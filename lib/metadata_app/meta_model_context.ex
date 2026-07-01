@@ -1,0 +1,46 @@
+defmodule MetadataApp.MetaModelContext do
+  alias MetadataApp.Repo
+  alias MetadataApp.MetaModelContext.MetaModelSchema
+  import Ecto.Query
+
+  # Listar todos los campos de un schema
+  def listar_campos(schema_nombre) do
+    from(c in MetaModelSchema,
+      where: c.schema_nombre == ^schema_nombre,
+      where: is_nil(c.delete_guid),
+      order_by: [asc: fragment("(propiedades->>'orden')::integer")]
+    )
+    |> Repo.all()
+  end
+
+  # Obtener un campo específico
+  def obtener_campo!(id), do: Repo.get!(MetaModelSchema, id)
+
+  # Crear — solo el sistema lo usa al inicializar schemas
+  def crear_campo(attrs) do
+    %MetaModelSchema{}
+    |> MetaModelSchema.changeset(attrs)
+    |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+    |> Repo.insert()
+  end
+
+  # Actualizar propiedades — lo usa el administrador
+  # Cambio inmediato: se sobreescribe el registro
+  def actualizar_campo(%MetaModelSchema{} = config, attrs) do
+    config
+    |> MetaModelSchema.changeset(attrs)
+    |> Ecto.Changeset.change(%{update_guid: generar_guid()})
+    |> Repo.update()
+  end
+
+  # Baja lógica del campo
+  def eliminar_campo(%MetaModelSchema{} = config) do
+    config
+    |> Ecto.Changeset.change(%{delete_guid: generar_guid()})
+    |> Repo.update()
+  end
+
+  defp generar_guid do
+    Ecto.UUID.generate() |> String.replace("-", "")
+  end
+end

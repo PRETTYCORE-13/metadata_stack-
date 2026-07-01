@@ -20,10 +20,12 @@ defmodule MetadataAppWeb.Router do
     get "/", PageController, :home
   end
 
-  # Other scopes may use custom stacks.
-  # scope "/api", MetadataAppWeb do
-  #   pipe_through :api
-  # end
+  scope "/api", MetadataAppWeb do
+    pipe_through :api
+
+    resources "/marcas", MarcaController, except: [:new, :edit]
+    resources "/meta_model", MetaModelController, except: [:new, :edit]
+  end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:metadata_app, :dev_routes) do
