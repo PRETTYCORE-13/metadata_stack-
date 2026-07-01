@@ -4,7 +4,7 @@ import Config
 config :metadata_app, MetadataApp.Repo,
 
   hostname: System.get_env("DB_HOSTNAME_PSQL", "localhost"),
-  port: String.to_integer(System.get_env("DB_PORT_PSQL", "5432")),
+  port: String.to_integer(System.get_env("DB_PORT_PSQL", "1111")),
   username: System.get_env("DB_USERNAME_PSQL", "metadata"),
   password: System.get_env("DB_PASSWORD_PSQL", "metadata1234%"),
   database: System.get_env("DB_NAME_PSQL", "metadata"),
