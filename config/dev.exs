@@ -2,10 +2,13 @@ import Config
 
 # Configure your database
 config :metadata_app, MetadataApp.Repo,
-  username: "postgres",
-  password: "postgres",
-  hostname: "localhost",
-  database: "metadata_app_dev",
+
+  hostname: System.get_env("DB_HOSTNAME_PSQL", "localhost"),
+  port: String.to_integer(System.get_env("DB_PORT_PSQL", "5432")),
+  username: System.get_env("DB_USERNAME_PSQL", "metadata"),
+  password: System.get_env("DB_PASSWORD_PSQL", "metadata1234%"),
+  database: System.get_env("DB_NAME_PSQL", "metadata"),
+
   stacktrace: true,
   show_sensitive_data_on_connection_error: true,
   pool_size: 10
