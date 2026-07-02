@@ -1,0 +1,15 @@
+<.sidebar
+  current_page={@current_page}
+  show_programacion_children={assigns[:show_programacion_children] || false}
+  show_clientes_children={assigns[:show_clientes_children] || false}
+  show_prettycore_children={assigns[:show_prettycore_children] || false}
+  sidebar_open={assigns[:sidebar_open] || false}
+  current_user_email={assigns[:current_user_email]}
+  current_user_name={assigns[:current_user_name]}
+  user_role={assigns[:user_role]}
+  user_permissions={assigns[:user_permissions]}
+  current_user_id={assigns[:current_user_id]}
+  notif_refresh={assigns[:notif_refresh] || 0}
+>
+  <.flash_group flash={@flash} /> {@inner_content}
+</.sidebar>

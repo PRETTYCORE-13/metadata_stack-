@@ -1,0 +1,303 @@
+/* Layout general */
+.pc-platform {
+  display: flex;
+  height: 100vh;
+  background: #ffffff;
+}
+
+/* Contenido principal */
+.pc-platform-main {
+  flex: 1;
+  background: #ffffff;
+  color: #000000;
+}
+
+/* SIDEBAR: barra vertical */
+.pc-platform-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 72px;           /* cerrada */
+  margin: 0;
+  padding: 12px 10px;
+  color: #e5e7eb;
+  transition: width 0.2s ease, border-radius 0.2s ease;
+  overflow: visible;
+}
+
+/* ABIERTA por clase, ya no por :hover */
+.pc-platform-sidebar-open {
+  width: 220px;
+  border-radius: 0;
+}
+
+/* Bloque fijo arriba (logo + toggle) */
+.pc-platform-sidebar-top {
+  flex-shrink: 0;
+}
+
+/* BLOQUE MENÚ (puede hacer scroll) */
+.pc-platform-sidebar-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;  /* menú arriba, config abajo */
+  margin-top: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Logo */
+.pc-platform-logo-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 6px;
+}
+
+.pc-platform-logo-img {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  object-fit: contain;
+}
+
+/* Texto del logo solo visible cuando está abierto */
+.pc-platform-logo-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.1;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.pc-platform-sidebar-open .pc-platform-logo-text {
+  opacity: 1;
+}
+
+.pc-platform-logo-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #000000;
+}
+
+.pc-platform-logo-subtitle {
+  font-size: 10px;
+  color: #9ca3af;
+}
+
+/* Botón toggle debajo del logo */
+.pc-menu-toggle {
+  margin-top: 8px;
+}
+
+/* Menú principal */
+.pc-platform-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* Items del menú : ícono centrado tipo botón */
+.pc-menu-item {
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: #9ca3af;
+  position: relative;
+}
+
+/* burbuja de fondo para el icono */
+.pc-menu-item::before {
+  content: "";
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.16);
+  opacity: 0;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+/* contenedor del icono */
+.pc-menu-item-icon {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+}
+
+/* SVG sólido, color negro */
+.pc-menu-item-icon svg {
+  width: 20px;
+  height: 20px;
+  color: #000000;
+}
+
+/* cuando está abierto, movemos el icono a la izquierda */
+.pc-platform-sidebar-open .pc-menu-item-icon {
+  left: 14px;
+  transform: none;
+}
+
+/* hover y activo: icono ligeramente más oscuro */
+.pc-menu-item:hover .pc-menu-item-icon svg {
+  color: #020617;
+}
+
+.pc-menu-item-active .pc-menu-item-icon svg {
+  color: #020617;
+}
+
+/* Texto del item */
+.pc-menu-item-label {
+  margin-left: 10px;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  font-size: 15px;
+}
+
+/* Textos visibles solo cuando está abierto */
+.pc-platform-sidebar-open .pc-menu-item-label {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* Indicador lateral fino para activo */
+.pc-menu-item-indicator {
+  width: 3px;
+  height: 18px;
+  border-radius: 999px;
+  background: transparent;
+  margin-right: 4px;
+}
+
+/* Hover y estado activo: burbuja oscura */
+.pc-menu-item:hover::before {
+  background: rgba(15, 23, 42, 0.9);
+  opacity: 1;
+}
+
+.pc-menu-item-active::before {
+  background: rgba(15, 23, 42, 0.95);
+  opacity: 1;
+}
+
+.pc-menu-item-active .pc-menu-item-indicator {
+  background: #e5e7eb;
+}
+
+/* Botón de configuración abajo */
+.pc-menu-item-bottom {
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(15, 23, 42, 0.6);
+}
+
+/* ========= SUBMENÚ PROGRAMACIÓN ========= */
+
+/* Contenedor del submenú debajo de Programación */
+.pc-submenu {
+  margin: 4px 0 8px;
+  padding-left: 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Item del submenú */
+.pc-submenu-item {
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: #6b7280;
+}
+
+/* Icono del submenú: círculo gris claro como los demás */
+.pc-submenu-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: #f3f4f6;
+}
+
+.pc-submenu-item-icon svg {
+  width: 14px;
+  height: 14px;
+  color: #000000;
+}
+
+/* Texto del submenú */
+.pc-submenu-item-label {
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+/* Hover / activo */
+.pc-submenu-item:hover {
+  background: #e5e7eb;
+  color: #111827;
+}
+
+.pc-submenu-item:hover .pc-submenu-item-icon {
+  background: #e5e7eb;
+}
+
+.pc-submenu-item-active {
+  background: #111827;
+  color: #f9fafb;
+}
+
+.pc-submenu-item-active .pc-submenu-item-icon {
+  background: #111827;
+}
+
+.pc-submenu-item-active .pc-submenu-item-icon svg {
+  color: #f9fafb;
+}
+
+/* Cuando el sidebar está CERRADO: mostrar solo iconos centrados */
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-submenu {
+  padding-left: 0;
+  align-items: center;
+  gap: 2px;
+}
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-submenu-item {
+  justify-content: center;
+  padding: 7px;
+  width: 48px;
+  border-radius: 10px;
+}
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-submenu-dot {
+  display: none;
+}
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-submenu-icon {
+  display: flex;
+}
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-submenu-chevron {
+  display: none;
+}
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-subsubmenu {
+  display: none;
+}

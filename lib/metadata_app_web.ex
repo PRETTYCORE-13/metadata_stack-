@@ -64,6 +64,15 @@ defmodule MetadataAppWeb do
     end
   end
 
+  def live_view_admin do
+    quote do
+      use Phoenix.LiveView,
+        layout: {MetadataAppWeb.Layouts, :app_admin}
+
+      unquote(html_helpers())
+    end
+  end
+
   def html do
     quote do
       use Phoenix.Component
