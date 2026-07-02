@@ -1,4 +1,6 @@
 defmodule MetadataAppWeb.Layouts do
+  import MetadataAppWeb.MenuLayout
+
   @moduledoc """
   This module holds layouts and related functionality
   used by your application.

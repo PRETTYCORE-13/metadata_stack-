@@ -1,0 +1,565 @@
+/* ========================================
+   PRETTYCORE SIDEBAR — eevo-style dark
+   ======================================== */
+
+/* Layout */
+.pc-platform {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;       /* fallback */
+  height: 100dvh;      /* Safari iOS: excluye barra del browser */
+  background: #f5f5f5;
+}
+
+/* Barra superior full-width */
+.pc-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 8px 24px;
+  flex-shrink: 0;
+}
+
+.pc-topbar-logo {
+  height: 30px;
+  object-fit: contain;
+}
+
+/* Fila sidebar + contenido */
+.pc-platform-row {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.pc-platform-main {
+  flex: 1;
+  background: #ffffff;
+  color: #000000;
+  overflow: auto;
+}
+
+/* ---- SIDEBAR ---- */
+.pc-platform-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 68px;
+  padding: 16px 12px;
+  background: #ffffff;
+  border-right: 1px solid #e5e7eb;
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+
+.pc-platform-sidebar-open {
+  width: 240px;
+}
+
+/* ---- HEADER (logo + brand + toggle) ---- */
+.pc-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 6px;
+  min-height: 44px;
+}
+
+.pc-sidebar-brand {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-header {
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-brand {
+  justify-content: center;
+}
+
+/* Logo gota morada - siempre visible */
+.pc-sidebar-drop-logo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              height 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Sidebar cerrado: gota más pequeña */
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-drop-logo {
+  width: 32px;
+  height: 32px;
+}
+
+/* ---- TOGGLE ---- */
+.pc-sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.pc-sidebar-toggle:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+/* Sidebar cerrado: centrar toggle */
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-toggle {
+  margin: 0 auto;
+}
+
+/* ---- BODY ---- */
+.pc-sidebar-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ---- SECTION LABEL ---- */
+.pc-sidebar-section-label {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #9ca3af;
+  padding: 16px 8px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-section-label {
+  font-size: 9px;
+  text-align: center;
+  padding: 16px 0 8px;
+}
+
+/* ---- NAV ---- */
+.pc-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ---- NAV ITEM ---- */
+.pc-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #374151;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s ease, color 0.15s ease;
+  position: relative;
+}
+
+.pc-nav-item:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+/* Activo */
+.pc-nav-item-active {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+/* ---- NAV ICON ---- */
+.pc-nav-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+}
+
+.pc-nav-icon svg {
+  width: 32px;
+  height: 32px;
+  color: inherit;
+}
+
+/* ---- NAV LABEL ---- */
+.pc-nav-label {
+  font-size: 14px;
+  font-weight: 400;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.pc-platform-sidebar-open .pc-nav-label {
+  opacity: 1;
+}
+
+.pc-nav-item-active .pc-nav-label {
+  font-weight: 500;
+}
+
+/* Sidebar cerrado: ocultar labels */
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-nav-label {
+  width: 0;
+  overflow: hidden;
+}
+
+/* Sidebar cerrado: centrar iconos */
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-nav-item {
+  justify-content: center;
+  padding: 10px;
+}
+
+/* ---- SUBMENU ---- */
+.pc-submenu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 20px;
+}
+
+.pc-submenu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #4b5563;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pc-submenu-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #7c3aed;
+  flex-shrink: 0;
+}
+
+.pc-submenu-icon {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: #7c3aed;
+}
+.pc-submenu-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.pc-submenu-item-active .pc-submenu-icon {
+  color: #6d28d9;
+}
+.pc-submenu-item:hover .pc-submenu-icon {
+  color: #5b21b6;
+}
+
+.pc-submenu-item:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.pc-submenu-item-active {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.pc-subsubmenu {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 18px;
+  margin-top: 2px;
+}
+
+.pc-subsubmenu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pc-subsubmenu-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: #7c3aed;
+  flex-shrink: 0;
+}
+
+.pc-subsubmenu-item:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.pc-subsubmenu-item-active {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+/* ---- LOGOUT ---- */
+.pc-nav-logout {
+  color: #6b7280;
+}
+
+.pc-nav-logout:hover {
+  background: rgba(239, 68, 68, 0.08);
+  color: #ef4444;
+}
+
+/* ---- USER ---- */
+.pc-sidebar-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-user {
+  justify-content: center;
+  padding: 10px;
+}
+
+.pc-sidebar-user-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.pc-sidebar-user-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 999px;
+}
+
+/* ---- SCROLLBAR ---- */
+.pc-sidebar-body::-webkit-scrollbar {
+  width: 4px;
+}
+
+.pc-sidebar-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.pc-sidebar-body::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 999px;
+}
+
+.pc-sidebar-body::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+/* ---- MOBILE HAMBURGER BUTTON ---- */
+.pc-mobile-menu-btn {
+  display: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: none;
+  background: rgba(0,0,0,0.06);
+  color: #111827;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* ---- MOBILE CLOSE BUTTON (inside sidebar, hidden on desktop) ---- */
+.pc-sidebar-close-mobile {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: none;
+  background: #f3f4f6;
+  color: #6b7280;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.pc-sidebar-close-mobile:hover {
+  background: #e5e7eb;
+  color: #111827;
+}
+.pc-sidebar-close-mobile svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ---- MOBILE OVERLAY ---- */
+.pc-sidebar-overlay {
+  display: none;
+}
+
+/* ========================================
+   MOBILE RESPONSIVE (max-width: 768px)
+   ======================================== */
+@media (max-width: 768px) {
+  /* Topbar compacto en móvil: muestra hamburger a la izquierda */
+  .pc-topbar {
+    justify-content: space-between;
+    padding: 6px 12px 6px 8px;
+  }
+
+  /* Show hamburger button inline en la topbar */
+  .pc-mobile-menu-btn {
+    display: flex;
+  }
+
+  .pc-topbar-logo {
+    height: 24px;
+  }
+
+  /* Sidebar: oculto fuera de pantalla por defecto */
+  .pc-platform-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    height: 100dvh;
+    width: 280px;
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    background: #ffffff;
+    border-right: 1px solid #e5e7eb;
+    padding: 12px 14px;
+  }
+
+  /* Sidebar abierto en móvil: slide in */
+  .pc-platform-sidebar.pc-sidebar-visible {
+    transform: translateX(0);
+    width: 280px;
+  }
+
+  /* Mostrar labels siempre cuando está visible en móvil */
+  .pc-platform-sidebar.pc-sidebar-visible .pc-nav-label {
+    opacity: 1;
+    width: auto;
+    overflow: visible;
+    font-size: 14px;
+    padding: 0;
+  }
+
+  .pc-platform-sidebar.pc-sidebar-visible .pc-sidebar-section-label {
+    text-align: left;
+    padding: 14px 8px 6px;
+  }
+
+  /* Corregir estilos colapsados de desktop cuando sidebar está visible en móvil */
+  .pc-platform-sidebar.pc-sidebar-visible .pc-sidebar-drop-logo { width: 40px; height: 40px; }
+  .pc-platform-sidebar.pc-sidebar-visible .pc-sidebar-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .pc-platform-sidebar.pc-sidebar-visible .pc-sidebar-brand { justify-content: flex-start; }
+  .pc-platform-sidebar.pc-sidebar-visible .pc-nav-item {
+    justify-content: flex-start;
+    padding: 12px 14px;
+    border-radius: 10px;
+    min-height: 48px;
+  }
+  .pc-platform-sidebar.pc-sidebar-visible .pc-sidebar-user {
+    justify-content: flex-start;
+    padding: 12px 14px;
+  }
+
+  /* Ocultar botón de colapso de desktop en móvil */
+  .pc-sidebar-toggle {
+    display: none;
+  }
+
+  /* Mostrar botón X de cerrar en móvil */
+  .pc-sidebar-close-mobile {
+    display: flex;
+  }
+
+  /* Submenu items más grandes en móvil */
+  .pc-platform-sidebar.pc-sidebar-visible .pc-submenu-item {
+    padding: 10px 14px;
+    min-height: 44px;
+    font-size: 14px;
+  }
+  .pc-platform-sidebar.pc-sidebar-visible .pc-subsubmenu-item {
+    padding: 9px 12px;
+    min-height: 40px;
+    font-size: 13px;
+  }
+
+  /* Overlay backdrop */
+  .pc-sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(2px);
+    z-index: 40;
+  }
+
+  .pc-sidebar-overlay.pc-sidebar-overlay-visible {
+    display: block;
+  }
+
+  /* Contenido ocupa todo el ancho */
+  .pc-platform-main {
+    width: 100%;
+    padding-top: 0;
+    min-width: 0;
+  }
+
+  /* Evitar scroll horizontal */
+  .pc-platform-row {
+    overflow-x: hidden;
+  }
+}

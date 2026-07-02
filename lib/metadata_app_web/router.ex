@@ -17,7 +17,7 @@ defmodule MetadataAppWeb.Router do
   scope "/", MetadataAppWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", InicioLive
   end
 
   scope "/api", MetadataAppWeb do

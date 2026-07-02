@@ -2,6 +2,8 @@
    https://tailwindcss.com/docs/configuration */
 
 @import "tailwindcss" source(none);
+@import "./menu.css";
+@import "./subMenu.css";
 @source "../css";
 @source "../js";
 @source "../../lib/metadata_app_web";
