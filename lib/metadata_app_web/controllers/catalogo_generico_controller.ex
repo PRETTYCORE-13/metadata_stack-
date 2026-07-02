@@ -6,6 +6,7 @@ defmodule MetadataAppWeb.CatalogoGenericoController do
     quote do
       use MetadataAppWeb, :controller
       alias MetadataApp.CatalogoGenerico
+      alias MetadataApp.MetaModelContext
 
       action_fallback MetadataAppWeb.FallbackController
 
@@ -14,12 +15,25 @@ defmodule MetadataAppWeb.CatalogoGenericoController do
 
       def index(conn, _params) do
         items = CatalogoGenerico.listar(@schema_mod)
-        json(conn, %{data: Enum.map(items, &CatalogoGenerico.serializar/1)})
+        meta_campos = @param_key |> MetaModelContext.listar_campos() |> Enum.map(&MetaModelContext.serializar_campo/1)
+
+        json(
+          conn,
+          Jason.OrderedObject.new(
+            meta_campos: meta_campos,
+            data: Enum.map(items, &CatalogoGenerico.serializar/1)
+          )
+        )
       end
 
       def show(conn, %{"id" => id}) do
         item = CatalogoGenerico.obtener!(@schema_mod, id)
-        json(conn, %{data: CatalogoGenerico.serializar(item)})
+        meta_campos = @param_key |> MetaModelContext.listar_campos() |> Enum.map(&MetaModelContext.serializar_campo/1)
+
+        json(
+          conn,
+          Jason.OrderedObject.new(meta_campos: meta_campos, data: CatalogoGenerico.serializar(item))
+        )
       end
 
       def create(conn, params) do

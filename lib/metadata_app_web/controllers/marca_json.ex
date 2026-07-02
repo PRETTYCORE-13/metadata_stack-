@@ -2,17 +2,14 @@ defmodule MetadataAppWeb.MarcaJSON do
   alias MetadataApp.Catalogos.Marca
 
   def index(%{marcas: marcas}) do
-    %{
+    Jason.OrderedObject.new(
       meta_campos: meta_campos(),
       data: for(m <- marcas, do: data(m))
-    }
+    )
   end
 
   def show(%{marca: marca}) do
-    %{
-      meta_campos: meta_campos(),
-      data: data(marca)
-    }
+    Jason.OrderedObject.new(meta_campos: meta_campos(), data: data(marca))
   end
 
   defp data(%Marca{} = m) do

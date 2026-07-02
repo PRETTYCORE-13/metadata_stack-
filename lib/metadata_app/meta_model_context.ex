@@ -55,6 +55,13 @@ defmodule MetadataApp.MetaModelContext do
     |> Repo.update()
   end
 
+  # Serializa un campo para exponerlo como meta_campos (ej. embebido en las
+  # respuestas de los catálogos). Sin id ni guids — son detalle interno de
+  # meta_schema, no del catálogo que describen.
+  def serializar_campo(%MetaModelSchema{} = campo) do
+    %{schema_nombre: campo.schema_nombre, campo: campo.campo, propiedades: campo.propiedades}
+  end
+
   defp generar_guid do
     Ecto.UUID.generate() |> String.replace("-", "")
   end
