@@ -15,11 +15,16 @@ defmodule MetadataAppWeb.MetaModelController do
     render(conn, :show, campo: campo)
   end
 
-  def create(conn, %{"meta_model" => %{"schema_nombre" => schema_nombre, "campos" => campos}})
+  def create(
+        conn,
+        %{
+          "meta_model" => %{"schema_nombre" => schema_nombre, "tabla" => tabla, "campos" => campos}
+        }
+      )
       when is_list(campos) do
     with {:ok, creados} <- MetaModelContext.crear_campos(schema_nombre, campos) do
       catalogo =
-        case CatalogoGenerador.generar(schema_nombre) do
+        case CatalogoGenerador.generar(schema_nombre, tabla) do
           {:ok, %{tabla: tabla, ya_existia: true}} ->
             %{tabla: tabla, generado: false, mensaje: "el catálogo ya existía, no se tocó"}
 

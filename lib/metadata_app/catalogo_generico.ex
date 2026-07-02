@@ -1,5 +1,6 @@
 defmodule MetadataApp.CatalogoGenerico do
   alias MetadataApp.Repo
+  import Ecto.Query
 
   def listar(schema_mod) do
     Repo.all(schema_mod)
@@ -49,6 +50,32 @@ defmodule MetadataApp.CatalogoGenerico do
     registro
     |> Map.from_struct()
     |> Map.drop([:__meta__, :insert_guid, :update_guid, :delete_guid])
+  end
+
+  # Valida que el valor de `campo` no exista ya como `campo_externo` en
+  # `tabla_externa` (unicidad cross-catálogo). `tabla_externa` es un nombre de
+  # tabla, no un módulo — se consulta sin schema Ecto compilado.
+  def validar_unico_en(changeset, campo, tabla_externa, campo_externo) do
+    case Ecto.Changeset.get_change(changeset, campo) do
+      nil ->
+        changeset
+
+      valor ->
+        campo_externo_atom = String.to_existing_atom(campo_externo)
+
+        existe? =
+          Repo.exists?(
+            from t in tabla_externa,
+              where: field(t, ^campo_externo_atom) == ^valor,
+              where: is_nil(field(t, :delete_guid))
+          )
+
+        if existe? do
+          Ecto.Changeset.add_error(changeset, campo, "ya existe en #{tabla_externa}")
+        else
+          changeset
+        end
+    end
   end
 
   defp generar_guid do

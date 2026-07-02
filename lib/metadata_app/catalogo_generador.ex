@@ -1,14 +1,21 @@
 defmodule MetadataApp.CatalogoGenerador do
   alias MetadataApp.MetaModelContext
+  alias MetadataApp.CatalogoRegistry
 
-  # Genera migración, schema, controller y ruta para schema_nombre a partir de
-  # lo registrado en meta_schema, y corre la migración. Si el catálogo ya
-  # existe (schema ya generado antes), no hace nada — es idempotente.
-  def generar(schema_nombre) do
+  # Genera migración y schema para schema_nombre/tabla a partir de lo
+  # registrado en meta_schema, los registra en el índice de catálogos y
+  # corre la migración. Si el catálogo ya existe (schema ya generado antes),
+  # no hace nada — es idempotente.
+  # Postgres trunca (sin error) identificadores de más de 63 bytes. El índice
+  # único del catálogo se nombra "<tabla>_unico_index"; se deja margen para
+  # ese sufijo y para nombres de constraint que Ecto derive de la tabla.
+  @tabla_longitud_maxima 50
+
+  def generar(schema_nombre, tabla) do
     schema_path = "lib/metadata_app/catalogos/#{schema_nombre}.ex"
 
     if File.exists?(schema_path) do
-      {:ok, %{tabla: pluralizar(schema_nombre), ya_existia: true}}
+      {:ok, %{tabla: tabla, ya_existia: true}}
     else
       campos_meta =
         schema_nombre
@@ -21,24 +28,26 @@ defmodule MetadataApp.CatalogoGenerador do
            "No hay metadata en meta_schema para schema_nombre=#{schema_nombre} (aparte de 'id')."}
 
         campos_meta ->
-          campos =
-            for campo_meta <- campos_meta do
-              propiedades = campo_meta.propiedades || %{}
-              tipo = tipo_ecto(Map.get(propiedades, "tipo", "string"))
-              longitud = if tipo == :string, do: Map.get(propiedades, "longitud", 255)
-              {campo_meta.campo, tipo, longitud}
-            end
+          with :ok <- validar_tabla(tabla),
+               :ok <- validar_referencias(campos_meta) do
+            campos =
+              for campo_meta <- campos_meta do
+                propiedades = campo_meta.propiedades || %{}
+                tipo_str = Map.get(propiedades, "tipo", "string")
+                tipo = tipo_ecto(tipo_str)
+                opciones = construir_opciones(tipo_str, propiedades)
+                {campo_meta.campo, tipo, opciones}
+              end
 
-          tabla = pluralizar(schema_nombre)
-          modulo = Macro.camelize(schema_nombre)
+            modulo = Macro.camelize(schema_nombre)
 
-          crear_migracion(tabla, campos)
-          crear_schema(schema_nombre, modulo, tabla, campos)
-          crear_controller(schema_nombre, modulo)
-          agregar_ruta(tabla, modulo)
-          migrar()
+            crear_migracion(tabla, campos)
+            crear_schema(schema_nombre, modulo, tabla, campos)
+            migrar()
+            CatalogoRegistry.registrar(tabla, schema_nombre, modulo)
 
-          {:ok, %{tabla: tabla, modulo: modulo, ya_existia: false}}
+            {:ok, %{tabla: tabla, modulo: modulo, ya_existia: false}}
+          end
       end
     end
   end
@@ -55,14 +64,83 @@ defmodule MetadataApp.CatalogoGenerador do
     end)
   end
 
+  defp validar_tabla(tabla) when byte_size(tabla) <= @tabla_longitud_maxima, do: :ok
+
+  defp validar_tabla(tabla),
+    do:
+      {:error,
+       "tabla=#{tabla} excede #{@tabla_longitud_maxima} caracteres — Postgres trunca identificadores largos y podría colisionar con otro catálogo"}
+
+  # Nombre determinista y corto del índice único del catálogo — una sola
+  # fuente de verdad, usada tanto por la migración como por el changeset
+  # generado (MetaCatalogoGenerico), para que nunca puedan desincronizarse.
+  def nombre_indice_unico(tabla), do: "#{tabla}_unico_index"
+
+  # Valida que todo campo tipo "referencia" apunte a un catálogo ya
+  # registrado (no se puede crear una FK a una tabla que no existe todavía).
+  defp validar_referencias(campos_meta) do
+    faltantes =
+      campos_meta
+      |> Enum.filter(&(Map.get(&1.propiedades || %{}, "tipo") == "referencia"))
+      |> Enum.map(&Map.fetch!(&1.propiedades, "catalogo"))
+      |> Enum.uniq()
+      |> Enum.reject(&CatalogoRegistry.obtener_por_schema_nombre/1)
+
+    case faltantes do
+      [] -> :ok
+      _ -> {:error, "catálogo(s) referenciados inexistentes: #{Enum.join(faltantes, ", ")}"}
+    end
+  end
+
   defp tipo_ecto("integer"), do: :integer
   defp tipo_ecto("decimal"), do: :decimal
+  defp tipo_ecto("boolean"), do: :boolean
+  defp tipo_ecto("date"), do: :date
+  defp tipo_ecto("enum"), do: :string
+  defp tipo_ecto("referencia"), do: :integer
   defp tipo_ecto(_string_u_otro), do: :string
 
-  defp columna_migracion(campo, :string, longitud),
-    do: "      add :#{campo}, :string, size: #{longitud || 255}, null: false"
+  defp construir_opciones("string", propiedades) do
+    base_opciones(propiedades)
+    |> Map.put(:longitud, Map.get(propiedades, "longitud", 255))
+    |> Map.put(:formato, Map.get(propiedades, "formato"))
+  end
 
-  defp columna_migracion(campo, tipo, _longitud) when tipo in [:integer, :decimal],
+  defp construir_opciones(tipo, propiedades) when tipo in ["integer", "decimal"] do
+    base_opciones(propiedades)
+    |> Map.put(:minimo, Map.get(propiedades, "minimo"))
+    |> Map.put(:maximo, Map.get(propiedades, "maximo"))
+  end
+
+  defp construir_opciones("enum", propiedades) do
+    base_opciones(propiedades)
+    |> Map.put(:valores, Map.fetch!(propiedades, "valores"))
+  end
+
+  defp construir_opciones("referencia", propiedades) do
+    catalogo_ref = Map.fetch!(propiedades, "catalogo")
+    tabla_ref = CatalogoRegistry.obtener_por_schema_nombre(catalogo_ref)
+
+    base_opciones(propiedades)
+    |> Map.put(:tabla_referenciada, tabla_ref.tabla)
+  end
+
+  defp construir_opciones(_tipo, propiedades), do: base_opciones(propiedades)
+
+  defp base_opciones(propiedades) do
+    case Map.get(propiedades, "unico_en") do
+      %{"tabla" => tabla, "campo" => campo_externo} -> %{unico_en: {tabla, campo_externo}}
+      _ -> %{}
+    end
+  end
+
+  defp columna_migracion(campo, _tipo, %{tabla_referenciada: tabla_ref}),
+    do: "      add :#{campo}, references(:#{tabla_ref}), null: false"
+
+  defp columna_migracion(campo, :string, opciones),
+    do: "      add :#{campo}, :string, size: #{opciones[:longitud] || 255}, null: false"
+
+  defp columna_migracion(campo, tipo, _opciones) when tipo in [:integer, :decimal, :boolean, :date],
     do: "      add :#{campo}, :#{tipo}, null: false"
 
   defp crear_migracion(tabla, campos) do
@@ -71,12 +149,13 @@ defmodule MetadataApp.CatalogoGenerador do
     path = "priv/repo/migrations/#{timestamp}_crear_#{tabla}.exs"
 
     columnas =
-      for {campo, tipo, longitud} <- campos do
-        columna_migracion(campo, tipo, longitud)
+      for {campo, tipo, opciones} <- campos do
+        columna_migracion(campo, tipo, opciones)
       end
       |> Enum.join("\n")
 
     nombres_campos = Enum.map(campos, fn {campo, _, _} -> ":#{campo}" end) |> Enum.join(", ")
+    nombre_indice = nombre_indice_unico(tabla)
 
     contenido = """
     defmodule MetadataApp.Repo.Migrations.#{modulo_migracion} do
@@ -91,7 +170,7 @@ defmodule MetadataApp.CatalogoGenerador do
           add :delete_guid, :string, size: 32, null: true
         end
 
-        create unique_index(:#{tabla}, [#{nombres_campos}])
+        create unique_index(:#{tabla}, [#{nombres_campos}], name: :#{nombre_indice})
       end
     end
     """
@@ -104,9 +183,8 @@ defmodule MetadataApp.CatalogoGenerador do
 
     campos_literal =
       campos
-      |> Enum.map(fn
-        {campo, :string, longitud} -> "{:#{campo}, :string, #{longitud || 255}}"
-        {campo, tipo, _} -> "{:#{campo}, :#{tipo}, nil}"
+      |> Enum.map(fn {campo, tipo, opciones} ->
+        "{:#{campo}, :#{tipo}, #{inspect(opciones, limit: :infinity, printable_limit: :infinity)}}"
       end)
       |> Enum.join(", ")
 
@@ -117,46 +195,6 @@ defmodule MetadataApp.CatalogoGenerador do
     """
 
     File.write!(path, contenido)
-  end
-
-  defp crear_controller(schema_nombre, modulo) do
-    path = "lib/metadata_app_web/controllers/#{schema_nombre}_controller.ex"
-
-    contenido = """
-    defmodule MetadataAppWeb.#{modulo}Controller do
-      use MetadataAppWeb.CatalogoGenericoController, schema: MetadataApp.Catalogos.#{modulo}, param: "#{schema_nombre}"
-    end
-    """
-
-    File.write!(path, contenido)
-  end
-
-  defp agregar_ruta(tabla, modulo) do
-    path = "lib/metadata_app_web/router.ex"
-    contenido = File.read!(path)
-    linea_nueva = "    resources \"/#{tabla}\", #{modulo}Controller, except: [:new, :edit]"
-
-    cond do
-      String.contains?(contenido, linea_nueva) ->
-        :ok
-
-      Regex.match?(~r/pipe_through :api\r?\n/, contenido) ->
-        actualizado =
-          Regex.replace(~r/(pipe_through :api\r?\n)/, contenido, "\\1" <> linea_nueva <> "\n", global: false)
-
-        File.write!(path, actualizado)
-
-      true ->
-        raise "No se encontró el pipeline :api en router.ex para insertar la ruta"
-    end
-  end
-
-  defp pluralizar(palabra) do
-    cond do
-      String.ends_with?(palabra, "s") -> palabra
-      String.ends_with?(palabra, ["a", "e", "i", "o", "u"]) -> palabra <> "s"
-      true -> palabra <> "es"
-    end
   end
 
   defp timestamp_utc do
