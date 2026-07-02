@@ -24,6 +24,21 @@ defmodule MetadataApp.MetaModelContext do
     |> Repo.insert()
   end
 
+  # Crear varios campos de un mismo schema en una sola transacción.
+  # Si alguno falla, se revierten todos (todo o nada).
+  def crear_campos(schema_nombre, campos) when is_list(campos) do
+    Repo.transaction(fn ->
+      Enum.map(campos, fn campo_attrs ->
+        attrs = Map.put(campo_attrs, "schema_nombre", schema_nombre)
+
+        case crear_campo(attrs) do
+          {:ok, campo} -> campo
+          {:error, changeset} -> Repo.rollback(changeset)
+        end
+      end)
+    end)
+  end
+
   # Actualizar propiedades — lo usa el administrador
   # Cambio inmediato: se sobreescribe el registro
   def actualizar_campo(%MetaModelSchema{} = config, attrs) do

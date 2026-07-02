@@ -1,6 +1,7 @@
 defmodule MetadataAppWeb.MetaModelController do
   use MetadataAppWeb, :controller
   alias MetadataApp.MetaModelContext
+  alias MetadataApp.CatalogoGenerador
 
   action_fallback MetadataAppWeb.FallbackController
 
@@ -12,6 +13,32 @@ defmodule MetadataAppWeb.MetaModelController do
   def show(conn, %{"id" => id}) do
     campo = MetaModelContext.obtener_campo!(id)
     render(conn, :show, campo: campo)
+  end
+
+  def create(conn, %{"meta_model" => %{"schema_nombre" => schema_nombre, "campos" => campos}})
+      when is_list(campos) do
+    with {:ok, creados} <- MetaModelContext.crear_campos(schema_nombre, campos) do
+      catalogo =
+        case CatalogoGenerador.generar(schema_nombre) do
+          {:ok, %{tabla: tabla, ya_existia: true}} ->
+            %{tabla: tabla, generado: false, mensaje: "el catálogo ya existía, no se tocó"}
+
+          {:ok, %{tabla: tabla}} ->
+            %{tabla: tabla, generado: true, ruta: "/api/#{tabla}"}
+
+          {:error, mensaje} ->
+            %{generado: false, error: mensaje}
+        end
+
+      body =
+        %{campos: creados}
+        |> MetadataAppWeb.MetaModelJSON.index()
+        |> Map.put(:catalogo, catalogo)
+
+      conn
+      |> put_status(:created)
+      |> json(body)
+    end
   end
 
   def create(conn, %{"meta_model" => campo_params}) do

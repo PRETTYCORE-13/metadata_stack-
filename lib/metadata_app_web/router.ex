@@ -22,9 +22,15 @@ defmodule MetadataAppWeb.Router do
 
   scope "/api", MetadataAppWeb do
     pipe_through :api
+    resources "/pty_canales", PtyCanalController, except: [:new, :edit]
+    resources "/pty_test_clis", PtyTestCliController, except: [:new, :edit]
+    resources "/pty_marca_autos", PtyMarcaAutoController, except: [:new, :edit]
+    resources "/pty_motos", PtyMotosController, except: [:new, :edit]
+    resources "/tallas", TallaController, except: [:new, :edit]
 
     resources "/marcas", MarcaController, except: [:new, :edit]
     resources "/meta_model", MetaModelController, except: [:new, :edit]
+    resources "/colores", ColorController, except: [:new, :edit]
   end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
