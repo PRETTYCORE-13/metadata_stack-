@@ -17,6 +17,19 @@ defmodule MetadataApp.CatalogoGenerico do
     |> Repo.insert()
   end
 
+  # Crea varios registros del mismo catálogo en una sola transacción.
+  # Si alguno falla, se revierten todos (todo o nada).
+  def crear_muchos(schema_mod, lista_attrs) when is_list(lista_attrs) do
+    Repo.transaction(fn ->
+      Enum.map(lista_attrs, fn attrs ->
+        case crear(schema_mod, attrs) do
+          {:ok, registro} -> registro
+          {:error, changeset} -> Repo.rollback(changeset)
+        end
+      end)
+    end)
+  end
+
   def actualizar(registro, attrs) do
     schema_mod = registro.__struct__
 

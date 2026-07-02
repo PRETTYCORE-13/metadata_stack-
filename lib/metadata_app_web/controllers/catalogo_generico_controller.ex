@@ -39,10 +39,18 @@ defmodule MetadataAppWeb.CatalogoGenericoController do
       def create(conn, params) do
         attrs = Map.get(params, @param_key, params)
 
-        with {:ok, item} <- CatalogoGenerico.crear(@schema_mod, attrs) do
-          conn
-          |> put_status(:created)
-          |> json(%{data: CatalogoGenerico.serializar(item)})
+        if is_list(attrs) do
+          with {:ok, items} <- CatalogoGenerico.crear_muchos(@schema_mod, attrs) do
+            conn
+            |> put_status(:created)
+            |> json(%{data: Enum.map(items, &CatalogoGenerico.serializar/1)})
+          end
+        else
+          with {:ok, item} <- CatalogoGenerico.crear(@schema_mod, attrs) do
+            conn
+            |> put_status(:created)
+            |> json(%{data: CatalogoGenerico.serializar(item)})
+          end
         end
       end
 

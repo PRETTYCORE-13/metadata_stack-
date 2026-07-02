@@ -22,6 +22,7 @@ defmodule MetadataAppWeb.Router do
 
   scope "/api", MetadataAppWeb do
     pipe_through :api
+    resources "/pty_marcas", PtyMarcaController, except: [:new, :edit]
     resources "/meta_model", MetaModelController, except: [:new, :edit]
   end
 
