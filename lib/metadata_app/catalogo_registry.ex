@@ -34,6 +34,16 @@ defmodule MetadataApp.CatalogoRegistry do
     )
   end
 
+  # Borrado total del catálogo (no soft-delete): a diferencia de las filas de
+  # negocio, borrar un catálogo es una operación administrativa irreversible,
+  # no algo que deba quedar recuperable vía delete_guid.
+  def eliminar(tabla) do
+    from(c in Catalogo, where: c.tabla == ^tabla)
+    |> Repo.delete_all()
+
+    :ok
+  end
+
   # Resuelve el módulo de schema Ecto (ej. MetadataApp.Catalogos.PtyMoto) a
   # partir del nombre de tabla en la URL. nil si no existe o no compiló.
   def modulo_por_tabla(tabla) do

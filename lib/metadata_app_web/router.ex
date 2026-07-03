@@ -24,6 +24,9 @@ defmodule MetadataAppWeb.Router do
     pipe_through :api
     resources "/meta_model", MetaModelController, except: [:new, :edit]
 
+    get "/catalogos/:tabla/impacto", CatalogoAdminController, :impacto
+    delete "/catalogos/:tabla", CatalogoAdminController, :delete
+
     get "/:tabla", CatalogoController, :index
     get "/:tabla/:id", CatalogoController, :show
     post "/:tabla", CatalogoController, :create

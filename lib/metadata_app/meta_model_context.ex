@@ -16,6 +16,28 @@ defmodule MetadataApp.MetaModelContext do
   # Obtener un campo específico
   def obtener_campo!(id), do: Repo.get!(MetaModelSchema, id)
 
+  # Schema_nombre de todo catálogo que tenga un campo tipo "referencia"
+  # apuntando a schema_nombre — son los que bloquean su borrado total.
+  def listar_dependientes(schema_nombre) do
+    from(c in MetaModelSchema,
+      where: is_nil(c.delete_guid),
+      where: fragment("?->>'tipo'", c.propiedades) == "referencia",
+      where: fragment("?->>'catalogo'", c.propiedades) == ^schema_nombre,
+      distinct: true,
+      select: c.schema_nombre
+    )
+    |> Repo.all()
+  end
+
+  # Borrado total (no soft-delete) de todos los campos de un schema_nombre —
+  # parte del borrado total de un catálogo, no de la edición normal.
+  def borrar_campos(schema_nombre) do
+    from(c in MetaModelSchema, where: c.schema_nombre == ^schema_nombre)
+    |> Repo.delete_all()
+
+    :ok
+  end
+
   # Crear — solo el sistema lo usa al inicializar schemas
   def crear_campo(attrs) do
     %MetaModelSchema{}

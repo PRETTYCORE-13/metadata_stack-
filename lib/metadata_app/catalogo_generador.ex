@@ -1,4 +1,6 @@
 defmodule MetadataApp.CatalogoGenerador do
+  import Ecto.Query
+  alias MetadataApp.Repo
   alias MetadataApp.MetaModelContext
   alias MetadataApp.CatalogoRegistry
 
@@ -49,6 +51,89 @@ defmodule MetadataApp.CatalogoGenerador do
             {:ok, %{tabla: tabla, modulo: modulo, ya_existia: false}}
           end
       end
+    end
+  end
+
+  # Vista previa del impacto de borrar un catálogo: cuántas filas se
+  # perderían y qué otros catálogos lo referencian (y por lo tanto bloquean
+  # el borrado). No modifica nada.
+  def impacto(tabla) do
+    with {:ok, catalogo} <- buscar_catalogo(tabla) do
+      filas = Repo.aggregate(from(t in tabla), :count)
+      dependientes = MetaModelContext.listar_dependientes(catalogo.schema_nombre)
+
+      {:ok, %{tabla: tabla, filas: filas, dependientes: dependientes}}
+    end
+  end
+
+  # Borrado total e irreversible de un catálogo: tabla, metadata, registro y
+  # archivo de schema. Nunca hace rollback de la migración de creación (el
+  # orden de versiones la hace frágil) — en cambio genera una migración
+  # nueva hacia adelante que dropea la tabla, igual que cualquier otra
+  # migración del historial.
+  def eliminar(tabla, confirmar_tabla) do
+    with {:ok, catalogo} <- buscar_catalogo(tabla),
+         :ok <- validar_confirmacion(tabla, confirmar_tabla),
+         :ok <- validar_sin_dependientes(catalogo.schema_nombre) do
+      crear_migracion_drop(tabla)
+      migrar()
+      MetaModelContext.borrar_campos(catalogo.schema_nombre)
+      CatalogoRegistry.eliminar(tabla)
+      archivo_eliminado? = borrar_schema_file(catalogo.schema_nombre)
+
+      {:ok, %{tabla: tabla, archivo_eliminado: archivo_eliminado?}}
+    end
+  end
+
+  defp buscar_catalogo(tabla) do
+    case CatalogoRegistry.obtener_por_tabla(tabla) do
+      nil -> {:error, :not_found}
+      catalogo -> {:ok, catalogo}
+    end
+  end
+
+  # Repetir el nombre de la tabla en el body es la confirmación — barato de
+  # implementar, elimina el borrado accidental por typo o script.
+  defp validar_confirmacion(tabla, tabla), do: :ok
+
+  defp validar_confirmacion(_tabla, _confirmar_tabla),
+    do: {:error, "confirmar_tabla no coincide con el nombre de la tabla a borrar"}
+
+  defp validar_sin_dependientes(schema_nombre) do
+    case MetaModelContext.listar_dependientes(schema_nombre) do
+      [] ->
+        :ok
+
+      dependientes ->
+        {:error,
+         "catálogo(s) dependientes, borralos primero: #{Enum.join(dependientes, ", ")}"}
+    end
+  end
+
+  defp crear_migracion_drop(tabla) do
+    timestamp = timestamp_utc()
+    modulo_migracion = "Eliminar" <> Macro.camelize(tabla)
+    path = "priv/repo/migrations/#{timestamp}_eliminar_#{tabla}.exs"
+
+    contenido = """
+    defmodule MetadataApp.Repo.Migrations.#{modulo_migracion} do
+      use Ecto.Migration
+
+      def change do
+        drop table(:#{tabla})
+      end
+    end
+    """
+
+    File.write!(path, contenido)
+  end
+
+  defp borrar_schema_file(schema_nombre) do
+    path = "lib/metadata_app/catalogos/#{schema_nombre}.ex"
+
+    case File.rm(path) do
+      :ok -> true
+      {:error, _motivo} -> false
     end
   end
 

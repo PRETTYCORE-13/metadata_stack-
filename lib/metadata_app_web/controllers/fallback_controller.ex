@@ -13,6 +13,12 @@ defmodule MetadataAppWeb.FallbackController do
     |> json(%{errors: %{detail: "Registro no encontrado"}})
   end
 
+  def call(conn, {:error, mensaje}) when is_binary(mensaje) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{errors: %{detail: mensaje}})
+  end
+
   defp traducir_errores(changeset) do
     Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
       Enum.reduce(opts, msg, fn {key, value}, acc ->
