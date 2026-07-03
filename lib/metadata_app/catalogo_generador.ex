@@ -278,12 +278,18 @@ defmodule MetadataApp.CatalogoGenerador do
     File.write!(path, contenido)
   end
 
+  # Con solo segundos de resolución, dos catálogos creados/borrados en el
+  # mismo segundo generan el mismo número de versión — Ecto trata la segunda
+  # migración como "ya aplicada" y la salta en silencio, sin correr su
+  # contenido. Se agregan milisegundos para que eso no vuelva a pasar.
   defp timestamp_utc do
     {{y, mo, d}, {h, mi, s}} = :calendar.universal_time()
+    ms = :erlang.system_time(:millisecond) |> rem(1000) |> Integer.to_string() |> String.pad_leading(3, "0")
 
     [y, mo, d, h, mi, s]
     |> Enum.zip([4, 2, 2, 2, 2, 2])
     |> Enum.map(fn {n, len} -> n |> Integer.to_string() |> String.pad_leading(len, "0") end)
     |> Enum.join()
+    |> Kernel.<>(ms)
   end
 end
