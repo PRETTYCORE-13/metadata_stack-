@@ -106,10 +106,14 @@ defmodule MetadataApp.CatalogoGenerador do
     end
   end
 
+  # El sufijo con el timestamp evita que dos migraciones "eliminar_<tabla>"
+  # (una por cada regeneración del mismo catálogo) choquen: Ecto exige que el
+  # nombre descriptivo del archivo (todo lo que sigue a la versión) sea único
+  # en toda la carpeta de migraciones, no solo el número de versión.
   defp crear_migracion_drop(schema_context_name) do
     timestamp = timestamp_utc()
-    modulo_migracion = "Eliminar" <> Macro.camelize(schema_context_name)
-    path = "priv/repo/migrations/#{timestamp}_eliminar_#{schema_context_name}.exs"
+    modulo_migracion = "Eliminar" <> Macro.camelize(schema_context_name) <> timestamp
+    path = "priv/repo/migrations/#{timestamp}_eliminar_#{schema_context_name}_#{timestamp}.exs"
 
     contenido = """
     defmodule MetadataApp.Repo.Migrations.#{modulo_migracion} do
@@ -224,10 +228,12 @@ defmodule MetadataApp.CatalogoGenerador do
   defp columna_migracion(campo, tipo, _opciones) when tipo in [:integer, :decimal, :boolean, :date],
     do: "      add :#{campo}, :#{tipo}, null: false"
 
+  # Mismo motivo que en crear_migracion_drop/1: el sufijo hace único el
+  # nombre descriptivo aunque el catálogo se regenere varias veces.
   defp crear_migracion(schema_context_name, campos) do
     timestamp = timestamp_utc()
-    modulo_migracion = "Crear" <> Macro.camelize(schema_context_name)
-    path = "priv/repo/migrations/#{timestamp}_crear_#{schema_context_name}.exs"
+    modulo_migracion = "Crear" <> Macro.camelize(schema_context_name) <> timestamp
+    path = "priv/repo/migrations/#{timestamp}_crear_#{schema_context_name}_#{timestamp}.exs"
 
     columnas =
       for {campo, tipo, opciones} <- campos do

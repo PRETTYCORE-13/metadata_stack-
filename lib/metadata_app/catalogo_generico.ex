@@ -3,11 +3,11 @@ defmodule MetadataApp.CatalogoGenerico do
   import Ecto.Query
 
   def listar(schema_mod) do
-    Repo.all(schema_mod)
+    Repo.all(from(r in schema_mod, where: is_nil(r.delete_guid)))
   end
 
   def obtener!(schema_mod, id) do
-    Repo.get!(schema_mod, id)
+    Repo.one!(from(r in schema_mod, where: r.id == ^id and is_nil(r.delete_guid)))
   end
 
   def crear(schema_mod, attrs) do
