@@ -22,7 +22,7 @@ defmodule MetadataAppWeb.Router do
 
   scope "/api", MetadataAppWeb do
     pipe_through :api
-    resources "/meta_model", MetaModelController, except: [:new, :edit]
+    resources "/meta_schema_header", MetaSchemaHeaderController, only: [:index, :show, :create, :update]
 
     get "/catalogos/:tabla/impacto", CatalogoAdminController, :impacto
     delete "/catalogos/:tabla", CatalogoAdminController, :delete

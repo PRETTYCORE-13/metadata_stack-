@@ -1,54 +1,51 @@
 defmodule MetadataApp.CatalogoGenerador do
   import Ecto.Query
   alias MetadataApp.Repo
-  alias MetadataApp.MetaModelContext
-  alias MetadataApp.CatalogoRegistry
+  alias MetadataApp.MetaSchemaContext
 
-  # Genera migración y schema para schema_nombre/tabla a partir de lo
-  # registrado en meta_schema, los registra en el índice de catálogos y
-  # corre la migración. Si el catálogo ya existe (schema ya generado antes),
-  # no hace nada — es idempotente.
+  # Genera migración y schema para schema_context_name a partir de lo
+  # registrado en meta_schema_detail y corre la migración. Si el catálogo ya
+  # existe (schema ya generado antes), no hace nada — es idempotente.
   # Postgres trunca (sin error) identificadores de más de 63 bytes. El índice
-  # único del catálogo se nombra "<tabla>_unico_index"; se deja margen para
-  # ese sufijo y para nombres de constraint que Ecto derive de la tabla.
+  # único del catálogo se nombra "<schema_context_name>_unico_index"; se deja
+  # margen para ese sufijo y para nombres de constraint que Ecto derive.
   @tabla_longitud_maxima 50
 
-  def generar(schema_nombre, tabla) do
-    schema_path = "lib/metadata_app/catalogos/#{schema_nombre}.ex"
+  def generar(schema_context_name) do
+    schema_path = "lib/metadata_app/catalogos/#{schema_context_name}.ex"
 
     if File.exists?(schema_path) do
-      {:ok, %{tabla: tabla, ya_existia: true}}
+      {:ok, %{tabla: schema_context_name, ya_existia: true}}
     else
-      campos_meta =
-        schema_nombre
-        |> MetaModelContext.listar_campos()
-        |> Enum.reject(&(&1.campo == "id"))
+      detalles =
+        schema_context_name
+        |> MetaSchemaContext.listar_detalles()
+        |> Enum.reject(&(&1.schema_context_field == "id"))
 
-      case campos_meta do
+      case detalles do
         [] ->
           {:error,
-           "No hay metadata en meta_schema para schema_nombre=#{schema_nombre} (aparte de 'id')."}
+           "No hay metadata en meta_schema_detail para #{schema_context_name} (aparte de 'id')."}
 
-        campos_meta ->
-          with :ok <- validar_tabla(tabla),
-               :ok <- validar_referencias(campos_meta) do
+        detalles ->
+          with :ok <- validar_tabla(schema_context_name),
+               :ok <- validar_referencias(detalles) do
             campos =
-              for campo_meta <- campos_meta do
-                propiedades = campo_meta.propiedades || %{}
+              for detalle <- detalles do
+                propiedades = detalle.schema_context_properties || %{}
                 tipo_str = Map.get(propiedades, "tipo", "string")
                 tipo = tipo_ecto(tipo_str)
                 opciones = construir_opciones(tipo_str, propiedades)
-                {campo_meta.campo, tipo, opciones}
+                {detalle.schema_context_field, tipo, opciones}
               end
 
-            modulo = Macro.camelize(schema_nombre)
+            modulo = Macro.camelize(schema_context_name)
 
-            crear_migracion(tabla, campos)
-            crear_schema(schema_nombre, modulo, tabla, campos)
+            crear_migracion(schema_context_name, campos)
+            crear_schema(schema_context_name, modulo, campos)
             migrar()
-            CatalogoRegistry.registrar(tabla, schema_nombre, modulo)
 
-            {:ok, %{tabla: tabla, modulo: modulo, ya_existia: false}}
+            {:ok, %{tabla: schema_context_name, modulo: modulo, ya_existia: false}}
           end
       end
     end
@@ -57,38 +54,37 @@ defmodule MetadataApp.CatalogoGenerador do
   # Vista previa del impacto de borrar un catálogo: cuántas filas se
   # perderían y qué otros catálogos lo referencian (y por lo tanto bloquean
   # el borrado). No modifica nada.
-  def impacto(tabla) do
-    with {:ok, catalogo} <- buscar_catalogo(tabla) do
-      filas = Repo.aggregate(from(t in tabla), :count)
-      dependientes = MetaModelContext.listar_dependientes(catalogo.schema_nombre)
+  def impacto(schema_context_name) do
+    with {:ok, _header} <- buscar_header(schema_context_name) do
+      filas = Repo.aggregate(from(t in schema_context_name), :count)
+      dependientes = MetaSchemaContext.listar_dependientes(schema_context_name)
 
-      {:ok, %{tabla: tabla, filas: filas, dependientes: dependientes}}
+      {:ok, %{tabla: schema_context_name, filas: filas, dependientes: dependientes}}
     end
   end
 
-  # Borrado total e irreversible de un catálogo: tabla, metadata, registro y
-  # archivo de schema. Nunca hace rollback de la migración de creación (el
-  # orden de versiones la hace frágil) — en cambio genera una migración
-  # nueva hacia adelante que dropea la tabla, igual que cualquier otra
-  # migración del historial.
-  def eliminar(tabla, confirmar_tabla) do
-    with {:ok, catalogo} <- buscar_catalogo(tabla),
-         :ok <- validar_confirmacion(tabla, confirmar_tabla),
-         :ok <- validar_sin_dependientes(catalogo.schema_nombre) do
-      crear_migracion_drop(tabla)
+  # Borrado total e irreversible de un catálogo: tabla, Header (sus Detalles
+  # se van en cascada por FK) y archivo de schema. Nunca hace rollback de la
+  # migración de creación (el orden de versiones la hace frágil) — en cambio
+  # genera una migración nueva hacia adelante que dropea la tabla, igual que
+  # cualquier otra migración del historial.
+  def eliminar(schema_context_name, confirmar_tabla) do
+    with {:ok, header} <- buscar_header(schema_context_name),
+         :ok <- validar_confirmacion(schema_context_name, confirmar_tabla),
+         :ok <- validar_sin_dependientes(schema_context_name) do
+      crear_migracion_drop(schema_context_name)
       migrar()
-      MetaModelContext.borrar_campos(catalogo.schema_nombre)
-      CatalogoRegistry.eliminar(tabla)
-      archivo_eliminado? = borrar_schema_file(catalogo.schema_nombre)
+      MetaSchemaContext.eliminar_header(header)
+      archivo_eliminado? = borrar_schema_file(schema_context_name)
 
-      {:ok, %{tabla: tabla, archivo_eliminado: archivo_eliminado?}}
+      {:ok, %{tabla: schema_context_name, archivo_eliminado: archivo_eliminado?}}
     end
   end
 
-  defp buscar_catalogo(tabla) do
-    case CatalogoRegistry.obtener_por_tabla(tabla) do
+  defp buscar_header(schema_context_name) do
+    case MetaSchemaContext.obtener_header_por_nombre(schema_context_name) do
       nil -> {:error, :not_found}
-      catalogo -> {:ok, catalogo}
+      header -> {:ok, header}
     end
   end
 
@@ -99,8 +95,8 @@ defmodule MetadataApp.CatalogoGenerador do
   defp validar_confirmacion(_tabla, _confirmar_tabla),
     do: {:error, "confirmar_tabla no coincide con el nombre de la tabla a borrar"}
 
-  defp validar_sin_dependientes(schema_nombre) do
-    case MetaModelContext.listar_dependientes(schema_nombre) do
+  defp validar_sin_dependientes(schema_context_name) do
+    case MetaSchemaContext.listar_dependientes(schema_context_name) do
       [] ->
         :ok
 
@@ -110,17 +106,17 @@ defmodule MetadataApp.CatalogoGenerador do
     end
   end
 
-  defp crear_migracion_drop(tabla) do
+  defp crear_migracion_drop(schema_context_name) do
     timestamp = timestamp_utc()
-    modulo_migracion = "Eliminar" <> Macro.camelize(tabla)
-    path = "priv/repo/migrations/#{timestamp}_eliminar_#{tabla}.exs"
+    modulo_migracion = "Eliminar" <> Macro.camelize(schema_context_name)
+    path = "priv/repo/migrations/#{timestamp}_eliminar_#{schema_context_name}.exs"
 
     contenido = """
     defmodule MetadataApp.Repo.Migrations.#{modulo_migracion} do
       use Ecto.Migration
 
       def change do
-        drop table(:#{tabla})
+        drop table(:#{schema_context_name})
       end
     end
     """
@@ -128,8 +124,8 @@ defmodule MetadataApp.CatalogoGenerador do
     File.write!(path, contenido)
   end
 
-  defp borrar_schema_file(schema_nombre) do
-    path = "lib/metadata_app/catalogos/#{schema_nombre}.ex"
+  defp borrar_schema_file(schema_context_name) do
+    path = "lib/metadata_app/catalogos/#{schema_context_name}.ex"
 
     case File.rm(path) do
       :ok -> true
@@ -161,15 +157,15 @@ defmodule MetadataApp.CatalogoGenerador do
   # generado (MetaCatalogoGenerico), para que nunca puedan desincronizarse.
   def nombre_indice_unico(tabla), do: "#{tabla}_unico_index"
 
-  # Valida que todo campo tipo "referencia" apunte a un catálogo ya
+  # Valida que todo detalle tipo "referencia" apunte a un catálogo ya
   # registrado (no se puede crear una FK a una tabla que no existe todavía).
-  defp validar_referencias(campos_meta) do
+  defp validar_referencias(detalles) do
     faltantes =
-      campos_meta
-      |> Enum.filter(&(Map.get(&1.propiedades || %{}, "tipo") == "referencia"))
-      |> Enum.map(&Map.fetch!(&1.propiedades, "catalogo"))
+      detalles
+      |> Enum.filter(&(Map.get(&1.schema_context_properties || %{}, "tipo") == "referencia"))
+      |> Enum.map(&Map.fetch!(&1.schema_context_properties, "catalogo"))
       |> Enum.uniq()
-      |> Enum.reject(&CatalogoRegistry.obtener_por_schema_nombre/1)
+      |> Enum.reject(&MetaSchemaContext.obtener_header_por_nombre/1)
 
     case faltantes do
       [] -> :ok
@@ -204,10 +200,10 @@ defmodule MetadataApp.CatalogoGenerador do
 
   defp construir_opciones("referencia", propiedades) do
     catalogo_ref = Map.fetch!(propiedades, "catalogo")
-    tabla_ref = CatalogoRegistry.obtener_por_schema_nombre(catalogo_ref)
+    header_ref = MetaSchemaContext.obtener_header_por_nombre(catalogo_ref)
 
     base_opciones(propiedades)
-    |> Map.put(:tabla_referenciada, tabla_ref.tabla)
+    |> Map.put(:tabla_referenciada, header_ref.schema_context_name)
   end
 
   defp construir_opciones(_tipo, propiedades), do: base_opciones(propiedades)
@@ -228,10 +224,10 @@ defmodule MetadataApp.CatalogoGenerador do
   defp columna_migracion(campo, tipo, _opciones) when tipo in [:integer, :decimal, :boolean, :date],
     do: "      add :#{campo}, :#{tipo}, null: false"
 
-  defp crear_migracion(tabla, campos) do
+  defp crear_migracion(schema_context_name, campos) do
     timestamp = timestamp_utc()
-    modulo_migracion = "Crear" <> Macro.camelize(tabla)
-    path = "priv/repo/migrations/#{timestamp}_crear_#{tabla}.exs"
+    modulo_migracion = "Crear" <> Macro.camelize(schema_context_name)
+    path = "priv/repo/migrations/#{timestamp}_crear_#{schema_context_name}.exs"
 
     columnas =
       for {campo, tipo, opciones} <- campos do
@@ -240,14 +236,14 @@ defmodule MetadataApp.CatalogoGenerador do
       |> Enum.join("\n")
 
     nombres_campos = Enum.map(campos, fn {campo, _, _} -> ":#{campo}" end) |> Enum.join(", ")
-    nombre_indice = nombre_indice_unico(tabla)
+    nombre_indice = nombre_indice_unico(schema_context_name)
 
     contenido = """
     defmodule MetadataApp.Repo.Migrations.#{modulo_migracion} do
       use Ecto.Migration
 
       def change do
-        create table(:#{tabla}) do
+        create table(:#{schema_context_name}) do
     #{columnas}
 
           add :insert_guid, :string, size: 32, null: false
@@ -255,7 +251,7 @@ defmodule MetadataApp.CatalogoGenerador do
           add :delete_guid, :string, size: 32, null: true
         end
 
-        create unique_index(:#{tabla}, [#{nombres_campos}], name: :#{nombre_indice})
+        create unique_index(:#{schema_context_name}, [#{nombres_campos}], name: :#{nombre_indice})
       end
     end
     """
@@ -263,8 +259,8 @@ defmodule MetadataApp.CatalogoGenerador do
     File.write!(path, contenido)
   end
 
-  defp crear_schema(schema_nombre, modulo, tabla, campos) do
-    path = "lib/metadata_app/catalogos/#{schema_nombre}.ex"
+  defp crear_schema(schema_context_name, modulo, campos) do
+    path = "lib/metadata_app/catalogos/#{schema_context_name}.ex"
 
     campos_literal =
       campos
@@ -275,7 +271,7 @@ defmodule MetadataApp.CatalogoGenerador do
 
     contenido = """
     defmodule MetadataApp.Catalogos.#{modulo} do
-      use MetadataApp.MetaCatalogoGenerico, tabla: "#{tabla}", campos: [#{campos_literal}]
+      use MetadataApp.MetaCatalogoGenerico, tabla: "#{schema_context_name}", campos: [#{campos_literal}]
     end
     """
 

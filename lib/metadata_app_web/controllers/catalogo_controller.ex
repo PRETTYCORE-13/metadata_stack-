@@ -1,15 +1,14 @@
 defmodule MetadataAppWeb.CatalogoController do
   use MetadataAppWeb, :controller
   alias MetadataApp.CatalogoGenerico
-  alias MetadataApp.CatalogoRegistry
-  alias MetadataApp.MetaModelContext
+  alias MetadataApp.MetaSchemaContext
 
   action_fallback MetadataAppWeb.FallbackController
 
   def index(conn, %{"tabla" => tabla}) do
-    with {:ok, schema_mod, schema_nombre} <- resolver(tabla) do
+    with {:ok, schema_mod} <- resolver(tabla) do
       items = CatalogoGenerico.listar(schema_mod)
-      meta_campos = schema_nombre |> MetaModelContext.listar_campos() |> Enum.map(&MetaModelContext.serializar_campo/1)
+      meta_campos = tabla |> MetaSchemaContext.listar_detalles() |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
 
       json(
         conn,
@@ -22,9 +21,9 @@ defmodule MetadataAppWeb.CatalogoController do
   end
 
   def show(conn, %{"tabla" => tabla, "id" => id}) do
-    with {:ok, schema_mod, schema_nombre} <- resolver(tabla) do
+    with {:ok, schema_mod} <- resolver(tabla) do
       item = CatalogoGenerico.obtener!(schema_mod, id)
-      meta_campos = schema_nombre |> MetaModelContext.listar_campos() |> Enum.map(&MetaModelContext.serializar_campo/1)
+      meta_campos = tabla |> MetaSchemaContext.listar_detalles() |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
 
       json(
         conn,
@@ -34,8 +33,8 @@ defmodule MetadataAppWeb.CatalogoController do
   end
 
   def create(conn, %{"tabla" => tabla} = params) do
-    with {:ok, schema_mod, schema_nombre} <- resolver(tabla) do
-      attrs = Map.get(params, schema_nombre, Map.drop(params, ["tabla"]))
+    with {:ok, schema_mod} <- resolver(tabla) do
+      attrs = Map.get(params, tabla, Map.drop(params, ["tabla"]))
 
       if is_list(attrs) do
         with {:ok, items} <- CatalogoGenerico.crear_muchos(schema_mod, attrs) do
@@ -54,8 +53,8 @@ defmodule MetadataAppWeb.CatalogoController do
   end
 
   def update(conn, %{"tabla" => tabla, "id" => id} = params) do
-    with {:ok, schema_mod, schema_nombre} <- resolver(tabla) do
-      attrs = Map.get(params, schema_nombre, Map.drop(params, ["tabla", "id"]))
+    with {:ok, schema_mod} <- resolver(tabla) do
+      attrs = Map.get(params, tabla, Map.drop(params, ["tabla", "id"]))
       item = CatalogoGenerico.obtener!(schema_mod, id)
 
       with {:ok, item} <- CatalogoGenerico.actualizar(item, attrs) do
@@ -65,7 +64,7 @@ defmodule MetadataAppWeb.CatalogoController do
   end
 
   def delete(conn, %{"tabla" => tabla, "id" => id}) do
-    with {:ok, schema_mod, _schema_nombre} <- resolver(tabla) do
+    with {:ok, schema_mod} <- resolver(tabla) do
       item = CatalogoGenerico.obtener!(schema_mod, id)
 
       with {:ok, _item} <- CatalogoGenerico.eliminar(item) do
@@ -75,9 +74,9 @@ defmodule MetadataAppWeb.CatalogoController do
   end
 
   defp resolver(tabla) do
-    case CatalogoRegistry.obtener_por_tabla(tabla) do
+    case MetaSchemaContext.modulo_por_nombre(tabla) do
       nil -> {:error, :not_found}
-      catalogo -> {:ok, CatalogoRegistry.modulo_por_tabla(tabla), catalogo.schema_nombre}
+      modulo -> {:ok, modulo}
     end
   end
 end
