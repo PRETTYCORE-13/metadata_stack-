@@ -2,8 +2,6 @@ defmodule MetadataAppWeb.MenuLayout do
   use Phoenix.Component
   alias Phoenix.LiveView.JS
 
-  @menu []
-
   # Props y slot
   attr :current_page, :string, required: true
   attr :menu_event, :string, default: "change_page"
@@ -20,7 +18,7 @@ defmodule MetadataAppWeb.MenuLayout do
   slot :inner_block, required: true
 
   def sidebar(assigns) do
-    assigns = assign(assigns, :menu_items, filter_menu(@menu, assigns.user_permissions, assigns.user_role))
+    assigns = assign(assigns, :menu_items, MetadataApp.MetaSchemaContext.listar_menu())
 
     ~H"""
     <div class="pc-platform">
@@ -97,14 +95,14 @@ defmodule MetadataAppWeb.MenuLayout do
             <div class="pc-sidebar-section-label">Menú</div>
             <nav class="pc-sidebar-nav">
               <%= for item <- @menu_items do %>
-                <button
-                  type="button"
+                <.link
+                  navigate={item.nav}
+                  phx-click={mobile_close_js()}
                   class={menu_item_class(menu_active?(item.id, @current_page))}
-                  phx-click={nav_and_close_js(@menu_event, item.id)}
                 >
                   <span class="pc-nav-icon"><.pc_icon name={item.id} /></span>
                   <span class="pc-nav-label">{item.label}</span>
-                </button>
+                </.link>
               <% end %>
             </nav>
           </div>
@@ -281,23 +279,6 @@ defmodule MetadataAppWeb.MenuLayout do
     """
   end
 
-  ## FILTRO DE MENÚ
-  defp filter_menu(menu, perms, role) do
-    do_filter_menu(menu, perms, role)
-  end
-
-  defp do_filter_menu(menu, _perms, "sysadmin"), do: menu
-  defp do_filter_menu(menu, _perms, "user"),
-    do: Enum.filter(menu, &(&1.id in ["tienda", "pedidos"]))
-  defp do_filter_menu(menu, nil, _role),
-    do: Enum.reject(menu, &(Map.get(&1, :admin_only, false) or Map.get(&1, :user_only, false)))
-  defp do_filter_menu(menu, perms, _role) do
-    menu
-    |> Enum.reject(&Map.get(&1, :user_only, false))
-    |> Enum.reject(fn item -> Map.get(item, :admin_only, false) and item.id not in perms end)
-    |> Enum.filter(&(&1.id in perms))
-  end
-
   ## HELPERS
   defp menu_active?(id, current), do: id == current
 
@@ -320,9 +301,4 @@ defmodule MetadataAppWeb.MenuLayout do
     |> JS.remove_class("pc-sidebar-overlay-visible", to: ".pc-sidebar-overlay")
   end
 
-  defp nav_and_close_js(menu_event, item_id) do
-    JS.push(menu_event, value: %{id: item_id})
-    |> JS.remove_class("pc-sidebar-visible", to: ".pc-platform-sidebar")
-    |> JS.remove_class("pc-sidebar-overlay-visible", to: ".pc-sidebar-overlay")
-  end
 end

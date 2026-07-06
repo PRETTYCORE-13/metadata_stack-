@@ -9,6 +9,15 @@ defmodule MetadataApp.MetaSchemaContext do
     |> Repo.all()
   end
 
+  # Ítems del sidebar: un catálogo visible = una entrada de menú.
+  def listar_menu do
+    from(h in Header, where: is_nil(h.delete_guid) and h.schema_visible == true)
+    |> Repo.all()
+    |> Enum.map(fn h ->
+      %{id: h.schema_context_name, label: h.schema_context_label, nav: h.schema_context_nav}
+    end)
+  end
+
   def obtener_header!(id), do: Repo.get!(Header, id)
 
   # schema_context_name cubre hoy el rol que antes cumplían schema_nombre y
