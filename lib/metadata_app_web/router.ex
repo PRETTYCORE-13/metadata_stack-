@@ -18,6 +18,7 @@ defmodule MetadataAppWeb.Router do
     pipe_through :browser
 
     live "/", InicioLive
+    live "/catalogos/:slug", CatalogoLive
   end
 
   scope "/api", MetadataAppWeb do

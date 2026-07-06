@@ -29,6 +29,16 @@ defmodule MetadataApp.MetaSchemaContext do
     )
   end
 
+  # Resuelve el catálogo a partir de la ruta de navegación guardada en el
+  # header (schema_context_nav) — no siempre coincide con schema_context_name
+  # (ej. nav "/catalogos/carros" para el catálogo "pty_carros"), así que la
+  # pantalla genérica de catálogo busca por este campo, no por el nombre.
+  def obtener_header_por_nav(nav) do
+    Repo.one(
+      from h in Header, where: h.schema_context_nav == ^nav and is_nil(h.delete_guid)
+    )
+  end
+
   # Resuelve el módulo Ecto (ej. MetadataApp.Catalogos.PtyMoto) a partir del
   # nombre — se deriva en el momento, no se guarda: es determinista.
   def modulo_por_nombre(schema_context_name) do
