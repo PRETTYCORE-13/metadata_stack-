@@ -11,6 +11,12 @@ config :metadata_app,
   ecto_repos: [MetadataApp.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+# Nombre de la tabla de control de migraciones de Ecto — se alinea al
+# estándar meta_schema_* del resto del proyecto en vez del default
+# "schema_migrations".
+config :metadata_app, MetadataApp.Repo,
+  migration_source: "meta_schema_migrations"
+
 # Configures the endpoint
 config :metadata_app, MetadataAppWeb.Endpoint,
   url: [host: "localhost"],
