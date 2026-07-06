@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  ELIXIR_VERSION: "1.18.4"
+  OTP_VERSION: "28.0.4"
+
+jobs:
+  # Reproduce el mismo ciclo que se corre a mano en el devcontainer:
+  # migrar desde una base vacia, importar la metadata versionada, generar
+  # todos los catalogos y compilar. Si el historial de migraciones tiene un
+  # migration roto (como el caso de pty_motos) o la metadata quedo
+  # desincronizada del codigo generado, este job falla ANTES de llegar a
+  # build-image.
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      MIX_ENV: test
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: metadata_app_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      - name: Instalar dependencias
+        run: mix deps.get
+
+      - name: Crear base de test
+        run: mix ecto.create
+
+      - name: Migrar desde base vacia
+        run: mix ecto.migrate
+
+      - name: Importar metadata versionada (Business Contexts)
+        run: mix meta.import
+
+      - name: Generar todos los catalogos desde metadata
+        run: mix gen.catalogos
+
+      - name: Verificar que no haya quedado nada sin commitear
+        run: |
+          git status --porcelain lib/metadata_app/catalogos priv/repo/migrations priv/repo/metadata_export.json > /tmp/drift.txt
+          if [ -s /tmp/drift.txt ]; then
+            echo "La metadata versionada generó archivos que no están commiteados:"
+            cat /tmp/drift.txt
+            echo "Corré 'mix gen.catalogos' localmente y commiteá el resultado."
+            exit 1
+          fi
+
+      - name: Compilar sin warnings
+        run: mix compile --warning-as-errors
+
+      - name: Test
+        run: mix test
+
+  # Solo corre si "validate" pasó. Arma la imagen de producción con el mismo
+  # Dockerfile que se probó a mano (build stage con compilador, runtime sin
+  # el) y la publica en GitHub Container Registry.
+  build-image:
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
