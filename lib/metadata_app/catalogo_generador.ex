@@ -191,10 +191,18 @@ defmodule MetadataApp.CatalogoGenerador do
     |> Map.put(:formato, Map.get(propiedades, "formato"))
   end
 
-  defp construir_opciones(tipo, propiedades) when tipo in ["integer", "decimal"] do
+  defp construir_opciones("integer", propiedades) do
     base_opciones(propiedades)
     |> Map.put(:minimo, Map.get(propiedades, "minimo"))
     |> Map.put(:maximo, Map.get(propiedades, "maximo"))
+  end
+
+  defp construir_opciones("decimal", propiedades) do
+    base_opciones(propiedades)
+    |> Map.put(:minimo, Map.get(propiedades, "minimo"))
+    |> Map.put(:maximo, Map.get(propiedades, "maximo"))
+    |> Map.put(:precision, Map.get(propiedades, "precision"))
+    |> Map.put(:escala, Map.get(propiedades, "escala"))
   end
 
   defp construir_opciones("enum", propiedades) do
@@ -224,6 +232,10 @@ defmodule MetadataApp.CatalogoGenerador do
 
   defp columna_migracion(campo, :string, opciones),
     do: "      add :#{campo}, :string, size: #{opciones[:longitud] || 255}, null: false"
+
+  defp columna_migracion(campo, :decimal, %{precision: precision, escala: escala})
+       when is_integer(precision) and is_integer(escala),
+       do: "      add :#{campo}, :decimal, precision: #{precision}, scale: #{escala}, null: false"
 
   defp columna_migracion(campo, tipo, _opciones) when tipo in [:integer, :decimal, :boolean, :date],
     do: "      add :#{campo}, :#{tipo}, null: false"

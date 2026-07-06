@@ -5,6 +5,7 @@ defmodule MetadataApp.MetaCatalogoGenerico do
   #   :longitud          — :string, validate_length
   #   :formato           — :string, regex (validate_format)
   #   :minimo / :maximo  — :integer | :decimal, validate_number
+  #   :precision / :escala — :decimal, dígitos totales / decimales (numeric(p,s) en Postgres)
   #   :valores           — enum, validate_inclusion (tipo Ecto queda :string)
   #   :tabla_referenciada — FK a otro catálogo (tipo Ecto queda :integer)
   #   :unico_en          — {tabla_externa, campo_externo}, unicidad cross-tabla
@@ -60,6 +61,7 @@ defmodule MetadataApp.MetaCatalogoGenerico do
       |> aplicar_longitud(campo, opciones)
       |> aplicar_formato(campo, opciones)
       |> aplicar_rango(campo, opciones)
+      |> aplicar_escala(campo, opciones)
       |> aplicar_valores(campo, opciones)
       |> aplicar_referencia(campo, opciones)
       |> aplicar_unico_en(campo, opciones)
@@ -87,6 +89,20 @@ defmodule MetadataApp.MetaCatalogoGenerico do
 
   defp aplicar_maximo(cs, _campo, nil), do: cs
   defp aplicar_maximo(cs, campo, maximo), do: validate_number(cs, campo, less_than_or_equal_to: maximo)
+
+  defp aplicar_escala(cs, campo, %{escala: escala}) when is_integer(escala) do
+    validate_change(cs, campo, fn _campo, valor ->
+      case valor do
+        %Decimal{} = d ->
+          if Decimal.scale(d) > escala, do: [{campo, "no puede tener más de #{escala} decimales"}], else: []
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  defp aplicar_escala(cs, _campo, _opciones), do: cs
 
   defp aplicar_valores(cs, campo, %{valores: valores}) when is_list(valores),
     do: validate_inclusion(cs, campo, valores)
