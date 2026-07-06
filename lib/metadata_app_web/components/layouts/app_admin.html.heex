@@ -10,6 +10,7 @@
   user_permissions={assigns[:user_permissions]}
   current_user_id={assigns[:current_user_id]}
   notif_refresh={assigns[:notif_refresh] || 0}
+  menu_items={assigns[:menu_items]}
 >
   <.flash_group flash={@flash} /> {@inner_content}
 </.sidebar>

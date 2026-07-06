@@ -15,10 +15,13 @@ defmodule MetadataAppWeb.MenuLayout do
   attr :user_permissions, :list, default: nil
   attr :current_user_id, :any, default: nil
   attr :notif_refresh, :integer, default: 0
+  # Si se pasa, se usa tal cual (menú hardcodeado, ej. sysadmin). Si no, se
+  # trae el dinámico desde meta_schema_header.
+  attr :menu_items, :list, default: nil
   slot :inner_block, required: true
 
   def sidebar(assigns) do
-    assigns = assign(assigns, :menu_items, MetadataApp.MetaSchemaContext.listar_menu())
+    assigns = assign(assigns, :menu_items, assigns.menu_items || MetadataApp.MetaSchemaContext.listar_menu())
 
     ~H"""
     <div class="pc-platform">
@@ -45,6 +48,9 @@ defmodule MetadataAppWeb.MenuLayout do
           user_id={@current_user_id}
           refresh={@notif_refresh}
         />
+        <.link navigate="/sysadmin/bc-list" class="pc-topbar-login-btn">
+          Iniciar sesión
+        </.link>
       </div>
       <!-- Fila: Sidebar + Contenido -->
       <div class="pc-platform-row">

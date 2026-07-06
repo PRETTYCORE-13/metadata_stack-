@@ -26,11 +26,27 @@ import {hooks as colocatedHooks} from "phoenix-colocated/metadata_app"
 import topbar from "../vendor/topbar"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
+
+const AbrirVentana = {
+  mounted() {
+    this.el.addEventListener("click", (e) => {
+      e.preventDefault()
+      window.open(this.el.dataset.url, "_blank", "width=1000,height=800")
+    })
+  },
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks},
+  hooks: {...colocatedHooks, AbrirVentana},
 })
+
+// La pantalla que se abre en la ventana emergente (ej. BC Nuevo) dispara este
+// evento al terminar de guardar, para autocerrarse. window.close() solo
+// funciona en ventanas abiertas por script (window.open), por eso el botón
+// usa el hook AbrirVentana en vez de un <a target="_blank"> normal.
+window.addEventListener("phx:cerrar_ventana", () => window.close())
 
 // Show progress bar on live navigation and form submits
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})

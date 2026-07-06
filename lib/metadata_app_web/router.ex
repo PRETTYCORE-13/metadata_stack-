@@ -19,6 +19,8 @@ defmodule MetadataAppWeb.Router do
 
     live "/", InicioLive
     live "/catalogos/:slug", CatalogoLive
+    live "/sysadmin/bc-list", Sysadmin.BcListLive
+    live "/sysadmin/bc-list/nuevo", Sysadmin.BcNuevoLive
   end
 
   scope "/api", MetadataAppWeb do

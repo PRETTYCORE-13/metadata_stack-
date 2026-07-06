@@ -28,6 +28,22 @@
   object-fit: contain;
 }
 
+.pc-topbar-login-btn {
+  margin-left: 12px;
+  padding: 6px 16px;
+  border-radius: 8px;
+  background: #7c3aed;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.pc-topbar-login-btn:hover {
+  background: #6d28d9;
+}
+
 /* Fila sidebar + contenido */
 .pc-platform-row {
   display: flex;
