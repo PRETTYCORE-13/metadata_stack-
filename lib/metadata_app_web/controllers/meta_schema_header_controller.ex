@@ -19,21 +19,30 @@ defmodule MetadataAppWeb.MetaSchemaHeaderController do
 
   def create(conn, %{"meta_schema_header" => header_attrs}) do
     with {:ok, {header, detalles}} <- MetaSchemaContext.crear_header_con_detalles(header_attrs) do
-      catalogo =
-        case CatalogoGenerador.generar(header.schema_context_name) do
-          {:ok, %{tabla: tabla, ya_existia: true}} ->
-            %{tabla: tabla, generado: false, mensaje: "el catálogo ya existía, no se tocó"}
-
-          {:ok, %{tabla: tabla}} ->
-            %{tabla: tabla, generado: true, ruta: "/api/#{tabla}"}
-
-          {:error, mensaje} ->
-            %{generado: false, error: mensaje}
-        end
-
       conn
       |> put_status(:created)
-      |> json(%{data: header_data(header, detalles), catalogo: catalogo})
+      |> json(%{data: header_data(header, detalles), catalogo: generar_catalogo(header)})
+    end
+  end
+
+  # En dev/test hay compilador disponible, así que el catálogo se genera y
+  # migra al toque. En un release de producción no hay Mix ni compilador
+  # (ver config/config.exs) — ahí solo queda guardada la metadata, y la
+  # generación real corre después en el build (mix gen.catalogos).
+  defp generar_catalogo(header) do
+    if Application.get_env(:metadata_app, :generar_catalogos_en_caliente, false) do
+      case CatalogoGenerador.generar(header.schema_context_name) do
+        {:ok, %{tabla: tabla, ya_existia: true}} ->
+          %{tabla: tabla, generado: false, mensaje: "el catálogo ya existía, no se tocó"}
+
+        {:ok, %{tabla: tabla}} ->
+          %{tabla: tabla, generado: true, ruta: "/api/#{tabla}"}
+
+        {:error, mensaje} ->
+          %{generado: false, error: mensaje}
+      end
+    else
+      %{generado: false, mensaje: "metadata guardada; el catálogo se generará en el próximo build"}
     end
   end
 

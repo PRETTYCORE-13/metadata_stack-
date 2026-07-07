@@ -1,0 +1,12 @@
+{
+  "name": "metadata_app (Debian trixie)",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/app",
+  "postCreateCommand": "mix deps.get",
+  "customizations": {
+    "vscode": {
+      "extensions": ["JakeBecker.elixir-ls"]
+    }
+  }
+}

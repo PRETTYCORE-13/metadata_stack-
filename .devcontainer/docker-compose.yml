@@ -1,0 +1,40 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ..:/app:cached
+      # _build y deps NO se montan desde el host: son artefactos compilados
+      # para Linux/Debian trixie. Si se bindmontearan desde Windows,
+      # volveríamos a mezclar bytecode de dos plataformas distintas.
+      - metadata_app_build:/app/_build
+      - metadata_app_deps:/app/deps
+    working_dir: /app
+    environment:
+      DB_HOSTNAME_PSQL: db
+      DB_PORT_PSQL: "5432"
+      DB_USERNAME_PSQL: metadata
+      DB_PASSWORD_PSQL: metadata1234%
+      DB_NAME_PSQL: metadata
+    ports:
+      - "4000:4000"
+    depends_on:
+      - db
+    command: sleep infinity
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: metadata
+      POSTGRES_PASSWORD: metadata1234%
+      POSTGRES_DB: metadata
+    volumes:
+      - metadata_pg_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+
+volumes:
+  metadata_app_build:
+  metadata_app_deps:
+  metadata_pg_data:

@@ -11,6 +11,20 @@ config :metadata_app,
   ecto_repos: [MetadataApp.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+# Nombre de la tabla de control de migraciones de Ecto — se alinea al
+# estándar meta_schema_* del resto del proyecto en vez del default
+# "schema_migrations".
+config :metadata_app, MetadataApp.Repo,
+  migration_source: "meta_schema_migrations"
+
+# Generar el catálogo (migración + schema + compilar) en el momento del POST
+# solo tiene sentido donde hay compilador disponible (dev/test). En un
+# release de producción no hay Mix ni compilador, así que ahí el endpoint
+# solo guarda la metadata y la generación real pasa a correr en el build
+# (mix gen.catalogos). Se resuelve acá, en config, para no llamar Mix.env()
+# en tiempo de ejecución — eso rompería en un release compilado.
+config :metadata_app, generar_catalogos_en_caliente: Mix.env() != :prod
+
 # Configures the endpoint
 config :metadata_app, MetadataAppWeb.Endpoint,
   url: [host: "localhost"],
