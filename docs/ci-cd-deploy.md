@@ -1,6 +1,8 @@
 # CI/CD y deploy — cómo funciona
 
-Este documento explica el flujo completo: desde que generás un catálogo en tu máquina hasta que corre en el servidor. Está pensado para alguien que viene de .NET/C# y es nuevo en Elixir, CI/CD y Docker — así que incluye analogías donde ayudan.
+> **⚠️ Nota principal:** todos los comandos de validación/diagnóstico de este documento (`docker run`, `docker service ps`, `docker history`, etc.) se corren **en el servidor Linux de producción** (`reiayanami.mine.nu`), conectado por SSH — nunca en tu máquina local. Localmente no tenés Docker Swarm ni la imagen de producción corriendo.
+
+Este documento explica el flujo completo: desde que generás un catálogo en tu máquina hasta que corre en el servidor. 
 
 > **Nota de seguridad:** este repo es público. Cualquier host, usuario o contraseña reales (del servidor de deploy, de la base de datos, tokens) **no van en este archivo ni en ningún archivo versionado** — viven solo como variables de entorno configuradas directamente en el servidor. Acá vas a ver placeholders (`<host>`, `<password>`, etc.).
 
@@ -23,7 +25,6 @@ Tres ambientes distintos, cada uno con un rol:
 2. **GitHub Actions (CI):** también tiene compilador (temporalmente, en un contenedor efímero). Repite lo que hiciste localmente para verificar que no te olvidaste de commitear algo, corre los tests, y arma la imagen de producción.
 3. **Servidor de producción (Docker Swarm):** **no tiene compilador**. Solo sabe correr una imagen ya armada. No podés crear catálogos ahí — si lo intentás, no hay con qué compilarlos.
 
-Analogía con .NET: es como tener tu build en Debug en tu máquina, un pipeline de Azure DevOps/GitHub Actions que hace `dotnet build` + `dotnet test`, y después `dotnet publish --self-contained` empaquetando un ejecutable que no necesita el SDK de .NET instalado en el servidor — solo el runtime (o ni eso, si es self-contained). La diferencia es que acá el "self-contained" lo arma `mix release`, y en vez de copiar el ejecutable directamente al servidor, se empaqueta todo dentro de una imagen Docker que viaja por un container registry.
 
 ## Paso 1 — Local: generar y probar un catálogo
 
@@ -41,12 +42,11 @@ Corre en un runner de GitHub (Ubuntu, con Elixir instalado). Repite el mismo pro
 4. Compara con `git status` si esa generación produjo algún archivo que no está commiteado — si hay diferencia, **falla el build**. Esto evita que alguien commitee la metadata pero se olvide de commitear el código generado (o viceversa).
 5. Compila con `--warning-as-errors` y corre los tests.
 
-Analogía: es como un job de CI que corre `dotnet build` + `dotnet test`, pero además valida que un generador de código (piensa en un source generator, o en Entity Framework migrations) no haya quedado desincronizado del código versionado.
 
 ### Job `build-image` (solo si `validate` pasó)
 Arma la imagen de producción usando el [`Dockerfile`](../Dockerfile), que tiene **dos etapas**:
 
-- **Etapa `builder`** (imagen `hexpm/elixir`, con compilador completo): instala dependencias, compila, y corre `mix release`. Esto genera un **release de OTP**: un paquete autocontenido que incluye tu código ya compilado a bytecode (`.beam`) **más su propia copia del runtime de Erlang (ERTS)**. Es la parte más distinta de .NET — no es como copiar solo el ejecutable, es empaquetar el equivalente a "mi código + una JVM/CLR entera dedicada a él".
+- **Etapa `builder`** (imagen `hexpm/elixir`, con compilador completo): instala dependencias, compila, y corre `mix release`. Esto genera un **release de OTP**: un paquete autocontenido que incluye tu código ya compilado a bytecode (`.beam`) **más su propia copia del runtime de Erlang (ERTS)**. 
 - **Etapa final** (imagen `debian:trixie-slim`, sin ningún compilador ni SDK): copia únicamente el release ya armado de la etapa anterior. El resultado es una imagen mínima que solo sabe ejecutar `bin/server` — no puede compilar nada aunque quisiera.
 
 Esa imagen final se publica en GitHub Container Registry: `ghcr.io/prettycore-13/metadata_stack:latest` (y con el tag del SHA del commit).
@@ -57,7 +57,7 @@ Esa imagen final se publica en GitHub Container Registry: `ghcr.io/prettycore-13
 
 ## Paso 3 — Deploy en el servidor (Docker Swarm)
 
-El servidor corre **Docker Swarm** (no `docker run` suelto, ni `docker-compose` plano). Conceptualmente, para alguien de .NET: pensalo como una versión liviana de un orquestador (similar en espíritu a Service Fabric o un Kubernetes chico) — administra "servicios" que Docker mantiene corriendo, reinicia si se caen, y conecta entre sí por una red virtual propia.
+El servidor corre **Docker Swarm** (no `docker run` suelto, ni `docker-compose` plano).Administra "servicios" que Docker mantiene corriendo, reinicia si se caen, y conecta entre sí por una red virtual propia.
 
 - Existe un **stack** (grupo de servicios relacionados) llamado `metadata_stack`, con:
   - un servicio de Postgres ya existente (para persistencia),
