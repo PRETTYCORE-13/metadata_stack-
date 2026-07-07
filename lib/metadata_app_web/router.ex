@@ -18,9 +18,14 @@ defmodule MetadataAppWeb.Router do
     pipe_through :browser
 
     live "/", InicioLive
-    live "/catalogos/:slug", CatalogoLive
     live "/sysadmin/bc-list", Sysadmin.BcListLive
     live "/sysadmin/bc-list/nuevo", Sysadmin.BcNuevoLive
+
+    # Comodín al final: cualquier ruta de navegación de un catálogo (con la
+    # profundidad de carpetas que sea, ej. "/listas/motos" o
+    # "/catalogos/carros") cae aquí. Va después de las rutas literales de
+    # arriba para no taparlas.
+    live "/*ruta", CatalogoLive
   end
 
   scope "/api", MetadataAppWeb do

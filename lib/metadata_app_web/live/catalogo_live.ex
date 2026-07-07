@@ -5,8 +5,8 @@ defmodule MetadataAppWeb.CatalogoLive do
   alias MetadataApp.CatalogoGenerico
   alias MetadataAppWeb.AdminNav
 
-  def mount(%{"slug" => slug}, _session, socket) do
-    nav = "/catalogos/#{slug}"
+  def mount(%{"ruta" => segmentos}, _session, socket) do
+    nav = "/" <> Enum.join(segmentos, "/")
 
     socket =
       socket

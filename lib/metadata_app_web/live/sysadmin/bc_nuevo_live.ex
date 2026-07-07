@@ -21,7 +21,11 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
   # cualquier vuelta al servidor antes de eso (agregar/quitar fila) repinta
   # el formulario con los valores viejos y borra lo escrito.
   def handle_event("validar", %{"contexto" => contexto, "componentes" => componentes_map}, socket) do
-    contexto = Map.put(contexto, "visible", contexto["visible"] == "true")
+    contexto =
+      contexto
+      |> Map.put("visible", contexto["visible"] == "true")
+      |> Map.put("nombre_p2", normalizar_identificador(contexto["nombre_p2"]))
+      |> Map.put("nombre_p3", normalizar_identificador(contexto["nombre_p3"]))
 
     componentes =
       componentes_map
@@ -31,14 +35,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
     {:noreply, socket |> assign(:contexto, contexto) |> assign(:componentes, componentes)}
   end
 
-  # Al salir del campo (no mientras se teclea, para no saltar el cursor):
-  # minúsculas, sin acentos, y el prefijo pty_ si no lo trae ya.
-  def handle_event("normalizar_nombre_sistema", %{"value" => valor}, socket) do
-    nombre_normalizado = normalizar_nombre_sistema(valor)
-    {:noreply, assign(socket, :contexto, Map.put(socket.assigns.contexto, "nombre", nombre_normalizado))}
-  end
-
-  # Mismo criterio que normalizar_nombre_sistema, pero con el prefijo /catalogos/.
+  # Mismo criterio de normalización, pero con el prefijo /catalogos/.
   def handle_event("normalizar_nav", %{"value" => valor}, socket) do
     nav_normalizado = normalizar_nav(valor)
     {:noreply, assign(socket, :contexto, Map.put(socket.assigns.contexto, "nav", nav_normalizado))}
@@ -61,7 +58,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
   def handle_event("guardar", %{"contexto" => contexto, "componentes" => componentes_map}, socket) do
     contexto =
       contexto
-      |> Map.put("nombre", normalizar_nombre_sistema(contexto["nombre"]))
+      |> Map.put("nombre", combinar_nombre_sistema(contexto["nombre_p2"], contexto["nombre_p3"]))
       |> Map.put("nav", normalizar_nav(contexto["nav"]))
 
     componentes =
@@ -116,7 +113,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
 
   defp validar_formulario(contexto, componentes) do
     with :ok <- validar_regex(contexto["nombre"], @identificador, "Nombre de sistema"),
-         :ok <- validar_completado(contexto["nombre"], "pty_", "Nombre de sistema"),
          :ok <- validar_regex(contexto["nav"], @nav, "Navegación"),
          :ok <- validar_completado(contexto["nav"], "/catalogos/", "Navegación"),
          :ok <- validar_completado(contexto["etiqueta"], "Catálogo de", "Etiqueta") do
@@ -155,15 +151,18 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
     end
   end
 
-  # minúsculas + sin acentos/espacios + siempre con el prefijo pty_ al frente
-  # (convención de todos los catálogos existentes).
-  defp normalizar_nombre_sistema(valor) do
-    base = normalizar_identificador(valor)
+  # Combina las 3 cajitas del campo "Nombre de sistema": pty_ (fijo) +
+  # segunda parte + tercera parte, cada una limpia por separado. Si falta
+  # cualquiera de las dos partes editables, devuelve "" — eso hace que
+  # validar_regex/3 lo rechace solo, sin necesitar un chequeo aparte.
+  defp combinar_nombre_sistema(parte2, parte3) do
+    p2 = normalizar_identificador(parte2)
+    p3 = normalizar_identificador(parte3)
 
-    cond do
-      base == "" -> ""
-      String.starts_with?(base, "pty_") -> base
-      true -> "pty_" <> base
+    if p2 == "" or p3 == "" do
+      ""
+    else
+      String.slice("pty_#{p2}_#{p3}", 0, 50)
     end
   end
 
@@ -182,29 +181,30 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
     |> String.replace(~r/\p{Mn}/u, "")
   end
 
-  # minúsculas + sin acentos/espacios + siempre con el prefijo /catalogos/ al
-  # frente, sin importar si lo escribieron con o sin la barra inicial.
+  # minúsculas + sin acentos/espacios + siempre con una sola barra inicial.
+  # "catalogos/" es solo el valor por default del campo — es editable, si el
+  # usuario lo borra se queda borrado, no se vuelve a agregar solo.
   defp normalizar_nav(valor) do
     limpio =
       (valor || "")
       |> String.downcase()
       |> quitar_acentos()
       |> String.replace(~r/[^a-z0-9\-\/]/, "")
-      |> String.trim_leading("/")
 
-    resultado =
-      cond do
-        limpio == "" -> ""
-        String.starts_with?(limpio, "catalogos/") -> "/" <> limpio
-        true -> "/catalogos/" <> limpio
-      end
+    resultado = if limpio == "", do: "", else: "/" <> String.trim_leading(limpio, "/")
 
     String.slice(resultado, 0, 50)
   end
 
   defp nuevo_formulario(socket) do
     socket
-    |> assign(:contexto, %{"nombre" => "pty_", "etiqueta" => "Catálogo de ", "nav" => "/catalogos/", "visible" => true})
+    |> assign(:contexto, %{
+      "nombre_p2" => "catalogos",
+      "nombre_p3" => "",
+      "etiqueta" => "Catálogo de ",
+      "nav" => "/catalogos/",
+      "visible" => true
+    })
     |> assign(:componentes, [componente_vacio(1)])
   end
 
@@ -258,7 +258,12 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
   end
 
   def render(assigns) do
-    assigns = assign(assigns, :tipos, @tipos)
+    nombre_sistema = combinar_nombre_sistema(assigns.contexto["nombre_p2"], assigns.contexto["nombre_p3"])
+
+    assigns =
+      assigns
+      |> assign(:tipos, @tipos)
+      |> assign(:nombre_sistema_preview, nombre_sistema)
 
     ~H"""
     <div class="min-h-screen bg-white">
@@ -282,20 +287,41 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
           <legend class="px-2 ml-2 text-sm font-semibold text-gray-900">Contexto</legend>
           <div class="grid grid-cols-[160px_1fr] gap-y-3 gap-x-3 p-4 items-center">
             <label class="font-medium text-gray-900">Nombre de sistema:</label>
-            <input type="text" name="contexto[nombre]" value={@contexto["nombre"]} required maxlength="50"
-              phx-blur="normalizar_nombre_sistema"
-              title="Se convierte solo a minúsculas y se le agrega pty_ al salir del campo."
-              class="border border-gray-300 rounded text-gray-900 px-2 py-1" placeholder="pty_carros" />
+            <div>
+              <div class="flex items-center gap-1.5">
+                <span class="border border-gray-300 rounded bg-gray-100 text-gray-500 px-2 py-1 select-none">pty_</span>
+                <span class="text-gray-400">-</span>
+                <input type="text" name="contexto[nombre_p2]" value={@contexto["nombre_p2"]} required maxlength="30"
+                  title="Minúsculas, sin acentos ni espacios."
+                  class="border border-gray-300 rounded text-gray-900 px-2 py-1 w-32" placeholder="catalogos" />
+                <span class="text-gray-400">-</span>
+                <input type="text" name="contexto[nombre_p3]" value={@contexto["nombre_p3"]} required maxlength="30"
+                  title="Minúsculas, sin acentos ni espacios."
+                  class="border border-gray-300 rounded text-gray-900 px-2 py-1 flex-1" placeholder="carros" />
+              </div>
+              <div class="mt-1.5 bg-blue-600 text-white rounded px-2 py-1.5 text-xs inline-flex items-center gap-1.5">
+                <span class="text-blue-100">Vista previa:</span>
+                <span class="font-mono">{@nombre_sistema_preview}</span>
+              </div>
+            </div>
 
             <label class="font-medium text-gray-900">Etiqueta:</label>
             <input type="text" name="contexto[etiqueta]" value={@contexto["etiqueta"]} required maxlength="100"
               class="border border-gray-300 rounded text-gray-900 px-2 py-1" placeholder="Catálogo de carros" />
 
             <label class="font-medium text-gray-900">Navegación:</label>
-            <input type="text" name="contexto[nav]" value={@contexto["nav"]} required maxlength="50"
-              phx-blur="normalizar_nav"
-              title="Se convierte solo a minúsculas y se le agrega /catalogos/ al salir del campo."
-              class="border border-gray-300 rounded text-gray-900 px-2 py-1" placeholder="/catalogos/carros" />
+            <div>
+              <input type="text" name="contexto[nav]" value={@contexto["nav"]} required maxlength="50"
+                phx-blur="normalizar_nav"
+                title="Se convierte solo a minúsculas al salir del campo. /catalogos/ es solo el valor por default, lo puedes editar o borrar libremente."
+                class="border border-gray-300 rounded text-gray-900 px-2 py-1" placeholder="/catalogos/carros" />
+              <div class="mt-1.5 bg-blue-600 text-white rounded px-2 py-1.5 text-xs inline-flex items-center gap-1.5">
+                <span class="text-blue-100">Vista previa:</span>
+                <span class="font-mono">
+                  {@contexto["nav"]}<%= if @nombre_sistema_preview != "", do: "/#{@nombre_sistema_preview}" %>
+                </span>
+              </div>
+            </div>
 
             <label class="font-medium text-gray-900">Es visible:</label>
             <div>
