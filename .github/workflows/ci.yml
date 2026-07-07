@@ -98,8 +98,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Nombre de imagen en minúsculas (ghcr.io lo exige)
-        run: echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+      - name: Nombre de imagen para ghcr.io (minúsculas, sin separador final)
+        run: |
+          repo="${GITHUB_REPOSITORY,,}"
+          repo="${repo%[-._]}"
+          echo "IMAGE_NAME=$repo" >> "$GITHUB_ENV"
 
       - uses: docker/login-action@v3
         with:
