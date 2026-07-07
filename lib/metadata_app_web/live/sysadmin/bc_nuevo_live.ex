@@ -31,6 +31,19 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
     {:noreply, socket |> assign(:contexto, contexto) |> assign(:componentes, componentes)}
   end
 
+  # Al salir del campo (no mientras se teclea, para no saltar el cursor):
+  # minúsculas, sin acentos, y el prefijo pty_ si no lo trae ya.
+  def handle_event("normalizar_nombre_sistema", %{"value" => valor}, socket) do
+    nombre_normalizado = normalizar_nombre_sistema(valor)
+    {:noreply, assign(socket, :contexto, Map.put(socket.assigns.contexto, "nombre", nombre_normalizado))}
+  end
+
+  # Mismo criterio que normalizar_nombre_sistema, pero con el prefijo /catalogos/.
+  def handle_event("normalizar_nav", %{"value" => valor}, socket) do
+    nav_normalizado = normalizar_nav(valor)
+    {:noreply, assign(socket, :contexto, Map.put(socket.assigns.contexto, "nav", nav_normalizado))}
+  end
+
   def handle_event("agregar_componente", _params, socket) do
     componentes = socket.assigns.componentes ++ [componente_vacio(length(socket.assigns.componentes) + 1)]
     {:noreply, assign(socket, :componentes, componentes)}
@@ -46,46 +59,152 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
   end
 
   def handle_event("guardar", %{"contexto" => contexto, "componentes" => componentes_map}, socket) do
+    contexto =
+      contexto
+      |> Map.put("nombre", normalizar_nombre_sistema(contexto["nombre"]))
+      |> Map.put("nav", normalizar_nav(contexto["nav"]))
+
     componentes =
       componentes_map
       |> Enum.sort_by(fn {idx, _} -> String.to_integer(idx) end)
       |> Enum.map(fn {_idx, c} -> c end)
 
-    header_attrs = %{
-      "schema_context_name" => contexto["nombre"],
-      "schema_context_label" => contexto["etiqueta"],
-      "schema_context_nav" => contexto["nav"],
-      "schema_visible" => contexto["visible"] == "true",
-      "detalles" => Enum.map(componentes, &detalle_attrs/1)
-    }
+    case validar_formulario(contexto, componentes) do
+      :ok ->
+        header_attrs = %{
+          "schema_context_name" => contexto["nombre"],
+          "schema_context_label" => contexto["etiqueta"],
+          "schema_context_nav" => contexto["nav"],
+          "schema_visible" => contexto["visible"] == "true",
+          "detalles" => Enum.map(componentes, &detalle_attrs/1)
+        }
 
-    case MetaSchemaContext.crear_header_con_detalles(header_attrs) do
-      {:ok, {header, _detalles}} ->
-        resultado = CatalogoGenerador.generar(header.schema_context_name)
+        case MetaSchemaContext.crear_header_con_detalles(header_attrs) do
+          {:ok, {header, _detalles}} ->
+            resultado = CatalogoGenerador.generar(header.schema_context_name)
 
-        texto =
-          case resultado do
-            {:ok, %{ya_existia: true}} -> "Contexto '#{header.schema_context_label}' guardado (el catálogo ya existía)."
-            {:ok, _} -> "Contexto '#{header.schema_context_label}' guardado y catálogo generado."
-            {:error, motivo} -> "Contexto guardado, pero no se pudo generar el catálogo: #{motivo}"
-          end
+            texto =
+              case resultado do
+                {:ok, %{ya_existia: true}} -> "Contexto '#{header.schema_context_label}' guardado (el catálogo ya existía)."
+                {:ok, _} -> "Contexto '#{header.schema_context_label}' guardado y catálogo generado."
+                {:error, motivo} -> "Contexto guardado, pero no se pudo generar el catálogo: #{motivo}"
+              end
 
-        Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:bc_creado, header})
+            Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:bc_creado, header})
 
-        {:noreply,
-         socket
-         |> nuevo_formulario()
-         |> assign(:mensaje, {:ok, texto})
-         |> push_event("cerrar_ventana", %{})}
+            {:noreply,
+             socket
+             |> nuevo_formulario()
+             |> assign(:mensaje, {:ok, texto})
+             |> push_event("cerrar_ventana", %{})}
 
-      {:error, changeset} ->
-        {:noreply, assign(socket, :mensaje, {:error, resumen_errores(changeset)})}
+          {:error, changeset} ->
+            {:noreply, assign(socket, :mensaje, {:error, resumen_errores(changeset)})}
+        end
+
+      {:error, motivo} ->
+        {:noreply, assign(socket, :mensaje, {:error, motivo})}
     end
+  end
+
+  # No basta con las restricciones del navegador (pattern/maxlength) — un
+  # cliente HTTP directo a este LiveView se las salta. schema_context_name y
+  # schema_context_field terminan siendo identificadores reales de Postgres
+  # (nombre de tabla / nombre de columna), así que se validan aquí también.
+  @identificador ~r/^[a-z][a-z0-9_]{0,49}$/
+  @nav ~r/^\/[a-z0-9\-\/]{0,49}$/
+
+  defp validar_formulario(contexto, componentes) do
+    with :ok <- validar_regex(contexto["nombre"], @identificador, "Nombre de sistema"),
+         :ok <- validar_completado(contexto["nombre"], "pty_", "Nombre de sistema"),
+         :ok <- validar_regex(contexto["nav"], @nav, "Navegación"),
+         :ok <- validar_completado(contexto["nav"], "/catalogos/", "Navegación"),
+         :ok <- validar_completado(contexto["etiqueta"], "Catálogo de", "Etiqueta") do
+      componentes
+      |> Enum.with_index(1)
+      |> Enum.reduce_while(:ok, fn {c, i}, :ok ->
+        case validar_regex(c["nombre"], @identificador, "Nombre del componente ##{i}") do
+          :ok -> {:cont, :ok}
+          error -> {:halt, error}
+        end
+      end)
+    end
+  end
+
+  defp validar_regex(valor, regex, etiqueta) do
+    if valor && Regex.match?(regex, valor) do
+      :ok
+    else
+      {:error, "#{etiqueta} inválido: '#{valor}'. Debe cumplir el formato requerido (ver la ayuda del campo)."}
+    end
+  end
+
+  # No basta con dejar el valor por default (ej. solo "pty_" o "/catalogos/"
+  # sin completar) — tiene que haber algo real después del prefijo.
+  defp validar_completado(valor, prefijo, etiqueta) do
+    resto =
+      (valor || "")
+      |> String.trim()
+      |> String.trim_leading(prefijo)
+      |> String.trim()
+
+    if resto == "" do
+      {:error, "#{etiqueta} no puede quedarse solo con el valor por default — completa el resto."}
+    else
+      :ok
+    end
+  end
+
+  # minúsculas + sin acentos/espacios + siempre con el prefijo pty_ al frente
+  # (convención de todos los catálogos existentes).
+  defp normalizar_nombre_sistema(valor) do
+    base = normalizar_identificador(valor)
+
+    cond do
+      base == "" -> ""
+      String.starts_with?(base, "pty_") -> base
+      true -> "pty_" <> base
+    end
+  end
+
+  defp normalizar_identificador(valor) do
+    (valor || "")
+    |> String.downcase()
+    |> quitar_acentos()
+    |> String.replace(~r/[^a-z0-9_]/, "")
+    |> String.replace(~r/^[^a-z]+/, "")
+    |> String.slice(0, 50)
+  end
+
+  defp quitar_acentos(valor) do
+    valor
+    |> String.normalize(:nfd)
+    |> String.replace(~r/\p{Mn}/u, "")
+  end
+
+  # minúsculas + sin acentos/espacios + siempre con el prefijo /catalogos/ al
+  # frente, sin importar si lo escribieron con o sin la barra inicial.
+  defp normalizar_nav(valor) do
+    limpio =
+      (valor || "")
+      |> String.downcase()
+      |> quitar_acentos()
+      |> String.replace(~r/[^a-z0-9\-\/]/, "")
+      |> String.trim_leading("/")
+
+    resultado =
+      cond do
+        limpio == "" -> ""
+        String.starts_with?(limpio, "catalogos/") -> "/" <> limpio
+        true -> "/catalogos/" <> limpio
+      end
+
+    String.slice(resultado, 0, 50)
   end
 
   defp nuevo_formulario(socket) do
     socket
-    |> assign(:contexto, %{"nombre" => "", "etiqueta" => "", "nav" => "", "visible" => true})
+    |> assign(:contexto, %{"nombre" => "pty_", "etiqueta" => "Catálogo de ", "nav" => "/catalogos/", "visible" => true})
     |> assign(:componentes, [componente_vacio(1)])
   end
 
@@ -163,15 +282,19 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
           <legend class="px-2 ml-2 text-sm font-semibold text-gray-900">Contexto</legend>
           <div class="grid grid-cols-[160px_1fr] gap-y-3 gap-x-3 p-4 items-center">
             <label class="font-medium text-gray-900">Nombre de sistema:</label>
-            <input type="text" name="contexto[nombre]" value={@contexto["nombre"]} required
+            <input type="text" name="contexto[nombre]" value={@contexto["nombre"]} required maxlength="50"
+              phx-blur="normalizar_nombre_sistema"
+              title="Se convierte solo a minúsculas y se le agrega pty_ al salir del campo."
               class="border border-gray-300 rounded text-gray-900 px-2 py-1" placeholder="pty_carros" />
 
             <label class="font-medium text-gray-900">Etiqueta:</label>
-            <input type="text" name="contexto[etiqueta]" value={@contexto["etiqueta"]} required
+            <input type="text" name="contexto[etiqueta]" value={@contexto["etiqueta"]} required maxlength="100"
               class="border border-gray-300 rounded text-gray-900 px-2 py-1" placeholder="Catálogo de carros" />
 
             <label class="font-medium text-gray-900">Navegación:</label>
-            <input type="text" name="contexto[nav]" value={@contexto["nav"]} required
+            <input type="text" name="contexto[nav]" value={@contexto["nav"]} required maxlength="50"
+              phx-blur="normalizar_nav"
+              title="Se convierte solo a minúsculas y se le agrega /catalogos/ al salir del campo."
               class="border border-gray-300 rounded text-gray-900 px-2 py-1" placeholder="/catalogos/carros" />
 
             <label class="font-medium text-gray-900">Es visible:</label>
@@ -204,10 +327,12 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
                   <tr class="border-b border-gray-200">
                     <td class="px-2 py-1">
                       <input type="text" name={"componentes[#{idx}][nombre]"} value={componente["nombre"]} required
+                        pattern="[a-z][a-z0-9_]*" maxlength="50"
+                        title="Minúsculas, sin acentos ni espacios. Letras, números y guion_bajo, debe empezar con una letra."
                         class="border border-gray-300 rounded text-gray-900 px-2 py-1 w-32" placeholder="pty_carro_nombre" />
                     </td>
                     <td class="px-2 py-1">
-                      <input type="text" name={"componentes[#{idx}][etiqueta]"} value={componente["etiqueta"]} required
+                      <input type="text" name={"componentes[#{idx}][etiqueta]"} value={componente["etiqueta"]} required maxlength="100"
                         class="border border-gray-300 rounded text-gray-900 px-2 py-1 w-28" placeholder="Nombre" />
                     </td>
                     <td class="px-2 py-1">

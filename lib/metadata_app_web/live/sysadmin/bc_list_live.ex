@@ -65,6 +65,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               <th class="px-4 py-2 text-left font-semibold text-gray-600">Etiqueta</th>
               <th class="px-4 py-2 text-left font-semibold text-gray-600">Navegación</th>
               <th class="px-4 py-2 text-left font-semibold text-gray-600">Es visible</th>
+              <th class="px-4 py-2 text-left font-semibold text-gray-600">Acciones</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100">
@@ -74,11 +75,21 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                 <td class="px-4 py-2 text-gray-800">{header.schema_context_label}</td>
                 <td class="px-4 py-2 text-gray-800">{header.schema_context_nav}</td>
                 <td class="px-4 py-2 text-gray-800">{if header.schema_visible, do: "Sí", else: "No"}</td>
+                <td class="px-4 py-2">
+                  <div class="flex gap-2">
+                    <button type="button" class="text-blue-600 hover:text-blue-800 text-xs font-semibold">
+                      Editar
+                    </button>
+                    <button type="button" class="text-red-600 hover:text-red-800 text-xs font-semibold">
+                      Eliminar
+                    </button>
+                  </div>
+                </td>
               </tr>
             <% end %>
             <%= if @headers == [] do %>
               <tr>
-                <td class="px-4 py-6 text-center text-gray-400" colspan="4">
+                <td class="px-4 py-6 text-center text-gray-400" colspan="5">
                   Todavía no hay contextos creados
                 </td>
               </tr>
