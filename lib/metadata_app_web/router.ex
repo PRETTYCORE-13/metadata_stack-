@@ -14,20 +14,9 @@ defmodule MetadataAppWeb.Router do
     plug :accepts, ["json"]
   end
 
-  scope "/", MetadataAppWeb do
-    pipe_through :browser
-
-    live "/", InicioLive
-    live "/sysadmin/bc-list", Sysadmin.BcListLive
-    live "/sysadmin/bc-list/nuevo", Sysadmin.BcNuevoLive
-
-    # Comodín al final: cualquier ruta de navegación de un catálogo (con la
-    # profundidad de carpetas que sea, ej. "/listas/motos" o
-    # "/catalogos/carros") cae aquí. Va después de las rutas literales de
-    # arriba para no taparlas.
-    live "/*ruta", CatalogoLive
-  end
-
+  # Va antes del scope "/" browser: el catch-all "/*ruta" de más abajo matchea
+  # cualquier GET (incluido "/api/..."), así que /api tiene que resolverse
+  # primero o esas rutas GET nunca llegarían a la API.
   scope "/api", MetadataAppWeb do
     pipe_through :api
 
@@ -46,6 +35,20 @@ defmodule MetadataAppWeb.Router do
     put "/:tabla/:id", CatalogoController, :update
     patch "/:tabla/:id", CatalogoController, :update
     delete "/:tabla/:id", CatalogoController, :delete
+  end
+
+  scope "/", MetadataAppWeb do
+    pipe_through :browser
+
+    live "/", InicioLive
+    live "/sysadmin/bc-list", Sysadmin.BcListLive
+    live "/sysadmin/bc-list/nuevo", Sysadmin.BcNuevoLive
+
+    # Comodín al final: cualquier ruta de navegación de un catálogo (con la
+    # profundidad de carpetas que sea, ej. "/listas/motos" o
+    # "/catalogos/carros") cae aquí. Va después de las rutas literales de
+    # arriba para no taparlas.
+    live "/*ruta", CatalogoLive
   end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
