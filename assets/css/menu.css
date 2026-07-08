@@ -204,6 +204,43 @@
   color: #111827;
 }
 
+/* ---- MENÚ EN ÁRBOL (carpetas estilo explorador) ---- */
+.pc-menu-carpeta {
+  margin-bottom: 2px;
+}
+
+.pc-menu-carpeta-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #374151;
+  font-weight: 500;
+  font-size: 14px;
+  list-style: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pc-menu-carpeta-summary::-webkit-details-marker {
+  display: none;
+}
+
+.pc-menu-carpeta-summary:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.pc-menu-carpeta-icono-flecha {
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.pc-menu-carpeta[open] > .pc-menu-carpeta-summary .pc-menu-carpeta-icono-flecha {
+  transform: rotate(90deg);
+}
+
 /* ---- NAV ICON ---- */
 .pc-nav-icon {
   display: flex;

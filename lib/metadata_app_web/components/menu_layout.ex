@@ -21,7 +21,7 @@ defmodule MetadataAppWeb.MenuLayout do
   slot :inner_block, required: true
 
   def sidebar(assigns) do
-    assigns = assign(assigns, :menu_items, assigns.menu_items || MetadataApp.MetaSchemaContext.listar_menu())
+    assigns = assign(assigns, :menu_items, assigns.menu_items || MetadataApp.MetaSchemaContext.listar_menu_arbol())
 
     ~H"""
     <div class="pc-platform">
@@ -100,16 +100,7 @@ defmodule MetadataAppWeb.MenuLayout do
             <!-- SECCIÓN: MENÚ -->
             <div class="pc-sidebar-section-label">Menú</div>
             <nav class="pc-sidebar-nav">
-              <%= for item <- @menu_items do %>
-                <.link
-                  navigate={item.nav}
-                  phx-click={mobile_close_js()}
-                  class={menu_item_class(menu_active?(item.id, @current_page))}
-                >
-                  <span class="pc-nav-icon"><.pc_icon name={item.id} /></span>
-                  <span class="pc-nav-label">{item.label}</span>
-                </.link>
-              <% end %>
+              <.menu_nodos nodos={@menu_items} current_page={@current_page} />
             </nav>
           </div>
 
@@ -251,6 +242,51 @@ defmodule MetadataAppWeb.MenuLayout do
     </div>
     """
   end
+
+  ## MENÚ EN ÁRBOL — estilo explorador de Windows: nav="/carpeta/pagina" se
+  # parte en carpetas colapsables (<details>, sin JS) con la página como hoja
+  # al final. Ver MetadataApp.MetaSchemaContext.listar_menu_arbol/0.
+  attr :nodos, :list, required: true
+  attr :current_page, :string, required: true
+  attr :nivel, :integer, default: 0
+
+  def menu_nodos(assigns) do
+    ~H"""
+    <%= for nodo <- @nodos do %>
+      <%= if nodo.tipo == :carpeta do %>
+        <details class="pc-menu-carpeta" open={contiene_activo?(nodo, @current_page)}>
+          <summary class="pc-menu-carpeta-summary" style={"padding-left: #{12 + @nivel * 16}px"}>
+            <svg class="pc-menu-carpeta-icono-flecha w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+            <svg class="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+            </svg>
+            <span class="truncate">{nodo.nombre}</span>
+          </summary>
+          <.menu_nodos nodos={nodo.hijos} current_page={@current_page} nivel={@nivel + 1} />
+        </details>
+      <% else %>
+        <.link
+          navigate={nodo.nav}
+          phx-click={mobile_close_js()}
+          class={menu_item_class(menu_active?(nodo.id, @current_page))}
+          style={"padding-left: #{12 + @nivel * 16}px"}
+        >
+          <span class="pc-nav-icon"><.pc_icon name={nodo.id} /></span>
+          <span class="pc-nav-label">{nodo.label}</span>
+        </.link>
+      <% end %>
+    <% end %>
+    """
+  end
+
+  # Para que la carpeta que contiene la página activa empiece abierta, en
+  # vez de tener que expandirla a mano cada vez que cargas la pantalla.
+  defp contiene_activo?(%{tipo: :pagina, id: id}, current_page), do: id == current_page
+
+  defp contiene_activo?(%{tipo: :carpeta, hijos: hijos}, current_page),
+    do: Enum.any?(hijos, &contiene_activo?(&1, current_page))
 
   ## ICONOS — outline style
   attr :name, :string, required: true

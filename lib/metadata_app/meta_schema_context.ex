@@ -18,6 +18,64 @@ defmodule MetadataApp.MetaSchemaContext do
     end)
   end
 
+  # Igual que listar_menu/0 pero en árbol: cada segmento del nav (menos el
+  # último) es una carpeta y el último segmento es la página. Ej.
+  # nav="/catalogos/carros" -> carpeta "catalogos" con la página "Carros"
+  # adentro. Estilo explorador de Windows: carpetas primero (orden
+  # alfabético), luego páginas (por etiqueta).
+  def listar_menu_arbol do
+    from(h in Header, where: is_nil(h.delete_guid) and h.schema_visible == true)
+    |> Repo.all()
+    |> Enum.map(fn h ->
+      %{id: h.schema_context_name, label: h.schema_context_label, nav: h.schema_context_nav}
+    end)
+    |> Enum.reduce(%{}, fn item, arbol ->
+      insertar_en_arbol(arbol, segmentos_con_carpeta(item), item)
+    end)
+    |> mapa_a_lista_ordenada()
+  end
+
+  # Nunca se deja un catálogo suelto al nivel raíz del menú — si el nav no
+  # trae carpeta (ej. "/refacciones", un solo segmento) se envuelve en una
+  # carpeta con el nombre de la propia etiqueta del catálogo (no un genérico
+  # "general"). Si el nav sí trae carpeta (ej. "/refacciones/algo"), esa
+  # carpeta usa el segmento real de la ruta, como siempre.
+  defp segmentos_con_carpeta(item) do
+    case item.nav |> String.trim_leading("/") |> String.split("/", trim: true) do
+      [] -> [item.label, item.id]
+      [pagina] -> [item.label, pagina]
+      varios -> varios
+    end
+  end
+
+  defp insertar_en_arbol(mapa, [ultimo], item) do
+    Map.put(mapa, {:pagina, ultimo}, item)
+  end
+
+  defp insertar_en_arbol(mapa, [], item) do
+    # nav sin segmentos (ej. "/") — no debería pasar con la validación
+    # actual, pero por si acaso no se pierde el ítem.
+    Map.put(mapa, {:pagina, item.id}, item)
+  end
+
+  defp insertar_en_arbol(mapa, [carpeta | resto], item) do
+    Map.update(mapa, {:carpeta, carpeta}, insertar_en_arbol(%{}, resto, item), fn hijos ->
+      insertar_en_arbol(hijos, resto, item)
+    end)
+  end
+
+  defp mapa_a_lista_ordenada(mapa) do
+    mapa
+    |> Enum.map(fn
+      {{:pagina, _clave}, item} -> %{tipo: :pagina, id: item.id, label: item.label, nav: item.nav}
+      {{:carpeta, nombre}, hijos} -> %{tipo: :carpeta, nombre: nombre, hijos: mapa_a_lista_ordenada(hijos)}
+    end)
+    |> Enum.sort_by(fn
+      %{tipo: :carpeta, nombre: nombre} -> {0, nombre}
+      %{tipo: :pagina, label: label} -> {1, label}
+    end)
+  end
+
   def obtener_header!(id), do: Repo.get!(Header, id)
 
   # schema_context_name cubre hoy el rol que antes cumplían schema_nombre y
