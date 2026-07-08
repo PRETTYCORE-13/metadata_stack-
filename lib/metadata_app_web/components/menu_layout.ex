@@ -314,7 +314,7 @@ defmodule MetadataAppWeb.MenuLayout do
           <line x1="21" y1="12" x2="9" y2="12" />
         </svg>
       <% _ -> %>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width: 16px; height: 16px;">
           <circle cx="12" cy="12" r="8" />
         </svg>
     <% end %>

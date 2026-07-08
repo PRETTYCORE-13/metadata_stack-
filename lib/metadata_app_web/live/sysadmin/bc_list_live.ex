@@ -38,7 +38,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   end
 
   defp cargar_headers(socket) do
-    assign(socket, :headers, MetaSchemaContext.listar_headers())
+    assign(socket, :arbol, MetaSchemaContext.listar_headers_arbol())
   end
 
   def render(assigns) do
@@ -69,25 +69,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100">
-            <%= for header <- @headers do %>
-              <tr>
-                <td class="px-4 py-2 text-gray-800">{header.schema_context_name}</td>
-                <td class="px-4 py-2 text-gray-800">{header.schema_context_label}</td>
-                <td class="px-4 py-2 text-gray-800">{header.schema_context_nav}</td>
-                <td class="px-4 py-2 text-gray-800">{if header.schema_visible, do: "Sí", else: "No"}</td>
-                <td class="px-4 py-2">
-                  <div class="flex gap-2">
-                    <button type="button" class="text-blue-600 hover:text-blue-800 text-xs font-semibold">
-                      Editar
-                    </button>
-                    <button type="button" class="text-red-600 hover:text-red-800 text-xs font-semibold">
-                      Eliminar
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            <% end %>
-            <%= if @headers == [] do %>
+            <.filas_arbol nodos={@arbol} />
+            <%= if @arbol == [] do %>
               <tr>
                 <td class="px-4 py-6 text-center text-gray-400" colspan="5">
                   Todavía no hay contextos creados
@@ -98,6 +81,47 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         </table>
       </div>
     </div>
+    """
+  end
+
+  # Filas de la tabla agrupadas igual que el menú: una fila de encabezado
+  # gris por carpeta, recursivo para soportar carpetas anidadas.
+  attr :nodos, :list, required: true
+  attr :nivel, :integer, default: 0
+
+  def filas_arbol(assigns) do
+    ~H"""
+    <%= for nodo <- @nodos do %>
+      <%= if nodo.tipo == :carpeta do %>
+        <tr class="bg-gray-50">
+          <td
+            colspan="5"
+            class="px-4 py-1.5 font-semibold text-gray-500 text-xs uppercase tracking-wide"
+            style={"padding-left: #{16 + @nivel * 20}px"}
+          >
+            📁 {nodo.nombre}
+          </td>
+        </tr>
+        <.filas_arbol nodos={nodo.hijos} nivel={@nivel + 1} />
+      <% else %>
+        <tr>
+          <td class="px-4 py-2 text-gray-800" style={"padding-left: #{16 + @nivel * 20}px"}>{nodo.id}</td>
+          <td class="px-4 py-2 text-gray-800">{nodo.label}</td>
+          <td class="px-4 py-2 text-gray-800">{nodo.nav}</td>
+          <td class="px-4 py-2 text-gray-800">{if nodo.visible, do: "Sí", else: "No"}</td>
+          <td class="px-4 py-2">
+            <div class="flex gap-2">
+              <button type="button" class="text-blue-600 hover:text-blue-800 text-xs font-semibold">
+                Editar
+              </button>
+              <button type="button" class="text-red-600 hover:text-red-800 text-xs font-semibold">
+                Eliminar
+              </button>
+            </div>
+          </td>
+        </tr>
+      <% end %>
+    <% end %>
     """
   end
 end

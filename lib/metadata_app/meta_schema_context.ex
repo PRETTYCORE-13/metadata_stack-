@@ -26,9 +26,33 @@ defmodule MetadataApp.MetaSchemaContext do
   def listar_menu_arbol do
     from(h in Header, where: is_nil(h.delete_guid) and h.schema_visible == true)
     |> Repo.all()
-    |> Enum.map(fn h ->
-      %{id: h.schema_context_name, label: h.schema_context_label, nav: h.schema_context_nav}
-    end)
+    |> Enum.map(&item_de_header/1)
+    |> construir_arbol()
+  end
+
+  # Mismo árbol, pero con TODOS los contextos (visibles o no) — para la
+  # tabla de administración (BC List), que necesita mostrarlos todos.
+  def listar_headers_arbol do
+    from(h in Header, where: is_nil(h.delete_guid))
+    |> Repo.all()
+    |> Enum.map(&item_de_header/1)
+    |> construir_arbol()
+  end
+
+  defp item_de_header(h) do
+    %{
+      id: h.schema_context_name,
+      label: h.schema_context_label,
+      nav: h.schema_context_nav,
+      visible: h.schema_visible
+    }
+  end
+
+  # Recibe una lista de %{id:, label:, nav:, ...} y arma el árbol de
+  # carpetas/páginas a partir del nav de cada uno. Cualquier llave extra en
+  # el item (ej. :visible) sobrevive en el nodo de página resultante.
+  def construir_arbol(items) do
+    items
     |> Enum.reduce(%{}, fn item, arbol ->
       insertar_en_arbol(arbol, segmentos_con_carpeta(item), item)
     end)
@@ -67,7 +91,7 @@ defmodule MetadataApp.MetaSchemaContext do
   defp mapa_a_lista_ordenada(mapa) do
     mapa
     |> Enum.map(fn
-      {{:pagina, _clave}, item} -> %{tipo: :pagina, id: item.id, label: item.label, nav: item.nav}
+      {{:pagina, _clave}, item} -> Map.put(item, :tipo, :pagina)
       {{:carpeta, nombre}, hijos} -> %{tipo: :carpeta, nombre: nombre, hijos: mapa_a_lista_ordenada(hijos)}
     end)
     |> Enum.sort_by(fn
