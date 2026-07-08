@@ -11,10 +11,15 @@ defmodule MetadataApp.CatalogoGenerador do
   # margen para ese sufijo y para nombres de constraint que Ecto derive.
   @tabla_longitud_maxima 50
 
+  @spec generar(any()) ::
+          {:error, <<_::64, _::_*8>>}
+          | {:ok, %{:tabla => any(), :ya_existia => boolean(), optional(:modulo) => binary()}}
   def generar(schema_context_name) do
     schema_path = "lib/metadata_app/catalogos/#{schema_context_name}.ex"
 
     if File.exists?(schema_path) do
+      asegurar_estado_id(schema_context_name)
+      asegurar_campos_nuevos(schema_context_name)
       {:ok, %{tabla: schema_context_name, ya_existia: true}}
     else
       detalles =
@@ -44,6 +49,7 @@ defmodule MetadataApp.CatalogoGenerador do
             crear_migracion(schema_context_name, campos)
             crear_schema(schema_context_name, modulo, campos)
             migrar()
+            recompilar_schema(schema_context_name)
 
             {:ok, %{tabla: schema_context_name, modulo: modulo, ya_existia: false}}
           end
@@ -81,6 +87,121 @@ defmodule MetadataApp.CatalogoGenerador do
     end
   end
 
+  # Backfill de estado_id para catálogos generados antes de que este campo
+  # existiera. Deliberadamente NO es una migración versionada: el orden de
+  # versiones entre migraciones escritas a mano (14 dígitos) y las que arma
+  # este mismo generador (17 dígitos, ver timestamp_utc/0) no es confiable
+  # entre sí (un timestamp de 17 dígitos siempre ordena después que uno de
+  # 14, sin importar la fecha real). Corre acá, en cambio, cada vez que
+  # gen.catalogos toca un catálogo ya existente — momento en el que la tabla
+  # ya seguro existe. Idempotente (IF NOT EXISTS).
+  defp asegurar_estado_id(schema_context_name) do
+    Repo.query!("""
+    ALTER TABLE #{schema_context_name}
+    ADD COLUMN IF NOT EXISTS estado_id integer
+      REFERENCES meta_schema_estados(id)
+    """)
+
+    :ok
+  end
+
+  # Agrega al catálogo YA generado los campos de meta_schema_detail que
+  # todavía no son columnas físicas de la tabla — permite extender un
+  # catálogo existente (ej. sumarle un campo nuevo) sin borrar y recrear
+  # todo. No es una migración versionada por el mismo motivo que
+  # asegurar_estado_id/1 (timestamps de 17 dígitos de este generador ordenan
+  # siempre después que cualquier migración escrita a mano de 14).
+  defp asegurar_campos_nuevos(schema_context_name) do
+    detalles =
+      schema_context_name
+      |> MetaSchemaContext.listar_detalles()
+      |> Enum.reject(&(&1.schema_context_field == "id"))
+
+    campos =
+      for detalle <- detalles do
+        propiedades = detalle.schema_context_properties || %{}
+        tipo_str = Map.get(propiedades, "tipo", "string")
+        tipo = tipo_ecto(tipo_str)
+        opciones = construir_opciones(tipo_str, propiedades)
+        {detalle.schema_context_field, tipo, opciones}
+      end
+
+    columnas_actuales = columnas_existentes(schema_context_name)
+
+    campos_nuevos =
+      Enum.reject(campos, fn {campo, _tipo, _opciones} ->
+        to_string(campo) in columnas_actuales
+      end)
+
+    if campos_nuevos != [], do: agregar_columnas(schema_context_name, campos_nuevos)
+
+    # Siempre regenera el schema (no solo cuando hay columnas nuevas): así
+    # también recoge cambios de propiedades en campos que ya existían como
+    # columna (ej. marcar uno como "opcional" después de agregarlo). Barato
+    # e idempotente — sobreescribe el mismo contenido si nada cambió.
+    modulo = Macro.camelize(schema_context_name)
+    crear_schema(schema_context_name, modulo, campos)
+    recompilar_schema(schema_context_name)
+    :ok
+  end
+
+  defp columnas_existentes(schema_context_name) do
+    %{rows: filas} =
+      Repo.query!("select column_name from information_schema.columns where table_name = $1", [
+        schema_context_name
+      ])
+
+    Enum.map(filas, fn [nombre] -> nombre end)
+  end
+
+  defp agregar_columnas(schema_context_name, campos_nuevos) do
+    timestamp = timestamp_utc()
+
+    sufijo =
+      campos_nuevos
+      |> Enum.map(fn {campo, _, _} -> Macro.camelize(to_string(campo)) end)
+      |> Enum.join("")
+
+    modulo_migracion = "Agregar#{sufijo}A#{Macro.camelize(schema_context_name)}#{timestamp}"
+
+    path =
+      "priv/repo/migrations/#{timestamp}_agregar_campos_a_#{schema_context_name}_#{timestamp}.exs"
+
+    columnas =
+      for {campo, tipo, opciones} <- campos_nuevos do
+        # Los registros ya existentes no tienen valor para este campo nuevo,
+        # así que acá SIEMPRE es null: true, a diferencia de columna_migracion/3
+        # (pensada para CREATE TABLE, donde todo campo de negocio es
+        # obligatorio desde el principio).
+        columna_migracion(campo, tipo, opciones) |> String.replace("null: false", "null: true")
+      end
+      |> Enum.join("\n")
+
+    contenido = """
+    defmodule MetadataApp.Repo.Migrations.#{modulo_migracion} do
+      use Ecto.Migration
+
+      def change do
+        alter table(:#{schema_context_name}) do
+    #{columnas}
+        end
+      end
+    end
+    """
+
+    File.write!(path, contenido)
+    migrar()
+  end
+
+  # Sin esto, el módulo recién reescrito en disco queda desactualizado en la
+  # sesión BEAM que está corriendo ahora mismo (ej. un mix run de seeds que
+  # agrega un campo y en la misma corrida ya quiere usarlo) — fuera de un
+  # request HTTP no está Phoenix.CodeReloader para recompilarlo solo.
+  defp recompilar_schema(schema_context_name) do
+    Code.compile_file("lib/metadata_app/catalogos/#{schema_context_name}.ex")
+    :ok
+  end
+
   defp buscar_header(schema_context_name) do
     case MetaSchemaContext.obtener_header_por_nombre(schema_context_name) do
       nil -> {:error, :not_found}
@@ -101,8 +222,7 @@ defmodule MetadataApp.CatalogoGenerador do
         :ok
 
       dependientes ->
-        {:error,
-         "catálogo(s) dependientes, borralos primero: #{Enum.join(dependientes, ", ")}"}
+        {:error, "catálogo(s) dependientes, borralos primero: #{Enum.join(dependientes, ", ")}"}
     end
   end
 
@@ -221,9 +341,14 @@ defmodule MetadataApp.CatalogoGenerador do
   defp construir_opciones(_tipo, propiedades), do: base_opciones(propiedades)
 
   defp base_opciones(propiedades) do
+    opcional = Map.get(propiedades, "opcional", false)
+
     case Map.get(propiedades, "unico_en") do
-      %{"tabla" => tabla, "campo" => campo_externo} -> %{unico_en: {tabla, campo_externo}}
-      _ -> %{}
+      %{"tabla" => tabla, "campo" => campo_externo} ->
+        %{unico_en: {tabla, campo_externo}, opcional: opcional}
+
+      _ ->
+        %{opcional: opcional}
     end
   end
 
@@ -231,14 +356,22 @@ defmodule MetadataApp.CatalogoGenerador do
     do: "      add :#{campo}, references(:#{tabla_ref}), null: false"
 
   defp columna_migracion(campo, :string, opciones),
-    do: "      add :#{campo}, :string, size: #{opciones[:longitud] || 255}, null: false"
+    do:
+      "      add :#{campo}, :string, size: #{opciones[:longitud] || 255}, null: #{nulo?(opciones)}"
 
-  defp columna_migracion(campo, :decimal, %{precision: precision, escala: escala})
+  defp columna_migracion(campo, :decimal, %{precision: precision, escala: escala} = opciones)
        when is_integer(precision) and is_integer(escala),
-       do: "      add :#{campo}, :decimal, precision: #{precision}, scale: #{escala}, null: false"
+       do:
+         "      add :#{campo}, :decimal, precision: #{precision}, scale: #{escala}, null: #{nulo?(opciones)}"
 
-  defp columna_migracion(campo, tipo, _opciones) when tipo in [:integer, :decimal, :boolean, :date],
-    do: "      add :#{campo}, :#{tipo}, null: false"
+  defp columna_migracion(campo, tipo, opciones)
+       when tipo in [:integer, :decimal, :boolean, :date],
+       do: "      add :#{campo}, :#{tipo}, null: #{nulo?(opciones)}"
+
+  # "opcional" (opt-in en schema_context_properties) es la única forma de que
+  # un campo de negocio no sea null: false — por default todo campo es
+  # obligatorio, como siempre fue.
+  defp nulo?(opciones), do: opciones[:opcional] == true
 
   # Mismo motivo que en crear_migracion_drop/1: el sufijo hace único el
   # nombre descriptivo aunque el catálogo se regenere varias veces.
@@ -267,6 +400,8 @@ defmodule MetadataApp.CatalogoGenerador do
           add :insert_guid, :string, size: 32, null: false
           add :update_guid, :string, size: 32, null: true
           add :delete_guid, :string, size: 32, null: true
+
+          add :estado_id, references(:meta_schema_estados), null: true
         end
 
         create unique_index(:#{schema_context_name}, [#{nombres_campos}], name: :#{nombre_indice})
@@ -302,7 +437,12 @@ defmodule MetadataApp.CatalogoGenerador do
   # contenido. Se agregan milisegundos para que eso no vuelva a pasar.
   defp timestamp_utc do
     {{y, mo, d}, {h, mi, s}} = :calendar.universal_time()
-    ms = :erlang.system_time(:millisecond) |> rem(1000) |> Integer.to_string() |> String.pad_leading(3, "0")
+
+    ms =
+      :erlang.system_time(:millisecond)
+      |> rem(1000)
+      |> Integer.to_string()
+      |> String.pad_leading(3, "0")
 
     [y, mo, d, h, mi, s]
     |> Enum.zip([4, 2, 2, 2, 2, 2])

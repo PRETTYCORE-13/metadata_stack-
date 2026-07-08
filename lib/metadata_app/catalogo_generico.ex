@@ -11,12 +11,24 @@ defmodule MetadataApp.CatalogoGenerico do
   end
 
   def crear(schema_mod, attrs) do
+    catalogo = schema_mod.__schema__(:source)
+    estado_inicial = MetadataApp.StateEngine.estado_inicial(catalogo)
+
     schema_mod
     |> struct()
     |> schema_mod.changeset(attrs)
     |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+    |> asignar_estado_inicial(estado_inicial)
     |> Repo.insert()
   end
+
+  # Si el catálogo adoptó el motor de estados, todo registro nuevo nace en
+  # su estado inicial — si no, no hay nada que asignar (estado_id queda nil,
+  # como siempre para catálogos sin motor de estados).
+  defp asignar_estado_inicial(changeset, nil), do: changeset
+
+  defp asignar_estado_inicial(changeset, estado_inicial),
+    do: Ecto.Changeset.change(changeset, %{estado_id: estado_inicial.id})
 
   # Crea varios registros del mismo catálogo en una sola transacción.
   # Si alguno falla, se revierten todos (todo o nada).
@@ -33,11 +45,41 @@ defmodule MetadataApp.CatalogoGenerico do
 
   def actualizar(registro, attrs) do
     schema_mod = registro.__struct__
+    catalogo = schema_mod.__schema__(:source)
+    editables = MetadataApp.StateEngine.campos_editables(catalogo, registro.estado_id)
+
+    todos_los_campos =
+      MetadataApp.MetaSchemaContext.listar_detalles(catalogo)
+      |> Enum.map(& &1.schema_context_field)
 
     registro
     |> schema_mod.changeset(attrs)
+    |> rechazar_no_editables(attrs, todos_los_campos, editables)
     |> Ecto.Changeset.change(%{update_guid: generar_guid()})
     |> Repo.update()
+  end
+
+  # Rechaza explícitamente (error visible en el changeset, no ignorado en
+  # silencio) cualquier intento de tocar un campo que no esté en la
+  # whitelist de editables para el estado actual del registro. `estado_id`
+  # se protege aparte porque no es un campo "de negocio" (no vive en
+  # meta_schema_detail, así que nunca aparece en `todos_los_campos`) — el
+  # único camino para cambiarlo es `StateEngine.ejecutar_transicion/3`.
+  defp rechazar_no_editables(changeset, attrs, todos_los_campos, editables) do
+    editables_set = MapSet.new(editables)
+    protegidos = ["estado_id" | todos_los_campos]
+
+    attrs
+    |> Map.keys()
+    |> Enum.map(&to_string/1)
+    |> Enum.filter(&(&1 in protegidos and &1 not in editables_set))
+    |> Enum.reduce(changeset, fn campo, cs ->
+      Ecto.Changeset.add_error(
+        cs,
+        String.to_existing_atom(campo),
+        "no editable en el estado actual"
+      )
+    end)
   end
 
   def eliminar(registro) do

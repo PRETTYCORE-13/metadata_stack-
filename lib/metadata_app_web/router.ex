@@ -14,6 +14,29 @@ defmodule MetadataAppWeb.Router do
     plug :accepts, ["json"]
   end
 
+  # Va antes del scope "/" browser: el catch-all "/*ruta" de más abajo matchea
+  # cualquier GET (incluido "/api/..."), así que /api tiene que resolverse
+  # primero o esas rutas GET nunca llegarían a la API.
+  scope "/api", MetadataAppWeb do
+    pipe_through :api
+
+    resources "/meta_schema_header", MetaSchemaHeaderController,
+      only: [:index, :show, :create, :update]
+
+    get "/catalogos/:tabla/impacto", CatalogoAdminController, :impacto
+    delete "/catalogos/:tabla", CatalogoAdminController, :delete
+
+    get "/:tabla/:id/transiciones", TransicionController, :index
+    post "/:tabla/:id/transiciones/:accion", TransicionController, :ejecutar
+
+    get "/:tabla", CatalogoController, :index
+    get "/:tabla/:id", CatalogoController, :show
+    post "/:tabla", CatalogoController, :create
+    put "/:tabla/:id", CatalogoController, :update
+    patch "/:tabla/:id", CatalogoController, :update
+    delete "/:tabla/:id", CatalogoController, :delete
+  end
+
   scope "/", MetadataAppWeb do
     pipe_through :browser
 
@@ -26,21 +49,6 @@ defmodule MetadataAppWeb.Router do
     # "/catalogos/carros") cae aquí. Va después de las rutas literales de
     # arriba para no taparlas.
     live "/*ruta", CatalogoLive
-  end
-
-  scope "/api", MetadataAppWeb do
-    pipe_through :api
-    resources "/meta_schema_header", MetaSchemaHeaderController, only: [:index, :show, :create, :update]
-
-    get "/catalogos/:tabla/impacto", CatalogoAdminController, :impacto
-    delete "/catalogos/:tabla", CatalogoAdminController, :delete
-
-    get "/:tabla", CatalogoController, :index
-    get "/:tabla/:id", CatalogoController, :show
-    post "/:tabla", CatalogoController, :create
-    put "/:tabla/:id", CatalogoController, :update
-    patch "/:tabla/:id", CatalogoController, :update
-    delete "/:tabla/:id", CatalogoController, :delete
   end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development

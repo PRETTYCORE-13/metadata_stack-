@@ -12,6 +12,9 @@ defmodule MetadataApp.Application do
       MetadataApp.Repo,
       {DNSCluster, query: Application.get_env(:metadata_app, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: MetadataApp.PubSub},
+      # Efectos de cortesía (Paso 5b) del Motor de Estados: notificaciones y
+      # similares, despachadas fuera de la transacción, sin reintentos.
+      {Task.Supervisor, name: MetadataApp.StateEngine.TaskSupervisor},
       # Start a worker by calling: MetadataApp.Worker.start_link(arg)
       # {MetadataApp.Worker, arg},
       # Start to serve requests, typically the last entry

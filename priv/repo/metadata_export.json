@@ -10,7 +10,6 @@
       "schema_profiles": null,
       "detalles": [
         {
-          "schema_context_field": "pty_clientes_nombre",
           "schema_context_properties": {
             "editable": true,
             "etiqueta": "Nombre",
@@ -18,10 +17,10 @@
             "orden": 1,
             "tipo": "string",
             "visible": true
-          }
+          },
+          "schema_context_field": "pty_clientes_nombre"
         },
         {
-          "schema_context_field": "pty_clientes_edad",
           "schema_context_properties": {
             "editable": true,
             "etiqueta": "Edad",
@@ -29,10 +28,10 @@
             "orden": 2,
             "tipo": "integer",
             "visible": true
-          }
+          },
+          "schema_context_field": "pty_clientes_edad"
         },
         {
-          "schema_context_field": "pty_clientes_venta",
           "schema_context_properties": {
             "editable": true,
             "escala": 6,
@@ -42,7 +41,19 @@
             "precision": 20,
             "tipo": "decimal",
             "visible": true
-          }
+          },
+          "schema_context_field": "pty_clientes_venta"
+        },
+        {
+          "schema_context_properties": {
+            "editable": true,
+            "etiqueta": "Fecha de baja",
+            "opcional": true,
+            "orden": 4,
+            "tipo": "date",
+            "visible": true
+          },
+          "schema_context_field": "pty_clientes_fecha_baja"
         }
       ]
     },
@@ -56,7 +67,6 @@
       "schema_profiles": null,
       "detalles": [
         {
-          "schema_context_field": "subcanal_nombre",
           "schema_context_properties": {
             "editable": true,
             "etiqueta": "Nombre del subcanal",
@@ -64,10 +74,10 @@
             "orden": 1,
             "tipo": "string",
             "visible": true
-          }
+          },
+          "schema_context_field": "subcanal_nombre"
         },
         {
-          "schema_context_field": "id_canal",
           "schema_context_properties": {
             "catalogo": "pty_canal",
             "editable": true,
@@ -75,7 +85,8 @@
             "orden": 2,
             "tipo": "referencia",
             "visible": true
-          }
+          },
+          "schema_context_field": "id_canal"
         }
       ]
     },
@@ -89,7 +100,6 @@
       "schema_profiles": null,
       "detalles": [
         {
-          "schema_context_field": "canal_nombre",
           "schema_context_properties": {
             "editable": true,
             "etiqueta": "Nombre del canal",
@@ -97,10 +107,10 @@
             "orden": 1,
             "tipo": "string",
             "visible": true
-          }
+          },
+          "schema_context_field": "canal_nombre"
         },
         {
-          "schema_context_field": "canal_orden",
           "schema_context_properties": {
             "editable": true,
             "etiqueta": "Canal orden",
@@ -108,7 +118,8 @@
             "orden": 2,
             "tipo": "integer",
             "visible": true
-          }
+          },
+          "schema_context_field": "canal_orden"
         }
       ]
     }
