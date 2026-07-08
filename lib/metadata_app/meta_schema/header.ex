@@ -16,6 +16,8 @@ defmodule MetadataApp.MetaSchema.Header do
     field :delete_guid, :string
 
     has_many :detalles, MetadataApp.MetaSchema.Detail, foreign_key: :meta_schema_header_id
+    has_many :estados, MetadataApp.MetaSchema.Estado, foreign_key: :meta_schema_header_id
+    has_many :transiciones, MetadataApp.MetaSchema.Transicion, foreign_key: :meta_schema_header_id
   end
 
   @requeridos [

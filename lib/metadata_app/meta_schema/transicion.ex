@@ -1,0 +1,31 @@
+defmodule MetadataApp.MetaSchema.Transicion do
+  use Ecto.Schema
+  import Ecto.Changeset
+
+  schema "meta_schema_transiciones" do
+    field :empresa_id, :integer
+    field :accion, :string
+    field :etiqueta, :string
+
+    field :insert_guid, :string
+    field :update_guid, :string
+    field :delete_guid, :string
+
+    belongs_to :header, MetadataApp.MetaSchema.Header, foreign_key: :meta_schema_header_id
+    belongs_to :estado_origen, MetadataApp.MetaSchema.Estado
+    belongs_to :estado_destino, MetadataApp.MetaSchema.Estado
+
+    has_many :reglas, MetadataApp.MetaSchema.TransicionRegla, foreign_key: :transicion_id
+  end
+
+  @requeridos [:meta_schema_header_id, :accion, :etiqueta, :estado_origen_id, :estado_destino_id]
+
+  def changeset(transicion, attrs) do
+    transicion
+    |> cast(attrs, @requeridos ++ [:empresa_id])
+    |> validate_required(@requeridos)
+    |> unique_constraint([:empresa_id, :meta_schema_header_id, :estado_origen_id, :accion],
+      name: :meta_schema_transiciones_unico_index
+    )
+  end
+end

@@ -25,10 +25,15 @@ defmodule MetadataAppWeb.Router do
 
   scope "/api", MetadataAppWeb do
     pipe_through :api
-    resources "/meta_schema_header", MetaSchemaHeaderController, only: [:index, :show, :create, :update]
+
+    resources "/meta_schema_header", MetaSchemaHeaderController,
+      only: [:index, :show, :create, :update]
 
     get "/catalogos/:tabla/impacto", CatalogoAdminController, :impacto
     delete "/catalogos/:tabla", CatalogoAdminController, :delete
+
+    get "/:tabla/:id/transiciones", TransicionController, :index
+    post "/:tabla/:id/transiciones/:accion", TransicionController, :ejecutar
 
     get "/:tabla", CatalogoController, :index
     get "/:tabla/:id", CatalogoController, :show

@@ -9,6 +9,7 @@ defmodule MetadataApp.MetaCatalogoGenerico do
   #   :valores           — enum, validate_inclusion (tipo Ecto queda :string)
   #   :tabla_referenciada — FK a otro catálogo (tipo Ecto queda :integer)
   #   :unico_en          — {tabla_externa, campo_externo}, unicidad cross-tabla
+  #   :opcional          — true: no entra a validate_required (default: todo campo es obligatorio)
   defmacro __using__(opts) do
     tabla = Keyword.fetch!(opts, :tabla)
     campos_ast = Keyword.fetch!(opts, :campos)
@@ -18,6 +19,10 @@ defmodule MetadataApp.MetaCatalogoGenerico do
     {campos, _bindings} = Code.eval_quoted(campos_ast, [], __CALLER__)
 
     campo_nombres = Enum.map(campos, &elem(&1, 0))
+
+    campo_nombres_requeridos =
+      for {nombre, _tipo, opciones} <- campos, opciones[:opcional] != true, do: nombre
+
     campos_meta = Macro.escape(campos)
     nombre_indice = MetadataApp.CatalogoGenerador.nombre_indice_unico(tabla)
 
@@ -37,16 +42,22 @@ defmodule MetadataApp.MetaCatalogoGenerico do
         field :insert_guid, :string
         field :update_guid, :string
         field :delete_guid, :string
+
+        # Campo de sistema del Motor de Estados. Deliberadamente fuera de
+        # @campos: nunca se castea acá — el único camino para cambiarlo es
+        # MetadataApp.StateEngine.ejecutar_transicion/3.
+        field :estado_id, :integer
       end
 
       @campos unquote(campo_nombres)
+      @campos_requeridos unquote(campo_nombres_requeridos)
       @campos_meta unquote(campos_meta)
       @nombre_indice unquote(nombre_indice)
 
       def changeset(struct, attrs) do
         struct
         |> cast(attrs, @campos)
-        |> validate_required(@campos)
+        |> validate_required(@campos_requeridos)
         |> MetadataApp.MetaCatalogoGenerico.aplicar_validaciones(@campos_meta)
         |> unique_constraint(@campos, name: @nombre_indice)
       end
@@ -85,16 +96,22 @@ defmodule MetadataApp.MetaCatalogoGenerico do
   end
 
   defp aplicar_minimo(cs, _campo, nil), do: cs
-  defp aplicar_minimo(cs, campo, minimo), do: validate_number(cs, campo, greater_than_or_equal_to: minimo)
+
+  defp aplicar_minimo(cs, campo, minimo),
+    do: validate_number(cs, campo, greater_than_or_equal_to: minimo)
 
   defp aplicar_maximo(cs, _campo, nil), do: cs
-  defp aplicar_maximo(cs, campo, maximo), do: validate_number(cs, campo, less_than_or_equal_to: maximo)
+
+  defp aplicar_maximo(cs, campo, maximo),
+    do: validate_number(cs, campo, less_than_or_equal_to: maximo)
 
   defp aplicar_escala(cs, campo, %{escala: escala}) when is_integer(escala) do
     validate_change(cs, campo, fn _campo, valor ->
       case valor do
         %Decimal{} = d ->
-          if Decimal.scale(d) > escala, do: [{campo, "no puede tener más de #{escala} decimales"}], else: []
+          if Decimal.scale(d) > escala,
+            do: [{campo, "no puede tener más de #{escala} decimales"}],
+            else: []
 
         _ ->
           []
