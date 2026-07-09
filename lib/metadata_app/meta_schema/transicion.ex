@@ -27,5 +27,8 @@ defmodule MetadataApp.MetaSchema.Transicion do
     |> unique_constraint([:empresa_id, :meta_schema_header_id, :estado_origen_id, :accion],
       name: :meta_schema_transiciones_unico_index
     )
+    |> foreign_key_constraint(:meta_schema_header_id)
+    |> foreign_key_constraint(:estado_origen_id)
+    |> foreign_key_constraint(:estado_destino_id)
   end
 end

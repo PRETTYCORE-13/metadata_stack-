@@ -234,11 +234,17 @@ defmodule MetadataApp.MetaSchemaContext do
   end
 
   # Borrado total (no soft-delete): al ser el Header dueño de la definición
-  # del catálogo, borrarlo se lleva sus Detalles en cascada (on_delete:
-  # :delete_all en la FK) — un Detalle sin Header no tiene sentido.
+  # del catálogo, borrarlo se lleva en cascada (on_delete: :delete_all) sus
+  # Detalles y, si el catálogo adoptó el motor de estados, también Estados/
+  # Transiciones/Reglas — un Detalle o Estado sin Header no tiene sentido.
+  # Propaga el resultado (antes se descartaba con Repo.delete/1 + :ok fijo,
+  # así que un fallo de FK real quedaba como excepción sin capturar en vez
+  # de un {:error, _} manejable).
   def eliminar_header(%Header{} = header) do
-    Repo.delete(header)
-    :ok
+    case Repo.delete(header) do
+      {:ok, _header} -> :ok
+      {:error, changeset} -> {:error, changeset}
+    end
   end
 
   def serializar_detalle(%Detail{} = detalle) do

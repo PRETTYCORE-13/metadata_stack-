@@ -2,6 +2,7 @@ defmodule MetadataApp.CatalogoGenerador do
   import Ecto.Query
   alias MetadataApp.Repo
   alias MetadataApp.MetaSchemaContext
+  alias MetadataApp.MotorEstadosAdmin
 
   # Genera migración y schema para schema_context_name a partir de lo
   # registrado en meta_schema_detail y corre la migración. Si el catálogo ya
@@ -61,29 +62,56 @@ defmodule MetadataApp.CatalogoGenerador do
   # perderían y qué otros catálogos lo referencian (y por lo tanto bloquean
   # el borrado). No modifica nada.
   def impacto(schema_context_name) do
-    with {:ok, _header} <- buscar_header(schema_context_name) do
+    with {:ok, header} <- buscar_header(schema_context_name) do
       filas = Repo.aggregate(from(t in schema_context_name), :count)
       dependientes = MetaSchemaContext.listar_dependientes(schema_context_name)
+      escenario = MotorEstadosAdmin.contar_escenario(header.id)
 
-      {:ok, %{tabla: schema_context_name, filas: filas, dependientes: dependientes}}
+      {:ok,
+       %{
+         tabla: schema_context_name,
+         filas: filas,
+         dependientes: dependientes,
+         motor_estados: escenario,
+         advertencia:
+           "Borrado TOTAL e irreversible: se eliminan #{filas} fila(s) de datos, el catálogo " <>
+             "#{schema_context_name} completo, y del motor de estados #{escenario.estados} " <>
+             "estado(s), #{escenario.transiciones} transición(es), #{escenario.reglas} regla(s) " <>
+             "y #{escenario.eventos} evento(s) de historial de auditoría. Para confirmar: " <>
+             "DELETE /api/catalogos/#{schema_context_name} con body " <>
+             "{\"confirmar_tabla\": \"#{schema_context_name}\", \"confirmar_filas\": #{filas}}."
+       }}
     end
   end
 
-  # Borrado total e irreversible de un catálogo: tabla, Header (sus Detalles
-  # se van en cascada por FK) y archivo de schema. Nunca hace rollback de la
-  # migración de creación (el orden de versiones la hace frágil) — en cambio
-  # genera una migración nueva hacia adelante que dropea la tabla, igual que
-  # cualquier otra migración del historial.
-  def eliminar(schema_context_name, confirmar_tabla) do
+  # Borrado total e irreversible de un catálogo Y su escenario del motor de
+  # estados: tabla, Header (sus Detalles se van en cascada por FK), Estados/
+  # Transiciones/Reglas (cascada) y, deliberadamente, el HISTORIAL de
+  # transiciones ya ejecutadas (meta_schema_transicion_eventos), que en el
+  # uso normal está protegido con on_delete: :restrict — acá se purga a
+  # propósito porque el usuario ya confirmó el borrado total repitiendo el
+  # nombre de la tabla Y la cantidad exacta de filas actuales
+  # (confirmar_filas) — ese segundo dato solo se conoce si antes se
+  # consultó GET .../impacto, así que en la práctica encadena "mirar el
+  # impacto" -> "borrar" sin necesidad de tokens ni estado de sesión: no
+  # hay forma de acertar confirmar_filas a ciegas salvo por casualidad en
+  # un catálogo vacío. Nunca hace rollback de la migración de creación (el
+  # orden de versiones la hace frágil) — en cambio genera una migración
+  # nueva hacia adelante que dropea la tabla, igual que cualquier otra
+  # migración del historial.
+  def eliminar(schema_context_name, confirmar_tabla, confirmar_filas) do
     with {:ok, header} <- buscar_header(schema_context_name),
          :ok <- validar_confirmacion(schema_context_name, confirmar_tabla),
+         :ok <- validar_confirmacion_filas(schema_context_name, confirmar_filas),
          :ok <- validar_sin_dependientes(schema_context_name) do
       crear_migracion_drop(schema_context_name)
       migrar()
-      MetaSchemaContext.eliminar_header(header)
-      archivo_eliminado? = borrar_schema_file(schema_context_name)
+      MotorEstadosAdmin.purgar_historial(header.id)
 
-      {:ok, %{tabla: schema_context_name, archivo_eliminado: archivo_eliminado?}}
+      with :ok <- MetaSchemaContext.eliminar_header(header) do
+        archivo_eliminado? = borrar_schema_file(schema_context_name)
+        {:ok, %{tabla: schema_context_name, archivo_eliminado: archivo_eliminado?}}
+      end
     end
   end
 
@@ -210,11 +238,27 @@ defmodule MetadataApp.CatalogoGenerador do
   end
 
   # Repetir el nombre de la tabla en el body es la confirmación — barato de
-  # implementar, elimina el borrado accidental por typo o script.
+  # implementar, elimina el borrado accidental por typo o script, y obliga
+  # a escribirlo a propósito en vez de copiar/pegar un texto fijo sin leer.
   defp validar_confirmacion(tabla, tabla), do: :ok
 
   defp validar_confirmacion(_tabla, _confirmar_tabla),
     do: {:error, "confirmar_tabla no coincide con el nombre de la tabla a borrar"}
+
+  # Fuerza a haber consultado GET .../impacto antes de borrar: sin conocer
+  # la cantidad real de filas, no hay forma de completar este chequeo a
+  # ciegas (salvo casualidad en un catálogo vacío).
+  defp validar_confirmacion_filas(schema_context_name, confirmar_filas) do
+    filas = Repo.aggregate(from(t in schema_context_name), :count)
+
+    if filas == confirmar_filas do
+      :ok
+    else
+      {:error,
+       "confirmar_filas no coincide — el catálogo tiene #{filas} fila(s) ahora mismo. " <>
+         "Consultá GET /api/catalogos/#{schema_context_name}/impacto antes de borrar."}
+    end
+  end
 
   defp validar_sin_dependientes(schema_context_name) do
     case MetaSchemaContext.listar_dependientes(schema_context_name) do

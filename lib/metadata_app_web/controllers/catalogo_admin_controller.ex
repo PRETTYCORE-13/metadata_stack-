@@ -12,8 +12,9 @@ defmodule MetadataAppWeb.CatalogoAdminController do
 
   def delete(conn, %{"tabla" => tabla} = params) do
     confirmar_tabla = Map.get(params, "confirmar_tabla")
+    confirmar_filas = Map.get(params, "confirmar_filas")
 
-    with {:ok, resultado} <- CatalogoGenerador.eliminar(tabla, confirmar_tabla) do
+    with {:ok, resultado} <- CatalogoGenerador.eliminar(tabla, confirmar_tabla, confirmar_filas) do
       json(conn, resultado)
     end
   end
