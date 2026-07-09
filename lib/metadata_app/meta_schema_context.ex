@@ -44,20 +44,29 @@ defmodule MetadataApp.MetaSchemaContext do
       id: h.schema_context_name,
       label: h.schema_context_label,
       nav: h.schema_context_nav,
-      visible: h.schema_visible
+      visible: h.schema_visible,
+      es_carpeta: h.schema_context_type == 2
     }
   end
 
-  # Recibe una lista de %{id:, label:, nav:, ...} y arma el árbol de
-  # carpetas/páginas a partir del nav de cada uno. Cualquier llave extra en
-  # el item (ej. :visible) sobrevive en el nodo de página resultante.
+  # Recibe una lista de %{id:, label:, nav:, es_carpeta:, ...} y arma el
+  # árbol de carpetas/páginas a partir del nav de cada uno. Cualquier llave
+  # extra en el item (ej. :visible) sobrevive en el nodo de página
+  # resultante. Un item con es_carpeta: true no genera página — solo declara
+  # (o le pone nombre bonito a) la carpeta en esa ruta.
   def construir_arbol(items) do
     items
     |> Enum.reduce(%{}, fn item, arbol ->
-      insertar_en_arbol(arbol, segmentos_con_carpeta(item), item)
+      if item.es_carpeta do
+        insertar_carpeta_explicita(arbol, segmentos(item.nav), item.label)
+      else
+        insertar_en_arbol(arbol, segmentos_con_carpeta(item), item)
+      end
     end)
     |> mapa_a_lista_ordenada()
   end
+
+  defp segmentos(nav), do: nav |> String.trim_leading("/") |> String.split("/", trim: true)
 
   # Nunca se deja un catálogo suelto al nivel raíz del menú — si el nav no
   # trae carpeta (ej. "/refacciones", un solo segmento) se envuelve en una
@@ -65,7 +74,7 @@ defmodule MetadataApp.MetaSchemaContext do
   # "general"). Si el nav sí trae carpeta (ej. "/refacciones/algo"), esa
   # carpeta usa el segmento real de la ruta, como siempre.
   defp segmentos_con_carpeta(item) do
-    case item.nav |> String.trim_leading("/") |> String.split("/", trim: true) do
+    case segmentos(item.nav) do
       [] -> [item.label, item.id]
       [pagina] -> [item.label, pagina]
       varios -> varios
@@ -83,16 +92,41 @@ defmodule MetadataApp.MetaSchemaContext do
   end
 
   defp insertar_en_arbol(mapa, [carpeta | resto], item) do
-    Map.update(mapa, {:carpeta, carpeta}, insertar_en_arbol(%{}, resto, item), fn hijos ->
-      insertar_en_arbol(hijos, resto, item)
+    nodo_default = %{nombre: nil, hijos: insertar_en_arbol(%{}, resto, item)}
+
+    Map.update(mapa, {:carpeta, carpeta}, nodo_default, fn nodo ->
+      %{nodo | hijos: insertar_en_arbol(nodo.hijos, resto, item)}
+    end)
+  end
+
+  # Una carpeta explícita (registro tipo :carpeta) recorre/crea cada nivel
+  # de su nav igual que insertar_en_arbol/3, pero en el nivel final no deja
+  # una página — le pone su propio label como nombre "bonito" de esa
+  # carpeta, en vez del segmento crudo de la URL.
+  defp insertar_carpeta_explicita(mapa, [], _label), do: mapa
+
+  defp insertar_carpeta_explicita(mapa, [ultimo], label) do
+    Map.update(mapa, {:carpeta, ultimo}, %{nombre: label, hijos: %{}}, fn nodo ->
+      %{nodo | nombre: label}
+    end)
+  end
+
+  defp insertar_carpeta_explicita(mapa, [seg | resto], label) do
+    nodo_default = %{nombre: nil, hijos: insertar_carpeta_explicita(%{}, resto, label)}
+
+    Map.update(mapa, {:carpeta, seg}, nodo_default, fn nodo ->
+      %{nodo | hijos: insertar_carpeta_explicita(nodo.hijos, resto, label)}
     end)
   end
 
   defp mapa_a_lista_ordenada(mapa) do
     mapa
     |> Enum.map(fn
-      {{:pagina, _clave}, item} -> Map.put(item, :tipo, :pagina)
-      {{:carpeta, nombre}, hijos} -> %{tipo: :carpeta, nombre: nombre, hijos: mapa_a_lista_ordenada(hijos)}
+      {{:pagina, _clave}, item} ->
+        Map.put(item, :tipo, :pagina)
+
+      {{:carpeta, segmento}, %{nombre: nombre, hijos: hijos}} ->
+        %{tipo: :carpeta, nombre: nombre || segmento, hijos: mapa_a_lista_ordenada(hijos)}
     end)
     |> Enum.sort_by(fn
       %{tipo: :carpeta, nombre: nombre} -> {0, nombre}

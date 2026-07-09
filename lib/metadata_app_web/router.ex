@@ -37,21 +37,9 @@ defmodule MetadataAppWeb.Router do
     delete "/:tabla/:id", CatalogoController, :delete
   end
 
-  scope "/", MetadataAppWeb do
-    pipe_through :browser
-
-    live "/", InicioLive
-    live "/sysadmin/bc-list", Sysadmin.BcListLive
-    live "/sysadmin/bc-list/nuevo", Sysadmin.BcNuevoLive
-
-    # Comodín al final: cualquier ruta de navegación de un catálogo (con la
-    # profundidad de carpetas que sea, ej. "/listas/motos" o
-    # "/catalogos/carros") cae aquí. Va después de las rutas literales de
-    # arriba para no taparlas.
-    live "/*ruta", CatalogoLive
-  end
-
-  # Enable LiveDashboard and Swoosh mailbox preview in development
+  # Mismo motivo que el scope /api de arriba: también tiene que ir antes del
+  # catch-all "/*ruta", si no "/dev/dashboard" y "/dev/mailbox" quedan
+  # inalcanzables (el comodín las atrapa primero).
   if Application.compile_env(:metadata_app, :dev_routes) do
     # If you want to use the LiveDashboard in production, you should put
     # it behind authentication and allow only admins to access it.
@@ -66,5 +54,19 @@ defmodule MetadataAppWeb.Router do
       live_dashboard "/dashboard", metrics: MetadataAppWeb.Telemetry
       forward "/mailbox", Plug.Swoosh.MailboxPreview
     end
+  end
+
+  scope "/", MetadataAppWeb do
+    pipe_through :browser
+
+    live "/", InicioLive
+    live "/sysadmin/bc-list", Sysadmin.BcListLive
+    live "/sysadmin/bc-list/nuevo", Sysadmin.BcNuevoLive
+
+    # Comodín al final: cualquier ruta de navegación de un catálogo (con la
+    # profundidad de carpetas que sea, ej. "/listas/motos" o
+    # "/catalogos/carros") cae aquí. Va después de las rutas literales de
+    # arriba para no taparlas.
+    live "/*ruta", CatalogoLive
   end
 end

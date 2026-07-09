@@ -20,19 +20,33 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
   # Sin esto el servidor nunca se entera de lo tecleado hasta el submit —
   # cualquier vuelta al servidor antes de eso (agregar/quitar fila) repinta
   # el formulario con los valores viejos y borra lo escrito.
-  def handle_event("validar", %{"contexto" => contexto, "componentes" => componentes_map}, socket) do
+  # "componentes" no llega en los params cuando el tipo es "carpeta" — ese
+  # fieldset ni se pinta en el HTML, así que no hay nada que mandar. Se
+  # trata como opcional en vez de exigirlo en el pattern match.
+  def handle_event("validar", %{"contexto" => contexto} = params, socket) do
     contexto =
       contexto
       |> Map.put("visible", contexto["visible"] == "true")
       |> Map.put("nombre_p2", normalizar_identificador(contexto["nombre_p2"]))
       |> Map.put("nombre_p3", normalizar_identificador(contexto["nombre_p3"]))
 
-    componentes =
-      componentes_map
-      |> Enum.sort_by(fn {idx, _} -> String.to_integer(idx) end)
-      |> Enum.map(fn {_idx, c} -> Map.put(c, "visible", c["visible"] == "true") end)
+    socket = assign(socket, :contexto, contexto)
 
-    {:noreply, socket |> assign(:contexto, contexto) |> assign(:componentes, componentes)}
+    socket =
+      case params["componentes"] do
+        nil ->
+          socket
+
+        componentes_map ->
+          componentes =
+            componentes_map
+            |> Enum.sort_by(fn {idx, _} -> String.to_integer(idx) end)
+            |> Enum.map(fn {_idx, c} -> Map.put(c, "visible", c["visible"] == "true") end)
+
+          assign(socket, :componentes, componentes)
+      end
+
+    {:noreply, socket}
   end
 
   # Mismo criterio de normalización, pero con el prefijo /catalogos/.
@@ -55,37 +69,36 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
     {:noreply, socket |> nuevo_formulario() |> assign(:mensaje, nil)}
   end
 
-  def handle_event("guardar", %{"contexto" => contexto, "componentes" => componentes_map}, socket) do
+  # Mismo motivo que en "validar": si es carpeta, el form nunca manda
+  # "componentes" (el fieldset no existe en el DOM).
+  def handle_event("guardar", %{"contexto" => contexto} = params, socket) do
     contexto =
       contexto
       |> Map.put("nombre", combinar_nombre_sistema(contexto["nombre_p2"], contexto["nombre_p3"]))
       |> Map.put("nav", normalizar_nav(contexto["nav"]))
 
+    es_carpeta? = contexto["tipo_registro"] == "carpeta"
+
     componentes =
-      componentes_map
+      params
+      |> Map.get("componentes", %{})
       |> Enum.sort_by(fn {idx, _} -> String.to_integer(idx) end)
       |> Enum.map(fn {_idx, c} -> c end)
 
-    case validar_formulario(contexto, componentes) do
+    case validar_formulario(contexto, componentes, es_carpeta?) do
       :ok ->
         header_attrs = %{
           "schema_context_name" => contexto["nombre"],
           "schema_context_label" => contexto["etiqueta"],
           "schema_context_nav" => contexto["nav"],
           "schema_visible" => contexto["visible"] == "true",
-          "detalles" => Enum.map(componentes, &detalle_attrs/1)
+          "schema_context_type" => if(es_carpeta?, do: 2, else: 1),
+          "detalles" => if(es_carpeta?, do: [], else: Enum.map(componentes, &detalle_attrs/1))
         }
 
         case MetaSchemaContext.crear_header_con_detalles(header_attrs) do
           {:ok, {header, _detalles}} ->
-            resultado = CatalogoGenerador.generar(header.schema_context_name)
-
-            texto =
-              case resultado do
-                {:ok, %{ya_existia: true}} -> "Contexto '#{header.schema_context_label}' guardado (el catálogo ya existía)."
-                {:ok, _} -> "Contexto '#{header.schema_context_label}' guardado y catálogo generado."
-                {:error, motivo} -> "Contexto guardado, pero no se pudo generar el catálogo: #{motivo}"
-              end
+            texto = guardar_texto_resultado(es_carpeta?, header)
 
             Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:bc_creado, header})
 
@@ -104,6 +117,18 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
     end
   end
 
+  # Una carpeta no tiene tabla que generar — solo el nodo de menú.
+  defp guardar_texto_resultado(true, header),
+    do: "Carpeta '#{header.schema_context_label}' guardada."
+
+  defp guardar_texto_resultado(false, header) do
+    case CatalogoGenerador.generar(header.schema_context_name) do
+      {:ok, %{ya_existia: true}} -> "Contexto '#{header.schema_context_label}' guardado (el catálogo ya existía)."
+      {:ok, _} -> "Contexto '#{header.schema_context_label}' guardado y catálogo generado."
+      {:error, motivo} -> "Contexto guardado, pero no se pudo generar el catálogo: #{motivo}"
+    end
+  end
+
   # No basta con las restricciones del navegador (pattern/maxlength) — un
   # cliente HTTP directo a este LiveView se las salta. schema_context_name y
   # schema_context_field terminan siendo identificadores reales de Postgres
@@ -111,19 +136,24 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
   @identificador ~r/^[a-z][a-z0-9_]{0,49}$/
   @nav ~r/^\/[a-z0-9\-\/]{0,49}$/
 
-  defp validar_formulario(contexto, componentes) do
+  defp validar_formulario(contexto, componentes, es_carpeta?) do
     with :ok <- validar_regex(contexto["nombre"], @identificador, "Nombre de sistema"),
          :ok <- validar_regex(contexto["nav"], @nav, "Navegación"),
          :ok <- validar_completado(contexto["nav"], "/catalogos/", "Navegación"),
          :ok <- validar_completado(contexto["etiqueta"], "Catálogo de", "Etiqueta") do
-      componentes
-      |> Enum.with_index(1)
-      |> Enum.reduce_while(:ok, fn {c, i}, :ok ->
-        case validar_regex(c["nombre"], @identificador, "Nombre del componente ##{i}") do
-          :ok -> {:cont, :ok}
-          error -> {:halt, error}
-        end
-      end)
+      # Una carpeta no tiene Componentes que validar — es solo un nodo de menú.
+      if es_carpeta? do
+        :ok
+      else
+        componentes
+        |> Enum.with_index(1)
+        |> Enum.reduce_while(:ok, fn {c, i}, :ok ->
+          case validar_regex(c["nombre"], @identificador, "Nombre del componente ##{i}") do
+            :ok -> {:cont, :ok}
+            error -> {:halt, error}
+          end
+        end)
+      end
     end
   end
 
@@ -199,6 +229,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
   defp nuevo_formulario(socket) do
     socket
     |> assign(:contexto, %{
+      "tipo_registro" => "archivo",
       "nombre_p2" => "catalogos",
       "nombre_p3" => "",
       "etiqueta" => "Catálogo de ",
@@ -286,6 +317,18 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
         <fieldset class="border border-blue-300 rounded">
           <legend class="px-2 ml-2 text-sm font-semibold text-gray-900">Contexto</legend>
           <div class="grid grid-cols-[160px_1fr] gap-y-3 gap-x-3 p-4 items-center">
+            <label class="font-medium text-gray-900">Tipo:</label>
+            <div class="flex items-center gap-4">
+              <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer">
+                <input type="radio" name="contexto[tipo_registro]" value="archivo" checked={@contexto["tipo_registro"] != "carpeta"} />
+                Archivo (catálogo con datos)
+              </label>
+              <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer">
+                <input type="radio" name="contexto[tipo_registro]" value="carpeta" checked={@contexto["tipo_registro"] == "carpeta"} />
+                Carpeta (solo agrupa en el menú)
+              </label>
+            </div>
+
             <label class="font-medium text-gray-900">Nombre de sistema:</label>
             <div>
               <div class="flex items-center gap-1.5">
@@ -331,6 +374,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
           </div>
         </fieldset>
 
+        <%= if @contexto["tipo_registro"] != "carpeta" do %>
         <fieldset class="border border-blue-300 rounded">
           <legend class="px-2 ml-2 text-sm font-semibold text-gray-900">Componentes</legend>
           <div class="p-4 overflow-x-auto">
@@ -401,6 +445,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
             </button>
           </div>
         </fieldset>
+        <% end %>
 
         <div class="flex justify-end gap-3">
           <button type="button" phx-click="cancelar" class="bg-red-500 hover:bg-red-600 text-white font-bold px-8 py-2 rounded">
