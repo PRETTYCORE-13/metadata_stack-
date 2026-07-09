@@ -18,14 +18,22 @@ defmodule MetadataApp.MetaSchema.Transicion do
     has_many :reglas, MetadataApp.MetaSchema.TransicionRegla, foreign_key: :transicion_id
   end
 
-  @requeridos [:meta_schema_header_id, :accion, :etiqueta, :estado_origen_id, :estado_destino_id]
+  @campos [:meta_schema_header_id, :accion, :etiqueta, :estado_origen_id, :estado_destino_id, :empresa_id]
+  # estado_origen_id NO es requerido: nil significa "alta" (el registro
+  # todavía no existe) — ver StateEngine.dar_de_alta/4. estado_destino_id sí
+  # es siempre obligatorio, toda transición tiene que aterrizar en algún lado.
+  @requeridos [:meta_schema_header_id, :accion, :etiqueta, :estado_destino_id]
 
   def changeset(transicion, attrs) do
     transicion
-    |> cast(attrs, @requeridos ++ [:empresa_id])
+    |> cast(attrs, @campos)
     |> validate_required(@requeridos)
     |> unique_constraint([:empresa_id, :meta_schema_header_id, :estado_origen_id, :accion],
       name: :meta_schema_transiciones_unico_index
+    )
+    |> unique_constraint([:empresa_id, :meta_schema_header_id, :accion],
+      name: :meta_schema_transiciones_alta_unico_index,
+      message: "ya existe una transición de alta con esta acción para este catálogo"
     )
     |> foreign_key_constraint(:meta_schema_header_id)
     |> foreign_key_constraint(:estado_origen_id)

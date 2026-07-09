@@ -42,7 +42,8 @@ defmodule MetadataAppWeb.TransicionController do
           |> StateEngine.transiciones_disponibles(contexto)
           |> Enum.map(&serializar_transicion/1)
 
-        json(conn, %{data: CatalogoGenerico.serializar(actualizado), transiciones: transiciones})
+        estados_por_id = StateEngine.mapa_nombres_estados(tabla)
+      json(conn, %{data: CatalogoGenerico.serializar(actualizado, estados_por_id), transiciones: transiciones})
       end
     end
   end

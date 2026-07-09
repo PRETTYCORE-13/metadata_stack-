@@ -10,7 +10,23 @@ defmodule MetadataApp.CatalogoGenerico do
     Repo.one!(from(r in schema_mod, where: r.id == ^id and is_nil(r.delete_guid)))
   end
 
+  # Si el catálogo definió una transición "alta" (estado_origen_id nil, ver
+  # StateEngine.transicion_alta/1), el nacimiento del registro pasa por el
+  # mismo ciclo de reglas pre/post que cualquier transición — permite
+  # prevalidar (campos_requeridos, requiere_rol, ...) o disparar efectos
+  # (estampar_valor, notificar, ...) al crear, no solo al transicionar
+  # después. Si el catálogo nunca definió esa transición (ej. pty_clientes
+  # hoy), sigue el insert directo de siempre — 100% retrocompatible.
   def crear(schema_mod, attrs) do
+    catalogo = schema_mod.__schema__(:source)
+
+    case MetadataApp.StateEngine.transicion_alta(catalogo) do
+      nil -> crear_simple(schema_mod, attrs)
+      transicion -> MetadataApp.StateEngine.dar_de_alta(schema_mod, attrs, transicion, attrs)
+    end
+  end
+
+  defp crear_simple(schema_mod, attrs) do
     catalogo = schema_mod.__schema__(:source)
     estado_inicial = MetadataApp.StateEngine.estado_inicial(catalogo)
 
@@ -88,11 +104,23 @@ defmodule MetadataApp.CatalogoGenerico do
     |> Repo.update()
   end
 
-  def serializar(registro) do
+  # estados_por_id: %{estado_id => nombre} (ver StateEngine.mapa_nombres_estados/1)
+  # — opcional para no romper otros llamadores; sin él, o si el registro no
+  # tiene estado_id asignado, no agrega estado_nombre.
+  def serializar(registro, estados_por_id \\ %{}) do
     registro
     |> Map.from_struct()
     |> Map.drop([:__meta__, :insert_guid, :update_guid, :delete_guid])
+    |> agregar_estado_nombre(estados_por_id)
   end
+
+  defp agregar_estado_nombre(%{estado_id: nil} = mapa, _estados_por_id), do: mapa
+
+  defp agregar_estado_nombre(%{estado_id: estado_id} = mapa, estados_por_id) do
+    Map.put(mapa, :estado_nombre, Map.get(estados_por_id, estado_id))
+  end
+
+  defp agregar_estado_nombre(mapa, _estados_por_id), do: mapa
 
   # Valida que el valor de `campo` no exista ya como `campo_externo` en
   # `tabla_externa` (unicidad cross-catálogo). `tabla_externa` es un nombre de

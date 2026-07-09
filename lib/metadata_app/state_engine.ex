@@ -39,6 +39,48 @@ defmodule MetadataApp.StateEngine do
   end
 
   @doc """
+  Alta con motor de estados: variante de `ejecutar_transicion/3` para cuando
+  el registro TODAVÍA NO EXISTE. Corre el mismo ciclo de 5 pasos —
+  precondiciones sin cortocircuito, "cambio de estado" (acá un INSERT en vez
+  de un UPDATE con lock optimista, no hay fila previa que bloquear), evento
+  inmutable (con `estado_origen_id: nil`), postcondiciones transaccionales,
+  efectos de cortesía post-commit — reusando el mismo vocabulario de 8
+  reglas. `attrs`/`contexto` son el mismo mapa: los campos del registro Y el
+  contexto de negocio (ej. `usuario_id`, datos que pida `dato_en_contexto`)
+  llegan juntos en el body del POST de creación.
+
+  Solo se invoca cuando `transicion_alta/1` ya encontró una transición
+  configurada — `CatalogoGenerico.crear/2` decide eso, no este módulo.
+  """
+  @spec dar_de_alta(module(), map(), Transicion.t(), map()) :: {:ok, struct()} | {:error, term()}
+  def dar_de_alta(schema_mod, attrs, %Transicion{} = transicion, contexto) when is_map(contexto) do
+    with {:ok, changeset} <- construir_changeset_valido(schema_mod, attrs),
+         :ok <- evaluar_precondiciones(transicion, Ecto.Changeset.apply_changes(changeset), contexto) do
+      ejecutar_nucleo_alta(changeset, transicion, contexto)
+    end
+  end
+
+  @doc """
+  La transición de alta (`accion: "alta"`, `estado_origen_id: nil`)
+  configurada para `catalogo`, o `nil` si el catálogo no definió una. Es la
+  convención: un catálogo "nace" a través de la transición cuya `accion` es
+  literalmente `"alta"` — `CatalogoGenerico.crear/2` la busca por este
+  nombre fijo, igual que `estado_inicial/1` busca `es_inicial: true`.
+  """
+  @spec transicion_alta(String.t()) :: Transicion.t() | nil
+  def transicion_alta(catalogo) do
+    header = obtener_header_por_nombre!(catalogo)
+
+    Repo.one(
+      from t in Transicion,
+        where:
+          t.meta_schema_header_id == ^header.id and is_nil(t.estado_origen_id) and
+            t.accion == "alta" and is_nil(t.delete_guid),
+        preload: [reglas: ^reglas_query()]
+    )
+  end
+
+  @doc """
   Descubrimiento (Contrato 1 con el frontend): para el registro y su estado
   actual, lista las transiciones disponibles desde ahí con el resultado de
   evaluar sus precondiciones — reutiliza el mismo paso 2 del ciclo, sin
@@ -120,6 +162,23 @@ defmodule MetadataApp.StateEngine do
     )
   end
 
+  @doc """
+  Mapa `%{estado_id => nombre}` de todos los estados de `catalogo` — para
+  enriquecer la serialización de datos con el nombre legible del estado
+  (`CatalogoGenerico.serializar/2`) sin hacer una query por fila.
+  """
+  @spec mapa_nombres_estados(String.t()) :: %{integer() => String.t()}
+  def mapa_nombres_estados(catalogo) do
+    header = obtener_header_por_nombre!(catalogo)
+
+    from(e in Estado,
+      where: e.meta_schema_header_id == ^header.id and is_nil(e.delete_guid),
+      select: {e.id, e.nombre}
+    )
+    |> Repo.all()
+    |> Map.new()
+  end
+
   defp catalogo_adopto_motor?(catalogo) do
     header = obtener_header_por_nombre!(catalogo)
 
@@ -199,6 +258,64 @@ defmodule MetadataApp.StateEngine do
         tipo: Map.get(regla.params, "tipo", "string"),
         etiqueta: Map.get(regla.params, "etiqueta", dato)
       }
+    end)
+  end
+
+  # --- Núcleo transaccional del alta (paralelo a ejecutar_nucleo/4) ---------
+
+  defp construir_changeset_valido(schema_mod, attrs) do
+    changeset =
+      schema_mod
+      |> struct()
+      |> schema_mod.changeset(attrs)
+      |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+
+    if changeset.valid?, do: {:ok, changeset}, else: {:error, changeset}
+  end
+
+  defp ejecutar_nucleo_alta(changeset, transicion, contexto) do
+    schema_mod = changeset.data.__struct__
+    changeset_final = Ecto.Changeset.change(changeset, %{estado_id: transicion.estado_destino_id})
+
+    multi =
+      Multi.new()
+      |> Multi.insert(:registro, changeset_final)
+      |> Multi.insert(:evento, fn %{registro: registro} ->
+        TransicionEvento.changeset(%TransicionEvento{}, %{
+          meta_schema_header_id: transicion.meta_schema_header_id,
+          registro_id: registro.id,
+          estado_origen_id: nil,
+          estado_destino_id: transicion.estado_destino_id,
+          accion: transicion.accion,
+          usuario_id: Map.get(contexto, "usuario_id"),
+          contexto: contexto,
+          insert_guid: generar_guid()
+        })
+      end)
+      |> agregar_postcondiciones_transaccionales_alta(transicion, contexto)
+
+    case Repo.transaction(multi) do
+      {:ok, %{registro: registro}} ->
+        registro_final = Repo.get!(schema_mod, registro.id)
+        despachar_efectos_de_cortesia(transicion, registro_final, contexto)
+        {:ok, registro_final}
+
+      {:error, :registro, changeset, _cambios} ->
+        {:error, changeset}
+
+      {:error, _paso, razon, _cambios} ->
+        {:error, {:postcondicion_fallida, razon}}
+    end
+  end
+
+  defp agregar_postcondiciones_transaccionales_alta(multi, transicion, contexto) do
+    transicion.reglas
+    |> Enum.filter(&(&1.tipo == "post" and &1.transaccional))
+    |> Enum.sort_by(& &1.orden)
+    |> Enum.reduce(multi, fn regla, multi_acc ->
+      Multi.run(multi_acc, {:post_transaccional, regla.id}, fn repo, %{registro: registro} ->
+        Reglas.ejecutar_postcondicion(regla.regla, registro, contexto, regla.params, repo)
+      end)
     end)
   end
 
