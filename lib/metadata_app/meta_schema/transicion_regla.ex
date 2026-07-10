@@ -25,5 +25,6 @@ defmodule MetadataApp.MetaSchema.TransicionRegla do
     |> cast(attrs, @requeridos ++ [:params, :orden, :transaccional])
     |> validate_required(@requeridos)
     |> validate_inclusion(:tipo, @tipos)
+    |> foreign_key_constraint(:transicion_id)
   end
 end

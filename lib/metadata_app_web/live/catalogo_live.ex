@@ -3,6 +3,7 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   alias MetadataApp.MetaSchemaContext
   alias MetadataApp.CatalogoGenerico
+  alias MetadataApp.StateEngine
   alias MetadataAppWeb.AdminNav
 
   def mount(%{"ruta" => segmentos}, _session, socket) do
@@ -32,9 +33,13 @@ defmodule MetadataAppWeb.CatalogoLive do
           |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
           |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
 
+        estados_por_id = StateEngine.mapa_nombres_estados(header.schema_context_name)
+
         filas =
           if modulo do
-            modulo |> CatalogoGenerico.listar() |> Enum.map(&CatalogoGenerico.serializar/1)
+            modulo
+            |> CatalogoGenerico.listar()
+            |> Enum.map(&CatalogoGenerico.serializar(&1, estados_por_id))
           else
             []
           end
@@ -45,6 +50,7 @@ defmodule MetadataAppWeb.CatalogoLive do
          |> assign(:encontrado?, true)
          |> assign(:label, header.schema_context_label)
          |> assign(:columnas, columnas)
+         |> assign(:mostrar_estado?, estados_por_id != %{})
          |> assign(:filas, filas)}
     end
   end
@@ -76,6 +82,9 @@ defmodule MetadataAppWeb.CatalogoLive do
                   {columna.schema_context_properties["etiqueta"]}
                 </th>
               <% end %>
+              <%= if @mostrar_estado? do %>
+                <th class="px-4 py-2 text-left font-semibold text-gray-600">Estado</th>
+              <% end %>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100">
@@ -86,11 +95,17 @@ defmodule MetadataAppWeb.CatalogoLive do
                     {Map.get(fila, String.to_existing_atom(columna.schema_context_field))}
                   </td>
                 <% end %>
+                <%= if @mostrar_estado? do %>
+                  <td class="px-4 py-2 text-gray-800">{Map.get(fila, :estado_nombre)}</td>
+                <% end %>
               </tr>
             <% end %>
             <%= if @filas == [] do %>
               <tr>
-                <td class="px-4 py-6 text-center text-gray-400" colspan={length(@columnas)}>
+                <td
+                  class="px-4 py-6 text-center text-gray-400"
+                  colspan={length(@columnas) + if @mostrar_estado?, do: 1, else: 0}
+                >
                   Sin registros todavía
                 </td>
               </tr>

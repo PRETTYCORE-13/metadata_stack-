@@ -2,15 +2,44 @@ defmodule MetadataApp.CatalogoGenerico do
   alias MetadataApp.Repo
   import Ecto.Query
 
-  def listar(schema_mod) do
-    Repo.all(from(r in schema_mod, where: is_nil(r.delete_guid)))
+  # filtros: %{"campo" => valor, ...} — combinados con AND, solo columnas
+  # reales de la tabla (no campos calculados como estado_nombre). Usado por
+  # BCCliente.listar/2 para que una regla de negocio pueda filtrar otro
+  # catálogo sin escribir la query a mano.
+  def listar(schema_mod, filtros \\ %{}) do
+    from(r in schema_mod, where: is_nil(r.delete_guid))
+    |> aplicar_filtros(filtros)
+    |> Repo.all()
+  end
+
+  defp aplicar_filtros(query, filtros) do
+    Enum.reduce(filtros, query, fn {campo, valor}, acc ->
+      campo_atom = String.to_existing_atom(to_string(campo))
+      from(r in acc, where: field(r, ^campo_atom) == ^valor)
+    end)
   end
 
   def obtener!(schema_mod, id) do
     Repo.one!(from(r in schema_mod, where: r.id == ^id and is_nil(r.delete_guid)))
   end
 
+  # Si el catálogo definió una transición "alta" (estado_origen_id nil, ver
+  # StateEngine.transicion_alta/1), el nacimiento del registro pasa por el
+  # mismo ciclo de reglas pre/post que cualquier transición — permite
+  # prevalidar (campos_requeridos, requiere_rol, ...) o disparar efectos
+  # (estampar_valor, notificar, ...) al crear, no solo al transicionar
+  # después. Si el catálogo nunca definió esa transición (ej. pty_clientes
+  # hoy), sigue el insert directo de siempre — 100% retrocompatible.
   def crear(schema_mod, attrs) do
+    catalogo = schema_mod.__schema__(:source)
+
+    case MetadataApp.StateEngine.transicion_alta(catalogo) do
+      nil -> crear_simple(schema_mod, attrs)
+      transicion -> MetadataApp.StateEngine.dar_de_alta(schema_mod, attrs, transicion, attrs)
+    end
+  end
+
+  defp crear_simple(schema_mod, attrs) do
     catalogo = schema_mod.__schema__(:source)
     estado_inicial = MetadataApp.StateEngine.estado_inicial(catalogo)
 
@@ -43,6 +72,13 @@ defmodule MetadataApp.CatalogoGenerico do
     end)
   end
 
+  # Si el catálogo definió una transición "guardar" (self-loop en el estado
+  # actual, ver StateEngine.transicion_guardar/2), la edición corre el
+  # mismo ciclo de reglas pre/post que cualquier transición — las PRE ven
+  # los valores YA PROPUESTOS (permite bloquear "no puede llamarse X" en el
+  # momento de guardar, no después), y las POST pueden reaccionar al
+  # cambio. Si el catálogo nunca definió esa transición, sigue el update
+  # directo de siempre — 100% retrocompatible.
   def actualizar(registro, attrs) do
     schema_mod = registro.__struct__
     catalogo = schema_mod.__schema__(:source)
@@ -52,11 +88,20 @@ defmodule MetadataApp.CatalogoGenerico do
       MetadataApp.MetaSchemaContext.listar_detalles(catalogo)
       |> Enum.map(& &1.schema_context_field)
 
-    registro
-    |> schema_mod.changeset(attrs)
-    |> rechazar_no_editables(attrs, todos_los_campos, editables)
-    |> Ecto.Changeset.change(%{update_guid: generar_guid()})
-    |> Repo.update()
+    changeset =
+      registro
+      |> schema_mod.changeset(attrs)
+      |> rechazar_no_editables(attrs, todos_los_campos, editables)
+      |> Ecto.Changeset.change(%{update_guid: generar_guid()})
+
+    if changeset.valid? do
+      case MetadataApp.StateEngine.transicion_guardar(catalogo, registro.estado_id) do
+        nil -> Repo.update(changeset)
+        transicion -> MetadataApp.StateEngine.editar_con_transicion(changeset, transicion, attrs)
+      end
+    else
+      {:error, changeset}
+    end
   end
 
   # Rechaza explícitamente (error visible en el changeset, no ignorado en
@@ -88,11 +133,23 @@ defmodule MetadataApp.CatalogoGenerico do
     |> Repo.update()
   end
 
-  def serializar(registro) do
+  # estados_por_id: %{estado_id => nombre} (ver StateEngine.mapa_nombres_estados/1)
+  # — opcional para no romper otros llamadores; sin él, o si el registro no
+  # tiene estado_id asignado, no agrega estado_nombre.
+  def serializar(registro, estados_por_id \\ %{}) do
     registro
     |> Map.from_struct()
     |> Map.drop([:__meta__, :insert_guid, :update_guid, :delete_guid])
+    |> agregar_estado_nombre(estados_por_id)
   end
+
+  defp agregar_estado_nombre(%{estado_id: nil} = mapa, _estados_por_id), do: mapa
+
+  defp agregar_estado_nombre(%{estado_id: estado_id} = mapa, estados_por_id) do
+    Map.put(mapa, :estado_nombre, Map.get(estados_por_id, estado_id))
+  end
+
+  defp agregar_estado_nombre(mapa, _estados_por_id), do: mapa
 
   # Valida que el valor de `campo` no exista ya como `campo_externo` en
   # `tabla_externa` (unicidad cross-catálogo). `tabla_externa` es un nombre de

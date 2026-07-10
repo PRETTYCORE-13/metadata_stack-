@@ -20,18 +20,24 @@ defmodule MetadataApp.MetaSchema.TransicionEvento do
     timestamps(type: :utc_datetime_usec, updated_at: false)
   end
 
-  @requeridos [
+  # estado_origen_id NO es requerido: un evento de alta (registro recién
+  # creado) lo registra en nil — ver StateEngine.dar_de_alta/4.
+  @campos [
     :meta_schema_header_id,
     :registro_id,
     :estado_origen_id,
     :estado_destino_id,
     :accion,
-    :insert_guid
+    :insert_guid,
+    :empresa_id,
+    :usuario_id,
+    :contexto
   ]
+  @requeridos [:meta_schema_header_id, :registro_id, :estado_destino_id, :accion, :insert_guid]
 
   def changeset(evento, attrs) do
     evento
-    |> cast(attrs, @requeridos ++ [:empresa_id, :usuario_id, :contexto])
+    |> cast(attrs, @campos)
     |> validate_required(@requeridos)
   end
 end

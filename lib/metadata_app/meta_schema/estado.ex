@@ -30,5 +30,6 @@ defmodule MetadataApp.MetaSchema.Estado do
       name: :meta_schema_estados_un_inicial_index,
       message: "ya existe un estado inicial para este catálogo"
     )
+    |> foreign_key_constraint(:meta_schema_header_id)
   end
 end

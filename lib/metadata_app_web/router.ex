@@ -23,7 +23,16 @@ defmodule MetadataAppWeb.Router do
     resources "/meta_schema_header", MetaSchemaHeaderController,
       only: [:index, :show, :create, :update]
 
+    # Admin del autómata (definición): estados/transiciones/reglas. Van con
+    # nombre literal, ANTES de los "/:tabla" genéricos de más abajo — si no,
+    # "meta_schema_estados" etc. matchearían ahí como si fueran nombre de
+    # catálogo (mismo motivo que el bug de scope /api vs /*ruta).
+    resources "/meta_schema_estados", EstadoController, only: [:index, :create]
+    resources "/meta_schema_transiciones", TransicionAdminController, only: [:index, :create]
+    resources "/meta_schema_transicion_reglas", TransicionReglaController, only: [:index, :create]
+
     get "/catalogos/:tabla/impacto", CatalogoAdminController, :impacto
+    get "/catalogos/:tabla/validar_motor", CatalogoAdminController, :validar_motor
     delete "/catalogos/:tabla", CatalogoAdminController, :delete
 
     get "/:tabla/:id/transiciones", TransicionController, :index
