@@ -36,10 +36,126 @@ const AbrirVentana = {
   },
 }
 
+// Arrastrar la manija del borde del sidebar ajusta su ancho (guardado en
+// localStorage — persiste entre recargas/páginas, ya que cada ruta es un
+// mount de LiveView nuevo, no una sola SPA). Min/max evitan un sidebar
+// inutilizablemente angosto o que se coma toda la pantalla.
+const ANCHO_MIN = 200
+const ANCHO_MAX = 480
+const LLAVE_LOCALSTORAGE = "pc-sidebar-width"
+
+const RedimensionarSidebar = {
+  mounted() {
+    const sidebar = this.el.closest(".pc-platform-sidebar")
+    if (!sidebar) return
+
+    // La variable CSS se pone en <html>, no en el <aside> — el sidebar se
+    // vuelve a pintar seguido (ítem activo, campanita de notificaciones,
+    // etc.) y un re-render de LiveView borraría un estilo puesto ahí. <html>
+    // queda totalmente fuera de lo que LiveView parchea, así que sobrevive,
+    // y la variable igual llega al sidebar por herencia normal de CSS.
+    const raiz = document.documentElement
+
+    const guardado = localStorage.getItem(LLAVE_LOCALSTORAGE)
+    if (guardado) raiz.style.setProperty("--pc-sidebar-width", `${guardado}px`)
+
+    let arrastrando = false
+
+    const alMover = (e) => {
+      if (!arrastrando) return
+      const rect = sidebar.getBoundingClientRect()
+      const ancho = Math.min(Math.max(e.clientX - rect.left, ANCHO_MIN), ANCHO_MAX)
+      raiz.style.setProperty("--pc-sidebar-width", `${ancho}px`)
+    }
+
+    const alSoltar = () => {
+      if (!arrastrando) return
+      arrastrando = false
+      sidebar.classList.remove("pc-resizing")
+      this.el.classList.remove("pc-resizing")
+      const ancho = raiz.style.getPropertyValue("--pc-sidebar-width")
+      if (ancho) localStorage.setItem(LLAVE_LOCALSTORAGE, parseInt(ancho, 10))
+    }
+
+    this.el.addEventListener("mousedown", (e) => {
+      arrastrando = true
+      sidebar.classList.add("pc-resizing")
+      this.el.classList.add("pc-resizing")
+      e.preventDefault()
+    })
+
+    window.addEventListener("mousemove", alMover)
+    window.addEventListener("mouseup", alSoltar)
+
+    this._alMover = alMover
+    this._alSoltar = alSoltar
+  },
+  destroyed() {
+    window.removeEventListener("mousemove", this._alMover)
+    window.removeEventListener("mouseup", this._alSoltar)
+  },
+}
+
+// Filtra el árbol del menú sin ir al servidor — el menú se pinta en varias
+// pantallas (InicioLive, CatalogoLive, BcListLive, BcNuevoLive...), así que
+// resolverlo del lado del cliente evita cablear el mismo estado de búsqueda
+// en cada una. Oculta ítems que no matchean, y una carpeta se oculta solo
+// si NINGÚN descendiente (página o subcarpeta) matchea; si alguno matchea,
+// se abre sola para que se vea.
+const FiltroMenu = {
+  mounted() {
+    this.el.addEventListener("input", (e) => this.filtrar(e.target.value))
+  },
+  filtrar(query) {
+    const nav = document.querySelector(".pc-sidebar-nav")
+    if (!nav) return
+    const q = query.trim().toLowerCase()
+
+    const carpetas = nav.querySelectorAll(".pc-menu-carpeta")
+    const items = nav.querySelectorAll(".pc-nav-item")
+
+    if (q === "") {
+      carpetas.forEach((c) => {
+        c.style.display = ""
+        if (c.dataset.openOriginal !== undefined) c.open = c.dataset.openOriginal === "true"
+      })
+      items.forEach((i) => { i.style.display = "" })
+      return
+    }
+
+    items.forEach((item) => {
+      const label = item.querySelector(".pc-nav-label")
+      const texto = label ? label.textContent.toLowerCase() : ""
+      item.style.display = texto.includes(q) ? "" : "none"
+    })
+
+    // De adentro hacia afuera (querySelectorAll ya entrega las carpetas más
+    // anidadas después de sus padres en el DOM, así que se recorre al
+    // revés) para que una carpeta padre vea el resultado ya calculado de
+    // sus hijas antes de decidir si ella misma se muestra.
+    Array.from(carpetas).reverse().forEach((carpeta) => {
+      if (carpeta.dataset.openOriginal === undefined) {
+        carpeta.dataset.openOriginal = carpeta.open ? "true" : "false"
+      }
+
+      const hijoVisible = Array.from(carpeta.querySelectorAll(".pc-nav-item, .pc-menu-carpeta")).some(
+        (hijo) => hijo.style.display !== "none"
+      )
+
+      if (hijoVisible) {
+        carpeta.style.display = ""
+        carpeta.open = true
+      } else {
+        carpeta.style.display = "none"
+      }
+    })
+  },
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, AbrirVentana},
+  hooks: {...colocatedHooks, AbrirVentana, FiltroMenu, RedimensionarSidebar},
 })
 
 // La pantalla que se abre en la ventana emergente (ej. BC Nuevo) dispara este

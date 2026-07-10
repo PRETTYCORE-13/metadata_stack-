@@ -14,6 +14,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
     {:ok,
      socket
      |> assign(:mensaje, nil)
+     |> assign(:carpetas, MetaSchemaContext.listar_carpetas_existentes())
      |> nuevo_formulario()}
   end
 
@@ -29,6 +30,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
       |> Map.put("visible", contexto["visible"] == "true")
       |> Map.put("nombre_p2", normalizar_identificador(contexto["nombre_p2"]))
       |> Map.put("nombre_p3", normalizar_identificador(contexto["nombre_p3"]))
+      |> Map.put("nav_final", normalizar_slug(contexto["nav_final"]))
 
     socket = assign(socket, :contexto, contexto)
 
@@ -49,12 +51,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
     {:noreply, socket}
   end
 
-  # Mismo criterio de normalización, pero con el prefijo /catalogos/.
-  def handle_event("normalizar_nav", %{"value" => valor}, socket) do
-    nav_normalizado = normalizar_nav(valor)
-    {:noreply, assign(socket, :contexto, Map.put(socket.assigns.contexto, "nav", nav_normalizado))}
-  end
-
   def handle_event("agregar_componente", _params, socket) do
     componentes = socket.assigns.componentes ++ [componente_vacio(length(socket.assigns.componentes) + 1)]
     {:noreply, assign(socket, :componentes, componentes)}
@@ -72,12 +68,18 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
   # Mismo motivo que en "validar": si es carpeta, el form nunca manda
   # "componentes" (el fieldset no existe en el DOM).
   def handle_event("guardar", %{"contexto" => contexto} = params, socket) do
-    contexto =
-      contexto
-      |> Map.put("nombre", combinar_nombre_sistema(contexto["nombre_p2"], contexto["nombre_p3"]))
-      |> Map.put("nav", normalizar_nav(contexto["nav"]))
-
+    contexto = Map.put(contexto, "nav", componer_nav(contexto["carpeta_padre"], contexto["nav_final"]))
     es_carpeta? = contexto["tipo_registro"] == "carpeta"
+
+    # Si es carpeta, "Nombre de sistema" ni se muestra en el form — se
+    # deriva solo de la Navegación (única info disponible que la identifica).
+    # Si es archivo, sigue viniendo de las 3 cajitas de siempre.
+    contexto =
+      if es_carpeta? do
+        Map.put(contexto, "nombre", nombre_desde_nav(contexto["nav"]))
+      else
+        Map.put(contexto, "nombre", combinar_nombre_sistema(contexto["nombre_p2"], contexto["nombre_p3"]))
+      end
 
     componentes =
       params
@@ -139,7 +141,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
   defp validar_formulario(contexto, componentes, es_carpeta?) do
     with :ok <- validar_regex(contexto["nombre"], @identificador, "Nombre de sistema"),
          :ok <- validar_regex(contexto["nav"], @nav, "Navegación"),
-         :ok <- validar_completado(contexto["nav"], "/catalogos/", "Navegación"),
          :ok <- validar_completado(contexto["etiqueta"], "Catálogo de", "Etiqueta") do
       # Una carpeta no tiene Componentes que validar — es solo un nodo de menú.
       if es_carpeta? do
@@ -196,6 +197,21 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
     end
   end
 
+  # Para carpetas, el "Nombre de sistema" no se pide en el form — se arma
+  # solo a partir de los segmentos de la Navegación, que es la única
+  # información propia de una carpeta.
+  defp nombre_desde_nav(nav) do
+    sufijo =
+      nav
+      |> String.trim_leading("/")
+      |> String.split("/", trim: true)
+      |> Enum.map(&normalizar_identificador/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join("_")
+
+    if sufijo == "", do: "", else: String.slice("pty_carpeta_#{sufijo}", 0, 50)
+  end
+
   defp normalizar_identificador(valor) do
     (valor || "")
     |> String.downcase()
@@ -211,19 +227,29 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
     |> String.replace(~r/\p{Mn}/u, "")
   end
 
-  # minúsculas + sin acentos/espacios + siempre con una sola barra inicial.
-  # "catalogos/" es solo el valor por default del campo — es editable, si el
-  # usuario lo borra se queda borrado, no se vuelve a agregar solo.
-  defp normalizar_nav(valor) do
-    limpio =
-      (valor || "")
-      |> String.downcase()
-      |> quitar_acentos()
-      |> String.replace(~r/[^a-z0-9\-\/]/, "")
+  # Solo el segmento final del nav (lo que escribe el usuario en "Nombre en
+  # el menú") — minúsculas, sin acentos/espacios, guiones sí permitidos
+  # (a diferencia de normalizar_identificador/1, que es para nombres pty_*).
+  defp normalizar_slug(valor) do
+    (valor || "")
+    |> String.downcase()
+    |> quitar_acentos()
+    |> String.replace(~r/[^a-z0-9\-]/, "")
+    |> String.slice(0, 50)
+  end
 
-    resultado = if limpio == "", do: "", else: "/" <> String.trim_leading(limpio, "/")
+  # Compone el nav final: carpeta_padre (elegida del selector, puede venir
+  # vacía = raíz) + el segmento propio. Así ya no hay que escribir la ruta
+  # completa a mano ni arriesgarse a un typo que no calce con ninguna
+  # carpeta existente.
+  defp componer_nav(carpeta_padre, nav_final) do
+    segmento = normalizar_slug(nav_final)
 
-    String.slice(resultado, 0, 50)
+    cond do
+      segmento == "" -> ""
+      carpeta_padre in [nil, ""] -> "/" <> segmento
+      true -> String.slice("/" <> carpeta_padre <> "/" <> segmento, 0, 50)
+    end
   end
 
   defp nuevo_formulario(socket) do
@@ -233,7 +259,8 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
       "nombre_p2" => "catalogos",
       "nombre_p3" => "",
       "etiqueta" => "Catálogo de ",
-      "nav" => "/catalogos/",
+      "carpeta_padre" => "",
+      "nav_final" => "",
       "visible" => true
     })
     |> assign(:componentes, [componente_vacio(1)])
@@ -290,11 +317,13 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
 
   def render(assigns) do
     nombre_sistema = combinar_nombre_sistema(assigns.contexto["nombre_p2"], assigns.contexto["nombre_p3"])
+    nav_preview = componer_nav(assigns.contexto["carpeta_padre"], assigns.contexto["nav_final"])
 
     assigns =
       assigns
       |> assign(:tipos, @tipos)
       |> assign(:nombre_sistema_preview, nombre_sistema)
+      |> assign(:nav_preview, nav_preview)
 
     ~H"""
     <div class="min-h-screen bg-white">
@@ -329,24 +358,26 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
               </label>
             </div>
 
-            <label class="font-medium text-gray-900">Nombre de sistema:</label>
-            <div>
-              <div class="flex items-center gap-1.5">
-                <span class="border border-gray-300 rounded bg-gray-100 text-gray-500 px-2 py-1 select-none">pty_</span>
-                <span class="text-gray-400">-</span>
-                <input type="text" name="contexto[nombre_p2]" value={@contexto["nombre_p2"]} required maxlength="30"
-                  title="Minúsculas, sin acentos ni espacios."
-                  class="border border-gray-300 rounded text-gray-900 px-2 py-1 w-32" placeholder="catalogos" />
-                <span class="text-gray-400">-</span>
-                <input type="text" name="contexto[nombre_p3]" value={@contexto["nombre_p3"]} required maxlength="30"
-                  title="Minúsculas, sin acentos ni espacios."
-                  class="border border-gray-300 rounded text-gray-900 px-2 py-1 flex-1" placeholder="carros" />
+            <%= if @contexto["tipo_registro"] != "carpeta" do %>
+              <label class="font-medium text-gray-900">Nombre de sistema:</label>
+              <div>
+                <div class="flex items-center gap-1.5">
+                  <span class="border border-gray-300 rounded bg-gray-100 text-gray-500 px-2 py-1 select-none">pty_</span>
+                  <span class="text-gray-400">-</span>
+                  <input type="text" name="contexto[nombre_p2]" value={@contexto["nombre_p2"]} required maxlength="30"
+                    title="Minúsculas, sin acentos ni espacios."
+                    class="border border-gray-300 rounded text-gray-900 px-2 py-1 w-32" placeholder="catalogos" />
+                  <span class="text-gray-400">-</span>
+                  <input type="text" name="contexto[nombre_p3]" value={@contexto["nombre_p3"]} required maxlength="30"
+                    title="Minúsculas, sin acentos ni espacios."
+                    class="border border-gray-300 rounded text-gray-900 px-2 py-1 flex-1" placeholder="carros" />
+                </div>
+                <div class="mt-1.5 bg-blue-600 text-white rounded px-2 py-1.5 text-xs inline-flex items-center gap-1.5">
+                  <span class="text-blue-100">Vista previa:</span>
+                  <span class="font-mono">{@nombre_sistema_preview}</span>
+                </div>
               </div>
-              <div class="mt-1.5 bg-blue-600 text-white rounded px-2 py-1.5 text-xs inline-flex items-center gap-1.5">
-                <span class="text-blue-100">Vista previa:</span>
-                <span class="font-mono">{@nombre_sistema_preview}</span>
-              </div>
-            </div>
+            <% end %>
 
             <label class="font-medium text-gray-900">Etiqueta:</label>
             <input type="text" name="contexto[etiqueta]" value={@contexto["etiqueta"]} required maxlength="100"
@@ -354,14 +385,24 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
 
             <label class="font-medium text-gray-900">Navegación:</label>
             <div>
-              <input type="text" name="contexto[nav]" value={@contexto["nav"]} required maxlength="50"
-                phx-blur="normalizar_nav"
-                title="Se convierte solo a minúsculas al salir del campo. /catalogos/ es solo el valor por default, lo puedes editar o borrar libremente."
-                class="border border-gray-300 rounded text-gray-900 px-2 py-1" placeholder="/catalogos/carros" />
+              <div class="flex items-center gap-1.5">
+                <select name="contexto[carpeta_padre]"
+                  title="Elige una carpeta que ya existe para anidar ahí adentro, o deja 'Sin carpeta' para que quede en la raíz del menú."
+                  class="border border-gray-300 rounded text-gray-900 px-2 py-1">
+                  <option value="" selected={@contexto["carpeta_padre"] in [nil, ""]}>— Sin carpeta (raíz) —</option>
+                  <%= for carpeta <- @carpetas do %>
+                    <option value={carpeta.ruta} selected={@contexto["carpeta_padre"] == carpeta.ruta}>{carpeta.etiqueta}</option>
+                  <% end %>
+                </select>
+                <span class="text-gray-400">/</span>
+                <input type="text" name="contexto[nav_final]" value={@contexto["nav_final"]} required maxlength="50"
+                  title="Minúsculas, sin acentos ni espacios. Guiones sí permitidos."
+                  class="border border-gray-300 rounded text-gray-900 px-2 py-1 flex-1" placeholder="carros" />
+              </div>
               <div class="mt-1.5 bg-blue-600 text-white rounded px-2 py-1.5 text-xs inline-flex items-center gap-1.5">
                 <span class="text-blue-100">Vista previa:</span>
                 <span class="font-mono">
-                  {@contexto["nav"]}<%= if @nombre_sistema_preview != "", do: "/#{@nombre_sistema_preview}" %>
+                  {@nav_preview}<%= if @nombre_sistema_preview != "", do: "/#{@nombre_sistema_preview}" %>
                 </span>
               </div>
             </div>
