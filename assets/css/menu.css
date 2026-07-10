@@ -68,10 +68,39 @@
   border-right: 1px solid #e5e7eb;
   transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
+  position: relative;
 }
 
 .pc-platform-sidebar-open {
-  width: 240px;
+  width: var(--pc-sidebar-width, 240px);
+}
+
+/* Manija para arrastrar y ajustar el ancho del sidebar (solo con el menú
+   abierto — colapsado no tiene texto que ensanchar). */
+.pc-sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 20;
+  background: transparent;
+}
+
+.pc-sidebar-resize-handle:hover,
+.pc-sidebar-resize-handle.pc-resizing {
+  background: rgba(124, 58, 237, 0.35);
+}
+
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-resize-handle {
+  display: none;
+}
+
+/* Mientras se arrastra, sin transición — si no, el ancho va "a destiempo"
+   del mouse. */
+.pc-platform-sidebar.pc-resizing {
+  transition: none;
 }
 
 /* ---- HEADER (logo + brand + toggle) ---- */

@@ -61,6 +61,14 @@ defmodule MetadataAppWeb.MenuLayout do
         />
         <!-- Sidebar -->
         <aside class={"pc-platform-sidebar" <> if @sidebar_open, do: " pc-platform-sidebar-open", else: ""}>
+          <div
+            class="pc-sidebar-resize-handle"
+            id="sidebar-resize-handle"
+            phx-hook="RedimensionarSidebar"
+            phx-update="ignore"
+            title="Arrastra para ajustar el ancho del menú"
+          >
+          </div>
           <!-- HEADER: Logo + toggle -->
           <div class="pc-sidebar-header">
             <div class="pc-sidebar-brand">
@@ -99,6 +107,16 @@ defmodule MetadataAppWeb.MenuLayout do
           <div>
             <!-- SECCIÓN: MENÚ -->
             <div class="pc-sidebar-section-label">Menú</div>
+            <div class="px-3 pb-2">
+              <input
+                type="text"
+                id="filtro-menu"
+                phx-hook="FiltroMenu"
+                phx-update="ignore"
+                placeholder="Buscar en el menú..."
+                class="w-full text-sm border border-gray-300 rounded-lg px-3 py-1.5 text-gray-900"
+              />
+            </div>
             <nav class="pc-sidebar-nav">
               <.menu_nodos nodos={@menu_items} current_page={@current_page} />
             </nav>

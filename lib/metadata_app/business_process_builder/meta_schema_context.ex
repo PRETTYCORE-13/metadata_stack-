@@ -39,7 +39,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     |> construir_arbol()
   end
 
-  defp item_de_header(h) do
+  def item_de_header(h) do
     %{
       id: h.schema_context_name,
       label: h.schema_context_label,
@@ -126,11 +126,34 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
         Map.put(item, :tipo, :pagina)
 
       {{:carpeta, segmento}, %{nombre: nombre, hijos: hijos}} ->
-        %{tipo: :carpeta, nombre: nombre || segmento, hijos: mapa_a_lista_ordenada(hijos)}
+        %{tipo: :carpeta, segmento: segmento, nombre: nombre || segmento, hijos: mapa_a_lista_ordenada(hijos)}
     end)
     |> Enum.sort_by(fn
       %{tipo: :carpeta, nombre: nombre} -> {0, nombre}
       %{tipo: :pagina, label: label} -> {1, label}
+    end)
+  end
+
+  # Lista plana de todas las carpetas que ya existen (declaradas o
+  # inferidas), con su ruta real (para armar el nav) y una etiqueta tipo
+  # "migas de pan" (para el selector "Carpeta padre" del formulario). Ej.
+  # %{ruta: "vehiculos/electricos", etiqueta: "vehiculos / Eléctricos"}.
+  def listar_carpetas_existentes do
+    listar_headers_arbol()
+    |> recolectar_carpetas("", "")
+    |> Enum.sort_by(& &1.etiqueta)
+  end
+
+  defp recolectar_carpetas(nodos, ruta_previa, etiqueta_previa) do
+    Enum.flat_map(nodos, fn
+      %{tipo: :carpeta, segmento: segmento, nombre: nombre, hijos: hijos} ->
+        ruta = if ruta_previa == "", do: segmento, else: ruta_previa <> "/" <> segmento
+        etiqueta = if etiqueta_previa == "", do: nombre, else: etiqueta_previa <> " / " <> nombre
+
+        [%{ruta: ruta, etiqueta: etiqueta} | recolectar_carpetas(hijos, ruta, etiqueta)]
+
+      %{tipo: :pagina} ->
+        []
     end)
   end
 
