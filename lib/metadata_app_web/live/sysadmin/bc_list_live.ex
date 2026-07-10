@@ -1,7 +1,7 @@
 defmodule MetadataAppWeb.Sysadmin.BcListLive do
   use MetadataAppWeb, :live_view_admin
 
-  alias MetadataApp.MetaSchemaContext
+  alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataAppWeb.AdminNav
 
   @topic "bc_contextos"

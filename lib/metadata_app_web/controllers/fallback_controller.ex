@@ -14,7 +14,7 @@ defmodule MetadataAppWeb.FallbackController do
     |> json(%{errors: %{detail: "Registro no encontrado"}})
   end
 
-  # --- Desenlaces del ciclo de MetadataApp.StateEngine.ejecutar_transicion/3
+  # --- Desenlaces del ciclo de MetadataApp.MetaStateEngine.ejecutar_transicion/3
   # (spec sección 7, Contrato 2) ------------------------------------------
 
   # Paso 1: rechazo estructural — la acción no existe desde el estado actual.

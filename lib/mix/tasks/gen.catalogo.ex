@@ -17,12 +17,12 @@ defmodule Mix.Tasks.Gen.Catalogo do
 
     {:ok, resultado, _apps} =
       Ecto.Migrator.with_repo(MetadataApp.Repo, fn _repo ->
-        MetadataApp.CatalogoGenerador.generar(schema_context_name)
+        MetadataApp.BusinessProcessBuilder.CatalogoGenerador.generar(schema_context_name)
       end)
 
     case resultado do
       {:ok, %{tabla: tabla, ya_existia: true}} ->
-        Mix.shell().info("El catálogo #{schema_context_name} ya existía (lib/metadata_app/catalogos/#{schema_context_name}.ex). No se tocó nada. Ruta: /api/#{tabla}")
+        Mix.shell().info("El catálogo #{schema_context_name} ya existía (lib/metadata_app/meta_business_process/catalogos/#{schema_context_name}.ex). No se tocó nada. Ruta: /api/#{tabla}")
 
       {:ok, %{tabla: tabla}} ->
         Mix.shell().info("Catálogo #{schema_context_name} generado y migrado. Ruta: /api/#{tabla}")

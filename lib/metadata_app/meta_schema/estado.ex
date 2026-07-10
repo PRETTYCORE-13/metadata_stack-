@@ -14,7 +14,7 @@ defmodule MetadataApp.MetaSchema.Estado do
     field :update_guid, :string
     field :delete_guid, :string
 
-    belongs_to :header, MetadataApp.MetaSchema.Header, foreign_key: :meta_schema_header_id
+    belongs_to :header, MetadataApp.BusinessProcessBuilder.MetaSchema.Header, foreign_key: :meta_schema_header_id
   end
 
   @requeridos [:meta_schema_header_id, :nombre, :orden]

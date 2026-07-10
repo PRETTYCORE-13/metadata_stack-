@@ -1,6 +1,6 @@
 defmodule Mix.Tasks.Meta.Import do
   use Mix.Task
-  alias MetadataApp.MetaSchemaContext
+  alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
 
   @shortdoc "Importa Business Contexts desde un JSON exportado con mix meta.export"
 

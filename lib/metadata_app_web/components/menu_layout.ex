@@ -21,7 +21,7 @@ defmodule MetadataAppWeb.MenuLayout do
   slot :inner_block, required: true
 
   def sidebar(assigns) do
-    assigns = assign(assigns, :menu_items, assigns.menu_items || MetadataApp.MetaSchemaContext.listar_menu_arbol())
+    assigns = assign(assigns, :menu_items, assigns.menu_items || MetadataApp.BusinessProcessBuilder.MetaSchemaContext.listar_menu_arbol())
 
     ~H"""
     <div class="pc-platform">
@@ -245,7 +245,7 @@ defmodule MetadataAppWeb.MenuLayout do
 
   ## MENÚ EN ÁRBOL — estilo explorador de Windows: nav="/carpeta/pagina" se
   # parte en carpetas colapsables (<details>, sin JS) con la página como hoja
-  # al final. Ver MetadataApp.MetaSchemaContext.listar_menu_arbol/0.
+  # al final. Ver MetadataApp.BusinessProcessBuilder.MetaSchemaContext.listar_menu_arbol/0.
   attr :nodos, :list, required: true
   attr :current_page, :string, required: true
   attr :nivel, :integer, default: 0

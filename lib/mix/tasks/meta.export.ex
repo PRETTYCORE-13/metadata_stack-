@@ -1,6 +1,6 @@
 defmodule Mix.Tasks.Meta.Export do
   use Mix.Task
-  alias MetadataApp.MetaSchemaContext
+  alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
 
   @shortdoc "Exporta meta_schema_header + meta_schema_detail a un JSON versionable"
 

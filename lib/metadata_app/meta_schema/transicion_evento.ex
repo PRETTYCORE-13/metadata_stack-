@@ -13,7 +13,7 @@ defmodule MetadataApp.MetaSchema.TransicionEvento do
 
     field :insert_guid, :string
 
-    belongs_to :header, MetadataApp.MetaSchema.Header, foreign_key: :meta_schema_header_id
+    belongs_to :header, MetadataApp.BusinessProcessBuilder.MetaSchema.Header, foreign_key: :meta_schema_header_id
     belongs_to :estado_origen, MetadataApp.MetaSchema.Estado
     belongs_to :estado_destino, MetadataApp.MetaSchema.Estado
 

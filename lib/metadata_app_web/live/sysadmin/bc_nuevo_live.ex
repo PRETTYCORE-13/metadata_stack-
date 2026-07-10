@@ -3,8 +3,8 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
   # formulario, así se ve limpio dentro de la ventana chica.
   use MetadataAppWeb, :live_view
 
-  alias MetadataApp.MetaSchemaContext
-  alias MetadataApp.CatalogoGenerador
+  alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
+  alias MetadataApp.BusinessProcessBuilder.CatalogoGenerador
 
   @topic "bc_contextos"
 

@@ -20,30 +20,30 @@ defmodule MetadataAppWeb.Router do
   scope "/api", MetadataAppWeb do
     pipe_through :api
 
-    resources "/meta_schema_header", MetaSchemaHeaderController,
+    resources "/meta_schema_header", BusinessProcessBuilder.MetaSchemaHeaderController,
       only: [:index, :show, :create, :update]
 
     # Admin del autómata (definición): estados/transiciones/reglas. Van con
     # nombre literal, ANTES de los "/:tabla" genéricos de más abajo — si no,
     # "meta_schema_estados" etc. matchearían ahí como si fueran nombre de
     # catálogo (mismo motivo que el bug de scope /api vs /*ruta).
-    resources "/meta_schema_estados", EstadoController, only: [:index, :create]
-    resources "/meta_schema_transiciones", TransicionAdminController, only: [:index, :create]
-    resources "/meta_schema_transicion_reglas", TransicionReglaController, only: [:index, :create]
+    resources "/meta_schema_estados", MetaEstadoController, only: [:index, :create]
+    resources "/meta_schema_transiciones", MetaTransicionAdminController, only: [:index, :create]
+    resources "/meta_schema_transicion_reglas", MetaTransicionReglaController, only: [:index, :create]
 
-    get "/catalogos/:tabla/impacto", CatalogoAdminController, :impacto
-    get "/catalogos/:tabla/validar_motor", CatalogoAdminController, :validar_motor
-    delete "/catalogos/:tabla", CatalogoAdminController, :delete
+    get "/catalogos/:tabla/impacto", BusinessProcessBuilder.CatalogoAdminController, :impacto
+    get "/catalogos/:tabla/validar_motor", BusinessProcessBuilder.CatalogoAdminController, :validar_motor
+    delete "/catalogos/:tabla", BusinessProcessBuilder.CatalogoAdminController, :delete
 
-    get "/:tabla/:id/transiciones", TransicionController, :index
-    post "/:tabla/:id/transiciones/:accion", TransicionController, :ejecutar
+    get "/:tabla/:id/transiciones", MetaTransicionController, :index
+    post "/:tabla/:id/transiciones/:accion", MetaTransicionController, :ejecutar
 
-    get "/:tabla", CatalogoController, :index
-    get "/:tabla/:id", CatalogoController, :show
-    post "/:tabla", CatalogoController, :create
-    put "/:tabla/:id", CatalogoController, :update
-    patch "/:tabla/:id", CatalogoController, :update
-    delete "/:tabla/:id", CatalogoController, :delete
+    get "/:tabla", BusinessProcessBuilder.CatalogoController, :index
+    get "/:tabla/:id", BusinessProcessBuilder.CatalogoController, :show
+    post "/:tabla", BusinessProcessBuilder.CatalogoController, :create
+    put "/:tabla/:id", BusinessProcessBuilder.CatalogoController, :update
+    patch "/:tabla/:id", BusinessProcessBuilder.CatalogoController, :update
+    delete "/:tabla/:id", BusinessProcessBuilder.CatalogoController, :delete
   end
 
   # Mismo motivo que el scope /api de arriba: también tiene que ir antes del

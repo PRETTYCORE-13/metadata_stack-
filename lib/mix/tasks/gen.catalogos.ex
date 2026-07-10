@@ -1,6 +1,6 @@
 defmodule Mix.Tasks.Gen.Catalogos do
   use Mix.Task
-  alias MetadataApp.{MetaSchemaContext, CatalogoGenerador}
+  alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador}
 
   @shortdoc "Genera todos los catálogos pendientes a partir de la metadata"
 
@@ -9,7 +9,7 @@ defmodule Mix.Tasks.Gen.Catalogos do
 
   Recorre todos los Business Context de meta_schema_header y genera
   (migración + schema Ecto) cada uno que todavía no tenga su archivo en
-  lib/metadata_app/catalogos/, respetando el orden de dependencias de los
+  lib/metadata_app/meta_business_process/catalogos/, respetando el orden de dependencias de los
   campos tipo "referencia": un catálogo se genera después de todos los que
   referencia, porque su migración crea una FK contra una tabla que tiene que
   existir primero en Postgres. Sin este orden, `CatalogoGenerador` podría

@@ -1,9 +1,9 @@
 defmodule MetadataAppWeb.CatalogoLive do
   use MetadataAppWeb, :live_view_admin
 
-  alias MetadataApp.MetaSchemaContext
-  alias MetadataApp.CatalogoGenerico
-  alias MetadataApp.StateEngine
+  alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
+  alias MetadataApp.BusinessProcessBuilder.CatalogoGenerico
+  alias MetadataApp.MetaStateEngine
   alias MetadataAppWeb.AdminNav
 
   def mount(%{"ruta" => segmentos}, _session, socket) do
@@ -33,7 +33,7 @@ defmodule MetadataAppWeb.CatalogoLive do
           |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
           |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
 
-        estados_por_id = StateEngine.mapa_nombres_estados(header.schema_context_name)
+        estados_por_id = MetaStateEngine.mapa_nombres_estados(header.schema_context_name)
 
         filas =
           if modulo do

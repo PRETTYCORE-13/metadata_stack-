@@ -12,8 +12,9 @@
 # sin_relacionados/mutar_relacionados funcionando de verdad contra Postgres.
 
 alias MetadataApp.Repo
-alias MetadataApp.MetaSchema.{Header, Detail, Estado, Transicion, TransicionRegla}
-alias MetadataApp.CatalogoGenerador
+alias MetadataApp.BusinessProcessBuilder.MetaSchema.{Header, Detail}
+alias MetadataApp.MetaSchema.{Estado, Transicion, TransicionRegla}
+alias MetadataApp.BusinessProcessBuilder.CatalogoGenerador
 
 guid = fn -> Ecto.UUID.generate() |> String.replace("-", "") end
 
