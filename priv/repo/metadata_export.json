@@ -136,6 +136,9 @@
           "schema_context_field": "pty_aly_marca_nombre",
           "schema_context_properties": {
             "editable": true,
+            "editable_en": [
+              23
+            ],
             "etiqueta": "Marca",
             "longitud": 60,
             "orden": 1,
@@ -147,6 +150,9 @@
           "schema_context_field": "pty_aly_marca_orden",
           "schema_context_properties": {
             "editable": true,
+            "editable_en": [
+              23
+            ],
             "etiqueta": "Ordenamiento",
             "orden": 2,
             "tipo": "integer",

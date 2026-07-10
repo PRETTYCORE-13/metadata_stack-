@@ -81,6 +81,48 @@ defmodule MetadataApp.StateEngine do
   end
 
   @doc """
+  Transición "guardar" (self-loop: `estado_origen_id == estado_destino_id
+  == estado_id`) configurada para `catalogo` en el estado actual del
+  registro, o `nil` si no existe. Convención análoga a `transicion_alta/1`
+  — `CatalogoGenerico.actualizar/2` la busca por este nombre fijo para
+  decidir si una edición de campos (PUT/PATCH) corre el ciclo de reglas o
+  sigue el update directo de siempre.
+  """
+  @spec transicion_guardar(String.t(), integer() | nil) :: Transicion.t() | nil
+  def transicion_guardar(_catalogo, nil), do: nil
+
+  def transicion_guardar(catalogo, estado_id) do
+    header = obtener_header_por_nombre!(catalogo)
+
+    Repo.one(
+      from t in Transicion,
+        where:
+          t.meta_schema_header_id == ^header.id and t.accion == "guardar" and
+            t.estado_origen_id == ^estado_id and t.estado_destino_id == ^estado_id and
+            is_nil(t.delete_guid),
+        preload: [reglas: ^reglas_query()]
+    )
+  end
+
+  @doc """
+  Edición con motor de estados: variante de `ejecutar_transicion/3` para
+  cuando la "transición" en realidad es un cambio de campos (self-loop
+  `"guardar"`, ver `transicion_guardar/2`). Diferencia clave con una
+  transición común: las PRE evalúan contra los valores YA PROPUESTOS
+  (`changeset` aplicado), no los que había guardados — así una regla como
+  "no puede llamarse X" bloquea la edición ahí mismo, no un guardar
+  posterior. `changeset` ya viene validado (campos editables, tipos, etc.)
+  por `CatalogoGenerico.actualizar/2` — acá solo se agrega el ciclo.
+  """
+  @spec editar_con_transicion(Ecto.Changeset.t(), Transicion.t(), map()) ::
+          {:ok, struct()} | {:error, term()}
+  def editar_con_transicion(changeset, %Transicion{} = transicion, contexto) when is_map(contexto) do
+    with :ok <- evaluar_precondiciones(transicion, Ecto.Changeset.apply_changes(changeset), contexto) do
+      ejecutar_nucleo_editar(changeset, transicion, contexto)
+    end
+  end
+
+  @doc """
   Descubrimiento (Contrato 1 con el frontend): para el registro y su estado
   actual, lista las transiciones disponibles desde ahí con el resultado de
   evaluar sus precondiciones — reutiliza el mismo paso 2 del ciclo, sin
@@ -261,7 +303,7 @@ defmodule MetadataApp.StateEngine do
     end)
   end
 
-  # --- Núcleo transaccional del alta (paralelo a ejecutar_nucleo/4) ---------
+  # --- Núcleo transaccional del alta y de la edición (paralelo a ejecutar_nucleo/4) ---
 
   defp construir_changeset_valido(schema_mod, attrs) do
     changeset =
@@ -292,7 +334,7 @@ defmodule MetadataApp.StateEngine do
           insert_guid: generar_guid()
         })
       end)
-      |> agregar_postcondiciones_transaccionales_alta(transicion, contexto)
+      |> agregar_postcondiciones_transaccionales_multi(transicion, contexto)
 
     case Repo.transaction(multi) do
       {:ok, %{registro: registro}} ->
@@ -308,7 +350,7 @@ defmodule MetadataApp.StateEngine do
     end
   end
 
-  defp agregar_postcondiciones_transaccionales_alta(multi, transicion, contexto) do
+  defp agregar_postcondiciones_transaccionales_multi(multi, transicion, contexto) do
     transicion.reglas
     |> Enum.filter(&(&1.tipo == "post" and &1.transaccional))
     |> Enum.sort_by(& &1.orden)
@@ -317,6 +359,40 @@ defmodule MetadataApp.StateEngine do
         Reglas.ejecutar_postcondicion(regla.regla, registro, contexto, regla.params, repo)
       end)
     end)
+  end
+
+  defp ejecutar_nucleo_editar(changeset, transicion, contexto) do
+    schema_mod = changeset.data.__struct__
+
+    multi =
+      Multi.new()
+      |> Multi.update(:registro, changeset)
+      |> Multi.insert(:evento, fn %{registro: registro} ->
+        TransicionEvento.changeset(%TransicionEvento{}, %{
+          meta_schema_header_id: transicion.meta_schema_header_id,
+          registro_id: registro.id,
+          estado_origen_id: transicion.estado_origen_id,
+          estado_destino_id: transicion.estado_destino_id,
+          accion: transicion.accion,
+          usuario_id: Map.get(contexto, "usuario_id"),
+          contexto: contexto,
+          insert_guid: generar_guid()
+        })
+      end)
+      |> agregar_postcondiciones_transaccionales_multi(transicion, contexto)
+
+    case Repo.transaction(multi) do
+      {:ok, %{registro: registro}} ->
+        registro_final = Repo.get!(schema_mod, registro.id)
+        despachar_efectos_de_cortesia(transicion, registro_final, contexto)
+        {:ok, registro_final}
+
+      {:error, :registro, changeset, _cambios} ->
+        {:error, changeset}
+
+      {:error, _paso, razon, _cambios} ->
+        {:error, {:postcondicion_fallida, razon}}
+    end
   end
 
   # --- Pasos 3-5a: núcleo transaccional --------------------------------------

@@ -11,6 +11,7 @@ defmodule MetadataApp.MotorEstadosAdmin do
   import Ecto.Query
   alias MetadataApp.Repo
   alias MetadataApp.MetaSchemaContext
+  alias MetadataApp.StateEngine.Reglas
   alias MetadataApp.MetaSchema.{Estado, Transicion, TransicionRegla, TransicionEvento}
 
   # Vocabulario cerrado de reglas (ver StateEngine.Reglas.{Pre,Post}):
@@ -155,7 +156,7 @@ defmodule MetadataApp.MotorEstadosAdmin do
           |> validar_estados_ajenos(transiciones, estados)
           |> validar_alta_o_inicial(estados, transiciones)
           |> validar_estados_huerfanos(estados, transiciones)
-          |> validar_reglas(transiciones)
+          |> validar_reglas(transiciones, catalogo)
           |> Enum.reverse()
 
         {:ok,
@@ -226,24 +227,51 @@ defmodule MetadataApp.MotorEstadosAdmin do
     end)
   end
 
-  defp validar_reglas(problemas, transiciones) do
+  defp validar_reglas(problemas, transiciones, catalogo) do
     Enum.reduce(transiciones, problemas, fn t, acc ->
-      Enum.reduce(t.reglas, acc, &validar_regla(&2, t, &1))
+      Enum.reduce(t.reglas, acc, &validar_regla(&2, t, &1, catalogo))
     end)
   end
 
-  defp validar_regla(problemas, transicion, regla) do
+  defp validar_regla(problemas, transicion, regla, catalogo) do
     case Map.get(@vocabulario, regla.regla) do
       nil ->
-        [
-          problema(:error, "transición \"#{transicion.accion}\": la regla \"#{regla.regla}\" no existe en el vocabulario del motor")
-          | problemas
-        ]
+        validar_regla_de_negocio(problemas, transicion, regla, catalogo)
 
       {tipo_esperado, params_requeridos} ->
         problemas
         |> validar_tipo_regla(transicion, regla, tipo_esperado)
         |> validar_params_regla(transicion, regla, params_requeridos)
+    end
+  end
+
+  # No está en el vocabulario cerrado — puede ser un módulo de negocio
+  # (convención NegocioReglas.<Catalogo>.<Regla>, ver Reglas.modulo_negocio/2).
+  # No se puede validar el CONTENIDO de un módulo Elixir libre sin
+  # ejecutarlo — esto solo confirma que existe y que implementa la función
+  # correcta, el mismo chequeo que corre el motor de verdad al despachar.
+  defp validar_regla_de_negocio(problemas, transicion, regla, catalogo) do
+    modulo = Reglas.modulo_negocio(catalogo, regla.regla)
+    {funcion, aridad} = if regla.tipo == "post", do: {:ejecutar, 4}, else: {:evaluar, 3}
+
+    cond do
+      not Code.ensure_loaded?(modulo) ->
+        [
+          problema(
+            :error,
+            "transición \"#{transicion.accion}\": la regla \"#{regla.regla}\" no existe en el vocabulario del motor ni como módulo de negocio (se esperaba #{inspect(modulo)})"
+          )
+          | problemas
+        ]
+
+      not function_exported?(modulo, funcion, aridad) ->
+        [
+          problema(:error, "transición \"#{transicion.accion}\": el módulo #{inspect(modulo)} existe pero no implementa #{funcion}/#{aridad}")
+          | problemas
+        ]
+
+      true ->
+        problemas
     end
   end
 
