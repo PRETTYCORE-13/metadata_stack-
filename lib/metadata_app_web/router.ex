@@ -32,6 +32,7 @@ defmodule MetadataAppWeb.Router do
     resources "/meta_schema_transicion_reglas", TransicionReglaController, only: [:index, :create]
 
     get "/catalogos/:tabla/impacto", CatalogoAdminController, :impacto
+    get "/catalogos/:tabla/validar_motor", CatalogoAdminController, :validar_motor
     delete "/catalogos/:tabla", CatalogoAdminController, :delete
 
     get "/:tabla/:id/transiciones", TransicionController, :index
