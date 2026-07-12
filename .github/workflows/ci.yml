@@ -70,7 +70,7 @@ jobs:
 
       - name: Verificar que no haya quedado nada sin commitear
         run: |
-          git status --porcelain lib/metadata_app/catalogos priv/repo/migrations priv/repo/metadata_export.json > /tmp/drift.txt
+          git status --porcelain lib/metadata_app/meta_business_process/catalogos priv/repo/migrations priv/repo/catalogos > /tmp/drift.txt
           if [ -s /tmp/drift.txt ]; then
             echo "La metadata versionada generó archivos que no están commiteados:"
             cat /tmp/drift.txt

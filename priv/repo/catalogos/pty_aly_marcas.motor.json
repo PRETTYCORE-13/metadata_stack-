@@ -1,0 +1,70 @@
+{
+  "catalogo": "pty_aly_marcas",
+  "estados": [
+    {
+      "color": null,
+      "nombre": "Alta",
+      "orden": 1,
+      "es_inicial": true,
+      "icono": null,
+      "empresa_id": null
+    },
+    {
+      "color": null,
+      "nombre": "Baja",
+      "orden": 2,
+      "es_inicial": false,
+      "icono": null,
+      "empresa_id": null
+    }
+  ],
+  "transiciones": [
+    {
+      "empresa_id": null,
+      "accion": "alta",
+      "etiqueta": "Alta",
+      "reglas": [],
+      "estado_destino": "Alta",
+      "estado_origen": null
+    },
+    {
+      "empresa_id": null,
+      "accion": "dar_de_baja",
+      "etiqueta": "Baja",
+      "reglas": [],
+      "estado_destino": "Baja",
+      "estado_origen": "Alta"
+    },
+    {
+      "empresa_id": null,
+      "accion": "guardar",
+      "etiqueta": "Guardar",
+      "reglas": [
+        {
+          "params": {},
+          "orden": 1,
+          "tipo": "pre",
+          "regla": "no_cocacola",
+          "transaccional": true
+        },
+        {
+          "params": {},
+          "orden": 1,
+          "tipo": "post",
+          "regla": "pepsi_es_lo_de_hoy",
+          "transaccional": true
+        }
+      ],
+      "estado_destino": "Alta",
+      "estado_origen": "Alta"
+    },
+    {
+      "empresa_id": null,
+      "accion": "reactivar",
+      "etiqueta": "Reactivar",
+      "reglas": [],
+      "estado_destino": "Alta",
+      "estado_origen": "Baja"
+    }
+  ]
+}

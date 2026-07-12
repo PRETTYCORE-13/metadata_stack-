@@ -1,0 +1,57 @@
+{
+  "schema_context_name": "pty_clientes",
+  "schema_context_label": "Clientes",
+  "schema_context_type": 1,
+  "schema_context_nav": "/catalogos/Clientes",
+  "schema_visible": true,
+  "schema_set_permissions": null,
+  "schema_profiles": null,
+  "detalles": [
+    {
+      "schema_context_field": "pty_clientes_nombre",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Nombre",
+        "longitud": 150,
+        "orden": 1,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "pty_clientes_edad",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Edad",
+        "longitud": 0,
+        "orden": 2,
+        "tipo": "integer",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "pty_clientes_venta",
+      "schema_context_properties": {
+        "editable": true,
+        "escala": 6,
+        "etiqueta": "Venta promedio del cliente",
+        "longitud": 0,
+        "orden": 2,
+        "precision": 20,
+        "tipo": "decimal",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "pty_clientes_fecha_baja",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Fecha de baja",
+        "opcional": true,
+        "orden": 4,
+        "tipo": "date",
+        "visible": true
+      }
+    }
+  ]
+}

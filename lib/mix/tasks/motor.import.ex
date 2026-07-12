@@ -3,18 +3,19 @@ defmodule Mix.Tasks.Motor.Import do
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaEstadosAdmin
 
-  @shortdoc "Importa el autómata (estados/transiciones/reglas) desde un JSON exportado con mix motor.export"
+  @shortdoc "Importa el autómata (estados/transiciones/reglas) desde priv/repo/catalogos/*.motor.json"
 
   @moduledoc """
-  Uso: mix motor.import [ruta_entrada]
+  Uso: mix motor.import [directorio_entrada]
 
-  Default: priv/repo/motor_export.json
+  Default: priv/repo/catalogos/
 
-  Recrea estados/transiciones/reglas resolviendo toda referencia por
-  NOMBRE, no por id (mismo motivo que `mix motor.export`). Idempotente: lo
-  que ya existe (mismo nombre de estado; misma acción+origen+destino de
-  transición; misma tipo+regla dentro de una transición) se deja sin
-  tocar, no se duplica ni se actualiza.
+  Recrea estados/transiciones/reglas leyendo cada `*.motor.json` del
+  directorio (uno por catálogo, ver `mix motor.export`), resolviendo toda
+  referencia por NOMBRE, no por id (mismo motivo que `mix motor.export`).
+  Idempotente: lo que ya existe (mismo nombre de estado; misma
+  acción+origen+destino de transición; misma tipo+regla dentro de una
+  transición) se deja sin tocar, no se duplica ni se actualiza.
 
   Requiere que el catálogo ya exista — correr después de `mix meta.import`
   + `mix gen.catalogos`, nunca antes (mismo orden que ya exige el resto del
@@ -24,8 +25,15 @@ defmodule Mix.Tasks.Motor.Import do
   def run(args) do
     Mix.Task.run("app.config")
 
-    path = List.first(args) || "priv/repo/motor_export.json"
-    %{"catalogos" => catalogos} = path |> File.read!() |> Jason.decode!()
+    dir = List.first(args) || "priv/repo/catalogos"
+    unless File.dir?(dir), do: Mix.raise("No existe el directorio #{dir}")
+
+    catalogos =
+      dir
+      |> File.ls!()
+      |> Enum.filter(&String.ends_with?(&1, ".motor.json"))
+      |> Enum.sort()
+      |> Enum.map(&(dir |> Path.join(&1) |> File.read!() |> Jason.decode!()))
 
     {:ok, _resultado, _apps} =
       Ecto.Migrator.with_repo(MetadataApp.Repo, fn _repo ->

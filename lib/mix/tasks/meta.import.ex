@@ -2,24 +2,32 @@ defmodule Mix.Tasks.Meta.Import do
   use Mix.Task
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
 
-  @shortdoc "Importa Business Contexts desde un JSON exportado con mix meta.export"
+  @shortdoc "Importa Business Contexts desde priv/repo/catalogos/*.meta.json"
 
   @moduledoc """
-  Uso: mix meta.import [ruta_entrada]
+  Uso: mix meta.import [directorio_entrada]
 
-  Default: priv/repo/metadata_export.json
+  Default: priv/repo/catalogos/
 
-  Crea el Header + Detalles de cada Business Context descripto en el JSON.
-  Si un `schema_context_name` ya existe en la base, se deja sin tocar (no
-  actualiza, no duplica). Es el paso previo a `mix gen.catalogos`: deja la
-  metadata cargada para que el generador pueda materializar los catálogos.
+  Crea el Header + Detalles de cada `*.meta.json` del directorio (uno por
+  catálogo, ver `mix meta.export`). Si un `schema_context_name` ya existe
+  en la base, se deja sin tocar (no actualiza, no duplica). Es el paso
+  previo a `mix gen.catalogos`, que deja la metadata cargada para que el
+  generador pueda materializar los catálogos.
   """
 
   def run(args) do
     Mix.Task.run("app.config")
 
-    path = List.first(args) || "priv/repo/metadata_export.json"
-    %{"business_contexts" => contextos} = path |> File.read!() |> Jason.decode!()
+    dir = List.first(args) || "priv/repo/catalogos"
+    unless File.dir?(dir), do: Mix.raise("No existe el directorio #{dir}")
+
+    contextos =
+      dir
+      |> File.ls!()
+      |> Enum.filter(&String.ends_with?(&1, ".meta.json"))
+      |> Enum.sort()
+      |> Enum.map(&(dir |> Path.join(&1) |> File.read!() |> Jason.decode!()))
 
     {:ok, _resultado, _apps} =
       Ecto.Migrator.with_repo(MetadataApp.Repo, fn _repo ->

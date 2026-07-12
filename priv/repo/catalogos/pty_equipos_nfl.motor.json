@@ -1,0 +1,47 @@
+{
+  "catalogo": "pty_equipos_nfl",
+  "estados": [
+    {
+      "color": null,
+      "nombre": "Activo",
+      "orden": 1,
+      "es_inicial": true,
+      "icono": null,
+      "empresa_id": null
+    },
+    {
+      "color": null,
+      "nombre": "Baja",
+      "orden": 2,
+      "es_inicial": false,
+      "icono": null,
+      "empresa_id": null
+    }
+  ],
+  "transiciones": [
+    {
+      "empresa_id": null,
+      "accion": "alta",
+      "etiqueta": "Registrar",
+      "reglas": [],
+      "estado_destino": "Activo",
+      "estado_origen": null
+    },
+    {
+      "empresa_id": null,
+      "accion": "baja",
+      "etiqueta": "Baja",
+      "reglas": [],
+      "estado_destino": "Baja",
+      "estado_origen": "Activo"
+    },
+    {
+      "empresa_id": null,
+      "accion": "reactivar",
+      "etiqueta": "Reactivar",
+      "reglas": [],
+      "estado_destino": "Activo",
+      "estado_origen": "Baja"
+    }
+  ]
+}
