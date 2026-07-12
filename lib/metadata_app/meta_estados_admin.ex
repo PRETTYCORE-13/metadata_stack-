@@ -35,7 +35,7 @@ defmodule MetadataApp.MetaEstadosAdmin do
   def listar_estados(meta_schema_header_id) do
     from(e in Estado,
       where: e.meta_schema_header_id == ^meta_schema_header_id and is_nil(e.delete_guid),
-      order_by: e.orden
+      order_by: [asc: e.orden, asc: e.id]
     )
     |> Repo.all()
   end
@@ -64,6 +64,7 @@ defmodule MetadataApp.MetaEstadosAdmin do
   def listar_transiciones(meta_schema_header_id) do
     from(t in Transicion,
       where: t.meta_schema_header_id == ^meta_schema_header_id and is_nil(t.delete_guid),
+      order_by: [asc: t.accion, asc: t.id],
       preload: [reglas: ^reglas_query()]
     )
     |> Repo.all()
@@ -321,12 +322,12 @@ defmodule MetadataApp.MetaEstadosAdmin do
     :ok
   end
 
-  defp reglas_query, do: from(r in TransicionRegla, where: is_nil(r.delete_guid), order_by: r.orden)
+  defp reglas_query, do: from(r in TransicionRegla, where: is_nil(r.delete_guid), order_by: [asc: r.orden, asc: r.id])
 
   defp reglas_de_transicion_query(transicion_id) do
     from r in TransicionRegla,
       where: r.transicion_id == ^transicion_id and is_nil(r.delete_guid),
-      order_by: r.orden
+      order_by: [asc: r.orden, asc: r.id]
   end
 
   defp generar_guid do

@@ -4,8 +4,12 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Detail
   import Ecto.Query
 
+  # order_by explícito a propósito: sin esto Postgres no garantiza el orden
+  # de las filas devueltas, y mix meta.export terminaba produciendo diffs
+  # sin sentido (el archivo entero "cambiaba" de orden) sin ningún cambio
+  # real en la base.
   def listar_headers do
-    from(h in Header, where: is_nil(h.delete_guid))
+    from(h in Header, where: is_nil(h.delete_guid), order_by: h.schema_context_name)
     |> Repo.all()
   end
 
@@ -196,7 +200,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
       where: h.schema_context_name == ^schema_context_name,
       where: is_nil(d.delete_guid),
       where: is_nil(h.delete_guid),
-      order_by: [asc: fragment("(?->>'orden')::integer", d.schema_context_properties)]
+      order_by: [asc: fragment("(?->>'orden')::integer", d.schema_context_properties), asc: d.id]
     )
     |> Repo.all()
   end
