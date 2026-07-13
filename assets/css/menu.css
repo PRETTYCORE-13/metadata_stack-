@@ -44,6 +44,41 @@
   background: #6d28d9;
 }
 
+/* ---- BREADCRUMB (estilo CloudWatch: "AppName > Carpeta > Página") ---- */
+.pc-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: #fafafa;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 8px 24px;
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.pc-breadcrumb-home {
+  color: #6b7280;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.pc-breadcrumb-home:hover {
+  color: #111827;
+}
+
+.pc-breadcrumb-sep {
+  width: 12px;
+  height: 12px;
+  color: #9ca3af;
+  flex-shrink: 0;
+}
+
+.pc-breadcrumb-item {
+  color: #111827;
+  font-weight: 600;
+}
+
 /* Fila sidebar + contenido */
 .pc-platform-row {
   display: flex;
@@ -117,7 +152,23 @@
 .pc-sidebar-brand {
   display: flex;
   align-items: center;
+  gap: 10px;
   min-width: 0;
+}
+
+.pc-sidebar-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #111827;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.pc-platform-sidebar-open .pc-sidebar-title {
+  opacity: 1;
 }
 
 .pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-header {
@@ -128,6 +179,11 @@
 
 .pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-brand {
   justify-content: center;
+}
+
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-title {
+  width: 0;
+  overflow: hidden;
 }
 
 /* Logo gota morada - siempre visible */
@@ -206,19 +262,23 @@
   gap: 2px;
 }
 
-/* ---- NAV ITEM ---- */
+/* ---- NAV ITEM (página hoja, estilo lista plana CloudWatch) ---- */
 .pc-nav-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: none;
+  gap: 8px;
+  padding: 7px 12px;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+  border-right: none;
+  border-top: none;
+  border-bottom: none;
   background: transparent;
-  color: #374151;
+  color: #4b5563;
   cursor: pointer;
   text-decoration: none;
-  transition: background 0.15s ease, color 0.15s ease;
+  font-size: 14px;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
   position: relative;
 }
 
@@ -227,13 +287,18 @@
   color: #111827;
 }
 
-/* Activo */
+/* Activo: borde de acento a la izquierda + fondo tenue, como el ítem
+   seleccionado en la nav de CloudWatch (ahí es azul; acá usamos el morado
+   de marca de la app en vez de recolorear todo a la paleta de AWS). */
 .pc-nav-item-active {
-  background: #f3f4f6;
-  color: #111827;
+  background: #f5f3ff;
+  color: #6d28d9;
+  border-left-color: #7c3aed;
+  font-weight: 600;
 }
 
-/* ---- MENÚ EN ÁRBOL (carpetas estilo explorador) ---- */
+/* ---- MENÚ EN ÁRBOL (secciones estilo CloudWatch: título en negritas +
+   flecha, sin icono de carpeta) ---- */
 .pc-menu-carpeta {
   margin-bottom: 2px;
 }
@@ -241,13 +306,13 @@
 .pc-menu-carpeta-summary {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
   cursor: pointer;
-  color: #374151;
-  font-weight: 500;
-  font-size: 14px;
+  color: #111827;
+  font-weight: 700;
+  font-size: 13px;
   list-style: none;
   transition: background 0.15s ease, color 0.15s ease;
 }
@@ -258,16 +323,115 @@
 
 .pc-menu-carpeta-summary:hover {
   background: #f3f4f6;
-  color: #111827;
 }
 
 .pc-menu-carpeta-icono-flecha {
   transition: transform 0.15s ease;
   flex-shrink: 0;
+  color: #6b7280;
 }
 
 .pc-menu-carpeta[open] > .pc-menu-carpeta-summary .pc-menu-carpeta-icono-flecha {
   transform: rotate(90deg);
+}
+
+/* Ícono de carpeta: oculto en el menú expandido (ahí la sección ya se lee
+   por el texto en negritas, estilo CloudWatch); visible en el riel
+   colapsado, donde si no hay ningún ícono la fila se ve vacía y no invita
+   a abrir el menú. */
+.pc-menu-carpeta-icono-carpeta {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-menu-carpeta-icono-carpeta {
+  display: flex;
+}
+
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-menu-carpeta-icono-flecha {
+  display: none;
+}
+
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-menu-carpeta-summary {
+  justify-content: center;
+  padding: 8px !important;
+}
+
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-menu-carpeta-summary > span.truncate {
+  display: none;
+}
+
+/* Colapsado, cada carpeta es solo su fila-ícono — el contenido de adentro
+   (subcarpetas, páginas) se queda oculto hasta expandir el sidebar entero.
+   Si no se ocultara, una carpeta abierta (porque contiene la página activa)
+   dejaría ver sus hijas apiladas ahí mismo, con su propio padding-left de
+   anidación pisando el centrado — se veían íconos superpuestos, como una
+   llave "{" en vez de carpetas limpias. */
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-menu-carpeta > :not(summary) {
+  display: none;
+}
+
+/* La búsqueda no cabe útilmente en 68px — se oculta colapsado. */
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-search {
+  display: none;
+}
+
+/* ---- NAV LABEL ---- */
+.pc-nav-label {
+  font-size: 14px;
+  font-weight: inherit;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.pc-platform-sidebar-open .pc-nav-label {
+  opacity: 1;
+}
+
+/* ---- FAVORITOS Y RECIENTES ---- */
+.pc-recientes-carpeta {
+  margin-bottom: 8px;
+}
+
+.pc-recientes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 24px;
+}
+
+.pc-recientes-item {
+  display: block;
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: #4b5563;
+  font-size: 13px;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pc-recientes-item:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.pc-recientes-empty {
+  padding: 6px 12px;
+  color: #9ca3af;
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* "Favoritos y recientes" solo tiene sentido con el sidebar expandido —
+   colapsado (68px, modo riel de iconos) no hay espacio para la lista. */
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-recientes-carpeta {
+  display: none;
 }
 
 /* ---- NAV ICON ---- */
@@ -286,21 +450,10 @@
   color: inherit;
 }
 
-/* ---- NAV LABEL ---- */
-.pc-nav-label {
-  font-size: 14px;
-  font-weight: 400;
-  white-space: nowrap;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-
-.pc-platform-sidebar-open .pc-nav-label {
-  opacity: 1;
-}
-
-.pc-nav-item-active .pc-nav-label {
-  font-weight: 500;
+/* Expandido: lista plana solo con texto, estilo CloudWatch. Colapsado (68px)
+   el ícono vuelve a ser lo único visible — es el riel de acceso rápido. */
+.pc-platform-sidebar-open .pc-nav-icon {
+  display: none;
 }
 
 /* Sidebar cerrado: ocultar labels */
@@ -580,6 +733,8 @@
 
   /* Corregir estilos colapsados de desktop cuando sidebar está visible en móvil */
   .pc-platform-sidebar.pc-sidebar-visible .pc-sidebar-drop-logo { width: 40px; height: 40px; }
+  .pc-platform-sidebar.pc-sidebar-visible .pc-sidebar-title { opacity: 1; width: auto; overflow: visible; }
+  .pc-platform-sidebar.pc-sidebar-visible .pc-nav-icon { display: none; }
   .pc-platform-sidebar.pc-sidebar-visible .pc-sidebar-header {
     flex-direction: row;
     align-items: center;

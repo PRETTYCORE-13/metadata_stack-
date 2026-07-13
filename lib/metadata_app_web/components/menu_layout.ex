@@ -21,7 +21,14 @@ defmodule MetadataAppWeb.MenuLayout do
   slot :inner_block, required: true
 
   def sidebar(assigns) do
-    assigns = assign(assigns, :menu_items, assigns.menu_items || MetadataApp.BusinessProcessBuilder.MetaSchemaContext.listar_menu_arbol())
+    assigns =
+      assigns
+      |> assign(:menu_items, assigns.menu_items || MetadataApp.BusinessProcessBuilder.MetaSchemaContext.listar_menu_arbol())
+
+    assigns =
+      assigns
+      |> assign(:migas, ruta_migas(assigns.menu_items, assigns.current_page) || [])
+      |> assign(:nodo_actual, buscar_nodo_actual(assigns.menu_items, assigns.current_page))
 
     ~H"""
     <div class="pc-platform">
@@ -52,6 +59,16 @@ defmodule MetadataAppWeb.MenuLayout do
           Iniciar sesión
         </.link>
       </div>
+      <!-- Migas de pan: dónde estás parado, estilo CloudWatch -->
+      <div class="pc-breadcrumb">
+        <.link navigate="/" class="pc-breadcrumb-home">MetadataApp</.link>
+        <%= for miga <- @migas do %>
+          <svg class="pc-breadcrumb-sep" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+          <span class="pc-breadcrumb-item">{miga}</span>
+        <% end %>
+      </div>
       <!-- Fila: Sidebar + Contenido -->
       <div class="pc-platform-row">
         <!-- Mobile overlay -->
@@ -77,6 +94,7 @@ defmodule MetadataAppWeb.MenuLayout do
                 alt="MetadataApp"
                 class="pc-sidebar-drop-logo"
               />
+              <span class="pc-sidebar-title">MetadataApp</span>
             </div>
             <!-- Cerrar sidebar: solo visible en móvil -->
             <button type="button" class="pc-sidebar-close-mobile" phx-click={mobile_close_js()}>
@@ -105,9 +123,7 @@ defmodule MetadataAppWeb.MenuLayout do
         <!-- CUERPO DEL MENÚ -->
         <div class="pc-sidebar-body">
           <div>
-            <!-- SECCIÓN: MENÚ -->
-            <div class="pc-sidebar-section-label">Menú</div>
-            <div class="px-3 pb-2">
+            <div class="px-3 pb-2 pt-3 pc-sidebar-search">
               <input
                 type="text"
                 id="filtro-menu"
@@ -117,6 +133,30 @@ defmodule MetadataAppWeb.MenuLayout do
                 class="w-full text-sm border border-gray-300 rounded-lg px-3 py-1.5 text-gray-900"
               />
             </div>
+
+            <!-- FAVORITOS Y RECIENTES: últimas páginas visitadas, guardadas en
+                 el navegador (localStorage) — estilo CloudWatch. El marcador
+                 oculto le pasa al hook la página actual en cada navegación
+                 para que la registre. -->
+            <details class="pc-menu-carpeta pc-recientes-carpeta">
+              <summary class="pc-menu-carpeta-summary">
+                <svg class="pc-menu-carpeta-icono-flecha w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+                <span class="truncate">Favoritos y recientes</span>
+              </summary>
+              <div id="pc-recientes-list" class="pc-recientes-list" phx-update="ignore">
+                <p class="pc-recientes-empty">Sin páginas recientes todavía</p>
+              </div>
+            </details>
+            <span
+              id="pc-current-nav-marker"
+              phx-hook="RecientesMenu"
+              data-nav={@nodo_actual && @nodo_actual.nav}
+              data-label={@nodo_actual && @nodo_actual.label}
+              style="display:none"
+            ></span>
+
             <nav class="pc-sidebar-nav">
               <.menu_nodos nodos={@menu_items} current_page={@current_page} />
             </nav>
@@ -277,9 +317,11 @@ defmodule MetadataAppWeb.MenuLayout do
             <svg class="pc-menu-carpeta-icono-flecha w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="9 18 15 12 9 6" />
             </svg>
-            <svg class="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
-            </svg>
+            <span class="pc-menu-carpeta-icono-carpeta">
+              <svg class="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+              </svg>
+            </span>
             <span class="truncate">{nodo.nombre}</span>
           </summary>
           <.menu_nodos nodos={nodo.hijos} current_page={@current_page} nivel={@nivel + 1} />
@@ -305,6 +347,35 @@ defmodule MetadataAppWeb.MenuLayout do
 
   defp contiene_activo?(%{tipo: :carpeta, hijos: hijos}, current_page),
     do: Enum.any?(hijos, &contiene_activo?(&1, current_page))
+
+  # Migas de pan para la barra bajo el topbar: nombres de las carpetas
+  # atravesadas hasta la página activa, en orden. nil si la página activa no
+  # está en el árbol (ej. ruta no encontrada).
+  defp ruta_migas(nodos, current_page) do
+    Enum.find_value(nodos, fn
+      %{tipo: :pagina, id: id, label: label} when id == current_page ->
+        [label]
+
+      %{tipo: :carpeta, nombre: nombre, hijos: hijos} ->
+        case ruta_migas(hijos, current_page) do
+          nil -> nil
+          resto -> [nombre | resto]
+        end
+
+      _ ->
+        nil
+    end)
+  end
+
+  # Nodo de la página activa (label + nav) — se lo pasamos al hook de
+  # "Favoritos y recientes" para que sepa qué registrar.
+  defp buscar_nodo_actual(nodos, current_page) do
+    Enum.find_value(nodos, fn
+      %{tipo: :pagina, id: id} = nodo when id == current_page -> nodo
+      %{tipo: :carpeta, hijos: hijos} -> buscar_nodo_actual(hijos, current_page)
+      _ -> nil
+    end)
+  end
 
   ## ICONOS — outline style
   attr :name, :string, required: true
