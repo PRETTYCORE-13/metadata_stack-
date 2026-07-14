@@ -68,6 +68,24 @@ defmodule MetadataAppWeb.MenuLayout do
           </svg>
           <span class="pc-breadcrumb-item">{miga}</span>
         <% end %>
+        <%= if @nodo_actual do %>
+          <button
+            type="button"
+            id="pc-breadcrumb-copiar"
+            phx-hook="CopiarRuta"
+            data-nav={@nodo_actual.nav}
+            class="pc-breadcrumb-copiar"
+            title="Copiar la ruta de esta página"
+          >
+            <svg class="pc-breadcrumb-copiar-icono-copiar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="12" height="12" rx="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+            <svg class="pc-breadcrumb-copiar-icono-listo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </button>
+        <% end %>
       </div>
       <!-- Fila: Sidebar + Contenido -->
       <div class="pc-platform-row">
@@ -129,7 +147,7 @@ defmodule MetadataAppWeb.MenuLayout do
                 id="filtro-menu"
                 phx-hook="FiltroMenu"
                 phx-update="ignore"
-                placeholder="Buscar en el menú..."
+                placeholder="Buscar o pegar una ruta..."
                 class="w-full text-sm border border-gray-300 rounded-lg px-3 py-1.5 text-gray-900"
               />
             </div>

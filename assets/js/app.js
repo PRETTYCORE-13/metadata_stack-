@@ -104,9 +104,41 @@ const RedimensionarSidebar = {
 // se abre sola para que se vea.
 const FiltroMenu = {
   mounted() {
-    this.el.addEventListener("input", (e) => this.filtrar(e.target.value))
+    this.el.addEventListener("input", (e) => this.filtrar(e.target.value, e.target))
   },
-  filtrar(query) {
+  // Si lo que hay en la caja es exactamente la ruta de una página real (por
+  // ejemplo pegando lo que copiaste con el botón de las migas de pan), en
+  // vez de filtrar por texto navega directo para allá — clickeamos el link
+  // real para que LiveView haga su navegación normal (misma lógica que si
+  // el usuario le diera clic).
+  intentarNavegarPorRuta(query, elemento) {
+    const q = query.trim()
+    if (!q.startsWith("/")) return false
+
+    let candidato = q
+    if (candidato.includes("://")) {
+      try {
+        candidato = new URL(candidato).pathname
+      } catch (_e) {
+        // No era una URL válida — se sigue tratando como ruta tal cual.
+      }
+    }
+
+    const nav = document.querySelector(".pc-sidebar-nav")
+    if (!nav) return false
+
+    const coincidencia = Array.from(nav.querySelectorAll(".pc-nav-item[href]")).find(
+      (item) => item.getAttribute("href") === candidato
+    )
+    if (!coincidencia) return false
+
+    elemento.value = ""
+    coincidencia.click()
+    return true
+  },
+  filtrar(query, elemento) {
+    if (elemento && this.intentarNavegarPorRuta(query, elemento)) return
+
     const nav = document.querySelector(".pc-sidebar-nav")
     if (!nav) return
     const q = query.trim().toLowerCase()
@@ -148,6 +180,27 @@ const FiltroMenu = {
       } else {
         carpeta.style.display = "none"
       }
+    })
+  },
+}
+
+// Botón de copiar en las migas de pan — copia la ruta real de la página
+// activa (ej. "/electronica/computo/perifericos/mouses") al portapapeles,
+// para pegarla en la barra de búsqueda (ver FiltroMenu.intentarNavegarPorRuta)
+// o compartirla. data-nav se repatchea en cada navegación (no tiene
+// phx-update="ignore"), así que siempre lee la ruta más reciente al hacer
+// clic, sin necesitar un hook nuevo por cada página visitada.
+const CopiarRuta = {
+  mounted() {
+    this.el.addEventListener("click", () => this.copiar())
+  },
+  copiar() {
+    const nav = this.el.dataset.nav
+    if (!nav) return
+    navigator.clipboard.writeText(nav).then(() => {
+      this.el.classList.add("pc-breadcrumb-copiado")
+      clearTimeout(this._timeout)
+      this._timeout = setTimeout(() => this.el.classList.remove("pc-breadcrumb-copiado"), 1200)
     })
   },
 }
@@ -212,7 +265,7 @@ const RecientesMenu = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, AbrirVentana, FiltroMenu, RedimensionarSidebar, RecientesMenu},
+  hooks: {...colocatedHooks, AbrirVentana, FiltroMenu, RedimensionarSidebar, RecientesMenu, CopiarRuta},
 })
 
 // La pantalla que se abre en la ventana emergente (ej. BC Nuevo) dispara este

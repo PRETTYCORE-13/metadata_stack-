@@ -79,6 +79,51 @@
   font-weight: 600;
 }
 
+/* ---- COPIAR RUTA (botón al final de las migas de pan) ---- */
+.pc-breadcrumb-copiar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: 4px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pc-breadcrumb-copiar:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.pc-breadcrumb-copiar-icono-copiar,
+.pc-breadcrumb-copiar-icono-listo {
+  width: 14px;
+  height: 14px;
+}
+
+.pc-breadcrumb-copiar-icono-listo {
+  display: none;
+}
+
+.pc-breadcrumb-copiar.pc-breadcrumb-copiado {
+  color: #16a34a;
+}
+
+.pc-breadcrumb-copiar.pc-breadcrumb-copiado .pc-breadcrumb-copiar-icono-copiar {
+  display: none;
+}
+
+.pc-breadcrumb-copiar.pc-breadcrumb-copiado .pc-breadcrumb-copiar-icono-listo {
+  display: block;
+}
+
 /* Fila sidebar + contenido */
 .pc-platform-row {
   display: flex;
