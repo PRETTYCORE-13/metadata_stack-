@@ -1,0 +1,3 @@
+defmodule MetadataApp.MetaBusinessProcess.Catalogos.PtyMotocicletas do
+  use MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico, tabla: "pty_motocicletas", campos: [{:pty_motocicletas_nombre, :string, %{formato: nil, longitud: 25, opcional: false}}, {:pty_motocicletas_marca, :string, %{formato: nil, longitud: 15, opcional: false}}, {:pty_motocicletas_numero_cilindros, :integer, %{opcional: false, maximo: nil, minimo: nil}}, {:pty_motocicletas_tipo, :string, %{formato: nil, longitud: 20, opcional: false}}, {:pty_motocicletas_anio, :date, %{opcional: false}}, {:pty_motocicletas_numero_placas, :string, %{formato: nil, longitud: 10, opcional: false}}]
+end

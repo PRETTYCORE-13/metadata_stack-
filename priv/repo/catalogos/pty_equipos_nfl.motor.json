@@ -1,47 +1,50 @@
 {
-  "catalogo": "pty_equipos_nfl",
   "estados": [
     {
       "color": null,
-      "nombre": "Activo",
-      "orden": 1,
       "es_inicial": true,
+      "nombre": "Activo",
+      "empresa_id": null,
       "icono": null,
-      "empresa_id": null
+      "orden": 1
     },
     {
       "color": null,
-      "nombre": "Baja",
-      "orden": 2,
       "es_inicial": false,
+      "nombre": "Baja",
+      "empresa_id": null,
       "icono": null,
-      "empresa_id": null
+      "orden": 2
     }
   ],
   "transiciones": [
     {
-      "empresa_id": null,
+      "reglas": [],
+      "campos_editables": [],
       "accion": "alta",
-      "etiqueta": "Registrar",
-      "reglas": [],
+      "empresa_id": null,
       "estado_destino": "Activo",
-      "estado_origen": null
+      "estado_origen": null,
+      "etiqueta": "Registrar"
     },
     {
-      "empresa_id": null,
+      "reglas": [],
+      "campos_editables": [],
       "accion": "baja",
-      "etiqueta": "Baja",
-      "reglas": [],
+      "empresa_id": null,
       "estado_destino": "Baja",
-      "estado_origen": "Activo"
+      "estado_origen": "Activo",
+      "etiqueta": "Baja"
     },
     {
-      "empresa_id": null,
-      "accion": "reactivar",
-      "etiqueta": "Reactivar",
       "reglas": [],
+      "campos_editables": [],
+      "accion": "reactivar",
+      "empresa_id": null,
       "estado_destino": "Activo",
-      "estado_origen": "Baja"
+      "estado_origen": "Baja",
+      "etiqueta": "Reactivar"
     }
-  ]
+  ],
+  "catalogo": "pty_equipos_nfl"
 }
