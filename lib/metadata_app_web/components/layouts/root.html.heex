@@ -8,6 +8,15 @@
       {assigns[:page_title]}
     </.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
+    <!-- Material Symbols (Google Icons) — íconos configurables por catálogo
+         desde BC Nuevo (schema_context_icono), usados en el riel colapsado
+         del menú. display=swap evita bloquear el render mientras carga. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap"
+    />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>
     <script>

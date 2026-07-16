@@ -205,67 +205,10 @@ const CopiarRuta = {
   },
 }
 
-// "Favoritos y recientes" del menú (estilo CloudWatch) — el marcador oculto
-// #pc-current-nav-marker trae la página activa en sus data-attributes y
-// LiveView lo repatcha en cada navegación (no tiene phx-update="ignore"),
-// así que updated() dispara en cada cambio de página. La lista en sí
-// (#pc-recientes-list) sí es phx-update="ignore": el servidor no sabe qué
-// hay en localStorage, así que solo la pinta vacía una vez y de ahí en
-// adelante el hook es el único dueño de su contenido.
-const LLAVE_RECIENTES = "pc-recientes"
-const MAX_RECIENTES = 6
-
-const RecientesMenu = {
-  mounted() {
-    this.registrar()
-    this.pintar()
-  },
-  updated() {
-    this.registrar()
-    this.pintar()
-  },
-  registrar() {
-    const nav = this.el.dataset.nav
-    const label = this.el.dataset.label
-    if (!nav || !label) return
-
-    let lista = JSON.parse(localStorage.getItem(LLAVE_RECIENTES) || "[]")
-    lista = lista.filter((item) => item.nav !== nav)
-    lista.unshift({nav, label})
-    lista = lista.slice(0, MAX_RECIENTES)
-    localStorage.setItem(LLAVE_RECIENTES, JSON.stringify(lista))
-  },
-  pintar() {
-    const cont = document.querySelector("#pc-recientes-list")
-    if (!cont) return
-
-    const lista = JSON.parse(localStorage.getItem(LLAVE_RECIENTES) || "[]")
-    cont.innerHTML = ""
-
-    if (lista.length === 0) {
-      const p = document.createElement("p")
-      p.className = "pc-recientes-empty"
-      p.textContent = "Sin páginas recientes todavía"
-      cont.appendChild(p)
-      return
-    }
-
-    // Nodos de texto (no innerHTML con strings interpolados) para que un
-    // label con caracteres raros no pueda inyectar HTML.
-    lista.forEach((item) => {
-      const a = document.createElement("a")
-      a.href = item.nav
-      a.className = "pc-recientes-item"
-      a.textContent = item.label
-      cont.appendChild(a)
-    })
-  },
-}
-
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, AbrirVentana, FiltroMenu, RedimensionarSidebar, RecientesMenu, CopiarRuta},
+  hooks: {...colocatedHooks, AbrirVentana, FiltroMenu, RedimensionarSidebar, CopiarRuta},
 })
 
 // La pantalla que se abre en la ventana emergente (ej. BC Nuevo) dispara este

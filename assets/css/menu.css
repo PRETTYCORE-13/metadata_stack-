@@ -2,6 +2,26 @@
    PRETTYCORE SIDEBAR — eevo-style dark
    ======================================== */
 
+/* ---- MATERIAL SYMBOLS (Google Icons) ----
+   Sin esto el navegador pinta el nombre del ícono como texto plano (ej.
+   "inventory_2") en vez del glyph mientras carga la fuente variable, o si
+   el <link> de Google Fonts no cargó. font-variation-settings define
+   grosor/relleno consistente sin necesitar clases de utilidad aparte. */
+.material-symbols-outlined {
+  font-family: "Material Symbols Outlined";
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  display: inline-block;
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+}
+
 /* Layout */
 .pc-platform {
   display: flex;
@@ -391,6 +411,10 @@
   flex-shrink: 0;
 }
 
+.pc-menu-carpeta-icono-carpeta .material-symbols-outlined {
+  font-size: 18px;
+}
+
 .pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-menu-carpeta-icono-carpeta {
   display: flex;
 }
@@ -436,49 +460,6 @@
   opacity: 1;
 }
 
-/* ---- FAVORITOS Y RECIENTES ---- */
-.pc-recientes-carpeta {
-  margin-bottom: 8px;
-}
-
-.pc-recientes-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding-left: 24px;
-}
-
-.pc-recientes-item {
-  display: block;
-  padding: 6px 12px;
-  border-radius: 6px;
-  color: #4b5563;
-  font-size: 13px;
-  text-decoration: none;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.pc-recientes-item:hover {
-  background: #f3f4f6;
-  color: #111827;
-}
-
-.pc-recientes-empty {
-  padding: 6px 12px;
-  color: #9ca3af;
-  font-size: 12px;
-  font-style: italic;
-}
-
-/* "Favoritos y recientes" solo tiene sentido con el sidebar expandido —
-   colapsado (68px, modo riel de iconos) no hay espacio para la lista. */
-.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-recientes-carpeta {
-  display: none;
-}
-
 /* ---- NAV ICON ---- */
 .pc-nav-icon {
   display: flex;
@@ -492,6 +473,11 @@
 .pc-nav-icon svg {
   width: 32px;
   height: 32px;
+  color: inherit;
+}
+
+.pc-nav-icon .material-symbols-outlined {
+  font-size: 26px;
   color: inherit;
 }
 

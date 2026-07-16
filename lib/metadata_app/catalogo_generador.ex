@@ -289,6 +289,7 @@ defmodule MetadataApp.CatalogoGenerador do
     end
     """
 
+
     File.write!(path, contenido)
   end
 

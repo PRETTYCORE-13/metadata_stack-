@@ -49,6 +49,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
       label: h.schema_context_label,
       nav: h.schema_context_nav,
       visible: h.schema_visible,
+      icono: h.schema_context_icono,
       es_carpeta: h.schema_context_type == 2
     }
   end
@@ -62,7 +63,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     items
     |> Enum.reduce(%{}, fn item, arbol ->
       if item.es_carpeta do
-        insertar_carpeta_explicita(arbol, segmentos(item.nav), item.label)
+        insertar_carpeta_explicita(arbol, segmentos(item.nav), item.label, item[:icono])
       else
         insertar_en_arbol(arbol, segmentos_con_carpeta(item), item)
       end
@@ -106,20 +107,21 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   # Una carpeta explícita (registro tipo :carpeta) recorre/crea cada nivel
   # de su nav igual que insertar_en_arbol/3, pero en el nivel final no deja
   # una página — le pone su propio label como nombre "bonito" de esa
-  # carpeta, en vez del segmento crudo de la URL.
-  defp insertar_carpeta_explicita(mapa, [], _label), do: mapa
+  # carpeta (y su ícono, si tiene uno configurado), en vez del segmento
+  # crudo de la URL.
+  defp insertar_carpeta_explicita(mapa, [], _label, _icono), do: mapa
 
-  defp insertar_carpeta_explicita(mapa, [ultimo], label) do
-    Map.update(mapa, {:carpeta, ultimo}, %{nombre: label, hijos: %{}}, fn nodo ->
-      %{nodo | nombre: label}
+  defp insertar_carpeta_explicita(mapa, [ultimo], label, icono) do
+    Map.update(mapa, {:carpeta, ultimo}, %{nombre: label, icono: icono, hijos: %{}}, fn nodo ->
+      %{nodo | nombre: label, icono: icono}
     end)
   end
 
-  defp insertar_carpeta_explicita(mapa, [seg | resto], label) do
-    nodo_default = %{nombre: nil, hijos: insertar_carpeta_explicita(%{}, resto, label)}
+  defp insertar_carpeta_explicita(mapa, [seg | resto], label, icono) do
+    nodo_default = %{nombre: nil, icono: nil, hijos: insertar_carpeta_explicita(%{}, resto, label, icono)}
 
     Map.update(mapa, {:carpeta, seg}, nodo_default, fn nodo ->
-      %{nodo | hijos: insertar_carpeta_explicita(nodo.hijos, resto, label)}
+      %{nodo | hijos: insertar_carpeta_explicita(nodo.hijos, resto, label, icono)}
     end)
   end
 
@@ -129,8 +131,14 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
       {{:pagina, _clave}, item} ->
         Map.put(item, :tipo, :pagina)
 
-      {{:carpeta, segmento}, %{nombre: nombre, hijos: hijos}} ->
-        %{tipo: :carpeta, segmento: segmento, nombre: nombre || segmento, hijos: mapa_a_lista_ordenada(hijos)}
+      {{:carpeta, segmento}, nodo} ->
+        %{
+          tipo: :carpeta,
+          segmento: segmento,
+          nombre: nodo.nombre || segmento,
+          icono: Map.get(nodo, :icono),
+          hijos: mapa_a_lista_ordenada(nodo.hijos)
+        }
     end)
     |> Enum.sort_by(fn
       %{tipo: :carpeta, nombre: nombre} -> {0, nombre}

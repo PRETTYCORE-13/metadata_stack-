@@ -152,29 +152,6 @@ defmodule MetadataAppWeb.MenuLayout do
               />
             </div>
 
-            <!-- FAVORITOS Y RECIENTES: últimas páginas visitadas, guardadas en
-                 el navegador (localStorage) — estilo CloudWatch. El marcador
-                 oculto le pasa al hook la página actual en cada navegación
-                 para que la registre. -->
-            <details class="pc-menu-carpeta pc-recientes-carpeta">
-              <summary class="pc-menu-carpeta-summary">
-                <svg class="pc-menu-carpeta-icono-flecha w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="9 18 15 12 9 6" />
-                </svg>
-                <span class="truncate">Favoritos y recientes</span>
-              </summary>
-              <div id="pc-recientes-list" class="pc-recientes-list" phx-update="ignore">
-                <p class="pc-recientes-empty">Sin páginas recientes todavía</p>
-              </div>
-            </details>
-            <span
-              id="pc-current-nav-marker"
-              phx-hook="RecientesMenu"
-              data-nav={@nodo_actual && @nodo_actual.nav}
-              data-label={@nodo_actual && @nodo_actual.label}
-              style="display:none"
-            ></span>
-
             <nav class="pc-sidebar-nav">
               <.menu_nodos nodos={@menu_items} current_page={@current_page} />
             </nav>
@@ -336,9 +313,13 @@ defmodule MetadataAppWeb.MenuLayout do
               <polyline points="9 18 15 12 9 6" />
             </svg>
             <span class="pc-menu-carpeta-icono-carpeta">
-              <svg class="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
-              </svg>
+              <%= if Map.get(nodo, :icono) not in [nil, ""] do %>
+                <span class="material-symbols-outlined">{nodo.icono}</span>
+              <% else %>
+                <svg class="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+                </svg>
+              <% end %>
             </span>
             <span class="truncate">{nodo.nombre}</span>
           </summary>
@@ -351,7 +332,7 @@ defmodule MetadataAppWeb.MenuLayout do
           class={menu_item_class(menu_active?(nodo.id, @current_page))}
           style={"padding-left: #{12 + @nivel * 16}px"}
         >
-          <span class="pc-nav-icon"><.pc_icon name={nodo.id} /></span>
+          <span class="pc-nav-icon"><.pc_icon name={nodo.id} icono={Map.get(nodo, :icono)} /></span>
           <span class="pc-nav-label">{nodo.label}</span>
         </.link>
       <% end %>
@@ -395,35 +376,44 @@ defmodule MetadataAppWeb.MenuLayout do
     end)
   end
 
-  ## ICONOS — outline style
+  ## ICONOS — outline style. Si el catálogo tiene un ícono de Material
+  # Symbols configurado (schema_context_icono, elegido en BC Nuevo desde
+  # fonts.google.com/icons), ese manda sobre todo lo demás. Si no, cae a los
+  # íconos fijos de siempre (por nombre) y, en último caso, a un círculo
+  # genérico.
   attr :name, :string, required: true
+  attr :icono, :string, default: nil
 
   def pc_icon(assigns) do
     ~H"""
-    <%= case @name do %>
-      <% "inicio" -> %>
-        <img src="/images/inicio.png" class="w-8 h-8 object-contain" />
-      <% "tienda" -> %>
-        <img src="/images/tienda.png" class="w-8 h-8 object-contain" />
-      <% "pedidos" -> %>
-        <img src="/images/pedidos.png" class="w-8 h-8 object-contain" />
-      <% "usuarios" -> %>
-        <img src="/images/usuarios.png" class="w-8 h-8 object-contain" />
-      <% "disenador" -> %>
-        <svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="18" height="18" rx="2" />
-          <path d="M3 9h18M9 21V9" />
-        </svg>
-      <% "logout" -> %>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-          <polyline points="16 17 21 12 16 7" />
-          <line x1="21" y1="12" x2="9" y2="12" />
-        </svg>
-      <% _ -> %>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width: 16px; height: 16px;">
-          <circle cx="12" cy="12" r="8" />
-        </svg>
+    <%= if @icono not in [nil, ""] do %>
+      <span class="material-symbols-outlined">{@icono}</span>
+    <% else %>
+      <%= case @name do %>
+        <% "inicio" -> %>
+          <img src="/images/inicio.png" class="w-8 h-8 object-contain" />
+        <% "tienda" -> %>
+          <img src="/images/tienda.png" class="w-8 h-8 object-contain" />
+        <% "pedidos" -> %>
+          <img src="/images/pedidos.png" class="w-8 h-8 object-contain" />
+        <% "usuarios" -> %>
+          <img src="/images/usuarios.png" class="w-8 h-8 object-contain" />
+        <% "disenador" -> %>
+          <svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M3 9h18M9 21V9" />
+          </svg>
+        <% "logout" -> %>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+        <% _ -> %>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width: 16px; height: 16px;">
+            <circle cx="12" cy="12" r="8" />
+          </svg>
+      <% end %>
     <% end %>
     """
   end

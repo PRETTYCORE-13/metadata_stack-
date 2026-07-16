@@ -7,6 +7,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :schema_context_label, :string
     field :schema_context_type, :integer, default: 1
     field :schema_context_nav, :string
+    field :schema_context_icono, :string
     field :schema_visible, :boolean
     field :schema_set_permissions, :map
     field :schema_profiles, :map
@@ -30,7 +31,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
 
   def changeset(header, attrs) do
     header
-    |> cast(attrs, @requeridos ++ [:schema_set_permissions, :schema_profiles])
+    |> cast(attrs, @requeridos ++ [:schema_context_icono, :schema_set_permissions, :schema_profiles])
     |> validate_required(@requeridos)
     |> unique_constraint(:schema_context_name)
   end

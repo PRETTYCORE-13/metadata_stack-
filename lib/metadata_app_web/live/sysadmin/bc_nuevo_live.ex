@@ -5,10 +5,28 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
 
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerador
+  alias Phoenix.LiveView.JS
 
   @topic "bc_contextos"
 
   @tipos ~w(string integer decimal boolean date enum referencia)
+
+  # Subconjunto curado de Material Symbols para el selector visual — no son
+  # los únicos válidos (el campo de texto sigue aceptando cualquier nombre
+  # de fonts.google.com/icons), solo los más comunes para catálogos/menús
+  # de negocio, para no tener que ir a buscar cada vez.
+  @iconos_sugeridos ~w(
+    inventory_2 inventory shopping_cart storefront store sell local_offer
+    category label folder folder_open description receipt_long assignment
+    checklist rule task list_alt table_chart grid_view apps widgets
+    dashboard bar_chart pie_chart insights trending_up payments credit_card
+    attach_money account_balance business apartment factory warehouse
+    local_shipping directions_car build engineering handyman construction
+    group person people badge admin_panel_settings support_agent
+    notifications campaign mail chat event schedule calendar_month
+    place map public language security lock key qr_code print
+    archive star favorite flag settings tune
+  )
 
   def mount(_params, _session, socket) do
     {:ok,
@@ -31,6 +49,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
       |> Map.put("nombre_p2", normalizar_identificador(contexto["nombre_p2"]))
       |> Map.put("nombre_p3", normalizar_identificador(contexto["nombre_p3"]))
       |> Map.put("nav_final", normalizar_slug(contexto["nav_final"]))
+      |> Map.put("icono", normalizar_icono(contexto["icono"]))
 
     socket = assign(socket, :contexto, contexto)
 
@@ -59,6 +78,10 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
   def handle_event("quitar_componente", %{"idx" => idx}, socket) do
     idx = String.to_integer(idx)
     {:noreply, assign(socket, :componentes, List.delete_at(socket.assigns.componentes, idx))}
+  end
+
+  def handle_event("elegir_icono", %{"icono" => icono}, socket) do
+    {:noreply, update(socket, :contexto, &Map.put(&1, "icono", icono))}
   end
 
   def handle_event("cancelar", _params, socket) do
@@ -95,6 +118,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
           "schema_context_nav" => contexto["nav"],
           "schema_visible" => contexto["visible"] == "true",
           "schema_context_type" => if(es_carpeta?, do: 2, else: 1),
+          "schema_context_icono" => nil_si_vacio(normalizar_icono(contexto["icono"])),
           "detalles" => if(es_carpeta?, do: [], else: Enum.map(componentes, &detalle_attrs/1))
         }
 
@@ -227,6 +251,25 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
     |> String.replace(~r/\p{Mn}/u, "")
   end
 
+  # Nombre del ícono de Material Symbols (fonts.google.com/icons) — la UI de
+  # Google los muestra en "Title Case" (ej. "Inventory 2") pero el nombre
+  # real del glyph es snake_case ("inventory_2"), así que se normaliza para
+  # no depender de que el usuario lo pegue ya en el formato exacto. Devuelve
+  # "" (no nil) para que el campo se redibuje igual que nombre_p2/nav_final;
+  # el guardado convierte "" a nil (sin ícono = cae al genérico de siempre).
+  defp normalizar_icono(valor) do
+    (valor || "")
+    |> String.trim()
+    |> String.downcase()
+    |> quitar_acentos()
+    |> String.replace(~r/[^a-z0-9]+/, "_")
+    |> String.trim("_")
+    |> String.slice(0, 50)
+  end
+
+  defp nil_si_vacio(""), do: nil
+  defp nil_si_vacio(valor), do: valor
+
   # Solo el segmento final del nav (lo que escribe el usuario en "Nombre en
   # el menú") — minúsculas, sin acentos/espacios, guiones sí permitidos
   # (a diferencia de normalizar_identificador/1, que es para nombres pty_*).
@@ -261,6 +304,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
       "etiqueta" => "Catálogo de ",
       "carpeta_padre" => "",
       "nav_final" => "",
+      "icono" => "",
       "visible" => true
     })
     |> assign(:componentes, [componente_vacio(1)])
@@ -324,6 +368,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
       |> assign(:tipos, @tipos)
       |> assign(:nombre_sistema_preview, nombre_sistema)
       |> assign(:nav_preview, nav_preview)
+      |> assign(:iconos_sugeridos, @iconos_sugeridos)
 
     ~H"""
     <div class="min-h-screen bg-white">
@@ -405,6 +450,50 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
                   {@nav_preview}<%= if @nombre_sistema_preview != "", do: "/#{@nombre_sistema_preview}" %>
                 </span>
               </div>
+            </div>
+
+            <label class="font-medium text-gray-900">Ícono:</label>
+            <div>
+              <div class="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  phx-click={JS.toggle(to: "#selector-iconos")}
+                  class="w-9 h-9 flex items-center justify-center border border-gray-300 rounded bg-gray-50 hover:bg-gray-100 text-gray-700 flex-shrink-0"
+                  title="Elegir de la lista"
+                >
+                  <%= if @contexto["icono"] not in [nil, ""] do %>
+                    <span class="material-symbols-outlined">{@contexto["icono"]}</span>
+                  <% else %>
+                    <span class="material-symbols-outlined text-gray-400">apps</span>
+                  <% end %>
+                </button>
+                <input type="text" name="contexto[icono]" value={@contexto["icono"]} maxlength="50"
+                  title="Nombre del ícono tal como aparece en fonts.google.com/icons (ej. 'inventory_2')."
+                  class="border border-gray-300 rounded text-gray-900 px-2 py-1 flex-1" placeholder="inventory_2 (opcional)" />
+              </div>
+
+              <div id="selector-iconos" class="hidden mt-1.5 border border-gray-200 rounded-lg bg-white shadow-sm p-2 max-w-md">
+                <div class="grid grid-cols-8 gap-1 max-h-48 overflow-y-auto">
+                  <%= for icono <- @iconos_sugeridos do %>
+                    <button
+                      type="button"
+                      title={icono}
+                      phx-click={JS.push("elegir_icono", value: %{icono: icono}) |> JS.hide(to: "#selector-iconos")}
+                      class={[
+                        "w-9 h-9 flex items-center justify-center rounded text-gray-700 hover:bg-purple-50 hover:text-purple-700",
+                        @contexto["icono"] == icono && "bg-purple-100 text-purple-700"
+                      ]}
+                    >
+                      <span class="material-symbols-outlined">{icono}</span>
+                    </button>
+                  <% end %>
+                </div>
+              </div>
+
+              <p class="mt-1 text-xs text-gray-500">
+                Opcional — se ve en el menú colapsado. Elige uno de la lista o escribe el nombre desde
+                <a href="https://fonts.google.com/icons" target="_blank" class="text-purple-700 underline">fonts.google.com/icons</a>.
+              </p>
             </div>
 
             <label class="font-medium text-gray-900">Es visible:</label>
