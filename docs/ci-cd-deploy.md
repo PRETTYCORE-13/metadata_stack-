@@ -9,15 +9,20 @@ Este documento explica el flujo completo: desde que generás un catálogo en tu 
 ## El panorama completo
 
 ```
-[Tu máquina / devcontainer]        [GitHub]                          [Servidor de producción]
-   compilador presente        →    Actions (CI)              →       Docker Swarm
-   mix gen.catalogos               ├─ validate (con compilador)       ├─ docker pull imagen nueva
-   probás en caliente              │   compila, migra, testea         ├─ docker service update --force
-   git commit + push               └─ build-image (si validate OK)    └─ docker exec .../bin/migrate
-                                        compila release, arma
-                                        imagen SIN compilador,
-                                        la publica en ghcr.io
+[Tu máquina / devcontainer]        [GitHub Actions]                  [Servidor de producción]
+   compilador presente        →    ├─ validate (con compilador)  →   Docker Swarm
+   mix gen.catalogos                │   compila, migra, testea       (lo hace el job deploy,
+   probás en caliente              ├─ build-image (si validate OK)   por SSH, automático)
+   git commit + push               │   compila release, arma
+                                    │   imagen SIN compilador,
+                                    │   la publica en ghcr.io
+                                    └─ deploy (si build-image OK)
+                                        SSH al servidor:
+                                        docker pull + service update
+                                        + docker exec .../bin/migrate
 ```
+
+**El deploy ya es automático** — cada push a `main` que pasa `validate` y `build-image` dispara el job `deploy`, que se conecta por SSH al servidor y actualiza el servicio solo. Ya no hace falta correr `docker pull`/`docker service update` a mano salvo que el job falle o quieras hacer un rollback puntual.
 
 Tres ambientes distintos, cada uno con un rol:
 
@@ -65,18 +70,25 @@ El servidor corre **Docker Swarm** (no `docker run` suelto, ni `docker-compose` 
 - Ambos servicios comparten una **red overlay** (una red virtual privada entre contenedores del mismo stack), así que la app puede conectarse a la base de datos usando el **nombre del servicio** como si fuera un hostname (Swarm resuelve DNS interno automáticamente) — no hace falta IP fija ni exponer el puerto de Postgres hacia afuera.
 - La app se configura enteramente por **variables de entorno** (host/puerto/usuario/password/nombre de la base de datos, `SECRET_KEY_BASE` para firmar cookies, `PHX_HOST` con el hostname público real por el que se accede — importante: si no coincide con el hostname real, Phoenix rechaza la conexión de LiveView por seguridad).
 
-### Actualizar a una versión nueva
-Como el tag `latest` no cambia de nombre en cada build, hay que forzar a Swarm a resolver el `latest` más reciente y recrear el contenedor:
+### Actualizar a una versión nueva (automático desde el job `deploy`)
+Como el tag `latest` no cambia de nombre en cada build, hay que forzar a Swarm a resolver el `latest` más reciente y recrear el contenedor. Esto ya lo hace solo el job `deploy` del workflow (`.github/workflows/ci.yml`) por SSH en cada push a `main`:
 ```
 docker pull ghcr.io/prettycore-13/metadata_stack:latest
 docker service update --image ghcr.io/prettycore-13/metadata_stack:latest --force metadata_stack_app
 ```
+Si hace falta correrlo a mano (el job falló, o un rollback puntual), son los mismos dos comandos por SSH en el servidor.
 
-### Migraciones
-El release incluye un script propio (generado a partir de `rel/overlays/bin/migrate`, que llama a `MetadataApp.Release.migrate/0`) para correr migraciones sin necesitar `mix` (que no existe en la imagen final, porque `mix` es una herramienta del *compilador*):
+### Migraciones (automático desde el job `deploy`)
+El release incluye un script propio (generado a partir de `rel/overlays/bin/migrate`, que llama a `MetadataApp.Release.migrate/0`) para correr migraciones sin necesitar `mix` (que no existe en la imagen final, porque `mix` es una herramienta del *compilador*). El job `deploy` espera a que el servicio converja y lo corre solo:
 ```
 docker exec <container_id> /app/bin/migrate
 ```
+
+### Setup del job `deploy` (una sola vez)
+El job usa `appleboy/ssh-action` con 3 secrets del repo (**Settings → Secrets and variables → Actions**, nunca en archivos versionados):
+- `DEPLOY_HOST` — el hostname del servidor.
+- `DEPLOY_USER` — el usuario SSH.
+- `DEPLOY_SSH_KEY` — clave privada ed25519 dedicada a este deploy (no la personal de nadie). Generarla con `ssh-keygen -t ed25519 -C "github-actions-deploy@metadata_stack" -N ""`, agregar la **pública** a `~/.ssh/authorized_keys` del usuario en el servidor, y la **privada** como el secret.
 
 ## Estado actual
 
