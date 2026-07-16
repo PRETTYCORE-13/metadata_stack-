@@ -1,0 +1,75 @@
+{
+  "schema_context_name": "pty_motocicletas",
+  "schema_context_label": "Motocicletas",
+  "schema_context_nav": "/catalogos/Motocicletas",
+  "schema_visible": true,
+  "schema_context_type": 1,
+  "detalles": [
+    {
+      "schema_context_field": "pty_motocicletas_nombre",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Nombre",
+        "longitud": 25,
+        "orden": 1,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "pty_motocicletas_marca",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Marca",
+        "longitud": 15,
+        "orden": 2,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "pty_motocicletas_numero_cilindros",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Número de cilindros",
+        "orden": 3,
+        "tipo": "integer",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "pty_motocicletas_tipo",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Tipo",
+        "longitud": 20,
+        "orden": 4,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "pty_motocicletas_anio",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Año",
+        "orden": 5,
+        "tipo": "date",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "pty_motocicletas_numero_placas",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Número de placas",
+        "longitud": 10,
+        "orden": 6,
+        "tipo": "string",
+        "visible": true
+      }
+    }
+  ],
+  "schema_profiles": null,
+  "schema_set_permissions": null
+}
