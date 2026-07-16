@@ -172,17 +172,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   def render(assigns) do
     ~H"""
     <div class="max-w-5xl mx-auto p-8">
-      <div class="flex items-center justify-between mb-4">
+      <div class="mb-4">
         <h1 class="text-2xl font-bold">BC List</h1>
-        <button
-          type="button"
-          id="btn-nuevo-contexto"
-          phx-hook="AbrirVentana"
-          data-url="/sysadmin/bc-list/nuevo"
-          class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-6 py-2 rounded"
-        >
-          + Nuevo
-        </button>
       </div>
 
       <div class="mb-4">

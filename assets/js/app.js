@@ -113,7 +113,6 @@ const FiltroMenu = {
   // el usuario le diera clic).
   intentarNavegarPorRuta(query, elemento) {
     const q = query.trim()
-    if (!q.startsWith("/")) return false
 
     let candidato = q
     if (candidato.includes("://")) {
@@ -123,6 +122,8 @@ const FiltroMenu = {
         // No era una URL válida — se sigue tratando como ruta tal cual.
       }
     }
+
+    if (!candidato.startsWith("/")) return false
 
     const nav = document.querySelector(".pc-sidebar-nav")
     if (!nav) return false
@@ -184,12 +185,15 @@ const FiltroMenu = {
   },
 }
 
-// Botón de copiar en las migas de pan — copia la ruta real de la página
-// activa (ej. "/electronica/computo/perifericos/mouses") al portapapeles,
-// para pegarla en la barra de búsqueda (ver FiltroMenu.intentarNavegarPorRuta)
-// o compartirla. data-nav se repatchea en cada navegación (no tiene
-// phx-update="ignore"), así que siempre lee la ruta más reciente al hacer
-// clic, sin necesitar un hook nuevo por cada página visitada.
+// Botón de copiar en las migas de pan — copia la URL completa y compartible
+// de la página activa (ej. "https://host/electronica/computo/mouses", no
+// solo la ruta relativa) al portapapeles, para pegarla en la barra de
+// búsqueda (ver FiltroMenu.intentarNavegarPorRuta) o compartirla con
+// alguien que la pueda abrir directo. data-nav se repatchea en cada
+// navegación (no tiene phx-update="ignore"), así que siempre lee la ruta
+// más reciente al hacer clic, sin necesitar un hook nuevo por cada página
+// visitada. window.location.origin se resuelve en el momento del click
+// (no al montar), así que ya sale correcto detrás de cualquier proxy/dominio.
 const CopiarRuta = {
   mounted() {
     this.el.addEventListener("click", () => this.copiar())
@@ -197,7 +201,8 @@ const CopiarRuta = {
   copiar() {
     const nav = this.el.dataset.nav
     if (!nav) return
-    navigator.clipboard.writeText(nav).then(() => {
+    const url = window.location.origin + nav
+    navigator.clipboard.writeText(url).then(() => {
       this.el.classList.add("pc-breadcrumb-copiado")
       clearTimeout(this._timeout)
       this._timeout = setTimeout(() => this.el.classList.remove("pc-breadcrumb-copiado"), 1200)
