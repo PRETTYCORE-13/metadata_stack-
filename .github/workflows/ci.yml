@@ -78,6 +78,15 @@ jobs:
             exit 1
           fi
 
+      - name: Verificar que no queden reglas de negocio en estado stub
+        run: |
+          if grep -rl "# ESCRIBA SUS REGLAS AQUI" lib/metadata_app/meta_business_process/reglas/ > /tmp/stubs.txt 2>/dev/null; then
+            echo "Hay reglas de negocio sin completar (todavia con el stub de 'mix motor.reglas.andamiar'):"
+            cat /tmp/stubs.txt
+            echo "Completa la logica de negocio antes de publicar, o desenganchala si no hace falta."
+            exit 1
+          fi
+
       - name: Compilar sin warnings
         run: mix compile --warning-as-errors
 
