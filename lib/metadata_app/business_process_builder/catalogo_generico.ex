@@ -6,10 +6,32 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # reales de la tabla (no campos calculados como estado_nombre). Usado por
   # MetaBcCliente.listar/2 para que una regla de negocio pueda filtrar otro
   # catálogo sin escribir la query a mano.
-  def listar(schema_mod, filtros \\ %{}) do
+  #
+  # opciones: [] por default — sin :limit/:offset trae TODO, el
+  # comportamiento de siempre. MetaBcCliente.listar/2 sigue llamando sin
+  # opciones a propósito: una regla de negocio necesita ver el conjunto
+  # COMPLETO de relacionados (sin_relacionados, mutar_relacionados), no una
+  # página — paginar ahí rompería esas reglas en silencio. El único caller
+  # que pasa :limit/:offset es CatalogoController.index/2 (la API HTTP).
+  #
+  # order_by es incondicional, no depende de opciones: sin un orden
+  # estable, Postgres no garantiza el mismo resultado entre llamadas — con
+  # LIMIT/OFFSET eso significa filas repetidas o salteadas entre páginas,
+  # en silencio. Mismo tipo de bug ya visto antes en este proyecto
+  # (exports sin order_by producían diffs sin sentido).
+  def listar(schema_mod, filtros \\ %{}, opciones \\ []) do
+    from(r in schema_mod, where: is_nil(r.delete_guid), order_by: [asc: r.id])
+    |> aplicar_filtros(filtros)
+    |> aplicar_paginacion(opciones)
+    |> Repo.all()
+  end
+
+  # Total de filas para los mismos filtros, sin paginar — para calcular
+  # total_paginas en la respuesta HTTP.
+  def contar(schema_mod, filtros \\ %{}) do
     from(r in schema_mod, where: is_nil(r.delete_guid))
     |> aplicar_filtros(filtros)
-    |> Repo.all()
+    |> Repo.aggregate(:count)
   end
 
   defp aplicar_filtros(query, filtros) do
@@ -18,6 +40,18 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
       from(r in acc, where: field(r, ^campo_atom) == ^valor)
     end)
   end
+
+  defp aplicar_paginacion(query, opciones) do
+    query
+    |> aplicar_limit(Keyword.get(opciones, :limit))
+    |> aplicar_offset(Keyword.get(opciones, :offset))
+  end
+
+  defp aplicar_limit(query, nil), do: query
+  defp aplicar_limit(query, limit), do: from(r in query, limit: ^limit)
+
+  defp aplicar_offset(query, nil), do: query
+  defp aplicar_offset(query, offset), do: from(r in query, offset: ^offset)
 
   def obtener!(schema_mod, id) do
     Repo.one!(from(r in schema_mod, where: r.id == ^id and is_nil(r.delete_guid)))

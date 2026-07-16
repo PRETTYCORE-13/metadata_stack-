@@ -6,9 +6,19 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
 
   action_fallback MetadataAppWeb.FallbackController
 
-  def index(conn, %{"tabla" => tabla}) do
+  # Sin estos parámetros el listado igual sale paginado (defaults acá
+  # abajo) — "siempre paginado" no puede depender de que el cliente HTTP
+  # se acuerde de mandar pagina/por_pagina.
+  @por_pagina_default 25
+  @por_pagina_maximo 100
+
+  def index(conn, %{"tabla" => tabla} = params) do
     with {:ok, schema_mod} <- resolver(tabla) do
-      items = CatalogoGenerico.listar(schema_mod)
+      {pagina, por_pagina} = resolver_paginacion(params)
+      offset = (pagina - 1) * por_pagina
+
+      items = CatalogoGenerico.listar(schema_mod, %{}, limit: por_pagina, offset: offset)
+      total_filas = CatalogoGenerico.contar(schema_mod)
       meta_campos = tabla |> MetaSchemaContext.listar_detalles() |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
       estados_por_id = MetaStateEngine.mapa_nombres_estados(tabla)
 
@@ -16,11 +26,38 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
         conn,
         Jason.OrderedObject.new(
           meta_campos: meta_campos,
-          data: Enum.map(items, &CatalogoGenerico.serializar(&1, estados_por_id))
+          data: Enum.map(items, &CatalogoGenerico.serializar(&1, estados_por_id)),
+          paginacion: %{
+            pagina: pagina,
+            por_pagina: por_pagina,
+            total_filas: total_filas,
+            total_paginas: total_paginas(total_filas, por_pagina)
+          }
         )
       )
     end
   end
+
+  defp resolver_paginacion(params) do
+    pagina = params |> Map.get("pagina") |> parse_entero(1) |> max(1)
+    por_pagina = params |> Map.get("por_pagina") |> parse_entero(@por_pagina_default) |> clamp(1, @por_pagina_maximo)
+    {pagina, por_pagina}
+  end
+
+  defp parse_entero(nil, default), do: default
+  defp parse_entero(valor, _default) when is_integer(valor), do: valor
+
+  defp parse_entero(valor, default) do
+    case Integer.parse(to_string(valor)) do
+      {n, _resto} -> n
+      :error -> default
+    end
+  end
+
+  defp clamp(n, minimo, maximo), do: n |> max(minimo) |> min(maximo)
+
+  defp total_paginas(0, _por_pagina), do: 1
+  defp total_paginas(total_filas, por_pagina), do: ceil(total_filas / por_pagina)
 
   def show(conn, %{"tabla" => tabla, "id" => id}) do
     with {:ok, schema_mod} <- resolver(tabla) do
