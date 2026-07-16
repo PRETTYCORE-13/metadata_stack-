@@ -1,6 +1,7 @@
 defmodule MetadataAppWeb.Sysadmin.BcListLive do
   use MetadataAppWeb, :live_view_admin
 
+  alias MetadataApp.BusinessProcessBuilder.CatalogoGenerador
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataAppWeb.AdminNav
 
@@ -28,6 +29,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:busqueda, "")
      |> assign(:pagina, 1)
      |> assign(:carpetas_colapsadas, MapSet.new())
+     |> assign(:accion_eliminar, nil)
      |> cargar_headers()}
   end
 
@@ -62,6 +64,63 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       end
 
     {:noreply, assign(socket, :carpetas_colapsadas, colapsadas)}
+  end
+
+  # Paso 1 del borrado: consulta el impacto antes de mostrar cualquier
+  # confirmación. Si hay dependientes, el borrado real va a fallar seguro
+  # (validar_sin_dependientes en CatalogoGenerador.eliminar/3) — se corta acá
+  # con un mensaje explicativo en vez de dejar avanzar a un confirm que
+  # después explota.
+  def handle_event("pedir_eliminar", %{"tabla" => tabla, "label" => label}, socket) do
+    case CatalogoGenerador.impacto(tabla) do
+      {:ok, %{dependientes: []} = resultado} ->
+        {:noreply,
+         assign(socket, :accion_eliminar, %{
+           tipo: :confirmar,
+           tabla: tabla,
+           label: label,
+           filas: resultado.filas
+         })}
+
+      {:ok, %{dependientes: dependientes}} ->
+        {:noreply,
+         assign(socket, :accion_eliminar, %{
+           tipo: :bloqueado,
+           tabla: tabla,
+           label: label,
+           dependientes: dependientes
+         })}
+
+      {:error, _motivo} ->
+        {:noreply, put_flash(socket, :error, "No se pudo consultar el catálogo #{tabla}.")}
+    end
+  end
+
+  def handle_event("cancelar_eliminar", _params, socket) do
+    {:noreply, assign(socket, :accion_eliminar, nil)}
+  end
+
+  # confirmar_filas viaja como el número ya conocido del paso de impacto (no
+  # se le vuelve a pedir al usuario que lo tipee) — sigue siendo una
+  # confirmación real porque valida contra el conteo actual en el momento del
+  # borrado, no el de cuando se abrió el modal.
+  def handle_event("confirmar_eliminar", _params, socket) do
+    %{tabla: tabla, filas: filas} = socket.assigns.accion_eliminar
+
+    case CatalogoGenerador.eliminar(tabla, tabla, filas) do
+      {:ok, _resultado} ->
+        {:noreply,
+         socket
+         |> assign(:accion_eliminar, nil)
+         |> put_flash(:info, "Catálogo #{tabla} eliminado.")
+         |> cargar_headers()}
+
+      {:error, motivo} ->
+        {:noreply,
+         socket
+         |> assign(:accion_eliminar, nil)
+         |> put_flash(:error, "No se pudo eliminar #{tabla}: #{inspect(motivo)}")}
+    end
   end
 
   # El formulario de creación (BcNuevoLive) avisa por PubSub al terminar de
@@ -187,6 +246,69 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         </div>
       <% end %>
     </div>
+
+    <.modal_eliminar accion={@accion_eliminar} />
+    """
+  end
+
+  # Modal de confirmación de borrado — dos variantes según lo que haya
+  # contestado CatalogoGenerador.impacto/1 en "pedir_eliminar":
+  # :confirmar (sin dependientes, puede seguir) o :bloqueado (hay otro
+  # catálogo referenciando a este, no tiene sentido ofrecer continuar).
+  attr :accion, :map, default: nil
+
+  defp modal_eliminar(%{accion: nil} = assigns), do: ~H""
+
+  defp modal_eliminar(%{accion: %{tipo: :confirmar}} = assigns) do
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+        <h2 class="text-lg font-bold text-gray-900 mb-2">Eliminar catálogo</h2>
+        <p class="text-sm text-gray-700 mb-6">
+          Se eliminará el catálogo <strong>{@accion.label}</strong> ({@accion.tabla}) —
+          <strong>{@accion.filas}</strong> fila(s). Este proceso no es reversible. ¿Desea continuar?
+        </p>
+        <div class="flex justify-end gap-3">
+          <button
+            type="button"
+            phx-click="cancelar_eliminar"
+            class="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            phx-click="confirmar_eliminar"
+            class="px-4 py-2 rounded bg-red-600 text-white text-sm font-semibold hover:bg-red-700"
+          >
+            Eliminar
+          </button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp modal_eliminar(%{accion: %{tipo: :bloqueado}} = assigns) do
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+        <h2 class="text-lg font-bold text-gray-900 mb-2">No se puede eliminar</h2>
+        <p class="text-sm text-gray-700 mb-6">
+          Hay otro catálogo con un campo "referencia" apuntando a este ({Enum.join(@accion.dependientes, ", ")}).
+          Hay que borrar o desenganchar esos primero.
+        </p>
+        <div class="flex justify-end">
+          <button
+            type="button"
+            phx-click="cancelar_eliminar"
+            class="px-4 py-2 rounded bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700"
+          >
+            Aceptar
+          </button>
+        </div>
+      </div>
+    </div>
     """
   end
 
@@ -232,7 +354,13 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               <button type="button" class="text-blue-600 hover:text-blue-800 text-xs font-semibold">
                 Editar
               </button>
-              <button type="button" class="text-red-600 hover:text-red-800 text-xs font-semibold">
+              <button
+                type="button"
+                phx-click="pedir_eliminar"
+                phx-value-tabla={nodo.id}
+                phx-value-label={nodo.label}
+                class="text-red-600 hover:text-red-800 text-xs font-semibold"
+              >
                 Eliminar
               </button>
             </div>
