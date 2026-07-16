@@ -6,6 +6,7 @@ defmodule MetadataApp.MetaSchema.Transicion do
     field :empresa_id, :integer
     field :accion, :string
     field :etiqueta, :string
+    field :campos_editables, {:array, :string}, default: []
 
     field :insert_guid, :string
     field :update_guid, :string
@@ -18,7 +19,15 @@ defmodule MetadataApp.MetaSchema.Transicion do
     has_many :reglas, MetadataApp.MetaSchema.TransicionRegla, foreign_key: :transicion_id
   end
 
-  @campos [:meta_schema_header_id, :accion, :etiqueta, :estado_origen_id, :estado_destino_id, :empresa_id]
+  @campos [
+    :meta_schema_header_id,
+    :accion,
+    :etiqueta,
+    :estado_origen_id,
+    :estado_destino_id,
+    :empresa_id,
+    :campos_editables
+  ]
   # estado_origen_id NO es requerido: nil significa "alta" (el registro
   # todavía no existe) — ver StateEngine.dar_de_alta/4. estado_destino_id sí
   # es siempre obligatorio, toda transición tiene que aterrizar en algún lado.

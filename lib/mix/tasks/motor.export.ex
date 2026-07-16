@@ -84,6 +84,7 @@ defmodule Mix.Tasks.Motor.Export do
       empresa_id: t.empresa_id,
       estado_origen: t.estado_origen_id && Map.fetch!(nombres_por_id, t.estado_origen_id),
       estado_destino: Map.fetch!(nombres_por_id, t.estado_destino_id),
+      campos_editables: t.campos_editables,
       reglas: Enum.map(t.reglas, &exportar_regla/1)
     }
   end

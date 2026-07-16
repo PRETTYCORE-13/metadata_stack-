@@ -158,31 +158,32 @@ defmodule MetadataApp.MetaStateEngine do
   end
 
   @doc """
-  Campos editables de `catalogo` (schema_context_name) para `estado_id`.
-  Lee `editable_en` (lista de ids de `meta_schema_estados`) de
-  `meta_schema_detail.schema_context_properties`.
+  Campos editables de `catalogo` (schema_context_name) para la `transicion`
+  de edición que se va a ejecutar (típicamente la resuelta por
+  `transicion_guardar/2`) — lee `campos_editables` directo de esa
+  transición, ya no de `meta_schema_detail.schema_context_properties`
+  (convención `editable_en` vieja, indexada por estado en vez de por
+  transición: no distinguía dos formas distintas de editar desde el mismo
+  estado).
 
   Semántica: si el catálogo NO adoptó el motor de estados (cero filas en
   `meta_schema_estados`), no se restringe nada — devuelve todos los campos
   del catálogo, para no romper retroactivamente catálogos que nunca usan
-  este motor. Si SÍ lo adoptó, es fail-safe: un campo sin `editable_en`
-  declarado, o cuyo `editable_en` no incluye `estado_id`, no es editable
-  (incluye el caso `estado_id: nil` — un registro sin estado asignado no
-  tiene ningún campo editable).
+  este motor. Si SÍ lo adoptó, es fail-safe: sin una transición de edición
+  resuelta (`transicion: nil` — no hay `guardar` configurado para el estado
+  actual, o el registro no tiene estado), no hay ningún campo editable.
   """
-  @spec campos_editables(String.t(), integer() | nil) :: [String.t()]
-  def campos_editables(catalogo, estado_id) do
-    detalles = MetaSchemaContext.listar_detalles(catalogo)
-
+  @spec campos_editables(String.t(), Transicion.t() | nil) :: [String.t()]
+  def campos_editables(catalogo, transicion) do
     if catalogo_adopto_motor?(catalogo) do
-      detalles
-      |> Enum.filter(fn detalle ->
-        editable_en = Map.get(detalle.schema_context_properties || %{}, "editable_en", [])
-        estado_id in editable_en
-      end)
-      |> Enum.map(& &1.schema_context_field)
+      case transicion do
+        nil -> []
+        %Transicion{campos_editables: campos} -> campos
+      end
     else
-      Enum.map(detalles, & &1.schema_context_field)
+      catalogo
+      |> MetaSchemaContext.listar_detalles()
+      |> Enum.map(& &1.schema_context_field)
     end
   end
 

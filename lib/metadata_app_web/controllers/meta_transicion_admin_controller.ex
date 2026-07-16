@@ -40,6 +40,7 @@ defmodule MetadataAppWeb.MetaTransicionAdminController do
       etiqueta: t.etiqueta,
       estado_origen_id: t.estado_origen_id,
       estado_destino_id: t.estado_destino_id,
+      campos_editables: t.campos_editables,
       reglas: reglas_data(t)
     }
   end

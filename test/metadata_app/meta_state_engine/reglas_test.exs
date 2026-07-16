@@ -1,10 +1,20 @@
+defmodule MetadataApp.MetaStateEngine.ReglasTest.Relacionado do
+  use Ecto.Schema
+
+  schema "test_fixture_relacionado" do
+    field :nombre, :string
+    field :orden, :integer
+  end
+end
+
 defmodule MetadataApp.MetaStateEngine.ReglasTest do
   use MetadataApp.DataCase, async: true
 
   import ExUnit.CaptureLog
 
   alias MetadataApp.MetaStateEngine.Reglas.{Pre, Post}
-  alias MetadataApp.MetaBusinessProcess.Catalogos.{PtyClientes, PtyCanal}
+  alias MetadataApp.MetaBusinessProcess.Catalogos.PtyClientes
+  alias MetadataApp.MetaStateEngine.ReglasTest.Relacionado
 
   defp guid, do: Ecto.UUID.generate() |> String.replace("-", "")
   defp unique, do: System.unique_integer([:positive])
@@ -23,13 +33,12 @@ defmodule MetadataApp.MetaStateEngine.ReglasTest do
     |> Repo.insert!()
   end
 
-  defp fixture_canal(attrs) do
-    base = %{canal_nombre: "canal #{unique()}", canal_orden: 0}
+  defp fixture_relacionado(attrs) do
+    base = %{nombre: "relacionado #{unique()}", orden: 0}
 
     base
     |> Map.merge(attrs)
-    |> then(&PtyCanal.changeset(%PtyCanal{}, &1))
-    |> put_change(:insert_guid, guid())
+    |> then(&Ecto.Changeset.cast(%Relacionado{}, &1, [:nombre, :orden]))
     |> Repo.insert!()
   end
 
@@ -95,19 +104,19 @@ defmodule MetadataApp.MetaStateEngine.ReglasTest do
       cliente = fixture_cliente()
 
       assert Pre.evaluar("sin_relacionados", cliente, %{}, %{
-               "entidad" => "pty_canal",
-               "campo_relacion" => "canal_orden"
+               "entidad" => "test_fixture_relacionado",
+               "campo_relacion" => "orden"
              }) == :ok
     end
 
     test "{:error, ...} cuando hay filas relacionadas" do
       cliente = fixture_cliente()
-      fixture_canal(%{canal_orden: cliente.id})
+      fixture_relacionado(%{orden: cliente.id})
 
       assert {:error, mensaje} =
                Pre.evaluar("sin_relacionados", cliente, %{}, %{
-                 "entidad" => "pty_canal",
-                 "campo_relacion" => "canal_orden"
+                 "entidad" => "test_fixture_relacionado",
+                 "campo_relacion" => "orden"
                })
 
       assert mensaje =~ "1 registro"
@@ -115,12 +124,12 @@ defmodule MetadataApp.MetaStateEngine.ReglasTest do
 
     test "respeta el filtro adicional" do
       cliente = fixture_cliente()
-      fixture_canal(%{canal_orden: cliente.id, canal_nombre: "no cuenta"})
+      fixture_relacionado(%{orden: cliente.id, nombre: "no cuenta"})
 
       assert Pre.evaluar("sin_relacionados", cliente, %{}, %{
-               "entidad" => "pty_canal",
-               "campo_relacion" => "canal_orden",
-               "filtro" => %{"campo" => "canal_nombre", "valor" => "sí cuenta"}
+               "entidad" => "test_fixture_relacionado",
+               "campo_relacion" => "orden",
+               "filtro" => %{"campo" => "nombre", "valor" => "sí cuenta"}
              }) == :ok
     end
   end
@@ -222,9 +231,9 @@ defmodule MetadataApp.MetaStateEngine.ReglasTest do
   describe "Post.ejecutar/5 — mutar_relacionados" do
     test "actualiza todas las filas relacionadas" do
       cliente = fixture_cliente()
-      canal1 = fixture_canal(%{canal_orden: cliente.id})
-      canal2 = fixture_canal(%{canal_orden: cliente.id})
-      _otro = fixture_canal(%{canal_orden: cliente.id + 999_999})
+      relacionado1 = fixture_relacionado(%{orden: cliente.id})
+      relacionado2 = fixture_relacionado(%{orden: cliente.id})
+      _otro = fixture_relacionado(%{orden: cliente.id + 999_999})
 
       assert {:ok, %{filas: 2}} =
                Post.ejecutar(
@@ -232,15 +241,15 @@ defmodule MetadataApp.MetaStateEngine.ReglasTest do
                  cliente,
                  %{},
                  %{
-                   "entidad" => "pty_canal",
-                   "campo_relacion" => "canal_orden",
-                   "cambio" => %{"campo" => "canal_orden", "valor" => 0}
+                   "entidad" => "test_fixture_relacionado",
+                   "campo_relacion" => "orden",
+                   "cambio" => %{"campo" => "orden", "valor" => 0}
                  },
                  Repo
                )
 
-      assert Repo.get!(PtyCanal, canal1.id).canal_orden == 0
-      assert Repo.get!(PtyCanal, canal2.id).canal_orden == 0
+      assert Repo.get!(Relacionado, relacionado1.id).orden == 0
+      assert Repo.get!(Relacionado, relacionado2.id).orden == 0
     end
   end
 

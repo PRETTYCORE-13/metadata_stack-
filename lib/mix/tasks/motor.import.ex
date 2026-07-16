@@ -110,7 +110,8 @@ defmodule Mix.Tasks.Motor.Import do
       "etiqueta" => attrs["etiqueta"],
       "estado_origen_id" => origen_id,
       "estado_destino_id" => destino_id,
-      "empresa_id" => attrs["empresa_id"]
+      "empresa_id" => attrs["empresa_id"],
+      "campos_editables" => attrs["campos_editables"] || []
     }
 
     case MetaEstadosAdmin.crear_transicion(atributos) do

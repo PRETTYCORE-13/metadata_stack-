@@ -82,7 +82,8 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   def actualizar(registro, attrs) do
     schema_mod = registro.__struct__
     catalogo = schema_mod.__schema__(:source)
-    editables = MetadataApp.MetaStateEngine.campos_editables(catalogo, registro.estado_id)
+    transicion = MetadataApp.MetaStateEngine.transicion_guardar(catalogo, registro.estado_id)
+    editables = MetadataApp.MetaStateEngine.campos_editables(catalogo, transicion)
 
     todos_los_campos =
       MetadataApp.BusinessProcessBuilder.MetaSchemaContext.listar_detalles(catalogo)
@@ -95,7 +96,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
       |> Ecto.Changeset.change(%{update_guid: generar_guid()})
 
     if changeset.valid? do
-      case MetadataApp.MetaStateEngine.transicion_guardar(catalogo, registro.estado_id) do
+      case transicion do
         nil -> Repo.update(changeset)
         transicion -> MetadataApp.MetaStateEngine.editar_con_transicion(changeset, transicion, attrs)
       end

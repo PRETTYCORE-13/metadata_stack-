@@ -10,6 +10,7 @@ defmodule MetadataApp.MetaEstadosAdmin do
 
   import Ecto.Query
   alias MetadataApp.Repo
+  alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaStateEngine.Reglas
   alias MetadataApp.MetaSchema.{Estado, Transicion, TransicionRegla, TransicionEvento}
@@ -73,8 +74,52 @@ defmodule MetadataApp.MetaEstadosAdmin do
   def crear_transicion(attrs) do
     %Transicion{}
     |> Transicion.changeset(attrs)
+    |> validar_campos_editables()
     |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
     |> Repo.insert()
+  end
+
+  # campos_editables reemplaza a la convención vieja editable_en (ver
+  # migración 20260716190000): en vez de un whitelist por estado escondido
+  # en meta_schema_detail.schema_context_properties, cada transición declara
+  # los suyos. Valida acá (no en Transicion.changeset/2) porque necesita
+  # Repo — los schemas de este proyecto se mantienen sin acceso a datos,
+  # igual que Estado/Header/Detail.
+  defp validar_campos_editables(changeset) do
+    Ecto.Changeset.validate_change(changeset, :campos_editables, fn :campos_editables, campos ->
+      case campos do
+        [] ->
+          []
+
+        _ ->
+          case Ecto.Changeset.get_field(changeset, :meta_schema_header_id) do
+            nil ->
+              []
+
+            header_id ->
+              case Repo.get(Header, header_id) do
+                nil ->
+                  []
+
+                header ->
+                  campos_validos =
+                    header.schema_context_name
+                    |> MetaSchemaContext.listar_detalles()
+                    |> MapSet.new(& &1.schema_context_field)
+
+                  desconocidos = Enum.reject(campos, &MapSet.member?(campos_validos, &1))
+
+                  case desconocidos do
+                    [] ->
+                      []
+
+                    _ ->
+                      [{:campos_editables, "campo(s) inexistente(s) en el catálogo: #{Enum.join(desconocidos, ", ")}"}]
+                  end
+              end
+          end
+      end
+    end)
   end
 
   # Todo o nada: si una transición de la lista falla, ninguna queda creada
@@ -157,6 +202,7 @@ defmodule MetadataApp.MetaEstadosAdmin do
           |> validar_estados_ajenos(transiciones, estados)
           |> validar_alta_o_inicial(estados, transiciones)
           |> validar_estados_huerfanos(estados, transiciones)
+          |> validar_campos_editables_vacios(transiciones)
           |> validar_reglas(transiciones, catalogo)
           |> Enum.reverse()
 
@@ -224,6 +270,28 @@ defmodule MetadataApp.MetaEstadosAdmin do
           problema(:advertencia, "el estado \"#{e.nombre}\" (id #{e.id}) es inalcanzable — ninguna transición lleva ahí y no es inicial")
           | acc
         ]
+      end
+    end)
+  end
+
+  # Self-loop (guardar-style: mismo estado origen y destino) sin
+  # campos_editables configurados es el gotcha que ya se dio en la práctica
+  # (pty_aly_marcas) — acá queda visible ANTES de que un PUT real explote
+  # con "no editable en el estado actual".
+  defp validar_campos_editables_vacios(problemas, transiciones) do
+    Enum.reduce(transiciones, problemas, fn t, acc ->
+      self_loop? = not is_nil(t.estado_origen_id) and t.estado_origen_id == t.estado_destino_id
+
+      if self_loop? and t.campos_editables == [] do
+        [
+          problema(
+            :advertencia,
+            "transición \"#{t.accion}\" (id #{t.id}) es un self-loop sin campos_editables — cualquier intento de editar por acá va a fallar"
+          )
+          | acc
+        ]
+      else
+        acc
       end
     end)
   end

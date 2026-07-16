@@ -2,15 +2,17 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
   use MetadataApp.DataCase, async: true
 
   alias MetadataApp.MetaStateEngine
+  alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerico
-  alias MetadataApp.BusinessProcessBuilder.MetaSchema.{Header, Detail}
-  alias MetadataApp.MetaSchema.Estado
-  alias MetadataApp.MetaBusinessProcess.Catalogos.PtyClientes
+  alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
+  alias MetadataApp.MetaSchema.{Estado, Transicion, TransicionRegla}
+  alias MetadataApp.MetaBusinessProcess.Catalogos.{PtyClientes, PtyEquiposNfl}
 
   defp guid, do: Ecto.UUID.generate() |> String.replace("-", "")
   defp unique, do: System.unique_integer([:positive])
 
   defp header_clientes, do: Repo.get_by!(Header, schema_context_name: "pty_clientes")
+  defp header_equipos_nfl, do: Repo.get_by!(Header, schema_context_name: "pty_equipos_nfl")
 
   defp fixture_estado(header, attrs) do
     %Estado{}
@@ -19,16 +21,29 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
     |> Repo.insert!()
   end
 
-  # Marca `campo` (nombre de meta_schema_detail.schema_context_field) como
-  # editable solo en `estados_ids`, mergeando sobre sus properties actuales
-  # (rollback automático por el sandbox al terminar el test).
-  defp marcar_editable_en(header, campo, estados_ids) do
-    detail = Repo.get_by!(Detail, meta_schema_header_id: header.id, schema_context_field: campo)
-    props = Map.put(detail.schema_context_properties, "editable_en", estados_ids)
+  defp fixture_transicion(header, attrs) do
+    %Transicion{}
+    |> Transicion.changeset(Map.merge(%{meta_schema_header_id: header.id}, attrs))
+    |> put_change(:insert_guid, guid())
+    |> Repo.insert!()
+  end
 
-    detail
-    |> Ecto.Changeset.change(%{schema_context_properties: props})
-    |> Repo.update!()
+  # Vacía el autómata de `header` (reglas + transiciones + estados + su
+  # historial) SOLO dentro de la transacción del test (sandbox: se revierte
+  # solo al terminar) -- así se puede probar "catálogo sin motor de
+  # estados" reusando un catálogo real y permanente (pty_equipos_nfl) en vez
+  # de depender de uno descartable que puede borrarse entre sesiones (ya
+  # pasó una vez con pty_canal).
+  defp desactivar_motor(header) do
+    MetaEstadosAdmin.purgar_historial(header.id)
+
+    transicion_ids =
+      from(t in Transicion, where: t.meta_schema_header_id == ^header.id, select: t.id)
+      |> Repo.all()
+
+    from(r in TransicionRegla, where: r.transicion_id in ^transicion_ids) |> Repo.delete_all()
+    from(t in Transicion, where: t.meta_schema_header_id == ^header.id) |> Repo.delete_all()
+    from(e in Estado, where: e.meta_schema_header_id == ^header.id) |> Repo.delete_all()
   end
 
   defp fixture_cliente(estado_id) do
@@ -47,36 +62,50 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
 
   describe "campos_editables/2 — catálogo SIN motor de estados" do
     test "devuelve todos los campos, sin restringir nada" do
-      # pty_canal no tiene ninguna fila en meta_schema_estados.
-      campos = MetaStateEngine.campos_editables("pty_canal", nil)
-      assert Enum.sort(campos) == ["canal_nombre", "canal_orden"]
+      header = header_equipos_nfl()
+      desactivar_motor(header)
+
+      assert MetaStateEngine.campos_editables("pty_equipos_nfl", nil) == [
+               "pty_equipos_nfl_nombre_equipo"
+             ]
     end
   end
 
   describe "campos_editables/2 — catálogo CON motor de estados" do
-    test "solo devuelve los campos con editable_en para el estado actual" do
+    test "solo devuelve los campos declarados en campos_editables de la transición" do
       header = header_clientes()
       nuevo = fixture_estado(header, %{nombre: "editables_nuevo_#{unique()}", es_inicial: true})
       activo = fixture_estado(header, %{nombre: "editables_activo_#{unique()}"})
 
-      marcar_editable_en(header, "pty_clientes_nombre", [nuevo.id, activo.id])
-      marcar_editable_en(header, "pty_clientes_edad", [activo.id])
-      # pty_clientes_venta no declara editable_en -> nunca editable.
+      t_nuevo =
+        fixture_transicion(header, %{
+          accion: "guardar_#{unique()}",
+          etiqueta: "Guardar",
+          estado_origen_id: nuevo.id,
+          estado_destino_id: nuevo.id,
+          campos_editables: ["pty_clientes_nombre"]
+        })
 
-      assert Enum.sort(MetaStateEngine.campos_editables("pty_clientes", nuevo.id)) == [
-               "pty_clientes_nombre"
-             ]
+      t_activo =
+        fixture_transicion(header, %{
+          accion: "guardar_#{unique()}",
+          etiqueta: "Guardar",
+          estado_origen_id: activo.id,
+          estado_destino_id: activo.id,
+          campos_editables: ["pty_clientes_nombre", "pty_clientes_edad"]
+        })
 
-      assert Enum.sort(MetaStateEngine.campos_editables("pty_clientes", activo.id)) == [
+      assert MetaStateEngine.campos_editables("pty_clientes", t_nuevo) == ["pty_clientes_nombre"]
+
+      assert Enum.sort(MetaStateEngine.campos_editables("pty_clientes", t_activo)) == [
                "pty_clientes_edad",
                "pty_clientes_nombre"
              ]
     end
 
-    test "estado_id nil no habilita ningún campo" do
+    test "sin transición resuelta (nil) no habilita ningún campo" do
       header = header_clientes()
-      estado = fixture_estado(header, %{nombre: "editables_solo_#{unique()}", es_inicial: true})
-      marcar_editable_en(header, "pty_clientes_nombre", [estado.id])
+      fixture_estado(header, %{nombre: "editables_solo_#{unique()}", es_inicial: true})
 
       assert MetaStateEngine.campos_editables("pty_clientes", nil) == []
     end
@@ -84,7 +113,10 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
 
   describe "estado_inicial/1" do
     test "nil si el catálogo no adoptó el motor" do
-      assert MetaStateEngine.estado_inicial("pty_canal") == nil
+      header = header_equipos_nfl()
+      desactivar_motor(header)
+
+      assert MetaStateEngine.estado_inicial("pty_equipos_nfl") == nil
     end
 
     test "devuelve el estado marcado es_inicial: true" do
@@ -98,13 +130,15 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
 
   describe "CatalogoGenerico.crear/2 — asignación automática del estado inicial" do
     test "catálogo sin motor de estados: estado_id sigue en nil" do
-      {:ok, canal} =
-        CatalogoGenerico.crear(MetadataApp.MetaBusinessProcess.Catalogos.PtyCanal, %{
-          "canal_nombre" => "canal #{unique()}",
-          "canal_orden" => 1
+      header = header_equipos_nfl()
+      desactivar_motor(header)
+
+      {:ok, equipo} =
+        CatalogoGenerico.crear(PtyEquiposNfl, %{
+          "pty_equipos_nfl_nombre_equipo" => "equipo #{unique()}"
         })
 
-      assert canal.estado_id == nil
+      assert equipo.estado_id == nil
     end
 
     test "catálogo con motor de estados: nace en el estado inicial" do
@@ -122,11 +156,18 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
     end
   end
 
-  describe "CatalogoGenerico.actualizar/2 — whitelist por estado" do
-    test "permite actualizar un campo declarado editable_en para el estado actual" do
+  describe "CatalogoGenerico.actualizar/2 — whitelist por transición" do
+    test "permite actualizar un campo declarado en campos_editables de la transición guardar" do
       header = header_clientes()
       estado = fixture_estado(header, %{nombre: "act_permitido_#{unique()}", es_inicial: true})
-      marcar_editable_en(header, "pty_clientes_nombre", [estado.id])
+
+      fixture_transicion(header, %{
+        accion: "guardar",
+        etiqueta: "Guardar",
+        estado_origen_id: estado.id,
+        estado_destino_id: estado.id,
+        campos_editables: ["pty_clientes_nombre"]
+      })
 
       cliente = fixture_cliente(estado.id)
 
@@ -136,12 +177,19 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       assert actualizado.pty_clientes_nombre == "nombre nuevo"
     end
 
-    test "rechaza (con error visible) un campo que no está en la whitelist del estado actual" do
+    test "rechaza (con error visible) un campo que no está en campos_editables de la transición actual" do
       header = header_clientes()
       estado = fixture_estado(header, %{nombre: "act_rechazado_#{unique()}", es_inicial: true})
-      marcar_editable_en(header, "pty_clientes_nombre", [estado.id])
-      # pty_clientes_edad NO está en editable_en para este estado.
 
+      fixture_transicion(header, %{
+        accion: "guardar",
+        etiqueta: "Guardar",
+        estado_origen_id: estado.id,
+        estado_destino_id: estado.id,
+        campos_editables: ["pty_clientes_nombre"]
+      })
+
+      # pty_clientes_edad NO está en campos_editables de esta transición.
       cliente = fixture_cliente(estado.id)
 
       assert {:error, changeset} =
@@ -155,7 +203,14 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       header = header_clientes()
       estado = fixture_estado(header, %{nombre: "act_estado_id_#{unique()}", es_inicial: true})
       otro = fixture_estado(header, %{nombre: "act_estado_id_otro_#{unique()}"})
-      marcar_editable_en(header, "pty_clientes_nombre", [estado.id])
+
+      fixture_transicion(header, %{
+        accion: "guardar",
+        etiqueta: "Guardar",
+        estado_origen_id: estado.id,
+        estado_destino_id: estado.id,
+        campos_editables: ["pty_clientes_nombre"]
+      })
 
       cliente = fixture_cliente(estado.id)
 
@@ -170,16 +225,20 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
     end
 
     test "catálogo sin motor de estados sigue funcionando sin restricción (compat)" do
-      {:ok, canal} =
-        CatalogoGenerico.crear(MetadataApp.MetaBusinessProcess.Catalogos.PtyCanal, %{
-          "canal_nombre" => "canal #{unique()}",
-          "canal_orden" => 1
+      header = header_equipos_nfl()
+      desactivar_motor(header)
+
+      {:ok, equipo} =
+        CatalogoGenerico.crear(PtyEquiposNfl, %{
+          "pty_equipos_nfl_nombre_equipo" => "equipo #{unique()}"
         })
 
       assert {:ok, actualizado} =
-               CatalogoGenerico.actualizar(canal, %{"canal_orden" => 2})
+               CatalogoGenerico.actualizar(equipo, %{
+                 "pty_equipos_nfl_nombre_equipo" => "otro nombre"
+               })
 
-      assert actualizado.canal_orden == 2
+      assert actualizado.pty_equipos_nfl_nombre_equipo == "otro nombre"
     end
   end
 end
