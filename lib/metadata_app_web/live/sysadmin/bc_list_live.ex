@@ -25,6 +25,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:sidebar_open, false)
      |> assign(:show_programacion_children, false)
      |> assign(:show_clientes_children, false)
+
+
      |> assign(:show_prettycore_children, false)
      |> assign(:busqueda, "")
      |> assign(:pagina, 1)

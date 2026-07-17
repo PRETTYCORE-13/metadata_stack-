@@ -97,7 +97,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   end
 
   defp insertar_en_arbol(mapa, [carpeta | resto], item) do
-    nodo_default = %{nombre: nil, hijos: insertar_en_arbol(%{}, resto, item)}
+    nodo_default = %{nombre: nil, icono: nil, id: nil, hijos: insertar_en_arbol(%{}, resto, item)}
 
     Map.update(mapa, {:carpeta, carpeta}, nodo_default, fn nodo ->
       %{nodo | hijos: insertar_en_arbol(nodo.hijos, resto, item)}
@@ -115,8 +115,14 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   defp insertar_carpeta_explicita(mapa, [], _label, _icono, _id), do: mapa
 
   defp insertar_carpeta_explicita(mapa, [ultimo], label, icono, id) do
+    # Map.merge en vez de %{nodo | ...}: si esta carpeta ya existía en el
+    # mapa como nodo "inferido" (creado por insertar_en_arbol/3 al procesar
+    # una página hija que se coló primero en el Enum.reduce — el orden
+    # depende del orden alfabético de schema_context_name, no del nav), ese
+    # nodo no tiene las claves :icono/:id todavía. %{nodo | ...} exige que
+    # ya existan (KeyError si no) — Map.merge las agrega sin problema.
     Map.update(mapa, {:carpeta, ultimo}, %{nombre: label, icono: icono, id: id, hijos: %{}}, fn nodo ->
-      %{nodo | nombre: label, icono: icono, id: id}
+      Map.merge(nodo, %{nombre: label, icono: icono, id: id})
     end)
   end
 

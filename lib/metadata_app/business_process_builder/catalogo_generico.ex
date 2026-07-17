@@ -5,7 +5,12 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # filtros: %{"campo" => valor, ...} — combinados con AND, solo columnas
   # reales de la tabla (no campos calculados como estado_nombre). Usado por
   # MetaBcCliente.listar/2 para que una regla de negocio pueda filtrar otro
-  # catálogo sin escribir la query a mano.
+  # catálogo sin escribir la query a mano. `valor` acepta también una tupla
+  # con operador — {:ilike, texto}, {:gte, valor}, {:lte, valor},
+  # {:entre, {desde, hasta}} (cualquiera de los dos puede ir nil, ej.
+  # {:entre, {100, nil}} es "desde 100 en adelante") — usado por
+  # CatalogoLive para los filtros dinámicos por columna. Un valor plano
+  # (no tupla) sigue siendo igualdad exacta, como siempre.
   #
   # opciones: [] por default — sin :limit/:offset trae TODO, el
   # comportamiento de siempre. MetaBcCliente.listar/2 sigue llamando sin
@@ -14,31 +19,79 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # página — paginar ahí rompería esas reglas en silencio. El único caller
   # que pasa :limit/:offset es CatalogoController.index/2 (la API HTTP).
   #
+  # busqueda: nil por default, o {texto, campos} — a diferencia de filtros
+  # (AND por columna, para acotar), esto es OR entre TODAS las columnas
+  # dadas (para buscar rápido sin saber en qué campo está). campos castea
+  # cada columna a texto para poder buscar "999" y encontrar un precio,
+  # aunque la columna sea numérica.
+  #
   # order_by es incondicional, no depende de opciones: sin un orden
   # estable, Postgres no garantiza el mismo resultado entre llamadas — con
   # LIMIT/OFFSET eso significa filas repetidas o salteadas entre páginas,
   # en silencio. Mismo tipo de bug ya visto antes en este proyecto
   # (exports sin order_by producían diffs sin sentido).
-  def listar(schema_mod, filtros \\ %{}, opciones \\ []) do
+  def listar(schema_mod, filtros \\ %{}, opciones \\ [], busqueda \\ nil) do
     from(r in schema_mod, where: is_nil(r.delete_guid), order_by: [asc: r.id])
     |> aplicar_filtros(filtros)
+    |> aplicar_busqueda(busqueda)
     |> aplicar_paginacion(opciones)
     |> Repo.all()
   end
 
-  # Total de filas para los mismos filtros, sin paginar — para calcular
-  # total_paginas en la respuesta HTTP.
-  def contar(schema_mod, filtros \\ %{}) do
+  # Total de filas para los mismos filtros/búsqueda, sin paginar — para
+  # calcular total_paginas en la respuesta HTTP.
+  def contar(schema_mod, filtros \\ %{}, busqueda \\ nil) do
     from(r in schema_mod, where: is_nil(r.delete_guid))
     |> aplicar_filtros(filtros)
+    |> aplicar_busqueda(busqueda)
     |> Repo.aggregate(:count)
   end
 
   defp aplicar_filtros(query, filtros) do
     Enum.reduce(filtros, query, fn {campo, valor}, acc ->
       campo_atom = String.to_existing_atom(to_string(campo))
-      from(r in acc, where: field(r, ^campo_atom) == ^valor)
+      aplicar_filtro(acc, campo_atom, valor)
     end)
+  end
+
+  defp aplicar_filtro(query, campo, {:ilike, texto}) do
+    patron = "%#{texto}%"
+    from(r in query, where: ilike(field(r, ^campo), ^patron))
+  end
+
+  defp aplicar_filtro(query, campo, {:gte, valor}) do
+    from(r in query, where: field(r, ^campo) >= ^valor)
+  end
+
+  defp aplicar_filtro(query, campo, {:lte, valor}) do
+    from(r in query, where: field(r, ^campo) <= ^valor)
+  end
+
+  defp aplicar_filtro(query, _campo, {:entre, {nil, nil}}), do: query
+  defp aplicar_filtro(query, campo, {:entre, {desde, nil}}), do: aplicar_filtro(query, campo, {:gte, desde})
+  defp aplicar_filtro(query, campo, {:entre, {nil, hasta}}), do: aplicar_filtro(query, campo, {:lte, hasta})
+
+  defp aplicar_filtro(query, campo, {:entre, {desde, hasta}}) do
+    from(r in query, where: field(r, ^campo) >= ^desde and field(r, ^campo) <= ^hasta)
+  end
+
+  defp aplicar_filtro(query, campo, valor) do
+    from(r in query, where: field(r, ^campo) == ^valor)
+  end
+
+  defp aplicar_busqueda(query, nil), do: query
+  defp aplicar_busqueda(query, {texto, _campos}) when texto in [nil, ""], do: query
+
+  defp aplicar_busqueda(query, {texto, campos}) do
+    patron = "%#{texto}%"
+
+    condicion =
+      Enum.reduce(campos, dynamic(false), fn campo, acc ->
+        campo_atom = String.to_existing_atom(to_string(campo))
+        dynamic([r], ^acc or fragment("?::text ILIKE ?", field(r, ^campo_atom), ^patron))
+      end)
+
+    from(r in query, where: ^condicion)
   end
 
   defp aplicar_paginacion(query, opciones) do
