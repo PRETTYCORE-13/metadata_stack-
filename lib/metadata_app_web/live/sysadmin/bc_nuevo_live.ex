@@ -392,14 +392,26 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
           <legend class="px-2 ml-2 text-sm font-semibold text-gray-900">Contexto</legend>
           <div class="grid grid-cols-[160px_1fr] gap-y-3 gap-x-3 p-4 items-center">
             <label class="font-medium text-gray-900">Tipo:</label>
-            <div class="flex items-center gap-4">
-              <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer">
-                <input type="radio" name="contexto[tipo_registro]" value="archivo" checked={@contexto["tipo_registro"] != "carpeta"} />
-                Archivo (catálogo con datos)
+            <div class="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm w-fit">
+              <label class={[
+                "px-4 py-2 cursor-pointer transition-colors select-none",
+                if(@contexto["tipo_registro"] == "carpeta",
+                  do: "bg-purple-600 text-white font-semibold",
+                  else: "bg-white text-gray-600 hover:bg-gray-50"
+                )
+              ]}>
+                <input type="radio" name="contexto[tipo_registro]" value="carpeta" checked={@contexto["tipo_registro"] == "carpeta"} class="hidden" />
+                Árbol de navegación
               </label>
-              <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer">
-                <input type="radio" name="contexto[tipo_registro]" value="carpeta" checked={@contexto["tipo_registro"] == "carpeta"} />
-                Carpeta (solo agrupa en el menú)
+              <label class={[
+                "px-4 py-2 cursor-pointer transition-colors select-none border-l border-gray-300",
+                if(@contexto["tipo_registro"] != "carpeta",
+                  do: "bg-purple-600 text-white font-semibold",
+                  else: "bg-white text-gray-600 hover:bg-gray-50"
+                )
+              ]}>
+                <input type="radio" name="contexto[tipo_registro]" value="archivo" checked={@contexto["tipo_registro"] != "carpeta"} class="hidden" />
+                Proceso de negocio
               </label>
             </div>
 
@@ -454,23 +466,19 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
 
             <label class="font-medium text-gray-900">Ícono:</label>
             <div>
-              <div class="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  phx-click={JS.toggle(to: "#selector-iconos")}
-                  class="w-9 h-9 flex items-center justify-center border border-gray-300 rounded bg-gray-50 hover:bg-gray-100 text-gray-700 flex-shrink-0"
-                  title="Elegir de la lista"
-                >
-                  <%= if @contexto["icono"] not in [nil, ""] do %>
-                    <span class="material-symbols-outlined">{@contexto["icono"]}</span>
-                  <% else %>
-                    <span class="material-symbols-outlined text-gray-400">apps</span>
-                  <% end %>
-                </button>
-                <input type="text" name="contexto[icono]" value={@contexto["icono"]} maxlength="50"
-                  title="Nombre del ícono tal como aparece en fonts.google.com/icons (ej. 'inventory_2')."
-                  class="border border-gray-300 rounded text-gray-900 px-2 py-1 flex-1" placeholder="inventory_2 (opcional)" />
-              </div>
+              <input type="hidden" name="contexto[icono]" value={@contexto["icono"]} />
+              <button
+                type="button"
+                phx-click={JS.toggle(to: "#selector-iconos")}
+                class="w-9 h-9 flex items-center justify-center border border-gray-300 rounded bg-gray-50 hover:bg-gray-100 text-gray-700"
+                title="Elegir ícono"
+              >
+                <%= if @contexto["icono"] not in [nil, ""] do %>
+                  <span class="material-symbols-outlined">{@contexto["icono"]}</span>
+                <% else %>
+                  <span class="material-symbols-outlined text-gray-400">apps</span>
+                <% end %>
+              </button>
 
               <div id="selector-iconos" class="hidden mt-1.5 border border-gray-200 rounded-lg bg-white shadow-sm p-2 max-w-md">
                 <div class="grid grid-cols-8 gap-1 max-h-48 overflow-y-auto">
@@ -490,10 +498,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
                 </div>
               </div>
 
-              <p class="mt-1 text-xs text-gray-500">
-                Opcional — se ve en el menú colapsado. Elige uno de la lista o escribe el nombre desde
-                <a href="https://fonts.google.com/icons" target="_blank" class="text-purple-700 underline">fonts.google.com/icons</a>.
-              </p>
+              <p class="mt-1 text-xs text-gray-500">Opcional — se ve en el menú colapsado.</p>
             </div>
 
             <label class="font-medium text-gray-900">Es visible:</label>

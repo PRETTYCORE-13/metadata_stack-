@@ -290,6 +290,7 @@ defmodule MetadataApp.CatalogoGenerador do
     """
 
 
+
     File.write!(path, contenido)
   end
 

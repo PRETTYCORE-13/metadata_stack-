@@ -106,14 +106,14 @@ defmodule MetadataAppWeb.MenuLayout do
           </div>
           <!-- HEADER: Logo + toggle -->
           <div class="pc-sidebar-header">
-            <div class="pc-sidebar-brand">
+            <.link navigate="/" class="pc-sidebar-brand">
               <img
                 src="https://prettycore.xyz/IMAGENES/Logo%20Prettycore%20(8).png"
                 alt="MetadataApp"
                 class="pc-sidebar-drop-logo"
               />
               <span class="pc-sidebar-title">MetadataApp</span>
-            </div>
+            </.link>
             <!-- Cerrar sidebar: solo visible en móvil -->
             <button type="button" class="pc-sidebar-close-mobile" phx-click={mobile_close_js()}>
               <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">

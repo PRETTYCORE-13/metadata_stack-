@@ -71,6 +71,7 @@ defmodule MetadataAppWeb.Router do
     live "/", InicioLive
     live "/sysadmin/bc-list", Sysadmin.BcListLive
     live "/sysadmin/bc-list/nuevo", Sysadmin.BcNuevoLive
+    live "/sysadmin/bc-list/carpeta/:nombre/editar", Sysadmin.BcEditarCarpetaLive
 
     # Comodín al final: cualquier ruta de navegación de un catálogo (con la
     # profundidad de carpetas que sea, ej. "/listas/motos" o

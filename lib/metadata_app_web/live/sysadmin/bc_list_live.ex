@@ -100,6 +100,43 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     {:noreply, assign(socket, :accion_eliminar, nil)}
   end
 
+  # Una carpeta no tiene tabla ni filas que perder — a diferencia de
+  # "pedir_eliminar" (archivo), acá no hay que consultar impacto/1 primero,
+  # solo confirmar. Borrar la carpeta no toca a sus hijos: solo pierden la
+  # etiqueta/ícono personalizados y el segmento vuelve a mostrarse con el
+  # nombre crudo de la ruta (ver construir_arbol/1).
+  def handle_event("pedir_eliminar_carpeta", %{"nombre" => nombre, "label" => label}, socket) do
+    {:noreply, assign(socket, :accion_eliminar, %{tipo: :confirmar_carpeta, nombre: nombre, label: label})}
+  end
+
+  def handle_event("confirmar_eliminar_carpeta", _params, socket) do
+    %{nombre: nombre} = socket.assigns.accion_eliminar
+
+    case MetaSchemaContext.obtener_header_por_nombre(nombre) do
+      nil ->
+        {:noreply,
+         socket
+         |> assign(:accion_eliminar, nil)
+         |> put_flash(:error, "Esa carpeta ya no existe.")}
+
+      header ->
+        case MetaSchemaContext.eliminar_header(header) do
+          :ok ->
+            {:noreply,
+             socket
+             |> assign(:accion_eliminar, nil)
+             |> put_flash(:info, "Carpeta #{header.schema_context_label} eliminada.")
+             |> cargar_headers()}
+
+          {:error, motivo} ->
+            {:noreply,
+             socket
+             |> assign(:accion_eliminar, nil)
+             |> put_flash(:error, "No se pudo eliminar: #{inspect(motivo)}")}
+        end
+    end
+  end
+
   # confirmar_filas viaja como el número ya conocido del paso de impacto (no
   # se le vuelve a pedir al usuario que lo tipee) — sigue siendo una
   # confirmación real porque valida contra el conteo actual en el momento del
@@ -123,9 +160,14 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     end
   end
 
-  # El formulario de creación (BcNuevoLive) avisa por PubSub al terminar de
-  # guardar, así esta lista se refresca sola sin que el usuario recargue.
+  # El formulario de creación (BcNuevoLive) y el de edición de carpeta
+  # (BcEditarCarpetaLive) avisan por PubSub al terminar de guardar, así
+  # esta lista se refresca sola sin que el usuario recargue.
   def handle_info({:bc_creado, _header}, socket) do
+    {:noreply, cargar_headers(socket)}
+  end
+
+  def handle_info({:bc_actualizado, _header}, socket) do
     {:noreply, cargar_headers(socket)}
   end
 
@@ -289,6 +331,37 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     """
   end
 
+  defp modal_eliminar(%{accion: %{tipo: :confirmar_carpeta}} = assigns) do
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+        <h2 class="text-lg font-bold text-gray-900 mb-2">Eliminar carpeta</h2>
+        <p class="text-sm text-gray-700 mb-6">
+          Se eliminará la carpeta <strong>{@accion.label}</strong> del menú. Los catálogos que
+          ya están adentro NO se borran — solo pierden esta etiqueta/ícono personalizados y
+          la carpeta vuelve a mostrarse con el nombre de la ruta. ¿Desea continuar?
+        </p>
+        <div class="flex justify-end gap-3">
+          <button
+            type="button"
+            phx-click="cancelar_eliminar"
+            class="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            phx-click="confirmar_eliminar_carpeta"
+            class="px-4 py-2 rounded bg-red-600 text-white text-sm font-semibold hover:bg-red-700"
+          >
+            Eliminar
+          </button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
   defp modal_eliminar(%{accion: %{tipo: :bloqueado}} = assigns) do
     ~H"""
     <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
@@ -326,18 +399,45 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       <%= if nodo.tipo == :carpeta do %>
         <% ruta = if @ruta_padre == "", do: nodo.segmento, else: @ruta_padre <> "/" <> nodo.segmento %>
         <% colapsada? = MapSet.member?(@carpetas_colapsadas, ruta) %>
-        <tr
-          class="bg-gray-50 cursor-pointer hover:bg-gray-100"
-          phx-click="toggle_carpeta"
-          phx-value-ruta={ruta}
-        >
+        <tr class="bg-gray-50 hover:bg-gray-100">
           <td
             colspan="5"
-            class="px-4 py-1.5 font-semibold text-gray-500 text-xs uppercase tracking-wide select-none"
+            class="px-4 py-1.5 text-xs select-none"
             style={"padding-left: #{16 + @nivel * 20}px"}
           >
-            <span class="inline-block w-3">{if colapsada?, do: "▸", else: "▾"}</span>
-            📁 {nodo.nombre}
+            <div class="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                phx-click="toggle_carpeta"
+                phx-value-ruta={ruta}
+                class="flex items-center gap-1 font-semibold text-gray-500 uppercase tracking-wide cursor-pointer flex-1 text-left"
+              >
+                <span class="inline-block w-3">{if colapsada?, do: "▸", else: "▾"}</span>
+                📁 {nodo.nombre}
+              </button>
+              <%= if nodo.id do %>
+                <div class="flex gap-2 normal-case tracking-normal flex-shrink-0">
+                  <button
+                    type="button"
+                    id={"btn-editar-carpeta-#{nodo.id}"}
+                    phx-hook="AbrirVentana"
+                    data-url={"/sysadmin/bc-list/carpeta/#{nodo.id}/editar"}
+                    class="text-blue-600 hover:text-blue-800 text-xs font-semibold"
+                  >
+                    Editar
+                  </button>
+                  <button
+                    type="button"
+                    phx-click="pedir_eliminar_carpeta"
+                    phx-value-nombre={nodo.id}
+                    phx-value-label={nodo.nombre}
+                    class="text-red-600 hover:text-red-800 text-xs font-semibold"
+                  >
+                    Eliminar
+                  </button>
+                </div>
+              <% end %>
+            </div>
           </td>
         </tr>
         <%= if !colapsada? do %>
