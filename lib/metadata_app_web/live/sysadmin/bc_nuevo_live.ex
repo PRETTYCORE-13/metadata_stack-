@@ -371,15 +371,16 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
       |> assign(:iconos_sugeridos, @iconos_sugeridos)
 
     ~H"""
-    <div class="min-h-screen bg-white">
-    <div class="max-w-6xl mx-auto">
-      <div class="bg-black text-white px-6 py-3 flex justify-end">
-        <span class="italic">Business Contexts Admin</span>
+    <div class="min-h-screen bg-gray-50 font-sans text-xs">
+    <div class="max-w-4xl mx-auto bg-white my-3 rounded-xl border border-gray-200 shadow-lg overflow-hidden">
+      <div class="flex items-center gap-1.5 bg-[#fafafa] border-b border-gray-200 px-4 py-1.5">
+        <span class="material-symbols-outlined text-gray-400" style="font-size: 16px">apps</span>
+        <span class="text-[13px] font-semibold text-gray-900">Business Contexts Admin</span>
       </div>
 
       <%= if @mensaje do %>
         <div class={[
-          "px-6 py-3 text-sm font-medium",
+          "px-4 py-1.5 font-medium border-b border-gray-200",
           elem(@mensaje, 0) == :ok && "bg-green-50 text-green-700",
           elem(@mensaje, 0) == :error && "bg-red-50 text-red-700"
         ]}>
@@ -387,65 +388,64 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
         </div>
       <% end %>
 
-      <form phx-submit="guardar" phx-change="validar" class="p-6 space-y-6">
-        <fieldset class="border border-blue-300 rounded">
-          <legend class="px-2 ml-2 text-sm font-semibold text-gray-900">Contexto</legend>
-          <div class="grid grid-cols-[160px_1fr] gap-y-3 gap-x-3 p-4 items-center">
-            <label class="font-medium text-gray-900">Tipo:</label>
-            <div class="inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm w-fit">
-              <label class={[
-                "px-4 py-2 cursor-pointer transition-colors select-none",
-                if(@contexto["tipo_registro"] == "carpeta",
-                  do: "bg-purple-600 text-white font-semibold",
-                  else: "bg-white text-gray-600 hover:bg-gray-50"
-                )
-              ]}>
-                <input type="radio" name="contexto[tipo_registro]" value="carpeta" checked={@contexto["tipo_registro"] == "carpeta"} class="hidden" />
-                Árbol de navegación
-              </label>
-              <label class={[
-                "px-4 py-2 cursor-pointer transition-colors select-none border-l border-gray-300",
-                if(@contexto["tipo_registro"] != "carpeta",
-                  do: "bg-purple-600 text-white font-semibold",
-                  else: "bg-white text-gray-600 hover:bg-gray-50"
-                )
-              ]}>
-                <input type="radio" name="contexto[tipo_registro]" value="archivo" checked={@contexto["tipo_registro"] != "carpeta"} class="hidden" />
-                Proceso de negocio
-              </label>
-            </div>
+      <form phx-submit="guardar" phx-change="validar" class="p-3 space-y-3">
+        <div class="flex gap-4 border-b border-gray-200 -mt-1">
+          <label class={[
+            "px-1 pb-2 -mb-px cursor-pointer select-none border-b-2 transition-colors",
+            if(@contexto["tipo_registro"] == "carpeta",
+              do: "border-purple-600 text-purple-700 font-semibold",
+              else: "border-transparent text-gray-500 hover:text-gray-700"
+            )
+          ]}>
+            <input type="radio" name="contexto[tipo_registro]" value="carpeta" checked={@contexto["tipo_registro"] == "carpeta"} class="hidden" />
+            Árbol de navegación
+          </label>
+          <label class={[
+            "px-1 pb-2 -mb-px cursor-pointer select-none border-b-2 transition-colors",
+            if(@contexto["tipo_registro"] != "carpeta",
+              do: "border-purple-600 text-purple-700 font-semibold",
+              else: "border-transparent text-gray-500 hover:text-gray-700"
+            )
+          ]}>
+            <input type="radio" name="contexto[tipo_registro]" value="archivo" checked={@contexto["tipo_registro"] != "carpeta"} class="hidden" />
+            Proceso de negocio
+          </label>
+        </div>
 
+        <fieldset class="border border-gray-200 rounded-lg">
+          <legend class="px-1.5 ml-2 font-bold uppercase tracking-wide text-[11px] text-gray-500">Contexto</legend>
+          <div class="grid grid-cols-[110px_1fr] gap-y-1.5 gap-x-2 p-2.5 items-start">
             <%= if @contexto["tipo_registro"] != "carpeta" do %>
-              <label class="font-medium text-gray-900">Nombre de sistema:</label>
+              <label class="font-medium text-gray-900 pt-1">Nombre de sistema:</label>
               <div>
-                <div class="flex items-center gap-1.5">
-                  <span class="border border-gray-300 rounded bg-gray-100 text-gray-500 px-2 py-1 select-none">pty_</span>
+                <div class="flex items-center gap-1">
+                  <span class="border border-gray-200 rounded-lg bg-gray-100 text-gray-500 px-1.5 py-1 select-none">pty_</span>
                   <span class="text-gray-400">-</span>
                   <input type="text" name="contexto[nombre_p2]" value={@contexto["nombre_p2"]} required maxlength="30"
                     title="Minúsculas, sin acentos ni espacios."
-                    class="border border-gray-300 rounded text-gray-900 px-2 py-1 w-32" placeholder="catalogos" />
+                    class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 w-24 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="catalogos" />
                   <span class="text-gray-400">-</span>
                   <input type="text" name="contexto[nombre_p3]" value={@contexto["nombre_p3"]} required maxlength="30"
                     title="Minúsculas, sin acentos ni espacios."
-                    class="border border-gray-300 rounded text-gray-900 px-2 py-1 flex-1" placeholder="carros" />
+                    class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 flex-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="carros" />
                 </div>
-                <div class="mt-1.5 bg-blue-600 text-white rounded px-2 py-1.5 text-xs inline-flex items-center gap-1.5">
-                  <span class="text-blue-100">Vista previa:</span>
+                <div class="mt-1 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg px-1.5 py-0.5 inline-flex items-center gap-1">
+                  <span class="text-purple-400">Vista previa:</span>
                   <span class="font-mono">{@nombre_sistema_preview}</span>
                 </div>
               </div>
             <% end %>
 
-            <label class="font-medium text-gray-900">Etiqueta:</label>
+            <label class="font-medium text-gray-900 pt-1">Etiqueta:</label>
             <input type="text" name="contexto[etiqueta]" value={@contexto["etiqueta"]} required maxlength="100"
-              class="border border-gray-300 rounded text-gray-900 px-2 py-1" placeholder="Catálogo de carros" />
+              class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="Catálogo de carros" />
 
-            <label class="font-medium text-gray-900">Navegación:</label>
+            <label class="font-medium text-gray-900 pt-1">Navegación:</label>
             <div>
-              <div class="flex items-center gap-1.5">
+              <div class="flex items-center gap-1">
                 <select name="contexto[carpeta_padre]"
                   title="Elige una carpeta que ya existe para anidar ahí adentro, o deja 'Sin carpeta' para que quede en la raíz del menú."
-                  class="border border-gray-300 rounded text-gray-900 px-2 py-1">
+                  class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors">
                   <option value="" selected={@contexto["carpeta_padre"] in [nil, ""]}>— Sin carpeta (raíz) —</option>
                   <%= for carpeta <- @carpetas do %>
                     <option value={carpeta.ruta} selected={@contexto["carpeta_padre"] == carpeta.ruta}>{carpeta.etiqueta}</option>
@@ -454,139 +454,141 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
                 <span class="text-gray-400">/</span>
                 <input type="text" name="contexto[nav_final]" value={@contexto["nav_final"]} required maxlength="50"
                   title="Minúsculas, sin acentos ni espacios. Guiones sí permitidos."
-                  class="border border-gray-300 rounded text-gray-900 px-2 py-1 flex-1" placeholder="carros" />
+                  class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 flex-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="carros" />
               </div>
-              <div class="mt-1.5 bg-blue-600 text-white rounded px-2 py-1.5 text-xs inline-flex items-center gap-1.5">
-                <span class="text-blue-100">Vista previa:</span>
+              <div class="mt-1 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg px-1.5 py-0.5 inline-flex items-center gap-1">
+                <span class="text-purple-400">Vista previa:</span>
                 <span class="font-mono">
                   {@nav_preview}<%= if @nombre_sistema_preview != "", do: "/#{@nombre_sistema_preview}" %>
                 </span>
               </div>
             </div>
 
-            <label class="font-medium text-gray-900">Ícono:</label>
+            <label class="font-medium text-gray-900 pt-1">Ícono:</label>
             <div>
-              <input type="hidden" name="contexto[icono]" value={@contexto["icono"]} />
-              <button
-                type="button"
-                phx-click={JS.toggle(to: "#selector-iconos")}
-                class="w-9 h-9 flex items-center justify-center border border-gray-300 rounded bg-gray-50 hover:bg-gray-100 text-gray-700"
-                title="Elegir ícono"
-              >
-                <%= if @contexto["icono"] not in [nil, ""] do %>
-                  <span class="material-symbols-outlined">{@contexto["icono"]}</span>
-                <% else %>
-                  <span class="material-symbols-outlined text-gray-400">apps</span>
-                <% end %>
-              </button>
+              <div class="flex items-center gap-4">
+                <input type="hidden" name="contexto[icono]" value={@contexto["icono"]} />
+                <button
+                  type="button"
+                  phx-click={JS.toggle(to: "#selector-iconos")}
+                  class="w-6 h-6 flex items-center justify-center border border-gray-300 rounded-lg bg-gray-50 hover:bg-gray-100 text-gray-700 transition-colors"
+                  title="Elegir ícono"
+                >
+                  <%= if @contexto["icono"] not in [nil, ""] do %>
+                    <span class="material-symbols-outlined" style="font-size: 16px">{@contexto["icono"]}</span>
+                  <% else %>
+                    <span class="material-symbols-outlined text-gray-400" style="font-size: 16px">apps</span>
+                  <% end %>
+                </button>
 
-              <div id="selector-iconos" class="hidden mt-1.5 border border-gray-200 rounded-lg bg-white shadow-sm p-2 max-w-md">
-                <div class="grid grid-cols-8 gap-1 max-h-48 overflow-y-auto">
+                <label class="flex items-center gap-1.5 font-medium text-gray-900 cursor-pointer select-none">
+                  <input type="hidden" name="contexto[visible]" value="false" />
+                  <input type="checkbox" name="contexto[visible]" value="true" checked={@contexto["visible"] == true} class="accent-purple-600" />
+                  Es visible
+                </label>
+              </div>
+
+              <div id="selector-iconos" class="hidden mt-1 border border-gray-200 rounded-lg bg-white shadow-lg p-1.5 max-w-md">
+                <div class="grid grid-cols-10 gap-0.5 max-h-40 overflow-y-auto">
                   <%= for icono <- @iconos_sugeridos do %>
                     <button
                       type="button"
                       title={icono}
                       phx-click={JS.push("elegir_icono", value: %{icono: icono}) |> JS.hide(to: "#selector-iconos")}
                       class={[
-                        "w-9 h-9 flex items-center justify-center rounded text-gray-700 hover:bg-purple-50 hover:text-purple-700",
+                        "w-6 h-6 flex items-center justify-center rounded-lg text-gray-700 hover:bg-purple-50 hover:text-purple-700 transition-colors",
                         @contexto["icono"] == icono && "bg-purple-100 text-purple-700"
                       ]}
                     >
-                      <span class="material-symbols-outlined">{icono}</span>
+                      <span class="material-symbols-outlined" style="font-size: 16px">{icono}</span>
                     </button>
                   <% end %>
                 </div>
               </div>
 
-              <p class="mt-1 text-xs text-gray-500">Opcional — se ve en el menú colapsado.</p>
-            </div>
-
-            <label class="font-medium text-gray-900">Es visible:</label>
-            <div>
-              <input type="hidden" name="contexto[visible]" value="false" />
-              <input type="checkbox" name="contexto[visible]" value="true" checked={@contexto["visible"] == true} />
+              <p class="mt-0.5 text-[11px] text-gray-500">Opcional — se ve en el menú colapsado.</p>
             </div>
           </div>
         </fieldset>
 
         <%= if @contexto["tipo_registro"] != "carpeta" do %>
-        <fieldset class="border border-blue-300 rounded">
-          <legend class="px-2 ml-2 text-sm font-semibold text-gray-900">Componentes</legend>
-          <div class="p-4 overflow-x-auto">
-            <table class="min-w-full text-sm">
-              <thead class="bg-black text-white">
+        <fieldset class="border border-gray-200 rounded-lg">
+          <legend class="px-1.5 ml-2 font-bold uppercase tracking-wide text-[11px] text-gray-500">Componentes</legend>
+          <div class="p-2.5 overflow-x-auto">
+            <table class="min-w-full">
+              <thead class="bg-gray-50">
                 <tr>
-                  <th class="px-2 py-1 text-left">Nombre</th>
-                  <th class="px-2 py-1 text-left">Etiqueta</th>
-                  <th class="px-2 py-1 text-left">Tipo</th>
-                  <th class="px-2 py-1 text-left">Longitud</th>
-                  <th class="px-2 py-1 text-left">precisión</th>
-                  <th class="px-2 py-1 text-left">escala</th>
-                  <th class="px-2 py-1 text-left">orden</th>
-                  <th class="px-2 py-1 text-left">Es visible</th>
-                  <th class="px-2 py-1"></th>
+                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Nombre</th>
+                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Etiqueta</th>
+                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
+                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Longitud</th>
+                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">precisión</th>
+                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">escala</th>
+                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">orden</th>
+                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Es visible</th>
+                  <th class="px-1.5 py-1 border-b border-gray-200"></th>
                 </tr>
               </thead>
               <tbody>
                 <%= for {componente, idx} <- Enum.with_index(@componentes) do %>
-                  <tr class="border-b border-gray-200">
-                    <td class="px-2 py-1">
+                  <tr class="border-b border-gray-100 hover:bg-gray-50">
+                    <td class="px-1.5 py-1">
                       <input type="text" name={"componentes[#{idx}][nombre]"} value={componente["nombre"]} required
                         pattern="[a-z][a-z0-9_]*" maxlength="50"
                         title="Minúsculas, sin acentos ni espacios. Letras, números y guion_bajo, debe empezar con una letra."
-                        class="border border-gray-300 rounded text-gray-900 px-2 py-1 w-32" placeholder="pty_carro_nombre" />
+                        class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 w-28 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="pty_carro_nombre" />
                     </td>
-                    <td class="px-2 py-1">
+                    <td class="px-1.5 py-1">
                       <input type="text" name={"componentes[#{idx}][etiqueta]"} value={componente["etiqueta"]} required maxlength="100"
-                        class="border border-gray-300 rounded text-gray-900 px-2 py-1 w-28" placeholder="Nombre" />
+                        class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 w-24 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="Nombre" />
                     </td>
-                    <td class="px-2 py-1">
-                      <select name={"componentes[#{idx}][tipo]"} class="border border-gray-300 rounded text-gray-900 px-2 py-1">
+                    <td class="px-1.5 py-1">
+                      <select name={"componentes[#{idx}][tipo]"} class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors">
                         <%= for tipo <- @tipos do %>
                           <option value={tipo} selected={componente["tipo"] == tipo}>{tipo}</option>
                         <% end %>
                       </select>
                     </td>
-                    <td class="px-2 py-1">
+                    <td class="px-1.5 py-1">
                       <input type="number" name={"componentes[#{idx}][longitud]"} value={componente["longitud"]}
-                        class="border border-gray-300 rounded text-gray-900 px-2 py-1 w-16" />
+                        class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 w-14 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" />
                     </td>
-                    <td class="px-2 py-1">
+                    <td class="px-1.5 py-1">
                       <input type="number" name={"componentes[#{idx}][precision]"} value={componente["precision"]}
-                        class="border border-gray-300 rounded text-gray-900 px-2 py-1 w-16" />
+                        class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 w-14 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" />
                     </td>
-                    <td class="px-2 py-1">
+                    <td class="px-1.5 py-1">
                       <input type="number" name={"componentes[#{idx}][escala]"} value={componente["escala"]}
-                        class="border border-gray-300 rounded text-gray-900 px-2 py-1 w-16" />
+                        class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 w-14 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" />
                     </td>
-                    <td class="px-2 py-1">
+                    <td class="px-1.5 py-1">
                       <input type="number" name={"componentes[#{idx}][orden]"} value={componente["orden"]}
-                        class="border border-gray-300 rounded text-gray-900 px-2 py-1 w-14" />
+                        class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 w-12 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" />
                     </td>
-                    <td class="px-2 py-1">
+                    <td class="px-1.5 py-1">
                       <input type="hidden" name={"componentes[#{idx}][visible]"} value="false" />
-                      <input type="checkbox" name={"componentes[#{idx}][visible]"} value="true" checked={componente["visible"] == true} />
+                      <input type="checkbox" name={"componentes[#{idx}][visible]"} value="true" checked={componente["visible"] == true} class="accent-purple-600" />
                     </td>
-                    <td class="px-2 py-1">
+                    <td class="px-1.5 py-1">
                       <button type="button" phx-click="quitar_componente" phx-value-idx={idx}
-                        class="text-red-600 text-xs font-semibold">Quitar</button>
+                        class="text-red-600 hover:text-red-700 text-[11px] font-semibold transition-colors">Quitar</button>
                     </td>
                   </tr>
                 <% end %>
               </tbody>
             </table>
-            <button type="button" phx-click="agregar_componente" class="mt-3 text-sm font-semibold text-purple-700">
+            <button type="button" phx-click="agregar_componente" class="mt-2 font-semibold text-purple-700 hover:text-purple-900 transition-colors">
               + Agregar componente
             </button>
           </div>
         </fieldset>
         <% end %>
 
-        <div class="flex justify-end gap-3">
-          <button type="button" phx-click="cancelar" class="bg-red-500 hover:bg-red-600 text-white font-bold px-8 py-2 rounded">
+        <div class="flex justify-end gap-2 border-t border-gray-200 pt-2.5">
+          <button type="button" phx-click="cancelar" class="px-3.5 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50 transition-colors">
             Cancelar
           </button>
-          <button type="submit" class="bg-green-500 hover:bg-green-600 text-white font-bold px-8 py-2 rounded">
+          <button type="submit" class="px-3.5 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
             Guardar
           </button>
         </div>
