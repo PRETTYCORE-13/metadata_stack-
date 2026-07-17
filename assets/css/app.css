@@ -92,6 +92,20 @@
   --noise: 0;
 }
 
+/* Inter como fuente base de toda la app (ver <link> en root.html.heex) —
+   sobreescribe --font-sans de Tailwind, así que aplica a todo elemento sin
+   font-family propio, sin tener que agregar font-sans a mano en cada
+   template. tabular-nums para que columnas numéricas (edad, venta, id)
+   alineen prolijo en las tablas. */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+body {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Add variants based on LiveView classes */
 @custom-variant phx-click-loading (.phx-click-loading&, .phx-click-loading &);
 @custom-variant phx-submit-loading (.phx-submit-loading&, .phx-submit-loading &);

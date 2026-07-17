@@ -1,9 +1,11 @@
 defmodule MetadataApp.MetaBusinessProcess.Reglas.PtyMotocicletas.DarDeBajaPost do
   @behaviour MetadataApp.MetaStateEngine.ReglaPost
 
+  require Logger
+
   @impl true
-  def ejecutar(_registro, _contexto, _params, _repo) do
-    # ESCRIBA SUS REGLAS AQUI
+  def ejecutar(registro, contexto, _params, _repo) do
+    Logger.info("moto #{registro.id} dada de baja (motivo: #{Map.get(contexto, "motivo_baja")})")
     {:ok, :sin_cambios}
   end
 end

@@ -33,6 +33,7 @@ defmodule MetadataAppWeb.Router do
 
     get "/catalogos/:tabla/impacto", BusinessProcessBuilder.CatalogoAdminController, :impacto
     get "/catalogos/:tabla/validar_motor", BusinessProcessBuilder.CatalogoAdminController, :validar_motor
+    get "/catalogos/:tabla/completitud", BusinessProcessBuilder.CatalogoAdminController, :completitud
     delete "/catalogos/:tabla", BusinessProcessBuilder.CatalogoAdminController, :delete
 
     get "/:tabla/:id/transiciones", MetaTransicionController, :index

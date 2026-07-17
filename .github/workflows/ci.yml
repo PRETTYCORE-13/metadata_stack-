@@ -78,6 +78,15 @@ jobs:
             exit 1
           fi
 
+      - name: Verificar que no queden reglas de negocio en estado stub
+        run: |
+          if grep -rl "# ESCRIBA SUS REGLAS AQUI" lib/metadata_app/meta_business_process/reglas/ > /tmp/stubs.txt 2>/dev/null; then
+            echo "Hay reglas de negocio sin completar (todavia con el stub de 'mix motor.reglas.andamiar'):"
+            cat /tmp/stubs.txt
+            echo "Completa la logica de negocio antes de publicar, o desenganchala si no hace falta."
+            exit 1
+          fi
+
       - name: Compilar sin warnings
         run: mix compile --warning-as-errors
 
@@ -118,3 +127,42 @@ jobs:
           tags: |
             ghcr.io/${{ env.IMAGE_NAME }}:latest
             ghcr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  # Solo corre si "build-image" publicó la imagen nueva. Actualiza el
+  # servicio en Docker Swarm (servidor de oficina, "producción simulada")
+  # y corre las migraciones — el mismo ciclo manual documentado en
+  # docs/ci-cd-deploy.md, ahora automático. Requiere 3 secrets en el repo
+  # (Settings -> Secrets and variables -> Actions): DEPLOY_HOST,
+  # DEPLOY_USER, DEPLOY_SSH_KEY (privada, ed25519) — ninguno vive acá ni
+  # en ningún archivo versionado, el repo es público.
+  deploy:
+    needs: build-image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Actualizar metadata_stack_app en Docker Swarm y migrar
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            docker pull ghcr.io/prettycore-13/metadata_stack:latest
+            docker service update --image ghcr.io/prettycore-13/metadata_stack:latest --force metadata_stack_app
+
+            echo "Esperando a que el servicio converja..."
+            for i in $(seq 1 12); do
+              REPLICAS=$(docker service ls --filter name=metadata_stack_app --format "{{.Replicas}}")
+              echo "  replicas: $REPLICAS"
+              if [ "$REPLICAS" = "1/1" ]; then break; fi
+              sleep 5
+            done
+
+            CONTAINER_ID=$(docker ps -q --filter "name=metadata_stack_app" | head -n1)
+            if [ -z "$CONTAINER_ID" ]; then
+              echo "No se encontró el contenedor de metadata_stack_app corriendo, no se pudo migrar"
+              exit 1
+            fi
+            docker exec "$CONTAINER_ID" /app/bin/migrate

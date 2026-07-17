@@ -20,6 +20,12 @@ if System.get_env("PHX_SERVER") do
   config :metadata_app, MetadataAppWeb.Endpoint, server: true
 end
 
+# Nombre de la empresa/tenant mostrado en la barra superior — pensado para
+# blanqueo de marca a futuro: distinto deploy, distinta variable de entorno,
+# sin tocar código. Vale para todos los ambientes (no solo prod), así en dev
+# también se puede probar sin recompilar.
+config :metadata_app, :nombre_empresa, System.get_env("NOMBRE_EMPRESA", "DemoCore Sa. de C.V")
+
 if config_env() == :prod do
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 

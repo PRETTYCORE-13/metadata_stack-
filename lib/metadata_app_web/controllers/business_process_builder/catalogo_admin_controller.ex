@@ -17,6 +17,12 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoAdminController do
     end
   end
 
+  def completitud(conn, %{"tabla" => tabla}) do
+    with {:ok, resultado} <- MetaEstadosAdmin.completitud(tabla) do
+      json(conn, resultado)
+    end
+  end
+
   def delete(conn, %{"tabla" => tabla} = params) do
     confirmar_tabla = Map.get(params, "confirmar_tabla")
     confirmar_filas = Map.get(params, "confirmar_filas")

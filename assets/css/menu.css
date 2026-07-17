@@ -31,16 +31,113 @@
   background: #f5f5f5;
 }
 
-/* Barra superior full-width */
+/* ---- USER MENU (topbar): avatar + nombre + dropdown de 3 opciones ---- */
+.pc-user-menu {
+  position: relative;
+}
+
+.pc-user-menu-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.pc-user-menu-btn:hover {
+  background: #f3f4f6;
+}
+
+.pc-user-menu-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pc-user-menu-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #111827;
+  white-space: nowrap;
+}
+
+/* display: none acá (no en una clase "hidden" aparte): menu.css se importa
+   DESPUÉS de Tailwind en app.css, así que con la misma especificidad esta
+   regla le gana a la utilidad ".hidden" sin importar el orden de clases en
+   el HTML — el toggle de abajo pone "display:flex" inline (JS.toggle
+   display: "flex"), que siempre le gana a cualquier CSS por clase. */
+.pc-user-menu-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 220px;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  z-index: 100;
+}
+
+.pc-user-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pc-user-menu-item:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.pc-user-menu-item-danger:hover {
+  background: rgba(239, 68, 68, 0.08);
+  color: #ef4444;
+}
+
+/* ---- TOPBAR (branding: logo + nombre de empresa configurable) ---- */
 .pc-topbar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  gap: 10px;
   width: 100%;
-  background: #ffffff;
+  background: #fafafa;
   border-bottom: 1px solid #e5e7eb;
   padding: 8px 24px;
   flex-shrink: 0;
+}
+
+.pc-topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  cursor: pointer;
 }
 
 .pc-topbar-logo {
@@ -48,55 +145,55 @@
   object-fit: contain;
 }
 
-.pc-topbar-login-btn {
-  margin-left: 12px;
-  padding: 6px 16px;
-  border-radius: 8px;
-  background: #7c3aed;
-  color: #ffffff;
-  font-size: 13px;
+.pc-topbar-empresa {
+  font-size: 15px;
   font-weight: 600;
-  white-space: nowrap;
-  transition: background 0.15s ease;
+  color: #111827;
 }
 
-.pc-topbar-login-btn:hover {
-  background: #6d28d9;
+/* Campana + login: empujados al extremo derecho de la topbar. */
+.pc-topbar-derecha {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
-/* ---- BREADCRUMB (estilo CloudWatch: "AppName > Carpeta > Página") ---- */
-.pc-breadcrumb {
+/* ---- FOOTER (copyright de la plataforma + ruta completa de la página
+   activa) — antes la ruta vivía arriba, se movió acá para dejar la topbar
+   solo con branding/acciones. Banda angosta estilo status bar de VS Code:
+   poca altura, texto chico, nada de aire de más. ---- */
+.pc-footer {
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
+  min-height: 22px;
   background: #fafafa;
-  border-bottom: 1px solid #e5e7eb;
-  padding: 8px 24px;
+  border-top: 1px solid #e5e7eb;
+  padding: 2px 12px;
   flex-shrink: 0;
-  font-size: 13px;
+  font-size: 11px;
+  color: #6b7280;
 }
 
-.pc-breadcrumb-home {
+.pc-footer-copyright {
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.pc-footer-separador {
+  color: #d1d5db;
+}
+
+.pc-footer-ruta {
   color: #6b7280;
   font-weight: 500;
   text-decoration: none;
 }
 
-.pc-breadcrumb-home:hover {
+.pc-footer-ruta:hover {
   color: #111827;
-}
-
-.pc-breadcrumb-sep {
-  width: 12px;
-  height: 12px;
-  color: #9ca3af;
-  flex-shrink: 0;
-}
-
-.pc-breadcrumb-item {
-  color: #111827;
-  font-weight: 600;
 }
 
 /* ---- COPIAR RUTA (botón al final de las migas de pan) ---- */
@@ -104,12 +201,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 18px;
+  height: 18px;
   margin-left: 4px;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: 4px;
   background: transparent;
   color: #9ca3af;
   cursor: pointer;
@@ -124,8 +221,8 @@
 
 .pc-breadcrumb-copiar-icono-copiar,
 .pc-breadcrumb-copiar-icono-listo {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
 }
 
 .pc-breadcrumb-copiar-icono-listo {
@@ -203,39 +300,17 @@
   transition: none;
 }
 
-/* ---- HEADER (logo + brand + toggle) ---- */
+/* ---- HEADER (toggle — el branding ya vive en la topbar, no acá).
+   padding-bottom/min-height chicos a propósito: sin logo+título que
+   acompañar, el botón (31px) no necesita el aire que tenía antes. ---- */
 .pc-sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-bottom: 20px;
+  padding-bottom: 8px;
   border-bottom: 1px solid #e5e7eb;
   margin-bottom: 6px;
-  min-height: 44px;
-}
-
-.pc-sidebar-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.pc-sidebar-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: #111827;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-
-.pc-platform-sidebar-open .pc-sidebar-title {
-  opacity: 1;
+  min-height: 31px;
 }
 
 .pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-header {
@@ -244,37 +319,13 @@
   gap: 8px;
 }
 
-.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-brand {
-  justify-content: center;
-}
-
-.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-title {
-  width: 0;
-  overflow: hidden;
-}
-
-/* Logo gota morada - siempre visible */
-.pc-sidebar-drop-logo {
-  width: 40px;
-  height: 40px;
-  object-fit: contain;
-  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-              height 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* Sidebar cerrado: gota más pequeña */
-.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-drop-logo {
-  width: 32px;
-  height: 32px;
-}
-
 /* ---- TOGGLE ---- */
 .pc-sidebar-toggle {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 31px;
+  height: 31px;
   border-radius: 8px;
   border: none;
   background: transparent;
@@ -302,24 +353,6 @@
   justify-content: space-between;
   overflow-y: auto;
   overflow-x: hidden;
-}
-
-/* ---- SECTION LABEL ---- */
-.pc-sidebar-section-label {
-  font-size: 11px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #9ca3af;
-  padding: 16px 8px 8px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-section-label {
-  font-size: 9px;
-  text-align: center;
-  padding: 16px 0 8px;
 }
 
 /* ---- NAV ---- */
@@ -601,52 +634,6 @@
   color: #6d28d9;
 }
 
-/* ---- LOGOUT ---- */
-.pc-nav-logout {
-  color: #6b7280;
-}
-
-.pc-nav-logout:hover {
-  background: rgba(239, 68, 68, 0.08);
-  color: #ef4444;
-}
-
-/* ---- USER ---- */
-.pc-sidebar-user {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-}
-
-.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-user {
-  justify-content: center;
-  padding: 10px;
-}
-
-.pc-sidebar-user-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 999px;
-  background: #e5e7eb;
-  color: #374151;
-  font-size: 13px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-
-.pc-sidebar-user-avatar-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 999px;
-}
-
 /* ---- SCROLLBAR ---- */
 .pc-sidebar-body::-webkit-scrollbar {
   width: 4px;
@@ -713,19 +700,22 @@
    MOBILE RESPONSIVE (max-width: 768px)
    ======================================== */
 @media (max-width: 768px) {
-  /* Topbar compacto en móvil: muestra hamburger a la izquierda */
+  /* Banda compacta en móvil: hamburger a la izquierda, resto puede ajustar */
   .pc-topbar {
-    justify-content: space-between;
     padding: 6px 12px 6px 8px;
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .pc-footer {
+    padding: 6px 12px;
+    flex-wrap: wrap;
+    row-gap: 4px;
   }
 
   /* Show hamburger button inline en la topbar */
   .pc-mobile-menu-btn {
     display: flex;
-  }
-
-  .pc-topbar-logo {
-    height: 24px;
   }
 
   /* Sidebar: oculto fuera de pantalla por defecto */
@@ -759,30 +749,18 @@
     padding: 0;
   }
 
-  .pc-platform-sidebar.pc-sidebar-visible .pc-sidebar-section-label {
-    text-align: left;
-    padding: 14px 8px 6px;
-  }
-
   /* Corregir estilos colapsados de desktop cuando sidebar está visible en móvil */
-  .pc-platform-sidebar.pc-sidebar-visible .pc-sidebar-drop-logo { width: 40px; height: 40px; }
-  .pc-platform-sidebar.pc-sidebar-visible .pc-sidebar-title { opacity: 1; width: auto; overflow: visible; }
   .pc-platform-sidebar.pc-sidebar-visible .pc-nav-icon { display: none; }
   .pc-platform-sidebar.pc-sidebar-visible .pc-sidebar-header {
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
   }
-  .pc-platform-sidebar.pc-sidebar-visible .pc-sidebar-brand { justify-content: flex-start; }
   .pc-platform-sidebar.pc-sidebar-visible .pc-nav-item {
     justify-content: flex-start;
     padding: 12px 14px;
     border-radius: 10px;
     min-height: 48px;
-  }
-  .pc-platform-sidebar.pc-sidebar-visible .pc-sidebar-user {
-    justify-content: flex-start;
-    padding: 12px 14px;
   }
 
   /* Ocultar botón de colapso de desktop en móvil */

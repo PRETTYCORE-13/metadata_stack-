@@ -31,6 +31,14 @@ defmodule MetadataApp.MetaEstadosAdmin do
     "notificar" => {"post", ["destinatario", "plantilla"]}
   }
 
+  # Sentinel literal que `mix motor.reglas.andamiar` escribe en cada stub
+  # generado (ver lib/mix/tasks/motor.reglas.andamiar.ex) — un módulo de
+  # negocio que compila y expone la función correcta pasa el chequeo
+  # estructural de validar_regla_de_negocio/4 aunque el cuerpo siga siendo
+  # el no-op del andamiaje. Buscar este string es la única forma barata de
+  # distinguir "completo" de "stub sin tocar" sin ejecutar el módulo.
+  @marcador_stub "# ESCRIBA SUS REGLAS AQUI"
+
   # --- Estados ---------------------------------------------------------------
 
   def listar_estados(meta_schema_header_id) do
@@ -180,13 +188,72 @@ defmodule MetadataApp.MetaEstadosAdmin do
     }
   end
 
+  # --- Completitud del ciclo ("¿esto está terminado?") -------------------------
+
+  # Checklist del ciclo completo de un Business Context: distinto de
+  # validar_motor/1 (que dice "¿esto va a funcionar sin romperse?") — esto
+  # dice "¿esto está terminado, o todavía es un borrador/andamiaje?".
+  # completo?/1 exige, además de la estructura sana, que NINGUNA regla de
+  # negocio siga siendo un stub sin completar — es la pregunta que
+  # validar_motor deliberadamente no contesta (una regla stub es
+  # estructuralmente válida: compila y expone la función correcta).
+  @spec completitud(String.t()) :: {:ok, map()} | {:error, String.t()}
+  def completitud(catalogo) do
+    case MetaSchemaContext.obtener_header_por_nombre(catalogo) do
+      nil ->
+        {:error, "catálogo no encontrado: #{catalogo}"}
+
+      header ->
+        detalles = MetaSchemaContext.listar_detalles(catalogo)
+        estados = listar_estados(header.id)
+        transiciones = listar_transiciones(header.id)
+
+        tiene_alta_o_inicial? =
+          Enum.any?(estados, & &1.es_inicial) or
+            Enum.any?(transiciones, &(&1.accion == "alta" and is_nil(&1.estado_origen_id)))
+
+        self_loops =
+          Enum.filter(transiciones, &(not is_nil(&1.estado_origen_id) and &1.estado_origen_id == &1.estado_destino_id))
+
+        self_loops_sin_campos = Enum.count(self_loops, &(&1.campos_editables == []))
+
+        reglas = Enum.flat_map(transiciones, & &1.reglas)
+        {reglas_cerradas, reglas_negocio} = Enum.split_with(reglas, &Map.has_key?(@vocabulario, &1.regla))
+        reglas_negocio_stub = Enum.count(reglas_negocio, &stub_sin_completar?(catalogo, &1.regla))
+
+        tiene_campos? = detalles != []
+        tiene_estados? = estados != []
+        self_loops_ok? = self_loops_sin_campos == 0
+
+        {:ok,
+         %{
+           catalogo: catalogo,
+           tiene_campos: tiene_campos?,
+           tiene_estados: tiene_estados?,
+           tiene_alta_o_inicial: tiene_alta_o_inicial?,
+           transiciones_self_loop: length(self_loops),
+           transiciones_self_loop_sin_campos_editables: self_loops_sin_campos,
+           reglas: %{
+             total: length(reglas),
+             vocabulario_cerrado: length(reglas_cerradas),
+             negocio_completas: length(reglas_negocio) - reglas_negocio_stub,
+             negocio_stub: reglas_negocio_stub
+           },
+           completo?:
+             tiene_campos? and tiene_estados? and tiene_alta_o_inicial? and self_loops_ok? and
+               reglas_negocio_stub == 0
+         }}
+    end
+  end
+
   # --- Validación estructural del autómata ("¿esto va a funcionar?") -----------
 
-  # Chequea el grafo entero de un catálogo (estados/transiciones/reglas) SIN
-  # ejecutar nada — errores de configuración (typos en nombres de regla,
-  # tipo pre/post equivocado, parámetros faltantes, estados de otro
-  # catálogo, estados inalcanzables) se agarran acá, no cuando un cliente
-  # real dispara la transición y el motor explota con un error interno.
+  # Chequeo estructural: "¿esto va a funcionar sin romperse?" — distinto de
+  # completitud/1 ("¿esto está terminado?"). Errores de configuración (typos
+  # en nombres de regla, tipo pre/post equivocado, parámetros faltantes,
+  # estados de otro catálogo, estados inalcanzables) se agarran acá, no
+  # cuando un cliente real dispara la transición y el motor explota con un
+  # error interno.
   @spec validar_motor(String.t()) :: {:ok, map()} | {:error, String.t()}
   def validar_motor(catalogo) do
     case MetaSchemaContext.obtener_header_por_nombre(catalogo) do
@@ -339,9 +406,29 @@ defmodule MetadataApp.MetaEstadosAdmin do
           | problemas
         ]
 
+      stub_sin_completar?(catalogo, regla.regla) ->
+        [
+          problema(
+            :advertencia,
+            "transición \"#{transicion.accion}\": la regla \"#{regla.regla}\" sigue siendo un stub de andamiaje sin completar (#{ruta_regla_negocio(catalogo, regla.regla)})"
+          )
+          | problemas
+        ]
+
       true ->
         problemas
     end
+  end
+
+  # Mismo criterio de ruta que Mix.Tasks.Motor.Reglas.Andamiar.ruta_regla/2
+  # — no se comparte el código porque una Mix.Task no es un módulo pensado
+  # para importarse desde runtime de la app.
+  defp ruta_regla_negocio(catalogo, regla),
+    do: Path.join(["lib", "metadata_app", "meta_business_process", "reglas", catalogo, "#{regla}.ex"])
+
+  defp stub_sin_completar?(catalogo, regla) do
+    ruta = ruta_regla_negocio(catalogo, regla)
+    File.exists?(ruta) and String.contains?(File.read!(ruta), @marcador_stub)
   end
 
   defp validar_tipo_regla(problemas, transicion, regla, tipo_esperado) do

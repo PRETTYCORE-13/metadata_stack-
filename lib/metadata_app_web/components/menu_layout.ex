@@ -27,14 +27,17 @@ defmodule MetadataAppWeb.MenuLayout do
 
     assigns =
       assigns
-      |> assign(:migas, ruta_migas(assigns.menu_items, assigns.current_page) || [])
       |> assign(:nodo_actual, buscar_nodo_actual(assigns.menu_items, assigns.current_page))
+      |> assign(:nombre_empresa, Application.get_env(:metadata_app, :nombre_empresa, "Prettycore"))
+      |> assign(:anio_actual, Date.utc_today().year)
 
     ~H"""
     <div class="pc-platform">
-      <!-- Barra negra superior full-width con branding -->
+      <!-- Topbar: logo + nombre de empresa (configurable, ver
+           config/runtime.exs NOMBRE_EMPRESA — pensado para blanqueo de
+           marca a futuro) + campana/login. -->
       <div class="pc-topbar">
-        <!-- Hamburger: solo visible en móvil, dentro de la topbar -->
+        <!-- Hamburger: solo visible en móvil -->
         <button
           type="button"
           class="pc-mobile-menu-btn"
@@ -44,48 +47,73 @@ defmodule MetadataAppWeb.MenuLayout do
             <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
           </svg>
         </button>
-        <img
-          src="https://prettycore.xyz/IMAGENES/Logo%20Prettycore%20(8).png"
-          alt="MetadataApp"
-          class="pc-topbar-logo"
-        />
-        <.live_component
-          module={MetadataAppWeb.NotifBellComponent}
-          id="notif-bell"
-          user_id={@current_user_id}
-          refresh={@notif_refresh}
-        />
-        <.link navigate="/sysadmin/bc-list" class="pc-topbar-login-btn">
-          Iniciar sesión
+        <.link navigate="/" class="pc-topbar-brand">
+          <img
+            src="https://prettycore.xyz/IMAGENES/Logo%20Prettycore%20(8).png"
+            alt={@nombre_empresa}
+            class="pc-topbar-logo"
+          />
+          <span class="pc-topbar-empresa">{@nombre_empresa}</span>
         </.link>
-      </div>
-      <!-- Migas de pan: dónde estás parado, estilo CloudWatch -->
-      <div class="pc-breadcrumb">
-        <.link navigate="/" class="pc-breadcrumb-home">MetadataApp</.link>
-        <%= for miga <- @migas do %>
-          <svg class="pc-breadcrumb-sep" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-          <span class="pc-breadcrumb-item">{miga}</span>
-        <% end %>
-        <%= if @nodo_actual do %>
-          <button
-            type="button"
-            id="pc-breadcrumb-copiar"
-            phx-hook="CopiarRuta"
-            data-nav={@nodo_actual.nav}
-            class="pc-breadcrumb-copiar"
-            title="Copiar la ruta de esta página"
-          >
-            <svg class="pc-breadcrumb-copiar-icono-copiar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="9" y="9" width="12" height="12" rx="2" />
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-            </svg>
-            <svg class="pc-breadcrumb-copiar-icono-listo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-          </button>
-        <% end %>
+        <div class="pc-topbar-derecha">
+          <.live_component
+            module={MetadataAppWeb.NotifBellComponent}
+            id="notif-bell"
+            user_id={@current_user_id}
+            refresh={@notif_refresh}
+          />
+          <!-- Usuario: antes vivía abajo del todo en el sidebar (sección
+               "Cuenta"), ahora es un solo botón acá con menú desplegable —
+               reemplaza también al link viejo de "Iniciar sesión". -->
+          <div class="pc-user-menu">
+            <button
+              type="button"
+              class="pc-user-menu-btn"
+              phx-click={
+                JS.toggle(
+                  to: "#user-menu-dropdown",
+                  display: "flex",
+                  in: {"ease-out duration-150", "opacity-0 scale-95", "opacity-100 scale-100"},
+                  out: {"ease-in duration-100", "opacity-100 scale-100", "opacity-0 scale-95"}
+                )
+              }
+            >
+              <div class="pc-user-menu-avatar">
+                {((@current_user_name && String.first(@current_user_name)) || "?") |> String.upcase()}
+              </div>
+              <span class="pc-user-menu-label">{@current_user_name || "Usuario"}</span>
+            </button>
+            <div
+              id="user-menu-dropdown"
+              class="pc-user-menu-dropdown"
+              phx-click-away={JS.hide(to: "#user-menu-dropdown")}
+            >
+              <.link navigate="/sysadmin/bc-list" class="pc-user-menu-item">
+                Business Process Builder
+              </.link>
+              <button
+                type="button"
+                class="pc-user-menu-item"
+                phx-click={
+                  JS.hide(to: "#user-menu-dropdown")
+                  |> JS.show(
+                    to: "#perfil-modal",
+                    transition: {"ease-out duration-200", "opacity-0 scale-95", "opacity-100 scale-100"}
+                  )
+                }
+              >
+                Datos del usuario
+              </button>
+              <.link
+                href="/logout"
+                class="pc-user-menu-item pc-user-menu-item-danger"
+                data-confirm="¿Cerrar sesión?"
+              >
+                Cerrar sesión
+              </.link>
+            </div>
+          </div>
+        </div>
       </div>
       <!-- Fila: Sidebar + Contenido -->
       <div class="pc-platform-row">
@@ -104,16 +132,9 @@ defmodule MetadataAppWeb.MenuLayout do
             title="Arrastra para ajustar el ancho del menú"
           >
           </div>
-          <!-- HEADER: Logo + toggle -->
+          <!-- HEADER: toggle (el branding ya vive en la topbar, arriba —
+               repetirlo acá era redundante). -->
           <div class="pc-sidebar-header">
-            <.link navigate="/" class="pc-sidebar-brand">
-              <img
-                src="https://prettycore.xyz/IMAGENES/Logo%20Prettycore%20(8).png"
-                alt="MetadataApp"
-                class="pc-sidebar-drop-logo"
-              />
-              <span class="pc-sidebar-title">MetadataApp</span>
-            </.link>
             <!-- Cerrar sidebar: solo visible en móvil -->
             <button type="button" class="pc-sidebar-close-mobile" phx-click={mobile_close_js()}>
               <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -127,11 +148,11 @@ defmodule MetadataAppWeb.MenuLayout do
               phx-click={toggle_sidebar_js(@menu_event)}
             >
               <%= if @sidebar_open do %>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="11 17 6 12 11 7" /><polyline points="18 17 13 12 18 7" />
                 </svg>
               <% else %>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="13 17 18 12 13 7" /><polyline points="6 17 11 12 6 7" />
                 </svg>
               <% end %>
@@ -156,42 +177,14 @@ defmodule MetadataAppWeb.MenuLayout do
               <.menu_nodos nodos={@menu_items} current_page={@current_page} />
             </nav>
           </div>
-
-          <!-- SECCIÓN INFERIOR -->
-          <div>
-            <div class="pc-sidebar-section-label">Cuenta</div>
-            <nav class="pc-sidebar-nav">
-              <!-- USUARIO: abre modal de perfil -->
-              <button
-                type="button"
-                class="pc-sidebar-user w-full text-left cursor-pointer hover:bg-gray-50 rounded-xl transition-colors"
-                phx-click={JS.show(to: "#perfil-modal", transition: {"ease-out duration-200", "opacity-0 scale-95", "opacity-100 scale-100"})}
-              >
-                <div class="pc-sidebar-user-avatar">
-                  {((@current_user_name && String.first(@current_user_name)) || "?") |> String.upcase()}
-                </div>
-                <span class="pc-nav-label">{@current_user_name || "Usuario"}</span>
-              </button>
-              <!-- LOGOUT -->
-              <.link
-                href="/logout"
-                class="pc-nav-item pc-nav-logout"
-                data-confirm="¿Cerrar sesión?"
-              >
-                <span class="pc-nav-icon"><.pc_icon name="logout" /></span>
-                <span class="pc-nav-label">Cerrar sesión</span>
-              </.link>
-            </nav>
-          </div>
         </div>
         </aside>
         <!-- CONTENIDO -->
         <main class="pc-platform-main">
-          <!-- Banda de publicidad (valores por defecto, sin backend todavía) -->
-          <%
+          <%!-- Banda de publicidad (valores por defecto, sin backend todavía)
             banda_texto = "¿Tienes alguna idea de app web y no sabes cómo hacerla realidad? CONTÁCTANOS"
             banda_color = "#4f46e5"
-          %>
+
           <div class="w-full overflow-hidden whitespace-nowrap" style={"background-color: #{banda_color}"}>
             <div class="inline-flex animate-marquee">
               <%= for _ <- 1..6 do %>
@@ -201,8 +194,38 @@ defmodule MetadataAppWeb.MenuLayout do
               <% end %>
             </div>
           </div>
+          --%>
           {render_slot(@inner_block)}
         </main>
+      </div>
+
+      <!-- Footer: copyright de la plataforma + ruta completa de la página
+           activa con botón de copiar (copia la URL completa, ver
+           assets/js/app.js CopiarRuta) — antes vivía arriba, se movió acá
+           para dejar la topbar solo con branding/acciones. La esquina
+           derecha queda reservada para una función a futuro. -->
+      <div class="pc-footer">
+        <span class="pc-footer-copyright">Prettycore {@anio_actual}</span>
+        <span class="pc-footer-separador">·</span>
+        <.link navigate="/" class="pc-footer-ruta">{if @nodo_actual, do: @nodo_actual.nav, else: "/"}</.link>
+        <%= if @nodo_actual do %>
+          <button
+            type="button"
+            id="pc-breadcrumb-copiar"
+            phx-hook="CopiarRuta"
+            data-nav={@nodo_actual.nav}
+            class="pc-breadcrumb-copiar"
+            title="Copiar la ruta de esta página"
+          >
+            <svg class="pc-breadcrumb-copiar-icono-copiar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="12" height="12" rx="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+            <svg class="pc-breadcrumb-copiar-icono-listo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </button>
+        <% end %>
       </div>
 
       <!-- ── Modal de perfil ── -->
@@ -346,25 +369,6 @@ defmodule MetadataAppWeb.MenuLayout do
 
   defp contiene_activo?(%{tipo: :carpeta, hijos: hijos}, current_page),
     do: Enum.any?(hijos, &contiene_activo?(&1, current_page))
-
-  # Migas de pan para la barra bajo el topbar: nombres de las carpetas
-  # atravesadas hasta la página activa, en orden. nil si la página activa no
-  # está en el árbol (ej. ruta no encontrada).
-  defp ruta_migas(nodos, current_page) do
-    Enum.find_value(nodos, fn
-      %{tipo: :pagina, id: id, label: label} when id == current_page ->
-        [label]
-
-      %{tipo: :carpeta, nombre: nombre, hijos: hijos} ->
-        case ruta_migas(hijos, current_page) do
-          nil -> nil
-          resto -> [nombre | resto]
-        end
-
-      _ ->
-        nil
-    end)
-  end
 
   # Nodo de la página activa (label + nav) — se lo pasamos al hook de
   # "Favoritos y recientes" para que sepa qué registrar.
