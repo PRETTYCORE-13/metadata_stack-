@@ -195,6 +195,19 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     )
   end
 
+  # Antes de dejar borrar una carpeta hay que confirmar que no tenga nada
+  # colgando debajo (otra carpeta o un catálogo) — eliminar_header/1 hace un
+  # DELETE físico, así que si se permitiera igual, esos hijos quedarían
+  # técnicamente intactos pero sin la carpeta que los agrupa/nombra. Se
+  # consulta directo contra la tabla (no el árbol ya armado en memoria) para
+  # que la regla valga incluso si el árbol que tiene el cliente está viejo.
+  def tiene_hijos_en_nav?(nav) do
+    prefijo = nav <> "/"
+
+    from(h in Header, where: is_nil(h.delete_guid) and like(h.schema_context_nav, ^"#{prefijo}%"))
+    |> Repo.exists?()
+  end
+
   # Resuelve el catálogo a partir de la ruta de navegación guardada en el
   # header (schema_context_nav) — no siempre coincide con schema_context_name
   # (ej. nav "/catalogos/carros" para el catálogo "pty_carros"), así que la

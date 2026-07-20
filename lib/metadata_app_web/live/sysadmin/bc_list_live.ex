@@ -81,7 +81,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
            tipo: :confirmar,
            tabla: tabla,
            label: label,
-           filas: resultado.filas
+           filas: resultado.filas,
+           confirmar_texto: ""
          })}
 
       {:ok, %{dependientes: dependientes}} ->
@@ -103,12 +104,29 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   end
 
   # Una carpeta no tiene tabla ni filas que perder — a diferencia de
-  # "pedir_eliminar" (archivo), acá no hay que consultar impacto/1 primero,
-  # solo confirmar. Borrar la carpeta no toca a sus hijos: solo pierden la
-  # etiqueta/ícono personalizados y el segmento vuelve a mostrarse con el
-  # nombre crudo de la ruta (ver construir_arbol/1).
+  # "pedir_eliminar" (archivo), acá no hay que consultar impacto/1 primero.
+  # Pero si tiene algo debajo (otra carpeta o un catálogo) no se deja seguir:
+  # el botón ya viene oculto en filas_arbol/1 cuando nodo.hijos != [], esta
+  # revalidación es por si el árbol que tiene el cliente quedó desactualizado
+  # (otra pestaña agregó un hijo después de que se pintó esta pantalla) y el
+  # link "Eliminar" seguía ahí en memoria.
   def handle_event("pedir_eliminar_carpeta", %{"nombre" => nombre, "label" => label}, socket) do
-    {:noreply, assign(socket, :accion_eliminar, %{tipo: :confirmar_carpeta, nombre: nombre, label: label})}
+    case MetaSchemaContext.obtener_header_por_nombre(nombre) do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Esa carpeta ya no existe.")}
+
+      header ->
+        if MetaSchemaContext.tiene_hijos_en_nav?(header.schema_context_nav) do
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             "No se puede eliminar '#{label}': todavía tiene carpetas o catálogos adentro. Muévelos o bórralos primero."
+           )}
+        else
+          {:noreply, assign(socket, :accion_eliminar, %{tipo: :confirmar_carpeta, nombre: nombre, label: label})}
+        end
+    end
   end
 
   def handle_event("confirmar_eliminar_carpeta", _params, socket) do
@@ -121,22 +139,46 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
          |> assign(:accion_eliminar, nil)
          |> put_flash(:error, "Esa carpeta ya no existe.")}
 
+      # Mismo chequeo que en "pedir_eliminar_carpeta", repetido acá porque
+      # puede pasar tiempo entre abrir el modal de confirmación y darle
+      # click a "Eliminar" — si en el medio alguien agregó un hijo, no debe
+      # colarse el borrado solo porque ya había pasado el primer chequeo.
       header ->
-        case MetaSchemaContext.eliminar_header(header) do
-          :ok ->
-            {:noreply,
-             socket
-             |> assign(:accion_eliminar, nil)
-             |> put_flash(:info, "Carpeta #{header.schema_context_label} eliminada.")
-             |> cargar_headers()}
+        if MetaSchemaContext.tiene_hijos_en_nav?(header.schema_context_nav) do
+          {:noreply,
+           socket
+           |> assign(:accion_eliminar, nil)
+           |> put_flash(
+             :error,
+             "No se puede eliminar '#{header.schema_context_label}': todavía tiene carpetas o catálogos adentro."
+           )}
+        else
+          case MetaSchemaContext.eliminar_header(header) do
+            :ok ->
+              {:noreply,
+               socket
+               |> assign(:accion_eliminar, nil)
+               |> put_flash(:info, "Carpeta #{header.schema_context_label} eliminada.")
+               |> cargar_headers()}
 
-          {:error, motivo} ->
-            {:noreply,
-             socket
-             |> assign(:accion_eliminar, nil)
-             |> put_flash(:error, "No se pudo eliminar: #{inspect(motivo)}")}
+            {:error, motivo} ->
+              {:noreply,
+               socket
+               |> assign(:accion_eliminar, nil)
+               |> put_flash(:error, "No se pudo eliminar: #{inspect(motivo)}")}
+          end
         end
     end
+  end
+
+  # Borrar un catálogo (Business Process) sí es de alto impacto — es un
+  # DELETE físico de la tabla completa (ver CatalogoGenerador.eliminar/3),
+  # a diferencia de una carpeta (que solo pierde su etiqueta/ícono). Por eso
+  # acá, y no en el borrado de carpetas, es donde pedimos teclear el nombre
+  # exacto antes de habilitar "Eliminar" — solo actualiza lo que se compara
+  # en el modal, no toca nada en la base todavía.
+  def handle_event("escribir_confirmacion_eliminar", %{"value" => texto}, socket) do
+    {:noreply, update(socket, :accion_eliminar, &Map.put(&1, :confirmar_texto, texto))}
   end
 
   # confirmar_filas viaja como el número ya conocido del paso de impacto (no
@@ -144,21 +186,28 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # confirmación real porque valida contra el conteo actual en el momento del
   # borrado, no el de cuando se abrió el modal.
   def handle_event("confirmar_eliminar", _params, socket) do
-    %{tabla: tabla, filas: filas} = socket.assigns.accion_eliminar
+    %{tabla: tabla, filas: filas, confirmar_texto: confirmar_texto} = socket.assigns.accion_eliminar
 
-    case CatalogoGenerador.eliminar(tabla, tabla, filas) do
-      {:ok, _resultado} ->
-        {:noreply,
-         socket
-         |> assign(:accion_eliminar, nil)
-         |> put_flash(:info, "Catálogo #{tabla} eliminado.")
-         |> cargar_headers()}
+    if confirmar_texto != tabla do
+      # No debería pasar (el botón viene disabled hasta que coincida), pero
+      # el atributo disabled es solo del lado del cliente — sin este chequeo,
+      # alguien podría mandar el evento igual saltándoselo.
+      {:noreply, put_flash(socket, :error, "El texto no coincide con el nombre del catálogo.")}
+    else
+      case CatalogoGenerador.eliminar(tabla, tabla, filas) do
+        {:ok, _resultado} ->
+          {:noreply,
+           socket
+           |> assign(:accion_eliminar, nil)
+           |> put_flash(:info, "Catálogo #{tabla} eliminado.")
+           |> cargar_headers()}
 
-      {:error, motivo} ->
-        {:noreply,
-         socket
-         |> assign(:accion_eliminar, nil)
-         |> put_flash(:error, "No se pudo eliminar #{tabla}: #{inspect(motivo)}")}
+        {:error, motivo} ->
+          {:noreply,
+           socket
+           |> assign(:accion_eliminar, nil)
+           |> put_flash(:error, "No se pudo eliminar #{tabla}: #{inspect(motivo)}")}
+      end
     end
   end
 
@@ -308,10 +357,23 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
       <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
         <h2 class="text-lg font-bold text-gray-900 mb-2">Eliminar catálogo</h2>
-        <p class="text-sm text-gray-700 mb-6">
+        <p class="text-sm text-gray-700 mb-4">
           Se eliminará el catálogo <strong>{@accion.label}</strong> ({@accion.tabla}) —
-          <strong>{@accion.filas}</strong> fila(s). Este proceso no es reversible. ¿Desea continuar?
+          <strong>{@accion.filas}</strong> fila(s). Este proceso no es reversible.
         </p>
+
+        <label class="block text-sm text-gray-700 mb-1.5">
+          Escribe <strong>"{@accion.tabla}"</strong> para confirmar:
+        </label>
+        <input
+          type="text"
+          value={@accion.confirmar_texto}
+          phx-keyup="escribir_confirmacion_eliminar"
+          autocomplete="off"
+          placeholder={@accion.tabla}
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 mb-6 focus:outline-none focus:ring-2 focus:ring-red-500/40 focus:border-red-500"
+        />
+
         <div class="flex justify-end gap-3">
           <button
             type="button"
@@ -323,7 +385,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           <button
             type="button"
             phx-click="confirmar_eliminar"
-            class="px-4 py-2 rounded bg-red-600 text-white text-sm font-semibold hover:bg-red-700"
+            disabled={@accion.confirmar_texto != @accion.tabla}
+            class="px-4 py-2 rounded bg-red-600 text-white text-sm font-semibold hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-red-600"
           >
             Eliminar
           </button>
@@ -339,9 +402,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
         <h2 class="text-lg font-bold text-gray-900 mb-2">Eliminar carpeta</h2>
         <p class="text-sm text-gray-700 mb-6">
-          Se eliminará la carpeta <strong>{@accion.label}</strong> del menú. Los catálogos que
-          ya están adentro NO se borran — solo pierden esta etiqueta/ícono personalizados y
-          la carpeta vuelve a mostrarse con el nombre de la ruta. ¿Desea continuar?
+          Se eliminará la carpeta <strong>"{@accion.label}"</strong> del menú. ¿Desea continuar?
         </p>
         <div class="flex justify-end gap-3">
           <button
@@ -428,15 +489,17 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                   >
                     Editar
                   </button>
-                  <button
-                    type="button"
-                    phx-click="pedir_eliminar_carpeta"
-                    phx-value-nombre={nodo.id}
-                    phx-value-label={nodo.nombre}
-                    class="text-red-600 hover:text-red-800 text-xs font-semibold"
-                  >
-                    Eliminar
-                  </button>
+                  <%= if nodo.hijos == [] do %>
+                    <button
+                      type="button"
+                      phx-click="pedir_eliminar_carpeta"
+                      phx-value-nombre={nodo.id}
+                      phx-value-label={nodo.nombre}
+                      class="text-red-600 hover:text-red-800 text-xs font-semibold"
+                    >
+                      Eliminar
+                    </button>
+                  <% end %>
                 </div>
               <% end %>
             </div>
@@ -453,9 +516,9 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           <td class="px-4 py-2 text-gray-800">{if nodo.visible, do: "Sí", else: "No"}</td>
           <td class="px-4 py-2">
             <div class="flex gap-2">
-              <button type="button" class="text-blue-600 hover:text-blue-800 text-xs font-semibold">
+              <.link navigate={~p"/sysadmin/bc-list/#{nodo.id}/motor"} class="text-blue-600 hover:text-blue-800 text-xs font-semibold">
                 Editar
-              </button>
+              </.link>
               <button
                 type="button"
                 phx-click="pedir_eliminar"
