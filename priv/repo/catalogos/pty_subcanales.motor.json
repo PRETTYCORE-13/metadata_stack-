@@ -1,0 +1,50 @@
+{
+  "estados": [
+    {
+      "color": "#40ed6b",
+      "icono": null,
+      "nombre": "Activo",
+      "orden": 1,
+      "es_inicial": true,
+      "empresa_id": null
+    }
+  ],
+  "transiciones": [
+    {
+      "etiqueta": "Alta",
+      "accion": "Alta",
+      "reglas": [
+        {
+          "params": {
+            "campos": [
+              "pty_canal_id"
+            ]
+          },
+          "tipo": "pre",
+          "regla": "campos_requeridos",
+          "orden": 0,
+          "transaccional": true
+        }
+      ],
+      "empresa_id": null,
+      "campos_editables": [
+        "pty_canal_id",
+        "pty_subcanal_nombre"
+      ],
+      "estado_destino": "Activo",
+      "estado_origen": null
+    },
+    {
+      "etiqueta": "Guardar",
+      "accion": "Guardar",
+      "reglas": [],
+      "empresa_id": null,
+      "campos_editables": [
+        "pty_subcanal_nombre"
+      ],
+      "estado_destino": "Activo",
+      "estado_origen": "Activo"
+    }
+  ],
+  "catalogo": "pty_subcanales"
+}

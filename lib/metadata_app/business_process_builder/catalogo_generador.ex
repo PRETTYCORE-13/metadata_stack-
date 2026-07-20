@@ -396,17 +396,24 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
   # Valida que todo detalle tipo "referencia" apunte a un catálogo ya
   # registrado (no se puede crear una FK a una tabla que no existe todavía).
+  # Map.get en vez de Map.fetch!: un detalle "referencia" sin "catalogo"
+  # configurado (bug real que ya pasó — el modal "Agregar campo" ofrecía el
+  # tipo sin ningún selector para elegir a qué apuntaba) tiene que reportarse
+  # como error de validación, no reventar el proceso con un KeyError.
   defp validar_referencias(detalles) do
-    faltantes =
+    catalogos_referencia =
       detalles
       |> Enum.filter(&(Map.get(&1.schema_context_properties || %{}, "tipo") == "referencia"))
-      |> Enum.map(&Map.fetch!(&1.schema_context_properties, "catalogo"))
+      |> Enum.map(&Map.get(&1.schema_context_properties, "catalogo"))
       |> Enum.uniq()
-      |> Enum.reject(&MetaSchemaContext.obtener_header_por_nombre/1)
 
-    case faltantes do
-      [] -> :ok
-      _ -> {:error, "catálogo(s) referenciados inexistentes: #{Enum.join(faltantes, ", ")}"}
+    if Enum.any?(catalogos_referencia, &(&1 in [nil, ""])) do
+      {:error, "hay un campo tipo 'referencia' sin catálogo destino configurado"}
+    else
+      case Enum.reject(catalogos_referencia, &MetaSchemaContext.obtener_header_por_nombre/1) do
+        [] -> :ok
+        faltantes -> {:error, "catálogo(s) referenciados inexistentes: #{Enum.join(faltantes, ", ")}"}
+      end
     end
   end
 

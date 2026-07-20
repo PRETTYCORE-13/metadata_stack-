@@ -48,6 +48,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       |> assign(:header_form, header_form_desde(header))
       |> assign(:iconos_sugeridos, @iconos_sugeridos)
       |> assign(:carpetas, MetaSchemaContext.listar_carpetas_existentes())
+      |> assign(:catalogos_referenciables, MetaSchemaContext.listar_catalogos_referenciables())
 
     {:ok, cargar_motor(socket)}
   end
@@ -207,6 +208,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
        "longitud" => "",
        "precision" => "",
        "escala" => "",
+       "catalogo" => "",
        "opcional" => true,
        "error" => nil
      })}
@@ -216,11 +218,30 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     {:noreply, assign(socket, :campo_form, nil)}
   end
 
+  # Solo existe para que el modal reaccione en vivo al elegir "referencia"
+  # en Tipo (mostrar/ocultar el selector de Catálogo destino).
+  def handle_event("validar_campo", params, socket) do
+    campo_form = %{
+      "nombre" => params["nombre"] || "",
+      "etiqueta" => params["etiqueta"] || "",
+      "tipo" => params["tipo"] || "string",
+      "longitud" => params["longitud"] || "",
+      "precision" => params["precision"] || "",
+      "escala" => params["escala"] || "",
+      "catalogo" => params["catalogo"] || "",
+      "opcional" => params["opcional"] == "true",
+      "error" => nil
+    }
+
+    {:noreply, assign(socket, :campo_form, campo_form)}
+  end
+
   def handle_event("guardar_campo", params, socket) do
     header = socket.assigns.header
     nombre = String.trim(params["nombre"] || "")
     etiqueta = String.trim(params["etiqueta"] || "")
     tipo = params["tipo"] || "string"
+    catalogo = params["catalogo"] || ""
 
     cond do
       not Regex.match?(~r/^[a-z][a-z0-9_]{0,49}$/, nombre) ->
@@ -233,6 +254,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       etiqueta == "" ->
         {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "La etiqueta no puede quedar vacía."))}
+
+      tipo == "referencia" and catalogo == "" ->
+        {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Elegí a qué catálogo apunta la referencia."))}
 
       true ->
         propiedades =
@@ -308,17 +332,24 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   # --- Estados: agregar/editar/eliminar ----------------------------------------
 
+  # El botón ya viene disabled en tabla_estados/1 mientras no haya Campos
+  # (ver motor_stepper) — este chequeo es la versión que de verdad importa,
+  # por si alguien manda el evento igual saltándose el disabled del cliente.
   def handle_event("abrir_form_estado", _params, socket) do
-    {:noreply,
-     assign(socket, :estado_form, %{
-       "id" => nil,
-       "nombre" => "",
-       "orden" => to_string(length(socket.assigns.estados) + 1),
-       "es_inicial" => false,
-       "color" => "#7c3aed",
-       "icono" => "",
-       "error" => nil
-     })}
+    if socket.assigns.completitud.tiene_campos do
+      {:noreply,
+       assign(socket, :estado_form, %{
+         "id" => nil,
+         "nombre" => "",
+         "orden" => to_string(length(socket.assigns.estados) + 1),
+         "es_inicial" => false,
+         "color" => "#7c3aed",
+         "icono" => "",
+         "error" => nil
+       })}
+    else
+      {:noreply, put_flash(socket, :error, "Agregá al menos un campo antes de agregar estados.")}
+    end
   end
 
   def handle_event("abrir_editar_estado", %{"id" => id}, socket) do
@@ -400,17 +431,26 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   # --- Transiciones: agregar/editar/eliminar ------------------------------------
 
+  # Mismo criterio que abrir_form_estado/3: el botón ya viene disabled
+  # mientras no haya un estado inicial (o transición de alta) definido, este
+  # chequeo es el que de verdad importa.
   def handle_event("abrir_form_transicion", _params, socket) do
-    {:noreply,
-     assign(socket, :transicion_form, %{
-       "id" => nil,
-       "accion" => "",
-       "etiqueta" => "",
-       "estado_origen_id" => "",
-       "estado_destino_id" => "",
-       "campos_editables" => [],
-       "error" => nil
-     })}
+    %{tiene_estados: tiene_estados, tiene_alta_o_inicial: tiene_alta_o_inicial} = socket.assigns.completitud
+
+    if tiene_estados and tiene_alta_o_inicial do
+      {:noreply,
+       assign(socket, :transicion_form, %{
+         "id" => nil,
+         "accion" => "",
+         "etiqueta" => "",
+         "estado_origen_id" => "",
+         "estado_destino_id" => "",
+         "campos_editables" => [],
+         "error" => nil
+       })}
+    else
+      {:noreply, put_flash(socket, :error, "Definí un estado inicial antes de agregar transiciones.")}
+    end
   end
 
   def handle_event("abrir_editar_transicion", %{"id" => id}, socket) do
@@ -630,6 +670,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   defp agregar_opciones_tipo_campo(propiedades, "decimal", params),
     do: propiedades |> maybe_put_int("precision", params["precision"]) |> maybe_put_int("escala", params["escala"])
 
+  defp agregar_opciones_tipo_campo(propiedades, "referencia", params), do: Map.put(propiedades, "catalogo", params["catalogo"])
+
   defp agregar_opciones_tipo_campo(propiedades, _tipo, _params), do: propiedades
 
   defp maybe_put_int(map, _key, val) when val in ["", nil], do: map
@@ -696,7 +738,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         </button>
       </div>
 
-      <.fila_validacion completitud={@completitud} />
+      <.motor_stepper pasos={pasos_motor(@completitud, @transiciones)} />
       <.panel_problemas :if={@validacion.problemas != []} problemas={@validacion.problemas} />
 
       <div class="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
@@ -707,8 +749,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         <div class="space-y-4 min-w-0">
           <.panel_encabezado header_form={@header_form} iconos_sugeridos={@iconos_sugeridos} carpetas={@carpetas} />
           <.panel_campos campos={@campos} />
-          <.tabla_estados estados={@estados} transiciones={@transiciones} />
-          <.tabla_transiciones transiciones={@transiciones} estados_por_id={@estados_por_id} catalogo={@header.schema_context_name} />
+          <.tabla_estados estados={@estados} transiciones={@transiciones} puede_agregar={@completitud.tiene_campos} />
+          <.tabla_transiciones transiciones={@transiciones} estados_por_id={@estados_por_id} catalogo={@header.schema_context_name}
+            puede_agregar={@completitud.tiene_estados and @completitud.tiene_alta_o_inicial} />
         </div>
         <div class="lg:sticky lg:top-4">
           <.diagrama_transiciones diagrama={@diagrama} />
@@ -717,7 +760,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     </div>
 
     <.modal_regla :if={@regla_form} form={@regla_form} vocabulario={MetaEstadosAdmin.vocabulario()} />
-    <.modal_campo :if={@campo_form} form={@campo_form} />
+    <.modal_campo :if={@campo_form} form={@campo_form} catalogos={@catalogos_referenciables} />
     <.modal_eliminar_campo :if={@eliminar_campo_form} form={@eliminar_campo_form} />
     <.modal_estado :if={@estado_form} form={@estado_form} iconos_sugeridos={@iconos_sugeridos} />
     <.modal_transicion :if={@transicion_form} form={@transicion_form} estados={@estados} campos={@campos} />
@@ -788,38 +831,44 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   defp hex_a_rgb(_), do: :error
 
-  attr :completitud, :map, required: true
+  # Orden real en que se arma el autómata — mismos booleanos que ya
+  # calculaba completitud/1, solo reordenados en una secuencia lógica
+  # (antes vivían como chips sueltos sin orden: Campos, Estado Inicial,
+  # Tiene Estados...). "Transiciones" no es un campo propio de
+  # completitud/1, se deriva acá: hay al menos una Y ninguna es un
+  # self-loop sin campos editables configurados.
+  defp pasos_motor(completitud, transiciones) do
+    tiene_transiciones? = transiciones != [] and completitud.transiciones_self_loop_sin_campos_editables == 0
 
-  # Fila de chips arriba de todo (reemplaza el panel vertical de antes) —
-  # mismo dato de siempre (completitud/1, ya existía), solo presentado como
-  # una serie de pasos tipo checklist en vez de un bloque de texto.
-  defp fila_validacion(assigns) do
-    ~H"""
-    <div class="flex flex-wrap gap-2">
-      <.chip_validacion ok={@completitud.tiene_campos} texto="Campos" />
-      <.chip_validacion ok={@completitud.tiene_alta_o_inicial} texto="Estado Inicial" />
-      <.chip_validacion ok={@completitud.tiene_estados} texto="Tiene Estados" />
-      <.chip_validacion ok={@completitud.transiciones_self_loop_sin_campos_editables == 0} texto="Self-loops Campos Editables" />
-      <.chip_validacion ok={@completitud.reglas.negocio_stub == 0} texto="Reglas" />
-      <.chip_validacion ok={@completitud.completo?} texto="Completo" />
-    </div>
-    """
+    [
+      {"Campos", completitud.tiene_campos},
+      {"Estados", completitud.tiene_estados},
+      {"Estado inicial", completitud.tiene_alta_o_inicial},
+      {"Transiciones", tiene_transiciones?},
+      {"Reglas", completitud.reglas.negocio_stub == 0}
+    ]
+    |> marcar_estado_pasos()
   end
 
-  attr :ok, :boolean, required: true
-  attr :texto, :string, required: true
+  # El primer paso todavía no completo es "donde estás parado" (:actual) —
+  # todo lo anterior ya quedó atrás (:completo), todo lo posterior todavía
+  # no aplica (:pendiente). Se recalcula siempre desde los booleanos reales,
+  # no desde en qué panel se hizo click último.
+  defp marcar_estado_pasos(pasos) do
+    primero_pendiente_idx = Enum.find_index(pasos, fn {_label, ok?} -> not ok? end)
 
-  defp chip_validacion(assigns) do
-    ~H"""
-    <div class={[
-      "flex items-center gap-1.5 px-3 py-2 rounded-lg border font-semibold",
-      @ok && "border-green-200 bg-green-50 text-green-700",
-      not @ok && "border-gray-200 bg-white text-gray-400"
-    ]}>
-      <span class="material-symbols-outlined" style="font-size: 15px">{if @ok, do: "check_circle", else: "radio_button_unchecked"}</span>
-      {@texto}
-    </div>
-    """
+    pasos
+    |> Enum.with_index()
+    |> Enum.map(fn {{label, ok?}, idx} ->
+      estado =
+        cond do
+          ok? -> :completo
+          primero_pendiente_idx == idx -> :actual
+          true -> :pendiente
+        end
+
+      %{label: label, estado: estado}
+    end)
   end
 
   attr :problemas, :list, required: true
@@ -977,6 +1026,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   attr :estados, :list, required: true
   attr :transiciones, :list, required: true
+  attr :puede_agregar, :boolean, required: true
 
   defp tabla_estados(assigns) do
     referenciados =
@@ -1041,9 +1091,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           </table>
         <% end %>
 
-        <button type="button" phx-click="abrir_form_estado" class="text-purple-700 hover:text-purple-900 font-semibold">
+        <button type="button" phx-click="abrir_form_estado" disabled={!@puede_agregar}
+          class="text-purple-700 hover:text-purple-900 font-semibold disabled:text-gray-300 disabled:cursor-not-allowed">
           + Agregar estado
         </button>
+        <span :if={!@puede_agregar} class="text-gray-400 ml-1">(agregá al menos un campo primero)</span>
       </div>
     </div>
     """
@@ -1052,6 +1104,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   attr :transiciones, :list, required: true
   attr :estados_por_id, :map, required: true
   attr :catalogo, :string, required: true
+  attr :puede_agregar, :boolean, required: true
 
   defp tabla_transiciones(assigns) do
     ~H"""
@@ -1167,9 +1220,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           </table>
         <% end %>
 
-        <button type="button" phx-click="abrir_form_transicion" class="text-purple-700 hover:text-purple-900 font-semibold">
+        <button type="button" phx-click="abrir_form_transicion" disabled={!@puede_agregar}
+          class="text-purple-700 hover:text-purple-900 font-semibold disabled:text-gray-300 disabled:cursor-not-allowed">
           + Agregar transición
         </button>
+        <span :if={!@puede_agregar} class="text-gray-400 ml-1">(definí un estado inicial primero)</span>
       </div>
     </div>
     """
@@ -1308,6 +1363,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   @tipos_campo ~w(string integer decimal boolean date enum referencia)
 
   attr :form, :map, required: true
+  attr :catalogos, :list, required: true
 
   defp modal_campo(assigns) do
     assigns = assign(assigns, :tipos, @tipos_campo)
@@ -1321,7 +1377,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           <div class="bg-red-50 text-red-700 rounded-lg px-2 py-1.5 mb-2">{@form["error"]}</div>
         <% end %>
 
-        <form phx-submit="guardar_campo" class="space-y-2">
+        <form phx-submit="guardar_campo" phx-change="validar_campo" class="space-y-2">
           <div>
             <label class="block text-gray-700 mb-0.5">Nombre</label>
             <input type="text" name="nombre" value={@form["nombre"]} placeholder="pty_carro_color" required
@@ -1341,6 +1397,17 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
               <% end %>
             </select>
           </div>
+          <%= if @form["tipo"] == "referencia" do %>
+            <div>
+              <label class="block text-gray-700 mb-0.5">Catálogo destino</label>
+              <select name="catalogo" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                <option value="">— Elegir —</option>
+                <%= for c <- @catalogos do %>
+                  <option value={c.nombre} selected={@form["catalogo"] == c.nombre}>{c.etiqueta}</option>
+                <% end %>
+              </select>
+            </div>
+          <% end %>
           <div class="grid grid-cols-3 gap-2">
             <div>
               <label class="block text-gray-700 mb-0.5">longitud</label>

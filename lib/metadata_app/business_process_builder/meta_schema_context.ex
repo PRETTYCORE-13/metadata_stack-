@@ -184,6 +184,18 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     end)
   end
 
+  # Catálogos reales (no carpetas) que un campo tipo "referencia" puede
+  # apuntar — usado por el selector "Catálogo destino" del modal "Agregar
+  # campo" (BcNuevoCompletoLive y BcMotorLive). Sin esto, "referencia" era
+  # un tipo seleccionable pero sin forma de elegir a qué apuntaba, y
+  # CatalogoGenerador.generar/1 fallaba en silencio al no encontrar esa
+  # propiedad (ver construir_opciones/2 en catalogo_generador.ex).
+  def listar_catalogos_referenciables do
+    from(h in Header, where: is_nil(h.delete_guid) and h.schema_context_type == 1, order_by: h.schema_context_label)
+    |> Repo.all()
+    |> Enum.map(&%{nombre: &1.schema_context_name, etiqueta: &1.schema_context_label})
+  end
+
   def obtener_header!(id), do: Repo.get!(Header, id)
 
   # schema_context_name cubre hoy el rol que antes cumplían schema_nombre y

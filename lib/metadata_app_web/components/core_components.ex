@@ -32,6 +32,53 @@ defmodule MetadataAppWeb.CoreComponents do
   alias Phoenix.LiveView.JS
 
   @doc """
+  Barra de estatus tipo "línea de tiempo" para el armado del Motor de
+  Estados — usada tanto en BcMotorLive (editar un catálogo ya existente)
+  como en BcNuevoCompletoLive (wizard de creación), para que ambas
+  pantallas comuniquen el mismo lenguaje visual de "en qué paso estás".
+
+  Cada paso es `%{label: string, estado: :completo | :actual | :pendiente}`,
+  en el orden real en que se arma el autómata. `:actual` es el primer paso
+  todavía no completo (dónde hay que seguir trabajando) — no es una medida
+  de "en qué panel hiciste click último", se recalcula solo a partir de
+  cuáles pasos están completos.
+
+  ## Ejemplos
+
+      <.motor_stepper pasos={[
+        %{label: "Campos", estado: :completo},
+        %{label: "Estados", estado: :actual},
+        %{label: "Reglas", estado: :pendiente}
+      ]} />
+  """
+  attr :pasos, :list, required: true
+
+  def motor_stepper(assigns) do
+    ~H"""
+    <div class="flex items-center gap-1 flex-wrap text-xs">
+      <%= for {paso, idx} <- Enum.with_index(@pasos) do %>
+        <span :if={idx > 0} class="text-gray-300 select-none">›</span>
+        <div class={[
+          "flex items-center gap-1.5 px-3 py-2 rounded-lg border font-semibold transition-colors",
+          paso.estado == :completo && "border-green-200 bg-green-50 text-green-700",
+          paso.estado == :actual && "border-purple-600 bg-purple-600 text-white shadow-sm",
+          paso.estado == :pendiente && "border-gray-200 bg-white text-gray-400"
+        ]}>
+          <span class="material-symbols-outlined" style="font-size: 15px">
+            {cond do
+              paso.estado == :completo -> "check_circle"
+              paso.estado == :actual -> "radio_button_checked"
+              true -> "radio_button_unchecked"
+            end}
+          </span>
+          {paso.label}
+        </div>
+      <% end %>
+    </div>
+    """
+  end
+
+  @doc """
   Renders flash notices.
 
   ## Examples
