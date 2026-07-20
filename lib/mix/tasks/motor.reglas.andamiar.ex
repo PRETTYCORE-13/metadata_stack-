@@ -73,90 +73,29 @@ defmodule Mix.Tasks.Motor.Reglas.Andamiar do
         "  (salteada \"#{transicion.accion}\": hay más de una transición con esta acción en #{catalogo}, enganchá a mano)"
       )
     else
-      andamiar_pre(catalogo, transicion)
-      andamiar_post(catalogo, transicion)
+      andamiar_tipo(catalogo, transicion, "pre")
+      andamiar_tipo(catalogo, transicion, "post")
     end
   end
 
-  defp andamiar_pre(catalogo, transicion) do
-    if Enum.any?(transicion.reglas, &(&1.tipo == "pre")) do
-      Mix.shell().info("  = #{catalogo} \"#{transicion.accion}\": ya tiene una regla pre enganchada, sin tocar")
-    else
-      nombre_regla = "#{transicion.accion}_pre"
+  # Delega la parte que importa (plantilla del stub + enganche) en
+  # MetaEstadosAdmin.andamiar_regla_negocio/3 — así BcMotorLive puede
+  # ofrecer el mismo "crear regla de negocio" de un click sin duplicar la
+  # plantilla acá. Este task queda como wrapper fino: solo agrega la salida
+  # por Mix.shell().
+  defp andamiar_tipo(catalogo, transicion, tipo) do
+    case MetaEstadosAdmin.andamiar_regla_negocio(catalogo, transicion, tipo) do
+      {:ok, %{creado?: true, ruta: ruta}} ->
+        Mix.shell().info("  + #{catalogo} \"#{transicion.accion}\" (#{tipo}): stub creado y enganchado (#{ruta})")
 
-      contenido = """
-      defmodule MetadataApp.MetaBusinessProcess.Reglas.#{Macro.camelize(catalogo)}.#{Macro.camelize(nombre_regla)} do
-        @behaviour MetadataApp.MetaStateEngine.ReglaPre
+      {:ok, %{creado?: false, ruta: ruta}} ->
+        Mix.shell().info("  + #{catalogo} \"#{transicion.accion}\" (#{tipo}): archivo ya existía, solo se enganchó (#{ruta})")
 
-        @impl true
-        def evaluar(_registro, _contexto, _params) do
-          # ESCRIBA SUS REGLAS AQUI
-          :ok
-        end
-      end
-      """
+      {:error, :ya_tiene_regla} ->
+        Mix.shell().info("  = #{catalogo} \"#{transicion.accion}\": ya tiene una regla #{tipo} enganchada, sin tocar")
 
-      ruta = ruta_regla(catalogo, nombre_regla)
-      creado? = escribir_si_no_existe(ruta, contenido)
-      enganchar(transicion.id, "pre", nombre_regla)
-
-      estado = if creado?, do: "stub creado y enganchado", else: "archivo ya existía, solo se enganchó"
-      Mix.shell().info("  + #{catalogo} \"#{transicion.accion}\" (pre): #{estado} (#{ruta})")
-    end
-  end
-
-  defp andamiar_post(catalogo, transicion) do
-    if Enum.any?(transicion.reglas, &(&1.tipo == "post")) do
-      Mix.shell().info("  = #{catalogo} \"#{transicion.accion}\": ya tiene una regla post enganchada, sin tocar")
-    else
-      nombre_regla = "#{transicion.accion}_post"
-
-      contenido = """
-      defmodule MetadataApp.MetaBusinessProcess.Reglas.#{Macro.camelize(catalogo)}.#{Macro.camelize(nombre_regla)} do
-        @behaviour MetadataApp.MetaStateEngine.ReglaPost
-
-        @impl true
-        def ejecutar(_registro, _contexto, _params, _repo) do
-          # ESCRIBA SUS REGLAS AQUI
-          {:ok, :sin_cambios}
-        end
-      end
-      """
-
-      ruta = ruta_regla(catalogo, nombre_regla)
-      creado? = escribir_si_no_existe(ruta, contenido)
-      enganchar(transicion.id, "post", nombre_regla)
-
-      estado = if creado?, do: "stub creado y enganchado", else: "archivo ya existía, solo se enganchó"
-      Mix.shell().info("  + #{catalogo} \"#{transicion.accion}\" (post): #{estado} (#{ruta})")
-    end
-  end
-
-  defp ruta_regla(catalogo, nombre_regla) do
-    Path.join(["lib", "metadata_app", "meta_business_process", "reglas", catalogo, "#{nombre_regla}.ex"])
-  end
-
-  # Devuelve true si escribió el archivo (no existía), false si ya existía
-  # y se lo dejó intacto — nunca sobrescribe.
-  defp escribir_si_no_existe(ruta, contenido) do
-    if File.exists?(ruta) do
-      false
-    else
-      File.mkdir_p!(Path.dirname(ruta))
-      File.write!(ruta, contenido)
-      true
-    end
-  end
-
-  defp enganchar(transicion_id, tipo, regla) do
-    case MetaEstadosAdmin.crear_regla(%{
-           "transicion_id" => transicion_id,
-           "tipo" => tipo,
-           "regla" => regla,
-           "orden" => 0
-         }) do
-      {:ok, _regla} -> :ok
-      {:error, changeset} -> Mix.raise("no se pudo enganchar #{tipo}/#{regla}: #{inspect(changeset.errors)}")
+      {:error, changeset} ->
+        Mix.raise("no se pudo enganchar #{tipo} en \"#{transicion.accion}\": #{inspect(changeset.errors)}")
     end
   end
 end

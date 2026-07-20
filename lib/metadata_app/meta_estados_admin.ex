@@ -9,8 +9,9 @@ defmodule MetadataApp.MetaEstadosAdmin do
   """
 
   import Ecto.Query
+  alias Ecto.Multi
   alias MetadataApp.Repo
-  alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
+  alias MetadataApp.BusinessProcessBuilder.MetaSchema.{Header, Detail}
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaStateEngine.Reglas
   alias MetadataApp.MetaSchema.{Estado, Transicion, TransicionRegla, TransicionEvento}
@@ -30,6 +31,11 @@ defmodule MetadataApp.MetaEstadosAdmin do
     "mutar_relacionados" => {"post", ["entidad", "campo_relacion", "cambio"]},
     "notificar" => {"post", ["destinatario", "plantilla"]}
   }
+
+  # Accessor público — BcMotorLive lo usa para armar el formulario dinámico
+  # de "agregar regla" (opciones + parámetros exactos por regla), sin
+  # duplicar esta lista en el LiveView.
+  def vocabulario, do: @vocabulario
 
   # Sentinel literal que `mix motor.reglas.andamiar` escribe en cada stub
   # generado (ver lib/mix/tasks/motor.reglas.andamiar.ex) — un módulo de
@@ -66,6 +72,38 @@ defmodule MetadataApp.MetaEstadosAdmin do
         end
       end)
     end)
+  end
+
+  def actualizar_estado(%Estado{} = estado, attrs) do
+    estado
+    |> Estado.changeset(attrs)
+    |> Ecto.Changeset.change(%{update_guid: generar_guid()})
+    |> Repo.update()
+  end
+
+  # Soft-delete (no Repo.delete): meta_schema_transiciones.estado_origen_id/
+  # estado_destino_id tienen on_delete: :delete_all — un borrado físico acá
+  # arrastraría en cascada TODAS las transiciones que lo usan (y por ende
+  # sus reglas, mismo on_delete en transicion_reglas.transicion_id). Además
+  # se bloquea de entrada si hay una transición activa que lo referencia —
+  # mismo criterio ya usado para no dejar borrar una carpeta de BC List con
+  # hijos: mejor un mensaje claro acá que un estado "fantasma" que
+  # validar_motor recién detecta después como transición huérfana.
+  def eliminar_estado(%Estado{} = estado) do
+    if estado_referenciado?(estado.id) do
+      {:error, :tiene_transiciones}
+    else
+      estado
+      |> Ecto.Changeset.change(%{delete_guid: generar_guid()})
+      |> Repo.update()
+    end
+  end
+
+  defp estado_referenciado?(estado_id) do
+    from(t in Transicion,
+      where: is_nil(t.delete_guid) and (t.estado_origen_id == ^estado_id or t.estado_destino_id == ^estado_id)
+    )
+    |> Repo.exists?()
   end
 
   # --- Transiciones ------------------------------------------------------------
@@ -143,6 +181,41 @@ defmodule MetadataApp.MetaEstadosAdmin do
     end)
   end
 
+  def actualizar_transicion(%Transicion{} = transicion, attrs) do
+    transicion
+    |> Transicion.changeset(attrs)
+    |> validar_campos_editables()
+    |> Ecto.Changeset.change(%{update_guid: generar_guid()})
+    |> Repo.update()
+  end
+
+  # Soft-delete, y a diferencia de eliminar_estado/1 acá SÍ cascadea a sus
+  # propias reglas — una TransicionRegla no es una entidad compartida entre
+  # varias transiciones (a diferencia de un Estado, que sí puede ser
+  # origen/destino de muchas), es hija exclusiva: no tiene sentido dejarla
+  # viva colgando de una transición borrada. Todo o nada en una sola
+  # transacción (mismo criterio que crear_transiciones/1).
+  def eliminar_transicion(%Transicion{} = transicion) do
+    Repo.transaction(fn ->
+      reglas_activas = listar_reglas(transicion.id)
+
+      Enum.each(reglas_activas, fn regla ->
+        case eliminar_regla(regla) do
+          {:ok, _} -> :ok
+          {:error, changeset} -> Repo.rollback(changeset)
+        end
+      end)
+
+      transicion
+      |> Ecto.Changeset.change(%{delete_guid: generar_guid()})
+      |> Repo.update()
+      |> case do
+        {:ok, transicion} -> transicion
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
+  end
+
   # --- Reglas ------------------------------------------------------------------
 
   def listar_reglas(transicion_id) do
@@ -168,6 +241,197 @@ defmodule MetadataApp.MetaEstadosAdmin do
         end
       end)
     end)
+  end
+
+  def actualizar_regla(%TransicionRegla{} = regla, attrs) do
+    regla
+    |> TransicionRegla.changeset(attrs)
+    |> Ecto.Changeset.change(%{update_guid: generar_guid()})
+    |> Repo.update()
+  end
+
+  # Hoja del árbol (nada referencia una TransicionRegla) — soft-delete
+  # directo, sin guardas de hijos.
+  def eliminar_regla(%TransicionRegla{} = regla) do
+    regla
+    |> Ecto.Changeset.change(%{delete_guid: generar_guid()})
+    |> Repo.update()
+  end
+
+  # --- Creación atómica completa (wizard "Nuevo Business Process") -------------
+
+  # Crea Contexto+Campos+Estados+Transiciones+Reglas en una única transacción
+  # — todo o nada. Pensado para el wizard completo: mientras no estén las 4
+  # piezas, no se persiste NADA (decisión explícita del usuario, más
+  # estricta que completitud/1, que hoy considera válido un catálogo sin
+  # ninguna regla). La generación de la tabla física (CatalogoGenerador) NO
+  # entra acá a propósito — no es reversible por Ecto (migración + archivo
+  # en disco + compile), así que corre aparte, best-effort, después de que
+  # esta transacción ya haya confirmado.
+  #
+  # Espera:
+  #   %{
+  #     "header" => %{...mismo shape que MetaSchemaContext.crear_header_con_detalles/1, con "detalles" => [...]},
+  #     "estados" => [%{"nombre" =>, "orden" =>, "es_inicial" =>, "color" =>, "icono" =>}, ...],
+  #     "transiciones" => [
+  #       %{"accion" =>, "etiqueta" =>, "estado_origen" => nombre_o_nil, "estado_destino" => nombre,
+  #         "campos_editables" => [...], "reglas" => [%{"tipo" =>, "regla" =>, "params" =>, "orden" =>, "transaccional" =>}, ...]}
+  #     ]
+  #   }
+  #
+  # estado_origen/estado_destino se resuelven por NOMBRE, no por id — los
+  # estados recién se están creando en esta misma llamada, mismo criterio ya
+  # usado por `mix motor.import` para el autómata completo (ahí sin
+  # atomicidad real entre pasos; acá sí, vía Ecto.Multi).
+  #
+  # Devuelve {:ok, %{header:, detalles:, estados:, transiciones:}} |
+  # {:error, motivo} (guarda de completitud, antes de tocar la base) |
+  # {:error, paso_fallido, valor, cambios_previos} (falla de Multi).
+  def crear_proceso_completo(%{"header" => header_attrs, "estados" => estados_attrs, "transiciones" => transiciones_attrs}) do
+    case validar_completo(header_attrs, estados_attrs, transiciones_attrs) do
+      :ok ->
+        Multi.new()
+        |> Multi.run(:header, fn repo, _cambios -> insertar_header(repo, header_attrs) end)
+        |> Multi.run(:detalles, fn repo, %{header: header} ->
+          insertar_detalles(repo, header, header_attrs["detalles"] || [])
+        end)
+        |> Multi.run(:estados, fn repo, %{header: header} -> insertar_estados(repo, header, estados_attrs) end)
+        |> Multi.run(:transiciones, fn repo, %{header: header, estados: estados_por_nombre} ->
+          insertar_transiciones(repo, header, transiciones_attrs, estados_por_nombre)
+        end)
+        |> Repo.transaction()
+
+      {:error, _motivo} = error ->
+        error
+    end
+  end
+
+  # Mismo criterio que validar_alta_o_inicial/2 (más abajo, para autómatas ya
+  # guardados): un estado inicial O una transición de alta cualquiera de las
+  # dos alcanza, no hace falta exigir literalmente "alta" si ya hay inicial.
+  defp validar_completo(header_attrs, estados_attrs, transiciones_attrs) do
+    detalles = header_attrs["detalles"] || []
+    reglas_totales = Enum.flat_map(transiciones_attrs, &(&1["reglas"] || []))
+    tiene_inicial? = Enum.any?(estados_attrs, & &1["es_inicial"])
+    tiene_alta? = Enum.any?(transiciones_attrs, &(&1["accion"] == "alta" and &1["estado_origen"] in [nil, ""]))
+
+    cond do
+      detalles == [] -> {:error, "hace falta al menos un campo"}
+      estados_attrs == [] -> {:error, "hace falta al menos un estado"}
+      not (tiene_inicial? or tiene_alta?) -> {:error, "hace falta un estado inicial o una transición de alta"}
+      reglas_totales == [] -> {:error, "hace falta al menos una regla (pre o post) en alguna transición"}
+      true -> :ok
+    end
+  end
+
+  defp insertar_header(repo, header_attrs) do
+    header_attrs
+    |> Map.drop(["detalles"])
+    |> then(&Header.changeset(%Header{}, &1))
+    |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+    |> repo.insert()
+  end
+
+  defp insertar_detalles(repo, header, detalles_attrs) do
+    insertar_todo_o_nada(detalles_attrs, fn detalle_attrs ->
+      detalle_attrs
+      |> Map.put("meta_schema_header_id", header.id)
+      |> then(&Detail.changeset(%Detail{}, &1))
+      |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+      |> repo.insert()
+    end)
+  end
+
+  defp insertar_estados(repo, header, estados_attrs) do
+    resultado =
+      insertar_todo_o_nada(estados_attrs, fn estado_attrs ->
+        estado_attrs
+        |> Map.put("meta_schema_header_id", header.id)
+        |> then(&Estado.changeset(%Estado{}, &1))
+        |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+        |> repo.insert()
+      end)
+
+    case resultado do
+      {:ok, estados} -> {:ok, Map.new(estados, &{&1.nombre, &1})}
+      error -> error
+    end
+  end
+
+  defp insertar_transiciones(repo, header, transiciones_attrs, estados_por_nombre) do
+    resultado =
+      Enum.reduce_while(transiciones_attrs, {:ok, []}, fn t_attrs, {:ok, acc} ->
+        with {:ok, origen_id} <- resolver_estado_id(t_attrs["estado_origen"], estados_por_nombre),
+             {:ok, destino_id} <- resolver_estado_id(t_attrs["estado_destino"], estados_por_nombre),
+             {:ok, transicion} <- insertar_una_transicion(repo, header, t_attrs, origen_id, destino_id),
+             {:ok, _reglas} <- insertar_reglas(repo, transicion, t_attrs["reglas"] || []) do
+          {:cont, {:ok, [transicion | acc]}}
+        else
+          {:error, _} = error -> {:halt, error}
+        end
+      end)
+
+    case resultado do
+      {:ok, transiciones} -> {:ok, Enum.reverse(transiciones)}
+      error -> error
+    end
+  end
+
+  defp insertar_una_transicion(repo, header, t_attrs, origen_id, destino_id) do
+    atributos = %{
+      "meta_schema_header_id" => header.id,
+      "accion" => t_attrs["accion"],
+      "etiqueta" => t_attrs["etiqueta"],
+      "estado_origen_id" => origen_id,
+      "estado_destino_id" => destino_id,
+      "empresa_id" => t_attrs["empresa_id"],
+      "campos_editables" => t_attrs["campos_editables"] || []
+    }
+
+    %Transicion{}
+    |> Transicion.changeset(atributos)
+    |> validar_campos_editables()
+    |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+    |> repo.insert()
+  end
+
+  defp resolver_estado_id(nil, _mapa), do: {:ok, nil}
+  defp resolver_estado_id("", _mapa), do: {:ok, nil}
+
+  defp resolver_estado_id(nombre, mapa) do
+    case Map.fetch(mapa, nombre) do
+      {:ok, estado} -> {:ok, estado.id}
+      :error -> {:error, "estado \"#{nombre}\" no está en la lista de estados"}
+    end
+  end
+
+  defp insertar_reglas(repo, transicion, reglas_attrs) do
+    insertar_todo_o_nada(reglas_attrs, fn regla_attrs ->
+      regla_attrs
+      |> Map.put("transicion_id", transicion.id)
+      |> then(&TransicionRegla.changeset(%TransicionRegla{}, &1))
+      |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+      |> repo.insert()
+    end)
+  end
+
+  # Inserta una lista todo-o-nada dentro de un paso de Multi.run — alcanza
+  # con devolver {:error, _} en el primer fallo, Ecto.Multi ya se encarga
+  # del rollback de toda la transacción (a diferencia de crear_header_con_detalles/1,
+  # acá no hace falta Repo.rollback manual).
+  defp insertar_todo_o_nada(lista, fun_insertar) do
+    resultado =
+      Enum.reduce_while(lista, {:ok, []}, fn item, {:ok, acc} ->
+        case fun_insertar.(item) do
+          {:ok, insertado} -> {:cont, {:ok, [insertado | acc]}}
+          {:error, _} = error -> {:halt, error}
+        end
+      end)
+
+    case resultado do
+      {:ok, insertados} -> {:ok, Enum.reverse(insertados)}
+      error -> error
+    end
   end
 
   # --- Historial / borrado total -----------------------------------------------
@@ -420,15 +684,90 @@ defmodule MetadataApp.MetaEstadosAdmin do
     end
   end
 
-  # Mismo criterio de ruta que Mix.Tasks.Motor.Reglas.Andamiar.ruta_regla/2
-  # — no se comparte el código porque una Mix.Task no es un módulo pensado
-  # para importarse desde runtime de la app.
-  defp ruta_regla_negocio(catalogo, regla),
+  def ruta_regla_negocio(catalogo, regla),
     do: Path.join(["lib", "metadata_app", "meta_business_process", "reglas", catalogo, "#{regla}.ex"])
 
-  defp stub_sin_completar?(catalogo, regla) do
+  def stub_sin_completar?(catalogo, regla) do
     ruta = ruta_regla_negocio(catalogo, regla)
     File.exists?(ruta) and String.contains?(File.read!(ruta), @marcador_stub)
+  end
+
+  # --- Andamiaje de reglas de negocio (compartido entre BcMotorLive y
+  # Mix.Tasks.Motor.Reglas.Andamiar) ------------------------------------------
+
+  # Genera (si no existe) el stub de una regla de negocio para UNA
+  # transición y UN tipo puntual, y la engancha — mismo comportamiento que
+  # `mix motor.reglas.andamiar`, pero acotado a una sola transición/tipo en
+  # vez de recorrer todo el catálogo, para poder ofrecerlo como una acción
+  # de un click desde la UI. Vive acá (no en el Mix.Task) porque un Mix.Task
+  # no está pensado para invocarse desde un proceso de la app ya corriendo
+  # (BcMotorLive lo llama en caliente) — el Mix.Task pasa a ser un wrapper
+  # fino sobre esto para el uso por consola.
+  #
+  # Devuelve {:error, :ya_tiene_regla} si la transición ya tiene una regla
+  # de ese tipo (con el nombre que sea) — no la reemplaza ni agrega una
+  # segunda, mismo invariante que el Mix.Task.
+  @spec andamiar_regla_negocio(String.t(), Transicion.t(), String.t()) ::
+          {:ok, %{creado?: boolean(), ruta: String.t(), regla: String.t()}} | {:error, :ya_tiene_regla}
+  def andamiar_regla_negocio(catalogo, %Transicion{} = transicion, tipo) when tipo in ["pre", "post"] do
+    reglas_actuales = listar_reglas(transicion.id)
+
+    if Enum.any?(reglas_actuales, &(&1.tipo == tipo)) do
+      {:error, :ya_tiene_regla}
+    else
+      nombre_regla = "#{transicion.accion}_#{tipo}"
+      ruta = ruta_regla_negocio(catalogo, nombre_regla)
+      creado? = escribir_stub_si_no_existe(ruta, catalogo, nombre_regla, tipo)
+
+      case crear_regla(%{"transicion_id" => transicion.id, "tipo" => tipo, "regla" => nombre_regla, "orden" => 0}) do
+        {:ok, _regla} -> {:ok, %{creado?: creado?, ruta: ruta, regla: nombre_regla}}
+        {:error, changeset} -> {:error, changeset}
+      end
+    end
+  end
+
+  defp escribir_stub_si_no_existe(ruta, catalogo, nombre_regla, "pre") do
+    if File.exists?(ruta) do
+      false
+    else
+      File.mkdir_p!(Path.dirname(ruta))
+
+      File.write!(ruta, """
+      defmodule MetadataApp.MetaBusinessProcess.Reglas.#{Macro.camelize(catalogo)}.#{Macro.camelize(nombre_regla)} do
+        @behaviour MetadataApp.MetaStateEngine.ReglaPre
+
+        @impl true
+        def evaluar(_registro, _contexto, _params) do
+          # ESCRIBA SUS REGLAS AQUI
+          :ok
+        end
+      end
+      """)
+
+      true
+    end
+  end
+
+  defp escribir_stub_si_no_existe(ruta, catalogo, nombre_regla, "post") do
+    if File.exists?(ruta) do
+      false
+    else
+      File.mkdir_p!(Path.dirname(ruta))
+
+      File.write!(ruta, """
+      defmodule MetadataApp.MetaBusinessProcess.Reglas.#{Macro.camelize(catalogo)}.#{Macro.camelize(nombre_regla)} do
+        @behaviour MetadataApp.MetaStateEngine.ReglaPost
+
+        @impl true
+        def ejecutar(_registro, _contexto, _params, _repo) do
+          # ESCRIBA SUS REGLAS AQUI
+          {:ok, :sin_cambios}
+        end
+      end
+      """)
+
+      true
+    end
   end
 
   defp validar_tipo_regla(problemas, transicion, regla, tipo_esperado) do
