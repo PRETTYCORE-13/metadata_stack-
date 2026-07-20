@@ -210,10 +210,49 @@ const CopiarRuta = {
   },
 }
 
+// Diagrama de estados del Motor (BcMotorLive) — Mermaid pesa ~3.5MB, así
+// que se carga on-demand (script inyectado dinámicamente) solo cuando este
+// hook monta, no en el bundle principal que se sirve en cada página.
+let cargaMermaid = null
+const cargarMermaid = () => {
+  if (window.mermaid) return Promise.resolve(window.mermaid)
+  if (cargaMermaid) return cargaMermaid
+
+  cargaMermaid = new Promise((resolve, reject) => {
+    const script = document.createElement("script")
+    script.src = "/vendor/mermaid.min.js"
+    script.onload = () => resolve(window.mermaid)
+    script.onerror = () => reject(new Error("no se pudo cargar mermaid.min.js"))
+    document.head.appendChild(script)
+  })
+
+  return cargaMermaid
+}
+
+const DiagramaMotor = {
+  async mounted() {
+    await this.pintar()
+  },
+  async pintar() {
+    const definicion = this.el.dataset.diagrama
+    if (!definicion) return
+
+    try {
+      const mermaid = await cargarMermaid()
+      mermaid.initialize({startOnLoad: false, theme: "neutral", securityLevel: "strict"})
+      const {svg} = await mermaid.render(`svg-${this.el.id}`, definicion)
+      this.el.innerHTML = svg
+    } catch (e) {
+      this.el.textContent = "No se pudo dibujar el diagrama."
+      console.error("[DiagramaMotor]", e)
+    }
+  },
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, AbrirVentana, FiltroMenu, RedimensionarSidebar, CopiarRuta},
+  hooks: {...colocatedHooks, AbrirVentana, FiltroMenu, RedimensionarSidebar, CopiarRuta, DiagramaMotor},
 })
 
 // La pantalla que se abre en la ventana emergente (ej. BC Nuevo) dispara este

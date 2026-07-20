@@ -17,7 +17,12 @@ defmodule MetadataAppWeb do
   those modules here.
   """
 
-  def static_paths, do: ~w(assets fonts images favicon.ico robots.txt)
+  # "vendor": librerías de terceros vendorizadas servidas TAL CUAL, sin pasar
+  # por el bundle de esbuild de app.js — hoy solo mermaid.min.js (usado por
+  # BcMotorLive para el diagrama de estados), cargado on-demand por su propio
+  # hook JS, no en cada página (son ~3.5MB, no tiene sentido sumarlos al
+  # bundle principal que se carga siempre).
+  def static_paths, do: ~w(assets fonts images vendor favicon.ico robots.txt)
 
   def router do
     quote do
