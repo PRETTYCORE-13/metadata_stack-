@@ -37,6 +37,7 @@ defmodule MetadataApp.MetaSchema.Transicion do
     transicion
     |> cast(attrs, @campos)
     |> validate_required(@requeridos)
+    |> update_change(:accion, &normalizar_accion/1)
     |> unique_constraint([:empresa_id, :meta_schema_header_id, :estado_origen_id, :accion],
       name: :meta_schema_transiciones_unico_index
     )
@@ -47,5 +48,18 @@ defmodule MetadataApp.MetaSchema.Transicion do
     |> foreign_key_constraint(:meta_schema_header_id)
     |> foreign_key_constraint(:estado_origen_id)
     |> foreign_key_constraint(:estado_destino_id)
+  end
+
+  # "alta" y "guardar" son palabras clave que MetaStateEngine reconoce con
+  # comparación exacta (t.accion == "alta" / == "guardar") — sin esto, tipear
+  # "Alta" o "Guardar" con mayúscula guarda una transición que se ve idéntica
+  # en la UI pero que el motor nunca reconoce como especial (bug real: una
+  # transición "Guardar" quedó sin efecto porque no matcheaba "guardar").
+  # Se normaliza acá, en el único changeset por el que pasa cualquier
+  # transición sin importar la pantalla que la creó.
+  defp normalizar_accion(nil), do: nil
+
+  defp normalizar_accion(accion) do
+    accion |> String.trim() |> String.downcase() |> String.replace(~r/\s+/, "_")
   end
 end

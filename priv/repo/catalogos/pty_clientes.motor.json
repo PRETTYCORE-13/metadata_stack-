@@ -67,6 +67,19 @@
       "estado_origen": "Activo"
     },
     {
+      "etiqueta": "Guardar",
+      "accion": "guardar",
+      "reglas": [],
+      "empresa_id": null,
+      "campos_editables": [
+        "pty_clientes_nombre",
+        "pty_clientes_edad",
+        "pty_clientes_venta"
+      ],
+      "estado_destino": "Activo",
+      "estado_origen": "Activo"
+    },
+    {
       "etiqueta": "Reactivar",
       "accion": "reactivar",
       "reglas": [],

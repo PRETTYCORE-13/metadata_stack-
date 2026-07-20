@@ -12,7 +12,7 @@
   "transiciones": [
     {
       "etiqueta": "Registrar",
-      "accion": "Nuevo",
+      "accion": "nuevo",
       "reglas": [
         {
           "params": {
@@ -36,7 +36,7 @@
     },
     {
       "etiqueta": "Registrar",
-      "accion": "Registrar",
+      "accion": "registrar",
       "reglas": [],
       "empresa_id": null,
       "campos_editables": [

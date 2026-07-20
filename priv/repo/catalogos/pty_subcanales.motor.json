@@ -12,7 +12,7 @@
   "transiciones": [
     {
       "etiqueta": "Alta",
-      "accion": "Alta",
+      "accion": "alta",
       "reglas": [
         {
           "params": {
@@ -36,7 +36,7 @@
     },
     {
       "etiqueta": "Guardar",
-      "accion": "Guardar",
+      "accion": "guardar",
       "reglas": [],
       "empresa_id": null,
       "campos_editables": [

@@ -79,6 +79,70 @@ defmodule MetadataAppWeb.CoreComponents do
   end
 
   @doc """
+  Tabs genéricos (2 o más) usados en BcMotorLive y BcNuevoCompletoLive para
+  separar Configuración / Diagrama / API en vez de un grid de 2 columnas.
+  Puramente client-side (JS.show/JS.hide + clases), sin ida y vuelta al
+  servidor — el diagrama se pinta con su propio hook (`DiagramaMotor`,
+  `phx-update="ignore"`), cambiar de tab no lo vuelve a renderizar.
+
+  `tabs` es una lista `[%{key: "config", label: "Configuración"}, ...]` en
+  el orden en que se muestran — el primero arranca activo. El caller tiene
+  que envolver el contenido de cada uno en un div con
+  id `<id>-panel-<key>` (todos menos el primero arrancan con
+  `class="hidden"`).
+
+  ## Ejemplo
+
+      <.tabs_motor id="motor" tabs={[
+        %{key: "config", label: "Configuración"},
+        %{key: "diagrama", label: "Diagrama"},
+        %{key: "api", label: "API"}
+      ]} />
+      <div id="motor-panel-config">...</div>
+      <div id="motor-panel-diagrama" class="hidden">...</div>
+      <div id="motor-panel-api" class="hidden">...</div>
+  """
+  attr :id, :string, required: true
+  attr :tabs, :list, required: true
+
+  def tabs_motor(assigns) do
+    primera_key = assigns.tabs |> List.first() |> Map.fetch!(:key)
+    assigns = assign(assigns, :primera_key, primera_key)
+
+    ~H"""
+    <div class="flex gap-1 border-b border-gray-200 mb-4">
+      <%= for tab <- @tabs do %>
+        <button type="button" id={"#{@id}-tab-#{tab.key}"}
+          phx-click={js_activar_tab(@id, @tabs, tab.key)}
+          class={[
+            "px-3 py-2 -mb-px text-sm font-semibold border-b-2 transition-colors",
+            tab.key == @primera_key && "border-purple-600 text-purple-700",
+            tab.key != @primera_key && "border-transparent text-gray-500 hover:text-gray-700"
+          ]}>
+          {tab.label}
+        </button>
+      <% end %>
+    </div>
+    """
+  end
+
+  defp js_activar_tab(id, tabs, tab_activo_key) do
+    Enum.reduce(tabs, %JS{}, fn tab, js ->
+      if tab.key == tab_activo_key do
+        js
+        |> JS.show(to: "##{id}-panel-#{tab.key}")
+        |> JS.add_class("border-purple-600 text-purple-700", to: "##{id}-tab-#{tab.key}")
+        |> JS.remove_class("border-transparent text-gray-500", to: "##{id}-tab-#{tab.key}")
+      else
+        js
+        |> JS.hide(to: "##{id}-panel-#{tab.key}")
+        |> JS.add_class("border-transparent text-gray-500", to: "##{id}-tab-#{tab.key}")
+        |> JS.remove_class("border-purple-600 text-purple-700", to: "##{id}-tab-#{tab.key}")
+      end
+    end)
+  end
+
+  @doc """
   Renders flash notices.
 
   ## Examples

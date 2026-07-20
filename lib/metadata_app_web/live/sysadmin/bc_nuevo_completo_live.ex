@@ -705,18 +705,19 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
 
       <.motor_stepper pasos={pasos_wizard(@campos, @estados, @transiciones)} />
 
-      <div class="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4 items-start">
-        <div class="space-y-4 min-w-0">
-          <.panel_contexto contexto={@contexto} carpetas={@carpetas} iconos_sugeridos={@iconos_sugeridos}
-            nombre_sistema_preview={@nombre_sistema_preview} nav_preview={@nav_preview} nav_error={@contexto_nav_error} />
-          <.panel_campos campos={@campos} />
-          <.panel_estados estados={@estados} puede_agregar={@campos != []} />
-          <.panel_transiciones transiciones={@transiciones} estados={@estados}
-            puede_agregar={@estados != [] and tiene_alta_o_inicial?(@estados, @transiciones)} />
-        </div>
-        <div class="lg:sticky lg:top-4">
-          <.diagrama_transiciones diagrama={@diagrama} />
-        </div>
+      <.tabs_motor id="wizard" tabs={[%{key: "config", label: "Configuración"}, %{key: "diagrama", label: "Diagrama"}]} />
+
+      <div id="wizard-panel-config" class="space-y-4">
+        <.panel_contexto contexto={@contexto} carpetas={@carpetas} iconos_sugeridos={@iconos_sugeridos}
+          nombre_sistema_preview={@nombre_sistema_preview} nav_preview={@nav_preview} nav_error={@contexto_nav_error} />
+        <.panel_campos campos={@campos} />
+        <.panel_estados estados={@estados} puede_agregar={@campos != []} />
+        <.panel_transiciones transiciones={@transiciones} estados={@estados}
+          puede_agregar={@estados != [] and tiene_alta_o_inicial?(@estados, @transiciones)} />
+      </div>
+
+      <div id="wizard-panel-diagrama" class="hidden">
+        <.diagrama_transiciones diagrama={@diagrama} />
       </div>
     </div>
 
@@ -1231,6 +1232,11 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
             <label class="block text-gray-700 mb-0.5">Acción</label>
             <input type="text" name="accion" value={@form["accion"]} placeholder="alta" required maxlength="100"
               class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
+            <p class="mt-0.5 text-[11px] text-gray-500">
+              Se guarda en minúsculas. <span class="font-mono">alta</span> (sin origen) y
+              <span class="font-mono">guardar</span> (self-loop, mismo origen y destino) son palabras clave que el
+              motor reconoce automáticamente — cualquier otro nombre es una transición normal.
+            </p>
           </div>
           <div>
             <label class="block text-gray-700 mb-0.5">Etiqueta</label>

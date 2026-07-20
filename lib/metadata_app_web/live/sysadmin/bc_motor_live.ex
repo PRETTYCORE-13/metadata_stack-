@@ -710,6 +710,48 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     |> inspect()
   end
 
+  # --- Tab API: ejemplos de payload por verbo ---------------------------------
+  # Documentación generada a partir de los campos REALES del catálogo (no
+  # texto fijo) — CatalogoController (lib/metadata_app_web/controllers/
+  # business_process_builder/catalogo_controller.ex) es el mismo para
+  # cualquier catálogo, así que lo que cambia entre uno y otro es solo esto.
+
+  # Un valor representativo por tipo — no busca ser realista, solo mostrar
+  # la FORMA que Postgres/Ecto esperan para ese tipo en el JSON.
+  defp valor_ejemplo_campo(propiedades) do
+    case Map.get(propiedades, "tipo", "string") do
+      "string" -> "texto"
+      "integer" -> 1
+      "decimal" -> 10.5
+      "boolean" -> true
+      "date" -> "2026-01-15"
+      "enum" -> (propiedades |> Map.get("valores", ["valor_a"]) |> List.first()) || "valor_a"
+      "referencia" -> 1
+      _ -> "texto"
+    end
+  end
+
+  # Body de POST/PATCH: solo los campos de negocio (nunca "id" ni
+  # "estado_id" — ver MetaCatalogoGenerico.__using__/1: estado_id está
+  # deliberadamente fuera de @campos, el único camino para cambiarlo es la
+  # transición correspondiente, no un PATCH directo).
+  defp ejemplo_payload(campos) do
+    Map.new(campos, &{&1.schema_context_field, valor_ejemplo_campo(&1.schema_context_properties)})
+  end
+
+  # "data" tal cual lo arma CatalogoGenerico.serializar/2: id + todos los
+  # campos + estado_id/estado_nombre si el catálogo adoptó el motor.
+  defp ejemplo_registro(campos, estados) do
+    base = Map.put(ejemplo_payload(campos), "id", 1)
+
+    case Enum.find(estados, & &1.es_inicial) || List.first(estados) do
+      nil -> base
+      estado -> base |> Map.put("estado_id", estado.id) |> Map.put("estado_nombre", estado.nombre)
+    end
+  end
+
+  defp json_pretty(dato), do: Jason.encode!(dato, pretty: true)
+
   # --- Render ------------------------------------------------------------------
 
   def render(%{header: nil} = assigns) do
@@ -741,21 +783,26 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       <.motor_stepper pasos={pasos_motor(@completitud, @transiciones)} />
       <.panel_problemas :if={@validacion.problemas != []} problemas={@validacion.problemas} />
 
-      <div class="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
-        Todavía no hay edición de Estados/Transiciones ya creados (renombrar, borrar) — sí se pueden agregar y guardar.
+      <.tabs_motor id="motor" tabs={[
+        %{key: "config", label: "Configuración"},
+        %{key: "diagrama", label: "Diagrama"},
+        %{key: "api", label: "API"}
+      ]} />
+
+      <div id="motor-panel-config" class="space-y-4">
+        <.panel_encabezado header_form={@header_form} iconos_sugeridos={@iconos_sugeridos} carpetas={@carpetas} />
+        <.panel_campos campos={@campos} />
+        <.tabla_estados estados={@estados} transiciones={@transiciones} puede_agregar={@completitud.tiene_campos} />
+        <.tabla_transiciones transiciones={@transiciones} estados_por_id={@estados_por_id} catalogo={@header.schema_context_name}
+          puede_agregar={@completitud.tiene_estados and @completitud.tiene_alta_o_inicial} />
       </div>
 
-      <div class="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4 items-start">
-        <div class="space-y-4 min-w-0">
-          <.panel_encabezado header_form={@header_form} iconos_sugeridos={@iconos_sugeridos} carpetas={@carpetas} />
-          <.panel_campos campos={@campos} />
-          <.tabla_estados estados={@estados} transiciones={@transiciones} puede_agregar={@completitud.tiene_campos} />
-          <.tabla_transiciones transiciones={@transiciones} estados_por_id={@estados_por_id} catalogo={@header.schema_context_name}
-            puede_agregar={@completitud.tiene_estados and @completitud.tiene_alta_o_inicial} />
-        </div>
-        <div class="lg:sticky lg:top-4">
-          <.diagrama_transiciones diagrama={@diagrama} />
-        </div>
+      <div id="motor-panel-diagrama" class="hidden">
+        <.diagrama_transiciones diagrama={@diagrama} />
+      </div>
+
+      <div id="motor-panel-api" class="hidden">
+        <.panel_api header={@header} campos={@campos} estados={@estados} transiciones={@transiciones} />
       </div>
     </div>
 
@@ -1260,6 +1307,169 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     """
   end
 
+  attr :header, :map, required: true
+  attr :campos, :list, required: true
+  attr :estados, :list, required: true
+  attr :transiciones, :list, required: true
+
+  # PATCH NO es un update libre — CatalogoGenerico.actualizar/2 solo deja
+  # tocar los campos que estén en la whitelist de una transición "guardar"
+  # (self-loop: mismo estado de origen y destino) configurada para el
+  # estado ACTUAL del registro. Sin ese self-loop, campos_editables/2
+  # devuelve [] y CADA campo que mandes se rechaza — no hay "todo o nada",
+  # se rechaza siempre. Documentar esto con datos reales del catálogo en
+  # vez de un ejemplo genérico que siempre "funciona" evita el malentendido
+  # de que PATCH puentea al autómata.
+  defp panel_api(assigns) do
+    tabla = assigns.header.schema_context_name
+    registro = ejemplo_registro(assigns.campos, assigns.estados)
+    meta_campos = Enum.map(assigns.campos, &%{"schema_context_field" => &1.schema_context_field, "schema_context_properties" => &1.schema_context_properties})
+    estados_por_id = Map.new(assigns.estados, &{&1.id, &1.nombre})
+
+    transiciones_guardar =
+      Enum.filter(assigns.transiciones, &(&1.accion == "guardar" and &1.estado_origen_id == &1.estado_destino_id))
+
+    transicion_editable = Enum.find(transiciones_guardar, &(&1.campos_editables != []))
+
+    {payload_editar, patch_status, patch_respuesta, patch_nota} =
+      ejemplo_patch(assigns.campos, registro, transicion_editable, transiciones_guardar, estados_por_id, tabla)
+
+    assigns =
+      assigns
+      |> assign(:tabla, tabla)
+      |> assign(:tiene_estados, assigns.estados != [])
+      |> assign(:ejemplo_wrap, "{\"#{tabla}\": {...}}")
+      |> assign(:payload_crear, ejemplo_payload(assigns.campos) |> json_pretty())
+      |> assign(:payload_editar, payload_editar |> json_pretty())
+      |> assign(:patch_status, patch_status)
+      |> assign(:patch_respuesta, patch_respuesta |> json_pretty())
+      |> assign(:patch_nota, patch_nota)
+      |> assign(
+        :respuesta_lista,
+        %{
+          "meta_campos" => meta_campos,
+          "data" => [registro],
+          "paginacion" => %{"pagina" => 1, "por_pagina" => 25, "total_filas" => 1, "total_paginas" => 1}
+        }
+        |> json_pretty()
+      )
+      |> assign(:respuesta_uno, %{"meta_campos" => meta_campos, "data" => registro} |> json_pretty())
+      |> assign(:respuesta_creado, %{"data" => registro} |> json_pretty())
+
+    ~H"""
+    <div class="space-y-4">
+      <div class="bg-blue-50 border border-blue-200 text-blue-800 rounded-lg px-3 py-2">
+        <p>
+          Mismo endpoint genérico para cualquier catálogo — lo único que cambia entre uno y otro es la tabla y sus
+          campos. El body de POST/PATCH acepta los campos sueltos (como abajo) o envueltos bajo la clave del
+          catálogo, <span class="font-mono">{@ejemplo_wrap}</span> — las dos formas funcionan.
+        </p>
+        <p :if={@tiene_estados} class="mt-1">
+          <span class="font-mono">estado_id</span> nunca se manda en el body de POST/PATCH — el estado solo cambia
+          con <span class="font-mono">POST /api/{@tabla}/:id/transiciones/:accion</span>.
+        </p>
+      </div>
+
+      <.tarjeta_endpoint metodo="GET" url={"/api/#{@tabla}?pagina=1&por_pagina=25"} descripcion="Listado paginado."
+        respuesta_status="200 OK" respuesta={@respuesta_lista} />
+
+      <.tarjeta_endpoint metodo="GET" url={"/api/#{@tabla}/:id"} descripcion="Un registro."
+        respuesta_status="200 OK" respuesta={@respuesta_uno} />
+
+      <.tarjeta_endpoint metodo="POST" url={"/api/#{@tabla}"} descripcion="Crea un registro nuevo."
+        body={@payload_crear} respuesta_status="201 Created" respuesta={@respuesta_creado} />
+
+      <.tarjeta_endpoint metodo="PATCH" url={"/api/#{@tabla}/:id"} descripcion={@patch_nota}
+        body={@payload_editar} respuesta_status={@patch_status} respuesta={@patch_respuesta} />
+
+      <.tarjeta_endpoint metodo="DELETE" url={"/api/#{@tabla}/:id"} descripcion="Borrado lógico (soft-delete)."
+        respuesta_status="204 No Content (sin body)" />
+    </div>
+    """
+  end
+
+  # Ningún estado tiene una transición "guardar" (self-loop) configurada:
+  # PATCH rechaza cualquier campo que mandes, siempre — 422 real, no un
+  # ejemplo que "funciona" y engaña sobre el comportamiento actual.
+  defp ejemplo_patch(campos, _registro, nil, [], _estados_por_id, _tabla) do
+    campo = List.first(campos)
+    payload = if campo, do: %{campo.schema_context_field => valor_ejemplo_campo(campo.schema_context_properties)}, else: %{}
+    errores = Map.new(payload, fn {campo, _valor} -> {campo, ["no editable en el estado actual"]} end)
+
+    nota =
+      "Este catálogo no tiene ninguna transición \"guardar\" (self-loop) configurada en ningún estado — PATCH " <>
+        "rechaza cualquier campo que mandes, sin importar cuál. Para habilitar edición directa hay que agregar una " <>
+        "transición con acción \"guardar\", mismo estado de origen y destino, y elegir ahí qué campos quedan editables."
+
+    {payload, "422 Unprocessable Entity", %{"errors" => errores}, nota}
+  end
+
+  # Hay transiciones "guardar" pero ninguna con campos editables — existen
+  # solo para correr reglas pre/post al guardar (ver MetaStateEngine), no
+  # para exponer ningún campo. Mismo rechazo que el caso sin self-loop.
+  defp ejemplo_patch(campos, registro, nil, transiciones_guardar, estados_por_id, tabla) do
+    {payload, status, respuesta, _nota} = ejemplo_patch(campos, registro, nil, [], estados_por_id, tabla)
+    estados_nombres = transiciones_guardar |> Enum.map(&Map.get(estados_por_id, &1.estado_origen_id)) |> Enum.join(", ")
+    nota = "Hay transición \"guardar\" en #{estados_nombres}, pero sin campos editables configurados — solo corre reglas, no deja tocar nada. PATCH sigue rechazando cualquier campo."
+    {payload, status, respuesta, nota}
+  end
+
+  defp ejemplo_patch(campos, registro, transicion, _transiciones_guardar, estados_por_id, _tabla) do
+    campos_por_nombre = Map.new(campos, &{&1.schema_context_field, &1})
+
+    payload =
+      Map.new(transicion.campos_editables, fn nombre ->
+        case Map.get(campos_por_nombre, nombre) do
+          nil -> {nombre, "texto"}
+          campo -> {nombre, valor_ejemplo_campo(campo.schema_context_properties)}
+        end
+      end)
+
+    respuesta = %{"data" => Map.merge(registro, payload)}
+    nombre_estado = Map.get(estados_por_id, transicion.estado_origen_id)
+
+    nota =
+      "Solo funciona si el registro está en el estado \"#{nombre_estado}\" — ahí los campos editables son: " <>
+        "#{Enum.join(transicion.campos_editables, ", ")}. En cualquier otro estado (o con otro campo), PATCH lo rechaza."
+
+    {payload, "200 OK", respuesta, nota}
+  end
+
+  attr :metodo, :string, required: true
+  attr :url, :string, required: true
+  attr :descripcion, :string, default: nil
+  attr :body, :string, default: nil
+  attr :respuesta_status, :string, required: true
+  attr :respuesta, :string, default: nil
+
+  defp tarjeta_endpoint(assigns) do
+    ~H"""
+    <div class="border border-gray-200 rounded-lg overflow-hidden">
+      <div class="px-3 py-2 border-b border-gray-200 flex items-center gap-2 bg-gray-50">
+        <span class={[
+          "px-2 py-0.5 rounded text-[11px] font-bold text-white shrink-0",
+          @metodo == "GET" && "bg-blue-600",
+          @metodo == "POST" && "bg-green-600",
+          @metodo == "PATCH" && "bg-amber-600",
+          @metodo == "DELETE" && "bg-red-600"
+        ]}>{@metodo}</span>
+        <span class="font-mono text-gray-700">{@url}</span>
+      </div>
+      <div class="p-3 space-y-2">
+        <p :if={@descripcion} class="text-gray-500">{@descripcion}</p>
+        <div :if={@body}>
+          <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Body</p>
+          <pre class="bg-gray-50 border border-gray-200 rounded-lg p-2 overflow-x-auto font-mono text-[11px] text-gray-800">{@body}</pre>
+        </div>
+        <div>
+          <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Respuesta {@respuesta_status}</p>
+          <pre :if={@respuesta} class="bg-gray-50 border border-gray-200 rounded-lg p-2 overflow-x-auto font-mono text-[11px] text-gray-800">{@respuesta}</pre>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
   attr :form, :map, required: true
   attr :vocabulario, :map, required: true
 
@@ -1581,6 +1791,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             <label class="block text-gray-700 mb-0.5">Acción</label>
             <input type="text" name="accion" value={@form["accion"]} placeholder="activar" required maxlength="100"
               class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
+            <p class="mt-0.5 text-[11px] text-gray-500">
+              Se guarda en minúsculas. <span class="font-mono">guardar</span> como self-loop (mismo origen y destino) es la única forma de habilitar PATCH directo por API — cualquier otro nombre no lo activa.
+            </p>
           </div>
           <div>
             <label class="block text-gray-700 mb-0.5">Etiqueta</label>
