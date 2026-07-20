@@ -1,9 +1,11 @@
 {
   "schema_context_name": "pty_motocicletas",
   "schema_context_label": "Motocicletas",
+  "schema_context_type": 1,
   "schema_context_nav": "/catalogos/Motocicletas",
   "schema_visible": true,
-  "schema_context_type": 1,
+  "schema_set_permissions": null,
+  "schema_profiles": null,
   "detalles": [
     {
       "schema_context_field": "pty_motocicletas_nombre",
@@ -69,7 +71,5 @@
         "visible": true
       }
     }
-  ],
-  "schema_profiles": null,
-  "schema_set_permissions": null
+  ]
 }

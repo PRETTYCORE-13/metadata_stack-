@@ -1,88 +1,76 @@
 {
+  "catalogo": "pty_motocicletas",
   "estados": [
     {
       "color": null,
-      "es_inicial": false,
       "nombre": "Activo",
-      "empresa_id": null,
+      "orden": 1,
+      "es_inicial": false,
       "icono": null,
-      "orden": 1
+      "empresa_id": null
     },
     {
       "color": null,
-      "es_inicial": false,
       "nombre": "Baja",
-      "empresa_id": null,
+      "orden": 2,
+      "es_inicial": false,
       "icono": null,
-      "orden": 2
+      "empresa_id": null
     }
   ],
   "transiciones": [
     {
-      "reglas": [
-        {
-          "params": {},
-          "regla": "alta_pre",
-          "tipo": "pre",
-          "orden": 0,
-          "transaccional": true
-        },
-        {
-          "params": {},
-          "regla": "alta_post",
-          "tipo": "post",
-          "orden": 0,
-          "transaccional": true
-        }
-      ],
-      "campos_editables": [],
+      "empresa_id": null,
       "accion": "alta",
-      "empresa_id": null,
-      "estado_destino": "Activo",
-      "estado_origen": null,
-      "etiqueta": "Registrar"
-    },
-    {
-      "reglas": [
-        {
-          "params": {},
-          "regla": "dar_de_baja_pre",
-          "tipo": "pre",
-          "orden": 0,
-          "transaccional": true
-        },
-        {
-          "params": {},
-          "regla": "dar_de_baja_post",
-          "tipo": "post",
-          "orden": 0,
-          "transaccional": true
-        }
-      ],
+      "etiqueta": "Registrar",
       "campos_editables": [],
-      "accion": "dar_de_baja",
-      "empresa_id": null,
-      "estado_destino": "Baja",
-      "estado_origen": "Activo",
-      "etiqueta": "Dar de baja"
-    },
-    {
       "reglas": [
         {
           "params": {},
-          "regla": "guardar_pre",
-          "tipo": "pre",
           "orden": 0,
+          "tipo": "pre",
+          "regla": "alta_pre",
           "transaccional": true
         },
         {
           "params": {},
-          "regla": "guardar_post",
-          "tipo": "post",
           "orden": 0,
+          "tipo": "post",
+          "regla": "alta_post",
           "transaccional": true
         }
       ],
+      "estado_destino": "Activo",
+      "estado_origen": null
+    },
+    {
+      "empresa_id": null,
+      "accion": "dar_de_baja",
+      "etiqueta": "Dar de baja",
+      "campos_editables": [],
+      "reglas": [
+        {
+          "params": {},
+          "orden": 0,
+          "tipo": "pre",
+          "regla": "dar_de_baja_pre",
+          "transaccional": true
+        },
+        {
+          "params": {},
+          "orden": 0,
+          "tipo": "post",
+          "regla": "dar_de_baja_post",
+          "transaccional": true
+        }
+      ],
+      "estado_destino": "Baja",
+      "estado_origen": "Activo"
+    },
+    {
+      "empresa_id": null,
+      "accion": "guardar",
+      "etiqueta": "Guardar cambios",
       "campos_editables": [
         "pty_motocicletas_nombre",
         "pty_motocicletas_numero_cilindros",
@@ -90,36 +78,48 @@
         "pty_motocicletas_anio",
         "pty_motocicletas_numero_placas"
       ],
-      "accion": "guardar",
-      "empresa_id": null,
-      "estado_destino": "Activo",
-      "estado_origen": "Activo",
-      "etiqueta": "Guardar cambios"
-    },
-    {
       "reglas": [
         {
           "params": {},
-          "regla": "reactivar_pre",
-          "tipo": "pre",
           "orden": 0,
+          "tipo": "pre",
+          "regla": "guardar_pre",
           "transaccional": true
         },
         {
           "params": {},
-          "regla": "reactivar_post",
-          "tipo": "post",
           "orden": 0,
+          "tipo": "post",
+          "regla": "guardar_post",
           "transaccional": true
         }
       ],
-      "campos_editables": [],
-      "accion": "reactivar",
-      "empresa_id": null,
       "estado_destino": "Activo",
-      "estado_origen": "Baja",
-      "etiqueta": "Reactivar"
+      "estado_origen": "Activo"
+    },
+    {
+      "empresa_id": null,
+      "accion": "reactivar",
+      "etiqueta": "Reactivar",
+      "campos_editables": [],
+      "reglas": [
+        {
+          "params": {},
+          "orden": 0,
+          "tipo": "pre",
+          "regla": "reactivar_pre",
+          "transaccional": true
+        },
+        {
+          "params": {},
+          "orden": 0,
+          "tipo": "post",
+          "regla": "reactivar_post",
+          "transaccional": true
+        }
+      ],
+      "estado_destino": "Activo",
+      "estado_origen": "Baja"
     }
-  ],
-  "catalogo": "pty_motocicletas"
+  ]
 }

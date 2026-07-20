@@ -1,79 +1,99 @@
 {
+  "catalogo": "pty_clientes",
   "estados": [
     {
       "color": null,
-      "es_inicial": true,
       "nombre": "Nuevo",
-      "empresa_id": null,
+      "orden": 1,
+      "es_inicial": true,
       "icono": null,
-      "orden": 1
+      "empresa_id": null
     },
     {
       "color": null,
-      "es_inicial": false,
       "nombre": "Prospecto",
-      "empresa_id": null,
+      "orden": 2,
+      "es_inicial": false,
       "icono": null,
-      "orden": 2
+      "empresa_id": null
     },
     {
       "color": null,
-      "es_inicial": false,
       "nombre": "Activo",
-      "empresa_id": null,
+      "orden": 3,
+      "es_inicial": false,
       "icono": null,
-      "orden": 3
+      "empresa_id": null
     },
     {
       "color": null,
-      "es_inicial": false,
       "nombre": "Baja",
-      "empresa_id": null,
+      "orden": 4,
+      "es_inicial": false,
       "icono": null,
-      "orden": 4
+      "empresa_id": null
     }
   ],
   "transiciones": [
     {
+      "empresa_id": null,
+      "accion": "activar",
+      "etiqueta": "Activar",
+      "campos_editables": [],
       "reglas": [
+        {
+          "params": {},
+          "orden": 0,
+          "tipo": "post",
+          "regla": "activar_post",
+          "transaccional": true
+        },
         {
           "params": {
             "campos": [
               "pty_clientes_nombre"
             ]
           },
-          "regla": "campos_requeridos",
-          "tipo": "pre",
           "orden": 1,
+          "tipo": "pre",
+          "regla": "campos_requeridos",
           "transaccional": true
         }
       ],
-      "campos_editables": [],
-      "accion": "activar",
-      "empresa_id": null,
       "estado_destino": "Activo",
-      "estado_origen": "Prospecto",
-      "etiqueta": "Activar"
+      "estado_origen": "Prospecto"
     },
     {
-      "reglas": [],
-      "campos_editables": [],
-      "accion": "calificar",
       "empresa_id": null,
+      "accion": "calificar",
+      "etiqueta": "Calificar como prospecto",
+      "campos_editables": [],
+      "reglas": [
+        {
+          "params": {},
+          "orden": 0,
+          "tipo": "pre",
+          "regla": "calificar_pre",
+          "transaccional": true
+        }
+      ],
       "estado_destino": "Prospecto",
-      "estado_origen": "Nuevo",
-      "etiqueta": "Calificar como prospecto"
+      "estado_origen": "Nuevo"
     },
     {
+      "empresa_id": null,
+      "accion": "dar_de_baja",
+      "etiqueta": "Dar de baja",
+      "campos_editables": [],
       "reglas": [
         {
           "params": {
             "campo_relacion": "canal_orden",
             "entidad": "pty_canal"
           },
-          "regla": "sin_relacionados",
-          "tipo": "pre",
           "orden": 1,
+          "tipo": "pre",
+          "regla": "sin_relacionados",
           "transaccional": true
         },
         {
@@ -81,18 +101,18 @@
             "campo": "pty_clientes_fecha_baja",
             "valor": "ahora"
           },
-          "regla": "estampar_valor",
-          "tipo": "post",
           "orden": 1,
+          "tipo": "post",
+          "regla": "estampar_valor",
           "transaccional": true
         },
         {
           "params": {
             "dato": "motivo_baja"
           },
-          "regla": "dato_en_contexto",
-          "tipo": "pre",
           "orden": 2,
+          "tipo": "pre",
+          "regla": "dato_en_contexto",
           "transaccional": true
         },
         {
@@ -104,9 +124,9 @@
             "campo_relacion": "id_canal",
             "entidad": "pty_subcanal"
           },
-          "regla": "mutar_relacionados",
-          "tipo": "post",
           "orden": 2,
+          "tipo": "post",
+          "regla": "mutar_relacionados",
           "transaccional": true
         },
         {
@@ -114,28 +134,28 @@
             "destinatario": "vendedor_asignado",
             "plantilla": "baja_cliente"
           },
-          "regla": "notificar",
-          "tipo": "post",
           "orden": 3,
+          "tipo": "post",
+          "regla": "notificar",
           "transaccional": false
         }
       ],
-      "campos_editables": [],
-      "accion": "dar_de_baja",
-      "empresa_id": null,
       "estado_destino": "Baja",
-      "estado_origen": "Activo",
-      "etiqueta": "Dar de baja"
+      "estado_origen": "Activo"
     },
     {
+      "empresa_id": null,
+      "accion": "reactivar",
+      "etiqueta": "Reactivar",
+      "campos_editables": [],
       "reglas": [
         {
           "params": {
             "rol": "supervisor"
           },
-          "regla": "requiere_rol",
-          "tipo": "pre",
           "orden": 1,
+          "tipo": "pre",
+          "regla": "requiere_rol",
           "transaccional": true
         },
         {
@@ -143,9 +163,9 @@
             "campo": "pty_clientes_fecha_baja",
             "valor": null
           },
-          "regla": "estampar_valor",
-          "tipo": "post",
           "orden": 1,
+          "tipo": "post",
+          "regla": "estampar_valor",
           "transaccional": true
         },
         {
@@ -153,19 +173,14 @@
             "destinatario": "vendedor_asignado",
             "plantilla": "cliente_reactivado"
           },
-          "regla": "notificar",
-          "tipo": "post",
           "orden": 2,
+          "tipo": "post",
+          "regla": "notificar",
           "transaccional": false
         }
       ],
-      "campos_editables": [],
-      "accion": "reactivar",
-      "empresa_id": null,
       "estado_destino": "Activo",
-      "estado_origen": "Baja",
-      "etiqueta": "Reactivar"
+      "estado_origen": "Baja"
     }
-  ],
-  "catalogo": "pty_clientes"
+  ]
 }
