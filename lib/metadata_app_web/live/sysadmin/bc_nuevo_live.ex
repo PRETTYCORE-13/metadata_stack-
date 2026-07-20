@@ -298,7 +298,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
   defp nuevo_formulario(socket) do
     socket
     |> assign(:contexto, %{
-      "tipo_registro" => "archivo",
+      "tipo_registro" => "carpeta",
       "nombre_p2" => "catalogos",
       "nombre_p3" => "",
       "etiqueta" => "Catálogo de ",
