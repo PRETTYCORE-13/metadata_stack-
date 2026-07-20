@@ -1,0 +1,34 @@
+{
+  "schema_context_name": "pty_canales",
+  "schema_context_label": "Canales",
+  "schema_context_type": 1,
+  "schema_context_nav": "/alyconfig/canales",
+  "schema_visible": true,
+  "schema_set_permissions": null,
+  "schema_profiles": null,
+  "detalles": [
+    {
+      "schema_context_field": "pty_canal_descripcion",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Descripción",
+        "longitud": 60,
+        "opcional": false,
+        "orden": 1,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "pty_canal_orden",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Ordenamiento",
+        "opcional": false,
+        "orden": 1,
+        "tipo": "integer",
+        "visible": true
+      }
+    }
+  ]
+}

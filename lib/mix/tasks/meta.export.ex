@@ -31,33 +31,11 @@ defmodule Mix.Tasks.Meta.Export do
     {:ok, nombres, _apps} =
       Ecto.Migrator.with_repo(MetadataApp.Repo, fn _repo ->
         MetaSchemaContext.listar_headers()
-        |> Enum.map(&exportar_header(&1, dir))
+        |> Enum.map(&MetaSchemaContext.exportar_header(&1, dir))
       end)
 
     limpiar_huerfanos(dir, nombres, ".meta.json")
     Mix.shell().info("Exportados #{length(nombres)} Business Context(s) a #{dir}/")
-  end
-
-  defp exportar_header(header, dir) do
-    detalles = MetaSchemaContext.listar_detalles(header.schema_context_name)
-
-    contenido =
-      Jason.encode!(
-        %{
-          schema_context_name: header.schema_context_name,
-          schema_context_label: header.schema_context_label,
-          schema_context_type: header.schema_context_type,
-          schema_context_nav: header.schema_context_nav,
-          schema_visible: header.schema_visible,
-          schema_set_permissions: header.schema_set_permissions,
-          schema_profiles: header.schema_profiles,
-          detalles: Enum.map(detalles, &MetaSchemaContext.serializar_detalle/1)
-        },
-        pretty: true
-      )
-
-    File.write!(Path.join(dir, "#{header.schema_context_name}.meta.json"), contenido)
-    header.schema_context_name
   end
 
   # Sincroniza el directorio con lo que existe hoy en la base: un catálogo

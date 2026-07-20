@@ -816,6 +816,60 @@ defmodule MetadataApp.MetaEstadosAdmin do
     :ok
   end
 
+  # --- Export --------------------------------------------------------------
+
+  # Exporta el autómata de ESTE header a <dir>/<catalogo>.motor.json —
+  # compartido entre `mix motor.export` (recorre todos) y el botón
+  # "Guardar BC" de BcMotorLive (uno solo). nil si el catálogo no adoptó
+  # el motor (sin estados) — no le corresponde archivo, mismo criterio
+  # que ya usaba el Mix.Task.
+  def exportar_header(header, dir \\ "priv/repo/catalogos") do
+    estados = listar_estados(header.id)
+
+    if estados == [] do
+      nil
+    else
+      File.mkdir_p!(dir)
+      transiciones = listar_transiciones(header.id)
+      nombres_por_id = Map.new(estados, &{&1.id, &1.nombre})
+
+      contenido =
+        Jason.encode!(
+          %{
+            catalogo: header.schema_context_name,
+            estados: Enum.map(estados, &exportar_estado/1),
+            transiciones: Enum.map(transiciones, &exportar_transicion(&1, nombres_por_id))
+          },
+          pretty: true
+        )
+
+      File.write!(Path.join(dir, "#{header.schema_context_name}.motor.json"), contenido)
+      header.schema_context_name
+    end
+  end
+
+  defp exportar_estado(e) do
+    %{nombre: e.nombre, orden: e.orden, es_inicial: e.es_inicial, color: e.color, icono: e.icono, empresa_id: e.empresa_id}
+  end
+
+  # estado_origen puede ser nil (transición de "alta" — el registro
+  # todavía no existe, ver MetaSchema.Transicion).
+  defp exportar_transicion(t, nombres_por_id) do
+    %{
+      accion: t.accion,
+      etiqueta: t.etiqueta,
+      empresa_id: t.empresa_id,
+      estado_origen: t.estado_origen_id && Map.fetch!(nombres_por_id, t.estado_origen_id),
+      estado_destino: Map.fetch!(nombres_por_id, t.estado_destino_id),
+      campos_editables: t.campos_editables,
+      reglas: Enum.map(t.reglas, &exportar_regla/1)
+    }
+  end
+
+  defp exportar_regla(r) do
+    %{tipo: r.tipo, regla: r.regla, params: r.params, orden: r.orden, transaccional: r.transaccional}
+  end
+
   defp reglas_query, do: from(r in TransicionRegla, where: is_nil(r.delete_guid), order_by: [asc: r.orden, asc: r.id])
 
   defp reglas_de_transicion_query(transicion_id) do

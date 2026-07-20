@@ -503,6 +503,7 @@
   width: 32px;
   height: 32px;
   flex-shrink: 0;
+  overflow: hidden;
 }
 
 .pc-nav-icon svg {
@@ -516,10 +517,33 @@
   color: inherit;
 }
 
-/* Expandido: lista plana solo con texto, estilo CloudWatch. Colapsado (68px)
-   el ícono vuelve a ser lo único visible — es el riel de acceso rápido. */
+/* Expandido: el ícono configurado por catálogo (schema_context_icono) ahora
+   se ve chico al lado del texto — antes se ocultaba entero en expandido
+   (estilo CloudWatch puro, solo texto) y el esfuerzo de elegir un ícono por
+   BC solo se notaba en el riel colapsado, que es donde nadie lo ve por
+   default. Colapsado (68px) sigue siendo el mismo ícono pero grande, como
+   antes — es lo único visible ahí, así que necesita el tamaño completo. */
 .pc-platform-sidebar-open .pc-nav-icon {
-  display: none;
+  width: 18px;
+  height: 18px;
+}
+
+.pc-platform-sidebar-open .pc-nav-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.pc-platform-sidebar-open .pc-nav-icon .material-symbols-outlined {
+  font-size: 18px;
+}
+
+/* Íconos "especiales" (páginas fijas con imagen propia — inicio/tienda/etc,
+   ver pc_icon/1) usan <img class="w-8 h-8"> en vez de Material Symbols: sin
+   esta regla se hubieran quedado en 32px, desbordando la cajita de 18px de
+   arriba en modo expandido. */
+.pc-platform-sidebar-open .pc-nav-icon img {
+  width: 18px;
+  height: 18px;
 }
 
 /* Sidebar cerrado: ocultar labels */

@@ -289,6 +289,57 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     end)
   end
 
+  # Agrega UN campo a un catálogo que ya existe (a diferencia de
+  # crear_header_con_detalles/1, que crea el header y todos sus detalles
+  # juntos al nacer) — CatalogoGenerador.generar/1 hay que volver a
+  # correrlo después de esto para que la columna física se agregue de
+  # verdad (asegurar_campos_nuevos/1 ya lo hace solo si el schema existe).
+  def agregar_detalle(%Header{} = header, attrs) do
+    attrs = Map.put(attrs, "meta_schema_header_id", header.id)
+
+    %Detail{}
+    |> Detail.changeset(attrs)
+    |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+    |> Repo.insert()
+  end
+
+  # Soft-delete de un campo — la columna física NO se toca acá (ver
+  # CatalogoGenerador.eliminar_campo/3, que orquesta esto + el DROP COLUMN +
+  # regenerar el schema, en ese orden).
+  def eliminar_detalle(%Detail{} = detalle) do
+    detalle
+    |> Ecto.Changeset.change(%{delete_guid: generar_guid()})
+    |> Repo.update()
+  end
+
+  # Exporta ESTE header a <dir>/<catalogo>.meta.json — compartido entre
+  # `mix meta.export` (recorre todos) y el botón "Guardar BC" de
+  # BcMotorLive (uno solo). Vive acá y no en el Mix.Task porque un
+  # Mix.Task no está pensado para invocarse desde un proceso de la app ya
+  # corriendo (mismo motivo que MetaEstadosAdmin.andamiar_regla_negocio/3).
+  def exportar_header(%Header{} = header, dir \\ "priv/repo/catalogos") do
+    File.mkdir_p!(dir)
+    detalles = listar_detalles(header.schema_context_name)
+
+    contenido =
+      Jason.encode!(
+        %{
+          schema_context_name: header.schema_context_name,
+          schema_context_label: header.schema_context_label,
+          schema_context_type: header.schema_context_type,
+          schema_context_nav: header.schema_context_nav,
+          schema_visible: header.schema_visible,
+          schema_set_permissions: header.schema_set_permissions,
+          schema_profiles: header.schema_profiles,
+          detalles: Enum.map(detalles, &serializar_detalle/1)
+        },
+        pretty: true
+      )
+
+    File.write!(Path.join(dir, "#{header.schema_context_name}.meta.json"), contenido)
+    header.schema_context_name
+  end
+
   def actualizar_header(%Header{} = header, attrs) do
     header
     |> Header.changeset(attrs)

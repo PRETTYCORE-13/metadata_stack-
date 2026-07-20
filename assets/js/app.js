@@ -27,15 +27,6 @@ import topbar from "../vendor/topbar"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 
-const AbrirVentana = {
-  mounted() {
-    this.el.addEventListener("click", (e) => {
-      e.preventDefault()
-      window.open(this.el.dataset.url, "_blank", "width=1000,height=800")
-    })
-  },
-}
-
 // Arrastrar la manija del borde del sidebar ajusta su ancho (guardado en
 // localStorage — persiste entre recargas/páginas, ya que cada ruta es un
 // mount de LiveView nuevo, no una sola SPA). Min/max evitan un sidebar
@@ -97,7 +88,7 @@ const RedimensionarSidebar = {
 }
 
 // Filtra el árbol del menú sin ir al servidor — el menú se pinta en varias
-// pantallas (InicioLive, CatalogoLive, BcListLive, BcNuevoLive...), así que
+// pantallas (InicioLive, CatalogoLive, BcListLive, BcMotorLive...), así que
 // resolverlo del lado del cliente evita cablear el mismo estado de búsqueda
 // en cada una. Oculta ítems que no matchean, y una carpeta se oculta solo
 // si NINGÚN descendiente (página o subcarpeta) matchea; si alguno matchea,
@@ -252,14 +243,8 @@ const DiagramaMotor = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, AbrirVentana, FiltroMenu, RedimensionarSidebar, CopiarRuta, DiagramaMotor},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, CopiarRuta, DiagramaMotor},
 })
-
-// La pantalla que se abre en la ventana emergente (ej. BC Nuevo) dispara este
-// evento al terminar de guardar, para autocerrarse. window.close() solo
-// funciona en ventanas abiertas por script (window.open), por eso el botón
-// usa el hook AbrirVentana en vez de un <a target="_blank"> normal.
-window.addEventListener("phx:cerrar_ventana", () => window.close())
 
 // Show progress bar on live navigation and form submits
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})

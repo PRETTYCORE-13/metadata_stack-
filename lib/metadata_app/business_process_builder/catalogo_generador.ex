@@ -115,6 +115,74 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     end
   end
 
+  # Vista previa del impacto de quitar UN campo: cuántas filas tienen un
+  # valor no-nulo ahí (esos valores se pierden con el DROP COLUMN). No
+  # modifica nada.
+  def impacto_campo(schema_context_name, campo) do
+    with {:ok, _header} <- buscar_header(schema_context_name) do
+      filas_con_valor =
+        Repo.aggregate(
+          from(t in schema_context_name, where: not is_nil(field(t, ^String.to_existing_atom(campo)))),
+          :count
+        )
+
+      {:ok, %{campo: campo, filas_con_valor: filas_con_valor}}
+    end
+  end
+
+  # Quita un campo de un catálogo YA generado: soft-delete del Detail +
+  # DROP COLUMN real (migración hacia adelante, mismo criterio que
+  # crear_migracion_drop/1 — nunca se toca la migración de creación) +
+  # regenera el schema .ex sin el campo. confirmar_campo repite el mismo
+  # criterio de validar_confirmacion/2 que ya usa eliminar/3 (escribir el
+  # nombre exacto, no una frase fija) — acá alcanza con el nombre del campo
+  # solo (no hace falta confirmar_filas como en el borrado total: esto
+  # pierde una columna, no el catálogo entero).
+  def eliminar_campo(schema_context_name, campo, confirmar_campo) do
+    with {:ok, _header} <- buscar_header(schema_context_name),
+         :ok <- validar_confirmacion(campo, confirmar_campo),
+         {:ok, detalle} <- buscar_detalle(schema_context_name, campo) do
+      MetaSchemaContext.eliminar_detalle(detalle)
+      quitar_columna(schema_context_name, campo)
+      asegurar_campos_nuevos(schema_context_name)
+      {:ok, %{campo: campo}}
+    end
+  end
+
+  defp buscar_detalle(schema_context_name, campo) do
+    case Enum.find(MetaSchemaContext.listar_detalles(schema_context_name), &(&1.schema_context_field == campo)) do
+      nil -> {:error, "el campo #{campo} no existe en #{schema_context_name}"}
+      detalle -> {:ok, detalle}
+    end
+  end
+
+  # Mismo motivo que crear_migracion_drop/1 y agregar_columnas/2: migración
+  # hacia adelante (nunca se toca la de creación), sufijo con timestamp para
+  # que el nombre descriptivo no choque si se repite la operación.
+  defp quitar_columna(schema_context_name, campo) do
+    timestamp = timestamp_utc()
+
+    modulo_migracion =
+      "Quitar" <> Macro.camelize(campo) <> "De" <> Macro.camelize(schema_context_name) <> timestamp
+
+    path = "priv/repo/migrations/#{timestamp}_quitar_#{campo}_de_#{schema_context_name}_#{timestamp}.exs"
+
+    contenido = """
+    defmodule MetadataApp.Repo.Migrations.#{modulo_migracion} do
+      use Ecto.Migration
+
+      def change do
+        alter table(:#{schema_context_name}) do
+          remove :#{campo}
+        end
+      end
+    end
+    """
+
+    File.write!(path, contenido)
+    migrar()
+  end
+
   # Backfill de estado_id para catálogos generados antes de que este campo
   # existiera. Deliberadamente NO es una migración versionada: el orden de
   # versiones entre migraciones escritas a mano (14 dígitos) y las que arma
@@ -237,13 +305,14 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     end
   end
 
-  # Repetir el nombre de la tabla en el body es la confirmación — barato de
-  # implementar, elimina el borrado accidental por typo o script, y obliga
-  # a escribirlo a propósito en vez de copiar/pegar un texto fijo sin leer.
-  defp validar_confirmacion(tabla, tabla), do: :ok
+  # Repetir el nombre (de la tabla, o de un campo en eliminar_campo/3) en el
+  # body es la confirmación — barato de implementar, elimina el borrado
+  # accidental por typo o script, y obliga a escribirlo a propósito en vez
+  # de copiar/pegar un texto fijo sin leer.
+  defp validar_confirmacion(esperado, esperado), do: :ok
 
-  defp validar_confirmacion(_tabla, _confirmar_tabla),
-    do: {:error, "confirmar_tabla no coincide con el nombre de la tabla a borrar"}
+  defp validar_confirmacion(_esperado, _confirmacion),
+    do: {:error, "el texto de confirmación no coincide con lo que se va a borrar"}
 
   # Fuerza a haber consultado GET .../impacto antes de borrar: sin conocer
   # la cantidad real de filas, no hay forma de completar este chequeo a
