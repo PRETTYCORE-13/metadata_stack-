@@ -381,12 +381,12 @@ defmodule MetadataAppWeb.CatalogoLive do
               <%= for fila <- @filas do %>
                 <tr class="hover:bg-purple-50/60 transition-colors">
                   <%= for columna <- @columnas do %>
-                    <td class={["px-4 py-3 text-gray-700", alineacion_columna(columna)]}>
+                    <td class={["px-4 py-1.5 text-xs text-gray-700", alineacion_columna(columna)]}>
                       {Map.get(fila, String.to_existing_atom(columna.schema_context_field))}
                     </td>
                   <% end %>
                   <%= if @mostrar_estado? do %>
-                    <td class="px-4 py-3 text-gray-700">{Map.get(fila, :estado_nombre)}</td>
+                    <td class="px-4 py-1.5 text-xs text-gray-700">{Map.get(fila, :estado_nombre)}</td>
                   <% end %>
                 </tr>
               <% end %>
