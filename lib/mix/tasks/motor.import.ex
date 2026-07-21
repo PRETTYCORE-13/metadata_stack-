@@ -93,17 +93,20 @@ defmodule Mix.Tasks.Motor.Import do
 
       case Enum.find(acc, &(&1.accion == attrs["accion"] and &1.estado_origen_id == origen_id)) do
         nil ->
-          crear_transicion_e_importar_reglas(header, attrs, origen_id, destino_id, acc)
+          crear_transicion(header, attrs, origen_id, destino_id, acc)
 
-        transicion ->
+        _transicion ->
           Mix.shell().info("= #{header.schema_context_name} transición \"#{attrs["accion"]}\": ya existía")
-          importar_reglas(header, transicion, attrs["reglas"] || [])
           acc
       end
     end)
   end
 
-  defp crear_transicion_e_importar_reglas(header, attrs, origen_id, destino_id, acumulado) do
+  # Reglas PRE/POST (rediseño 2026-07-21) ya no viajan en el JSON de
+  # transiciones — son código por catálogo, ver MetaReglasCodigo. Si el
+  # JSON importado es de una versión vieja y todavía trae "reglas" por
+  # transición, se ignora a propósito.
+  defp crear_transicion(header, attrs, origen_id, destino_id, acumulado) do
     atributos = %{
       "meta_schema_header_id" => header.id,
       "accion" => attrs["accion"],
@@ -117,7 +120,6 @@ defmodule Mix.Tasks.Motor.Import do
     case MetaEstadosAdmin.crear_transicion(atributos) do
       {:ok, transicion} ->
         Mix.shell().info("+ #{header.schema_context_name} transición \"#{attrs["accion"]}\": creada")
-        importar_reglas(header, transicion, attrs["reglas"] || [])
         [transicion | acumulado]
 
       {:error, changeset} ->
@@ -136,38 +138,4 @@ defmodule Mix.Tasks.Motor.Import do
     end
   end
 
-  defp importar_reglas(header, transicion, lista) do
-    existentes = transicion.id |> MetaEstadosAdmin.listar_reglas() |> MapSet.new(&{&1.tipo, &1.regla})
-
-    Enum.each(lista, fn attrs ->
-      clave = {attrs["tipo"], attrs["regla"]}
-
-      if MapSet.member?(existentes, clave) do
-        Mix.shell().info(
-          "= #{header.schema_context_name} transición \"#{transicion.accion}\" regla \"#{attrs["regla"]}\" (#{attrs["tipo"]}): ya existía"
-        )
-      else
-        atributos = %{
-          "transicion_id" => transicion.id,
-          "tipo" => attrs["tipo"],
-          "regla" => attrs["regla"],
-          "params" => attrs["params"] || %{},
-          "orden" => attrs["orden"] || 0,
-          "transaccional" => Map.get(attrs, "transaccional", true)
-        }
-
-        case MetaEstadosAdmin.crear_regla(atributos) do
-          {:ok, _regla} ->
-            Mix.shell().info(
-              "+ #{header.schema_context_name} transición \"#{transicion.accion}\" regla \"#{attrs["regla"]}\" (#{attrs["tipo"]}): creada"
-            )
-
-          {:error, changeset} ->
-            Mix.raise(
-              "Error importando regla \"#{attrs["regla"]}\" de #{header.schema_context_name}/#{transicion.accion}: #{inspect(changeset.errors)}"
-            )
-        end
-      end
-    end)
-  end
 end

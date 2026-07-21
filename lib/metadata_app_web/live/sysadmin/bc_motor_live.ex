@@ -10,6 +10,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador}
   alias MetadataApp.MetaEstadosAdmin
+  alias MetadataApp.MetaReglasCodigo
   alias Phoenix.LiveView.JS
 
   @menu [
@@ -39,7 +40,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       |> assign(:current_page, "bc_list")
       |> assign(:menu_items, @menu)
       |> assign(:sidebar_open, false)
-      |> assign(:regla_form, nil)
       |> assign(:campo_form, nil)
       |> assign(:eliminar_campo_form, nil)
       |> assign(:estado_form, nil)
@@ -49,6 +49,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       |> assign(:iconos_sugeridos, @iconos_sugeridos)
       |> assign(:carpetas, MetaSchemaContext.listar_carpetas_existentes())
       |> assign(:catalogos_referenciables, MetaSchemaContext.listar_catalogos_referenciables())
+      |> assign(:reglas_mensajes, %{"pre" => nil, "post" => nil})
+      |> assign(:compilar_disponible, MetaReglasCodigo.compilar_disponible?())
 
     {:ok, cargar_motor(socket)}
   end
@@ -129,6 +131,32 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     |> assign(:diagrama, diagrama_mermaid(estados, transiciones))
     |> assign(:completitud, completitud)
     |> assign(:validacion, validacion)
+    |> assign(:reglas, %{"pre" => MetaReglasCodigo.obtener(header.id, "pre"), "post" => MetaReglasCodigo.obtener(header.id, "post")})
+    |> assign(:puede_guardar_bc, puede_guardar_bc?(header, completitud, validacion))
+  end
+
+  # Candado de Guardar BC (agregado 2026-07-21): además de lo que ya exigía
+  # (completo? y valido?), ahora también exige código de reglas sin errores
+  # de sintaxis y, en dev/test, ya compilado — no tiene sentido exportar un
+  # catálogo con código guardado que ni parsea o que el motor todavía no
+  # está corriendo (ver MetaReglasCodigo.con_error_sintaxis?/1 y
+  # sin_compilar?/1).
+  #
+  # OJO — "Compila Todo" en verde NO alcanza para desbloquear este botón:
+  # compilar y completar son cosas distintas. Un stub con
+  # "#ESCRIBA SU CODIGO AQUÍ" sin tocar COMPILA perfecto (es código Elixir
+  # válido) y por lo tanto no dispara con_error_sintaxis? ni sin_compilar?
+  # — pero completitud.completo? sigue en false mientras el marcador siga
+  # presente en cualquier rama de PRE o POST (ver
+  # MetaReglasCodigo.pendiente?/2, que busca ese texto literal, y
+  # MetaEstadosAdmin.completitud/1, que lo exige junto con post_pendiente?).
+  # Si "Compila Todo" tira éxito pero Guardar BC sigue deshabilitado, el
+  # motivo casi siempre es ESE: falta terminar (o borrar el marcador de)
+  # alguna rama de la pestaña Reglas, no un problema de compilación.
+  defp puede_guardar_bc?(header, completitud, validacion) do
+    completitud.completo? and validacion.valido? and
+      not MetaReglasCodigo.con_error_sintaxis?(header) and
+      not MetaReglasCodigo.sin_compilar?(header)
   end
 
   # --- Encabezado: etiqueta/navegación/ícono ----------------------------------
@@ -523,98 +551,38 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # --- Reglas: vocabulario cerrado --------------------------------------------
+  # --- Compilar motor completo (tabla + reglas, un solo paso en dev/test) -----
 
-  def handle_event("abrir_form_regla", %{"transicion_id" => id, "accion" => accion}, socket) do
+  # Compila lo que YA está guardado en base para pre/post — "poner en línea
+  # todo lo guardado hasta ahora". Si un tipo nunca se guardó, se omite sin
+  # error (reglas no son obligatorias). Solo dev/test — recompilar_schema/1
+  # necesita el .ex fuente en disco, que un release de producción no tiene.
+  def handle_event("compilar_motor_completo", _params, socket) do
+    header = socket.assigns.header
+    :ok = CatalogoGenerador.recompilar_schema(header.schema_context_name)
+
+    resultados =
+      for tipo <- ~w(pre post), MetaReglasCodigo.obtener(header.id, tipo) do
+        {tipo, MetaReglasCodigo.compilar(header, tipo)}
+      end
+
+    compiladas = for {tipo, {:ok, _modulo}} <- resultados, do: tipo
+    errores = for {tipo, {:error, motivo}} <- resultados, do: "#{tipo}: #{motivo}"
+
+    mensaje =
+      case compiladas do
+        [] -> "Tabla compilada. No había reglas guardadas todavía para compilar."
+        _ -> "Tabla y reglas compiladas: #{Enum.join(compiladas, ", ")}."
+      end
+
+    socket = cargar_motor(socket)
+
     {:noreply,
-     assign(socket, :regla_form, %{
-       transicion_id: String.to_integer(id),
-       accion: accion,
-       regla: nil,
-       error: nil
-     })}
-  end
-
-  def handle_event("cerrar_form_regla", _params, socket) do
-    {:noreply, assign(socket, :regla_form, nil)}
-  end
-
-  def handle_event("elegir_regla", %{"regla" => nombre}, socket) do
-    nombre = if nombre == "", do: nil, else: nombre
-    {:noreply, update(socket, :regla_form, &Map.put(&1, :regla, nombre))}
-  end
-
-  def handle_event("guardar_regla", %{"regla" => nombre} = params, socket) do
-    case Map.fetch(MetaEstadosAdmin.vocabulario(), nombre) do
-      {:ok, {tipo, _requeridos}} ->
-        attrs = %{
-          "transicion_id" => socket.assigns.regla_form.transicion_id,
-          "tipo" => tipo,
-          "regla" => nombre,
-          "params" => normalizar_params_regla(nombre, Map.get(params, "params", %{})),
-          "orden" => 0
-        }
-
-        case MetaEstadosAdmin.crear_regla(attrs) do
-          {:ok, _regla} ->
-            {:noreply,
-             socket
-             |> assign(:regla_form, nil)
-             |> put_flash(:info, "Regla \"#{nombre}\" agregada.")
-             |> cargar_motor()}
-
-          {:error, changeset} ->
-            {:noreply, update(socket, :regla_form, &Map.put(&1, :error, resumen_errores(changeset)))}
-        end
-
-      :error ->
-        {:noreply, update(socket, :regla_form, &Map.put(&1, :error, "Elegí una regla de la lista."))}
-    end
-  end
-
-  # --- Reglas: eliminar (vocabulario o de negocio) ----------------------------
-
-  def handle_event("eliminar_regla", %{"id" => id}, socket) do
-    id = String.to_integer(id)
-    regla = socket.assigns.transiciones |> Enum.flat_map(& &1.reglas) |> Enum.find(&(&1.id == id))
-
-    resultado = regla && MetaEstadosAdmin.eliminar_regla(regla)
-
-    case resultado do
-      {:ok, _} ->
-        {:noreply, socket |> put_flash(:info, "Regla eliminada.") |> cargar_motor()}
-
-      _ ->
-        {:noreply, put_flash(socket, :error, "No se pudo eliminar la regla.")}
-    end
-  end
-
-  # --- Reglas: de negocio (andamiaje) -----------------------------------------
-
-  def handle_event("andamiar_negocio", %{"transicion_id" => id, "tipo" => tipo}, socket) do
-    id = String.to_integer(id)
-    transicion = Enum.find(socket.assigns.transiciones, &(&1.id == id))
-    catalogo = socket.assigns.header.schema_context_name
-
-    case transicion && MetaEstadosAdmin.andamiar_regla_negocio(catalogo, transicion, tipo) do
-      {:ok, %{creado?: true, ruta: ruta}} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "Stub creado y enganchado en #{ruta} — hay que completarlo en el editor de código.")
-         |> cargar_motor()}
-
-      {:ok, %{creado?: false, ruta: ruta}} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "El archivo #{ruta} ya existía, solo se enganchó.")
-         |> cargar_motor()}
-
-      {:error, :ya_tiene_regla} ->
-        {:noreply, put_flash(socket, :error, "Esa transición ya tiene una regla #{tipo}.")}
-
-      _ ->
-        {:noreply, put_flash(socket, :error, "No se pudo enganchar la regla de negocio.")}
-    end
+     if errores == [] do
+       put_flash(socket, :info, mensaje)
+     else
+       put_flash(socket, :error, "#{mensaje} Errores: #{Enum.join(errores, " | ")}")
+     end}
   end
 
   # --- Guardar BC: validar y exportar a JSON versionado -----------------------
@@ -629,9 +597,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # documentamos más de una vez en este proyecto. No toca git — eso sigue
   # siendo `mix motor.publicar`, una acción aparte y más pesada.
   def handle_event("guardar_bc", _params, socket) do
-    %{completitud: completitud, validacion: validacion, header: header} = socket.assigns
+    %{puede_guardar_bc: puede_guardar_bc, header: header} = socket.assigns
 
-    if completitud.completo? and validacion.valido? do
+    if puede_guardar_bc do
       MetaSchemaContext.exportar_header(header)
       MetaEstadosAdmin.exportar_header(header)
 
@@ -643,27 +611,81 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
        )}
     else
       {:noreply,
-       put_flash(socket, :error, "No se puede guardar todavía — hay problemas pendientes en el panel de validación.")}
+       put_flash(
+         socket,
+         :error,
+         "No se puede guardar todavía — hay problemas pendientes en el panel de validación, código de reglas con " <>
+           "error de sintaxis, o reglas guardadas sin compilar."
+       )}
     end
   end
 
-  # campos_requeridos.campos: texto separado por coma -> lista, sin vacíos.
-  defp normalizar_params_regla("campos_requeridos", %{"campos" => campos}) do
-    lista = campos |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
-    %{"campos" => lista}
+  # --- Reglas: código PRE/POST por catálogo -----------------------------------
+  # Sin candado (retirado 2026-07-21 a pedido explícito): sin login real
+  # todavía, un candado autodeclarado por nombre no era más que teatro de
+  # seguridad — las reglas quedan siempre editables por cualquiera hasta
+  # que exista autenticación de verdad. El resultado de cada acción queda
+  # separado de cargar_motor/1 vía reglas_mensajes, así un mensaje de
+  # éxito/error no se pierde en el siguiente recálculo.
+
+  # Un solo evento/form para PRE y POST juntos: un solo submit trae
+  # codigo_pre Y codigo_post, y la MISMA acción se intenta en los dos por
+  # separado. "validar" solo parsea, nunca toca la base.
+  def handle_event("reglas_accion", %{"accion" => accion} = params, socket) when accion in ~w(validar guardar compilar publicar) do
+    codigos = %{"pre" => params["codigo_pre"] || "", "post" => params["codigo_post"] || ""}
+
+    {socket, recargar?} =
+      Enum.reduce(~w(pre post), {socket, false}, fn tipo, {socket, recargar_acc?} ->
+        {socket, recargar?} = aplicar_reglas_accion(socket, tipo, accion, codigos[tipo])
+        {socket, recargar_acc? or recargar?}
+      end)
+
+    {:noreply, if(recargar?, do: cargar_motor(socket), else: socket)}
   end
 
-  # mutar_relacionados.cambio es un mapa anidado {campo, valor} — el form
-  # manda dos campos sueltos (cambio_campo/cambio_valor) que se combinan acá,
-  # más simple que inventar una notación de objeto anidado en un <input>.
-  defp normalizar_params_regla(
-         "mutar_relacionados",
-         %{"entidad" => entidad, "campo_relacion" => cr, "cambio_campo" => cc, "cambio_valor" => cv}
-       ) do
-    %{"entidad" => entidad, "campo_relacion" => cr, "cambio" => %{"campo" => cc, "valor" => cv}}
+  defp aplicar_reglas_accion(socket, tipo, "validar", codigo) do
+    case MetaReglasCodigo.validar_sintaxis(codigo) do
+      :ok -> {put_reglas_mensaje(socket, tipo, {:info, "Sintaxis correcta."}), false}
+      {:error, motivo} -> {put_reglas_mensaje(socket, tipo, {:error, motivo}), false}
+    end
   end
 
-  defp normalizar_params_regla(_regla, params), do: params
+  defp aplicar_reglas_accion(socket, tipo, "guardar", codigo) do
+    case MetaReglasCodigo.guardar(socket.assigns.header, tipo, codigo) do
+      {:ok, _fila} -> {put_reglas_mensaje(socket, tipo, {:info, "Guardado."}), true}
+      {:error, motivo} -> {put_reglas_mensaje(socket, tipo, {:error, "No se pudo guardar: #{inspect(motivo)}"}), false}
+    end
+  end
+
+  # compilar/publicar operan sobre el código YA GUARDADO (ver
+  # MetaReglasCodigo.compilar/2) — si el cuadro de texto tiene cambios sin
+  # guardar, avisar en vez de compilar algo distinto a lo que el usuario
+  # está mirando.
+  defp aplicar_reglas_accion(socket, tipo, accion, codigo) when accion in ~w(compilar publicar) do
+    fila = MetaReglasCodigo.obtener(socket.assigns.header.id, tipo)
+
+    cond do
+      fila != nil and codigo != fila.codigo_fuente ->
+        {put_reglas_mensaje(socket, tipo, {:error, "Guardá los cambios antes de #{accion} — usa el código ya guardado, no el del cuadro de texto."}), false}
+
+      accion == "compilar" ->
+        case MetaReglasCodigo.compilar(socket.assigns.header, tipo) do
+          {:ok, modulo} -> {put_reglas_mensaje(socket, tipo, {:info, "Compilado: #{inspect(modulo)}."}), true}
+          {:error, motivo} -> {put_reglas_mensaje(socket, tipo, {:error, motivo}), false}
+        end
+
+      accion == "publicar" ->
+        case MetaReglasCodigo.publicar(socket.assigns.header, tipo) do
+          :ok -> {put_reglas_mensaje(socket, tipo, {:info, "Publicado — commit local creado (el push queda manual)."}), true}
+          {:ok, :sin_cambios} -> {put_reglas_mensaje(socket, tipo, {:info, "No había cambios para publicar."}), false}
+          {:error, motivo} -> {put_reglas_mensaje(socket, tipo, {:error, motivo}), false}
+        end
+    end
+  end
+
+  defp put_reglas_mensaje(socket, tipo, mensaje) do
+    update(socket, :reglas_mensajes, &Map.put(&1, tipo, mensaje))
+  end
 
   defp agregar_opciones_tipo_campo(propiedades, "string", params), do: maybe_put_int(propiedades, "longitud", params["longitud"])
 
@@ -774,10 +796,19 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             <span class="font-mono">{@header.schema_context_nav}</span>
           </p>
         </div>
-        <button type="button" phx-click="guardar_bc"
-          class="shrink-0 px-4 py-2 rounded-lg bg-purple-600 text-white font-bold hover:bg-purple-700 transition-colors">
-          Guardar BC
-        </button>
+        <div class="shrink-0 flex items-start gap-2">
+          <div :if={@compilar_disponible} class="flex flex-col items-center">
+            <button type="button" phx-click="compilar_motor_completo"
+              class="px-4 py-2 rounded-lg bg-blue-600 text-white font-bold hover:bg-blue-700 transition-colors">
+              Compila Todo
+            </button>
+            <span class="mt-1 text-[10px] text-gray-400">Recompila tabla + reglas (modo dev)</span>
+          </div>
+          <button type="button" phx-click="guardar_bc" disabled={!@puede_guardar_bc}
+            class="px-4 py-2 rounded-lg bg-purple-600 text-white font-bold hover:bg-purple-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            Guardar BC
+          </button>
+        </div>
       </div>
 
       <.motor_stepper pasos={pasos_motor(@completitud, @transiciones)} />
@@ -785,6 +816,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       <.tabs_motor id="motor" tabs={[
         %{key: "config", label: "Configuración"},
+        %{key: "reglas", label: "Reglas"},
         %{key: "diagrama", label: "Diagrama"},
         %{key: "api", label: "API"}
       ]} />
@@ -797,6 +829,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           puede_agregar={@completitud.tiene_estados and @completitud.tiene_alta_o_inicial} />
       </div>
 
+      <div id="motor-panel-reglas" class="hidden">
+        <.panel_reglas header={@header} reglas={@reglas} reglas_mensajes={@reglas_mensajes}
+          compilar_disponible={@compilar_disponible} />
+      </div>
+
       <div id="motor-panel-diagrama" class="hidden">
         <.diagrama_transiciones diagrama={@diagrama} />
       </div>
@@ -806,7 +843,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       </div>
     </div>
 
-    <.modal_regla :if={@regla_form} form={@regla_form} vocabulario={MetaEstadosAdmin.vocabulario()} />
     <.modal_campo :if={@campo_form} form={@campo_form} catalogos={@catalogos_referenciables} />
     <.modal_eliminar_campo :if={@eliminar_campo_form} form={@eliminar_campo_form} />
     <.modal_estado :if={@estado_form} form={@estado_form} iconos_sugeridos={@iconos_sugeridos} />
@@ -824,7 +860,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     alias_por_id = estados |> Enum.with_index(1) |> Map.new(fn {e, i} -> {e.id, "e#{i}"} end)
 
     declaraciones =
-      Enum.map(estados, fn e -> ~s(    state "#{escapar_mermaid(e.nombre)}" as #{Map.fetch!(alias_por_id, e.id)}) end)
+      Enum.map(estados, fn e -> ~s(    state "#{e.id} - #{escapar_mermaid(e.nombre)}" as #{Map.fetch!(alias_por_id, e.id)}) end)
 
     iniciales =
       estados
@@ -892,7 +928,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       {"Estados", completitud.tiene_estados},
       {"Estado inicial", completitud.tiene_alta_o_inicial},
       {"Transiciones", tiene_transiciones?},
-      {"Reglas", completitud.reglas.negocio_stub == 0}
+      {"Reglas", not completitud.reglas.pre_pendiente and not completitud.reglas.post_pendiente}
     ]
     |> marcar_estado_pasos()
   end
@@ -1170,7 +1206,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Etiqueta</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Origen → Destino</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campos editables</th>
-                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Reglas</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
             </thead>
@@ -1178,8 +1213,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
               <%= for t <- @transiciones do %>
                 <% self_loop? = t.estado_origen_id != nil and t.estado_origen_id == t.estado_destino_id %>
                 <% aviso? = self_loop? and t.campos_editables == [] %>
-                <% tiene_pre? = Enum.any?(t.reglas, &(&1.tipo == "pre")) %>
-                <% tiene_post? = Enum.any?(t.reglas, &(&1.tipo == "post")) %>
                 <tr class={["border-b border-gray-100 hover:bg-gray-50 align-top", aviso? && "bg-amber-50/60"]}>
                   <td class="px-1.5 py-1.5 text-gray-900 font-mono">
                     {t.accion}
@@ -1204,59 +1237,12 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                       <span title={Enum.join(t.campos_editables, ", ")}>{length(t.campos_editables)} campo(s)</span>
                     <% end %>
                   </td>
-                  <td class="px-1.5 py-1.5">
-                    <div class="flex flex-wrap gap-1 mb-1.5">
-                      <%= for r <- t.reglas do %>
-                        <span
-                          class={[
-                            "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-mono",
-                            r.tipo == "pre" && "bg-gray-100 text-gray-700",
-                            r.tipo == "post" && "bg-purple-50 text-purple-700"
-                          ]}
-                          title={"#{r.tipo}: #{inspect(r.params)}"}
-                        >
-                          {r.regla}
-                          <%= if MetaEstadosAdmin.stub_sin_completar?(@catalogo, r.regla) do %>
-                            <span class="text-amber-600" title="Stub de andamiaje sin completar todavía">⏳</span>
-                          <% end %>
-                          <button
-                            type="button"
-                            phx-click="eliminar_regla"
-                            phx-value-id={r.id}
-                            data-confirm="¿Quitar esta regla de la transición?"
-                            class="text-gray-400 hover:text-red-600 leading-none"
-                          >×</button>
-                        </span>
-                      <% end %>
-                    </div>
-
-                    <div class="flex flex-wrap gap-2 text-[11px]">
-                      <button
-                        type="button"
-                        phx-click="abrir_form_regla"
-                        phx-value-transicion_id={t.id}
-                        phx-value-accion={t.accion}
-                        class="text-purple-700 hover:text-purple-900 font-semibold"
-                      >+ Regla</button>
-
-                      <%= if not tiene_pre? do %>
-                        <button type="button" phx-click="andamiar_negocio" phx-value-transicion_id={t.id} phx-value-tipo="pre" class="text-gray-500 hover:text-gray-800 font-semibold">
-                          + Negocio (pre)
-                        </button>
-                      <% end %>
-                      <%= if not tiene_post? do %>
-                        <button type="button" phx-click="andamiar_negocio" phx-value-transicion_id={t.id} phx-value-tipo="post" class="text-gray-500 hover:text-gray-800 font-semibold">
-                          + Negocio (post)
-                        </button>
-                      <% end %>
-                    </div>
-                  </td>
                   <td class="px-1.5 py-1.5 whitespace-nowrap">
                     <button type="button" phx-click="abrir_editar_transicion" phx-value-id={t.id} class="text-blue-600 hover:text-blue-800 text-[11px] font-semibold mr-2">
                       Editar
                     </button>
                     <button type="button" phx-click="eliminar_transicion" phx-value-id={t.id}
-                      data-confirm={"¿Eliminar la transición \"#{t.accion}\"? También se borran sus reglas."}
+                      data-confirm={"¿Eliminar la transición \"#{t.accion}\"?"}
                       class="text-red-600 hover:text-red-800 text-[11px] font-semibold">
                       Eliminar
                     </button>
@@ -1302,6 +1288,105 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         >
           Cargando diagrama…
         </div>
+      </div>
+    </div>
+    """
+  end
+
+  attr :header, :map, required: true
+  attr :reglas, :map, required: true
+  attr :reglas_mensajes, :map, required: true
+  attr :compilar_disponible, :boolean, required: true
+
+  # Un solo <form> envuelve los dos textareas (PRE y POST) y una sola barra
+  # de 4 botones arriba — sin candado (retirado 2026-07-21): las reglas
+  # quedan siempre editables por cualquiera hasta que exista
+  # autenticación de verdad.
+  defp panel_reglas(assigns) do
+    ~H"""
+    <div class="space-y-4">
+      <form phx-submit="reglas_accion" class="space-y-4">
+        <div class="flex items-center gap-2 border border-gray-200 rounded-lg p-2 bg-gray-50">
+          <span class="text-gray-500 mr-1">Acciones (aplican a PRE y POST):</span>
+          <button type="submit" name="accion" value="validar"
+            class="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 font-semibold hover:bg-gray-100">
+            Validar sintaxis
+          </button>
+          <button type="submit" name="accion" value="guardar"
+            class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">
+            Guardar
+          </button>
+          <button :if={@compilar_disponible} type="submit" name="accion" value="compilar"
+            class="px-3 py-1.5 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700">
+            Compilar (dev)
+          </button>
+          <button type="submit" name="accion" value="publicar"
+            class="px-3 py-1.5 rounded-lg bg-gray-900 text-white font-semibold hover:bg-black">
+            Publicar
+          </button>
+        </div>
+
+        <.tabs_motor id="reglas" tabs={[
+          %{key: "pre", label: "PRECONDICIONES"},
+          %{key: "post", label: "POSCONDICIONES"}
+        ]} />
+
+        <div id="reglas-panel-pre">
+          <.bloque_regla tipo="pre" titulo="PRE — antes de aplicar la transición (el primer error frena todo)" header={@header}
+            fila={@reglas["pre"]} mensaje={@reglas_mensajes["pre"]} compilar_disponible={@compilar_disponible} />
+        </div>
+
+        <div id="reglas-panel-post" class="hidden">
+          <.bloque_regla tipo="post" titulo="POST — después de aplicar la transición (si falla, se deshace todo)" header={@header}
+            fila={@reglas["post"]} mensaje={@reglas_mensajes["post"]} compilar_disponible={@compilar_disponible} />
+        </div>
+      </form>
+    </div>
+    """
+  end
+
+  attr :tipo, :string, required: true
+  attr :titulo, :string, required: true
+  attr :header, :map, required: true
+  attr :fila, :any, required: true
+  attr :mensaje, :any, required: true
+  attr :compilar_disponible, :boolean, required: true
+
+  defp bloque_regla(assigns) do
+    fila = assigns.fila
+    codigo = if fila, do: fila.codigo_fuente, else: MetaReglasCodigo.generar_stub(assigns.header, assigns.tipo)
+    pendiente = String.contains?(codigo, MetaReglasCodigo.marcador_stub())
+    sin_compilar = assigns.compilar_disponible and not MetaReglasCodigo.sincronizado?(assigns.header, assigns.tipo)
+    {mensaje_tipo, mensaje_texto} = assigns.mensaje || {nil, nil}
+
+    assigns =
+      assigns
+      |> assign(:nombre_campo, "codigo_#{assigns.tipo}")
+      |> assign(:codigo, codigo)
+      |> assign(:pendiente, pendiente)
+      |> assign(:sin_compilar, sin_compilar)
+      |> assign(:mensaje_tipo, mensaje_tipo)
+      |> assign(:mensaje_texto, mensaje_texto)
+
+    ~H"""
+    <div class="border border-gray-200 rounded-lg">
+      <div class="px-1.5 ml-2 -mb-2 relative">
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">{@titulo}</span>
+      </div>
+      <div class="p-3 pt-4 space-y-2">
+        <div :if={@mensaje_tipo} class={[
+          "rounded-lg px-2 py-1.5",
+          @mensaje_tipo == :error && "bg-red-50 text-red-700",
+          @mensaje_tipo == :info && "bg-green-50 text-green-700"
+        ]}>{@mensaje_texto}</div>
+
+        <div :if={@pendiente or @sin_compilar} class="flex items-center gap-2">
+          <span :if={@pendiente} class="text-amber-600">Tiene marcadores sin completar (#ESCRIBA SU CODIGO AQUÍ)</span>
+          <span :if={@sin_compilar} class="text-blue-600">Guardado sin compilar — el motor corre la versión anterior</span>
+        </div>
+
+        <textarea name={@nombre_campo} rows="14" spellcheck="false"
+          class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono text-[11px] leading-relaxed bg-white text-gray-900">{@codigo}</textarea>
       </div>
     </div>
     """
@@ -1466,106 +1551,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           <pre :if={@respuesta} class="bg-gray-50 border border-gray-200 rounded-lg p-2 overflow-x-auto font-mono text-[11px] text-gray-800">{@respuesta}</pre>
         </div>
       </div>
-    </div>
-    """
-  end
-
-  attr :form, :map, required: true
-  attr :vocabulario, :map, required: true
-
-  defp modal_regla(assigns) do
-    ~H"""
-    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div class="bg-white rounded-xl shadow-lg max-w-sm w-full p-4 text-xs">
-        <h2 class="text-sm font-bold text-gray-900 mb-1">Agregar regla</h2>
-        <p class="text-gray-500 mb-3">
-          Transición <span class="font-mono">{@form.accion}</span> — vocabulario cerrado
-        </p>
-
-        <%= if @form.error do %>
-          <div class="bg-red-50 text-red-700 rounded-lg px-2 py-1.5 mb-2">{@form.error}</div>
-        <% end %>
-
-        <form phx-submit="guardar_regla">
-          <label class="block font-medium text-gray-900 mb-1">Regla</label>
-          <select name="regla" phx-change="elegir_regla" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 mb-3 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500">
-            <option value="">— Elegir —</option>
-            <%= for {nombre, {tipo, _requeridos}} <- Enum.sort(@vocabulario) do %>
-              <option value={nombre} selected={@form.regla == nombre}>{tipo} · {nombre}</option>
-            <% end %>
-          </select>
-
-          <%= if @form.regla do %>
-            <% {_tipo, requeridos} = Map.fetch!(@vocabulario, @form.regla) %>
-            <div class="space-y-2 mb-3">
-              <%= for campo <- requeridos do %>
-                <.campo_param_regla regla={@form.regla} campo={campo} />
-              <% end %>
-            </div>
-          <% end %>
-
-          <div class="flex justify-end gap-2">
-            <button type="button" phx-click="cerrar_form_regla" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
-              Cancelar
-            </button>
-            <button type="submit" disabled={!@form.regla} class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed">
-              Guardar
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-    """
-  end
-
-  attr :regla, :string, required: true
-  attr :campo, :string, required: true
-
-  defp campo_param_regla(%{regla: "campo_cumple", campo: "operador"} = assigns) do
-    ~H"""
-    <div>
-      <label class="block text-gray-700 mb-0.5">operador</label>
-      <select name="params[operador]" class="w-full border border-gray-300 rounded-lg px-2 py-1">
-        <option value=">">&gt;</option>
-        <option value=">=">&gt;=</option>
-        <option value="<">&lt;</option>
-        <option value="<=">&lt;=</option>
-        <option value="==">==</option>
-        <option value="!=">!=</option>
-      </select>
-    </div>
-    """
-  end
-
-  defp campo_param_regla(%{regla: "mutar_relacionados", campo: "cambio"} = assigns) do
-    ~H"""
-    <div class="grid grid-cols-2 gap-2">
-      <div>
-        <label class="block text-gray-700 mb-0.5">cambio: campo</label>
-        <input type="text" name="params[cambio_campo]" class="w-full border border-gray-300 rounded-lg px-2 py-1" />
-      </div>
-      <div>
-        <label class="block text-gray-700 mb-0.5">cambio: valor</label>
-        <input type="text" name="params[cambio_valor]" class="w-full border border-gray-300 rounded-lg px-2 py-1" />
-      </div>
-    </div>
-    """
-  end
-
-  defp campo_param_regla(%{campo: "campos"} = assigns) do
-    ~H"""
-    <div>
-      <label class="block text-gray-700 mb-0.5">campos (separados por coma)</label>
-      <input type="text" name="params[campos]" placeholder="campo_a, campo_b" class="w-full border border-gray-300 rounded-lg px-2 py-1" />
-    </div>
-    """
-  end
-
-  defp campo_param_regla(assigns) do
-    ~H"""
-    <div>
-      <label class="block text-gray-700 mb-0.5">{@campo}</label>
-      <input type="text" name={"params[#{@campo}]"} class="w-full border border-gray-300 rounded-lg px-2 py-1" />
     </div>
     """
   end

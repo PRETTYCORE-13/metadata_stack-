@@ -29,7 +29,6 @@ defmodule MetadataAppWeb.Router do
     # catálogo (mismo motivo que el bug de scope /api vs /*ruta).
     resources "/meta_schema_estados", MetaEstadoController, only: [:index, :create]
     resources "/meta_schema_transiciones", MetaTransicionAdminController, only: [:index, :create]
-    resources "/meta_schema_transicion_reglas", MetaTransicionReglaController, only: [:index, :create]
 
     get "/catalogos/:tabla/impacto", BusinessProcessBuilder.CatalogoAdminController, :impacto
     get "/catalogos/:tabla/validar_motor", BusinessProcessBuilder.CatalogoAdminController, :validar_motor

@@ -4,9 +4,10 @@ defmodule MetadataApp.MetaStateEngine do
 
   Agnóstico del catálogo: no sabe qué es un "cliente", solo sabe operar sobre
   cualquier struct Ecto de un catálogo generado (`MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico`)
-  que tenga `:id` y `:estado_id`. Todo lo específico de negocio vive como datos
-  en `meta_schema_estados`/`meta_schema_transiciones`/`meta_schema_transicion_reglas`,
-  no en código.
+  que tenga `:id` y `:estado_id`. La estructura del autómata (estados/
+  transiciones) vive como datos en `meta_schema_estados`/`meta_schema_transiciones`.
+  La lógica de negocio (PRE/POST) vive como código — un módulo Pre y un
+  módulo Post por catálogo, ver `MetaStateEngine.Reglas`.
   """
 
   import Ecto.Query
@@ -14,7 +15,7 @@ defmodule MetadataApp.MetaStateEngine do
   alias MetadataApp.Repo
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
-  alias MetadataApp.MetaSchema.{Estado, Transicion, TransicionRegla, TransicionEvento}
+  alias MetadataApp.MetaSchema.{Estado, Transicion, TransicionEvento}
   alias MetadataApp.MetaStateEngine.Reglas
 
   @doc """
@@ -76,8 +77,7 @@ defmodule MetadataApp.MetaStateEngine do
       from t in Transicion,
         where:
           t.meta_schema_header_id == ^header.id and is_nil(t.estado_origen_id) and
-            t.accion == "alta" and is_nil(t.delete_guid),
-        preload: [reglas: ^reglas_query()]
+            t.accion == "alta" and is_nil(t.delete_guid)
     )
   end
 
@@ -100,8 +100,7 @@ defmodule MetadataApp.MetaStateEngine do
         where:
           t.meta_schema_header_id == ^header.id and t.accion == "guardar" and
             t.estado_origen_id == ^estado_id and t.estado_destino_id == ^estado_id and
-            is_nil(t.delete_guid),
-        preload: [reglas: ^reglas_query()]
+            is_nil(t.delete_guid)
     )
   end
 
@@ -141,18 +140,13 @@ defmodule MetadataApp.MetaStateEngine do
     header.id
     |> transiciones_desde(registro_actual.estado_id)
     |> Enum.map(fn transicion ->
-      {transicion, evaluar_precondiciones_lista(transicion, registro_actual, contexto)}
-    end)
-    |> Enum.reject(fn {_transicion, fallas} ->
-      Enum.any?(fallas, &(&1.regla == "requiere_rol"))
-    end)
-    |> Enum.map(fn {transicion, fallas} ->
+      razones = evaluar_precondiciones_lista(transicion, registro_actual, contexto)
+
       %{
         accion: transicion.accion,
         etiqueta: transicion.etiqueta,
-        disponible: fallas == [],
-        razones: fallas,
-        requiere: requiere_de(transicion)
+        disponible: razones == [],
+        razones: razones
       }
     end)
   end
@@ -243,8 +237,7 @@ defmodule MetadataApp.MetaStateEngine do
           t.meta_schema_header_id == ^header.id and
             t.estado_origen_id == ^estado_actual_id and
             t.accion == ^accion and
-            is_nil(t.delete_guid),
-        preload: [reglas: ^reglas_query()]
+            is_nil(t.delete_guid)
 
     case Repo.one(query) do
       nil -> {:error, {:transicion_invalida, %{estado_actual_id: estado_actual_id}}}
@@ -258,19 +251,21 @@ defmodule MetadataApp.MetaStateEngine do
         where:
           t.meta_schema_header_id == ^header_id and
             t.estado_origen_id == ^estado_actual_id and
-            is_nil(t.delete_guid),
-        preload: [reglas: ^reglas_query()]
+            is_nil(t.delete_guid)
 
     Repo.all(query)
   end
 
-  defp reglas_query do
-    from r in TransicionRegla, where: is_nil(r.delete_guid), order_by: r.orden
-  end
-
   defp obtener_header!(modulo), do: obtener_header_por_nombre!(modulo.__schema__(:source))
 
-  # --- Paso 2: precondiciones (solo lectura, sin cortocircuito) -------------
+  # --- Paso 2: precondiciones (solo lectura) --------------------------------
+  # Un solo código PRE por catálogo (ver MetaStateEngine.Reglas) — a
+  # diferencia del viejo mecanismo de varias filas sin cortocircuito, acá
+  # hay como mucho UN mensaje de error (el que el código del catálogo haya
+  # devuelto). Ya no existe requiere_de/1 (aviso previo de "qué datos hacen
+  # falta" antes de intentar) — con código libre no hay forma de inferirlo
+  # sin ejecutar; queda como responsabilidad del desarrollador documentarlo
+  # aparte si hace falta.
 
   defp evaluar_precondiciones(transicion, registro, contexto) do
     case evaluar_precondiciones_lista(transicion, registro, contexto) do
@@ -280,29 +275,10 @@ defmodule MetadataApp.MetaStateEngine do
   end
 
   defp evaluar_precondiciones_lista(transicion, registro, contexto) do
-    transicion.reglas
-    |> Enum.filter(&(&1.tipo == "pre"))
-    |> Enum.map(fn regla ->
-      case Reglas.evaluar_precondicion(regla.regla, registro, contexto, regla.params) do
-        :ok -> nil
-        {:error, mensaje} -> %{regla: regla.regla, mensaje: mensaje}
-      end
-    end)
-    |> Enum.reject(&is_nil/1)
-  end
-
-  defp requiere_de(transicion) do
-    transicion.reglas
-    |> Enum.filter(&(&1.tipo == "pre" and &1.regla == "dato_en_contexto"))
-    |> Enum.map(fn regla ->
-      dato = Map.get(regla.params, "dato")
-
-      %{
-        dato: dato,
-        tipo: Map.get(regla.params, "tipo", "string"),
-        etiqueta: Map.get(regla.params, "etiqueta", dato)
-      }
-    end)
+    case Reglas.evaluar_pre(transicion.accion, registro, contexto) do
+      :ok -> []
+      {:error, mensaje} -> [%{regla: "pre", mensaje: mensaje}]
+    end
   end
 
   # --- Núcleo transaccional del alta y de la edición (paralelo a ejecutar_nucleo/4) ---
@@ -336,13 +312,11 @@ defmodule MetadataApp.MetaStateEngine do
           insert_guid: generar_guid()
         })
       end)
-      |> agregar_postcondiciones_transaccionales_multi(transicion, contexto)
+      |> agregar_postcondicion_multi(transicion, contexto)
 
     case Repo.transaction(multi) do
       {:ok, %{registro: registro}} ->
-        registro_final = Repo.get!(schema_mod, registro.id)
-        despachar_efectos_de_cortesia(transicion, registro_final, contexto)
-        {:ok, registro_final}
+        {:ok, Repo.get!(schema_mod, registro.id)}
 
       {:error, :registro, changeset, _cambios} ->
         {:error, changeset}
@@ -352,14 +326,13 @@ defmodule MetadataApp.MetaStateEngine do
     end
   end
 
-  defp agregar_postcondiciones_transaccionales_multi(multi, transicion, contexto) do
-    transicion.reglas
-    |> Enum.filter(&(&1.tipo == "post" and &1.transaccional))
-    |> Enum.sort_by(& &1.orden)
-    |> Enum.reduce(multi, fn regla, multi_acc ->
-      Multi.run(multi_acc, {:post_transaccional, regla.id}, fn repo, %{registro: registro} ->
-        Reglas.ejecutar_postcondicion(regla.regla, registro, contexto, regla.params, repo)
-      end)
+  # Un solo código POST por catálogo (ver MetaStateEngine.Reglas) — corre
+  # SIEMPRE dentro de la transacción (mismo comportamiento que antes tenía
+  # `transaccional: true`; el viejo "efecto de cortesía" async ya no existe
+  # acá, ver ReglaPost).
+  defp agregar_postcondicion_multi(multi, transicion, contexto) do
+    Multi.run(multi, :post, fn repo, %{registro: registro} ->
+      Reglas.ejecutar_post(transicion.accion, registro, contexto, repo)
     end)
   end
 
@@ -381,13 +354,11 @@ defmodule MetadataApp.MetaStateEngine do
           insert_guid: generar_guid()
         })
       end)
-      |> agregar_postcondiciones_transaccionales_multi(transicion, contexto)
+      |> agregar_postcondicion_multi(transicion, contexto)
 
     case Repo.transaction(multi) do
       {:ok, %{registro: registro}} ->
-        registro_final = Repo.get!(schema_mod, registro.id)
-        despachar_efectos_de_cortesia(transicion, registro_final, contexto)
-        {:ok, registro_final}
+        {:ok, Repo.get!(schema_mod, registro.id)}
 
       {:error, :registro, changeset, _cambios} ->
         {:error, changeset}
@@ -426,13 +397,11 @@ defmodule MetadataApp.MetaStateEngine do
           insert_guid: generar_guid()
         })
       end)
-      |> agregar_postcondiciones_transaccionales(transicion, registro, contexto)
+      |> agregar_postcondicion(transicion, registro, contexto)
 
     case Repo.transaction(multi) do
       {:ok, _cambios} ->
-        registro_final = Repo.get!(modulo, registro.id)
-        despachar_efectos_de_cortesia(transicion, registro_final, contexto)
-        {:ok, registro_final}
+        {:ok, Repo.get!(modulo, registro.id)}
 
       {:error, :cambio_estado, :conflicto_concurrencia, _cambios} ->
         {:error, :conflicto_concurrencia}
@@ -454,32 +423,14 @@ defmodule MetadataApp.MetaStateEngine do
     end
   end
 
-  defp agregar_postcondiciones_transaccionales(multi, transicion, registro, contexto) do
-    transicion.reglas
-    |> Enum.filter(&(&1.tipo == "post" and &1.transaccional))
-    |> Enum.sort_by(& &1.orden)
-    |> Enum.reduce(multi, fn regla, multi_acc ->
-      Multi.run(multi_acc, {:post_transaccional, regla.id}, fn repo, _cambios ->
-        Reglas.ejecutar_postcondicion(regla.regla, registro, contexto, regla.params, repo)
-      end)
+  # Variante con `registro` por closure (no por Multi context): acá el
+  # registro se leyó en el Paso 1, ANTES del cambio de estado — mismo
+  # comportamiento que ya tenía el mecanismo viejo, no se re-lee adentro
+  # del Multi.
+  defp agregar_postcondicion(multi, transicion, registro, contexto) do
+    Multi.run(multi, :post, fn repo, _cambios ->
+      Reglas.ejecutar_post(transicion.accion, registro, contexto, repo)
     end)
-  end
-
-  # --- Paso 5b: efectos de cortesía (después del commit) --------------------
-
-  defp despachar_efectos_de_cortesia(transicion, registro, contexto) do
-    transicion.reglas
-    |> Enum.filter(&(&1.tipo == "post" and not &1.transaccional))
-    |> Enum.sort_by(& &1.orden)
-    |> Enum.each(fn regla ->
-      Task.Supervisor.start_child(MetadataApp.MetaStateEngine.TaskSupervisor, fn ->
-        # Falla acá NUNCA revierte la transición ni llega al usuario — es
-        # responsabilidad de la cola/reintentos, no del ciclo transaccional.
-        Reglas.ejecutar_postcondicion(regla.regla, registro, contexto, regla.params, Repo)
-      end)
-    end)
-
-    :ok
   end
 
   defp generar_guid do

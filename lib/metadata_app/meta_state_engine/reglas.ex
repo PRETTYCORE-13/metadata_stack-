@@ -1,86 +1,54 @@
 defmodule MetadataApp.MetaStateEngine.Reglas do
   @moduledoc """
-  Vocabulario de reglas del Motor de Estados: despacho por nombre de regla.
+  Punto único de despacho a las reglas PRE/POST de un catálogo (rediseño
+  2026-07-21) — un catálogo tiene A LO SUMO un módulo Pre y un módulo Post,
+  resueltos por convención de nombres:
+  `MetadataApp.MetaBusinessProcess.Reglas.<Catalogo>.Pre` / `.Post`. Ya no
+  hay vocabulario cerrado ni reglas configuradas fila por fila
+  (`meta_schema_transicion_reglas` dejó de leerse acá) — todo es código
+  libre con un `case` por `accion` adentro (ver `MetadataApp.MetaReglasCodigo`
+  para el generador de stub/edición).
 
-  Las 8 reglas genéricas (sección 5 del spec) viven en `Reglas.Pre` /
-  `Reglas.Post`, compartidas por cualquier catálogo. Un nombre que NO está
-  en ese vocabulario cerrado se resuelve por CONVENCIÓN DE NOMBRES a un
-  módulo de negocio escrito fuera del motor — `MetadataApp.MetaBusinessProcess.
-  Reglas.<Catalogo>.<Regla>`, implementando `MetaStateEngine.ReglaPre`/`ReglaPost` — sin que el
-  motor necesite ninguna tabla/config compartida donde "registrarlo".
-  Cada catálogo es dueño de su propio namespace, no hay coordinación entre
-  equipos ni cambios acá para agregar una regla nueva.
+  Las 8 funciones que antes eran el "vocabulario cerrado"
+  (`MetaStateEngine.Reglas.Pre`/`Post`) siguen existiendo tal cual, sin
+  tocar — ya no se despachan automáticamente por nombre, pero cualquier
+  código de catálogo las puede llamar directo como helper, ej.
+  `MetadataApp.MetaStateEngine.Reglas.Pre.evaluar("campos_requeridos", registro, contexto, %{"campos" => [...]})`.
 
-  `prueba_ok`/`prueba_falla` son fixtures de la Fase 2 para testear el
-  ciclo (`MetadataApp.MetaStateEngine`) en aislamiento — no son vocabulario de
-  negocio, no confundir con las reglas reales.
+  Reglas no son obligatorias: si el catálogo nunca generó/compiló su
+  módulo Pre/Post, se trata como "no hace nada" — `:ok` para PRE,
+  `{:ok, :sin_cambios}` para POST.
   """
 
-  alias MetadataApp.MetaStateEngine.Reglas.{Pre, Post}
+  @doc "Precondición: (accion, registro, contexto) -> :ok | {:error, mensaje}. Solo lectura."
+  def evaluar_pre(accion, registro, contexto) do
+    modulo = modulo_pre(catalogo_de(registro))
 
-  @vocabulario_pre ~w(campos_requeridos campo_cumple sin_relacionados requiere_rol dato_en_contexto)
-  @vocabulario_post ~w(estampar_valor mutar_relacionados notificar)
-
-  @doc "Precondición: (nombre, registro, contexto, params) -> :ok | {:error, mensaje}. Solo lectura."
-  def evaluar_precondicion("prueba_ok", _registro, _contexto, _params), do: :ok
-
-  def evaluar_precondicion("prueba_falla", _registro, _contexto, params),
-    do: {:error, Map.get(params, "mensaje", "regla de prueba: siempre falla")}
-
-  def evaluar_precondicion(nombre, registro, contexto, params) when nombre in @vocabulario_pre,
-    do: Pre.evaluar(nombre, registro, contexto, params)
-
-  def evaluar_precondicion(nombre, registro, contexto, params) do
-    with {:ok, modulo} <- resolver_negocio(registro, nombre, :evaluar, 3) do
-      modulo.evaluar(registro, contexto, params)
+    if Code.ensure_loaded?(modulo) and function_exported?(modulo, :evaluar, 3) do
+      modulo.evaluar(accion, registro, contexto)
+    else
+      :ok
     end
   end
 
-  @doc "Postcondición: (nombre, registro, contexto, params, repo) -> {:ok, cambios} | {:error, razon}."
-  def ejecutar_postcondicion("prueba_ok", _registro, _contexto, _params, _repo),
-    do: {:ok, :prueba_ok}
+  @doc "Postcondición: (accion, registro, contexto, repo) -> {:ok, cambios} | {:error, razon}."
+  def ejecutar_post(accion, registro, contexto, repo) do
+    modulo = modulo_post(catalogo_de(registro))
 
-  def ejecutar_postcondicion("prueba_falla", _registro, _contexto, params, _repo),
-    do: {:error, Map.get(params, "mensaje", "regla de prueba: siempre falla")}
-
-  def ejecutar_postcondicion(nombre, registro, contexto, params, repo) when nombre in @vocabulario_post,
-    do: Post.ejecutar(nombre, registro, contexto, params, repo)
-
-  def ejecutar_postcondicion(nombre, registro, contexto, params, repo) do
-    with {:ok, modulo} <- resolver_negocio(registro, nombre, :ejecutar, 4) do
-      modulo.ejecutar(registro, contexto, params, repo)
+    if Code.ensure_loaded?(modulo) and function_exported?(modulo, :ejecutar, 4) do
+      modulo.ejecutar(accion, registro, contexto, repo)
+    else
+      {:ok, :sin_cambios}
     end
   end
 
-  @doc """
-  Nombre del módulo de negocio esperado para `nombre_regla` en `catalogo`,
-  por convención `MetadataApp.MetaBusinessProcess.Reglas.<Catalogo>.<Regla>` — pura
-  construcción de nombre, no valida que exista ni que implemente nada (usado
-  también por `MetadataApp.MetaEstadosAdmin.validar_motor/1`).
-  """
-  @spec modulo_negocio(String.t(), String.t()) :: module()
-  def modulo_negocio(catalogo, nombre_regla) do
-    Module.concat([
-      MetadataApp.MetaBusinessProcess.Reglas,
-      Macro.camelize(catalogo),
-      Macro.camelize(nombre_regla)
-    ])
-  end
+  @doc "Nombre del módulo Pre esperado para `catalogo` — pura construcción de nombre, no valida que exista."
+  @spec modulo_pre(String.t()) :: module()
+  def modulo_pre(catalogo), do: Module.concat([MetadataApp.MetaBusinessProcess.Reglas, Macro.camelize(catalogo), Pre])
 
-  defp resolver_negocio(registro, nombre_regla, funcion, aridad) do
-    catalogo = registro.__struct__.__schema__(:source)
-    modulo = modulo_negocio(catalogo, nombre_regla)
+  @doc "Nombre del módulo Post esperado para `catalogo` — pura construcción de nombre, no valida que exista."
+  @spec modulo_post(String.t()) :: module()
+  def modulo_post(catalogo), do: Module.concat([MetadataApp.MetaBusinessProcess.Reglas, Macro.camelize(catalogo), Post])
 
-    cond do
-      not Code.ensure_loaded?(modulo) ->
-        {:error,
-         "regla \"#{nombre_regla}\" no existe ni en el vocabulario del motor ni como módulo de negocio (se esperaba #{inspect(modulo)})"}
-
-      not function_exported?(modulo, funcion, aridad) ->
-        {:error, "el módulo #{inspect(modulo)} existe pero no implementa #{funcion}/#{aridad}"}
-
-      true ->
-        {:ok, modulo}
-    end
-  end
+  defp catalogo_de(registro), do: registro.__struct__.__schema__(:source)
 end

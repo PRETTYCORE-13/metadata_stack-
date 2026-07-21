@@ -292,8 +292,10 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   # Sin esto, el módulo recién reescrito en disco queda desactualizado en la
   # sesión BEAM que está corriendo ahora mismo (ej. un mix run de seeds que
   # agrega un campo y en la misma corrida ya quiere usarlo) — fuera de un
-  # request HTTP no está Phoenix.CodeReloader para recompilarlo solo.
-  defp recompilar_schema(schema_context_name) do
+  # request HTTP no está Phoenix.CodeReloader para recompilarlo solo. Público
+  # (no defp) porque "Compilar motor completo" en BcMotorLive la reusa como
+  # paso explícito, además del uso automático de generar/1 en cada campo.
+  def recompilar_schema(schema_context_name) do
     Code.compile_file("lib/metadata_app/meta_business_process/catalogos/#{schema_context_name}.ex")
     :ok
   end

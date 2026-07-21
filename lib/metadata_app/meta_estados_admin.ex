@@ -1,11 +1,14 @@
 defmodule MetadataApp.MetaEstadosAdmin do
   @moduledoc """
-  CRUD administrativo de Estados/Transiciones/Reglas del Motor de Estados.
+  CRUD administrativo de Estados/Transiciones del Motor de Estados.
 
   Distinto de `MetadataApp.MetaStateEngine` (que es runtime: ejecuta
   transiciones sobre registros) — este módulo solo escribe/lee la
-  definición del autómata (`meta_schema_estados/transiciones/transicion_reglas`),
-  pensado para armarse paso a paso desde la API en vez de por seeds.
+  definición del autómata (`meta_schema_estados/transiciones`), pensado
+  para armarse paso a paso desde la API en vez de por seeds.
+
+  Las reglas PRE/POST (rediseño 2026-07-21) ya no viven acá — son código
+  por catálogo, ver `MetadataApp.MetaReglasCodigo`.
   """
 
   import Ecto.Query
@@ -13,37 +16,8 @@ defmodule MetadataApp.MetaEstadosAdmin do
   alias MetadataApp.Repo
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.{Header, Detail}
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
-  alias MetadataApp.MetaStateEngine.Reglas
-  alias MetadataApp.MetaSchema.{Estado, Transicion, TransicionRegla, TransicionEvento}
-
-  # Vocabulario cerrado de reglas (ver MetaStateEngine.Reglas.{Pre,Post}):
-  # nombre -> {tipo esperado, [parámetros requeridos]}. Única fuente de
-  # verdad para validar_motor/1 — si el vocabulario real cambia, actualizar
-  # acá también (no hay forma de derivarlo automáticamente de Pre/Post
-  # porque son funciones con pattern matching, no datos introspectables).
-  @vocabulario %{
-    "campos_requeridos" => {"pre", ["campos"]},
-    "campo_cumple" => {"pre", ["campo", "operador", "valor"]},
-    "sin_relacionados" => {"pre", ["entidad", "campo_relacion"]},
-    "requiere_rol" => {"pre", ["rol"]},
-    "dato_en_contexto" => {"pre", ["dato"]},
-    "estampar_valor" => {"post", ["campo", "valor"]},
-    "mutar_relacionados" => {"post", ["entidad", "campo_relacion", "cambio"]},
-    "notificar" => {"post", ["destinatario", "plantilla"]}
-  }
-
-  # Accessor público — BcMotorLive lo usa para armar el formulario dinámico
-  # de "agregar regla" (opciones + parámetros exactos por regla), sin
-  # duplicar esta lista en el LiveView.
-  def vocabulario, do: @vocabulario
-
-  # Sentinel literal que `mix motor.reglas.andamiar` escribe en cada stub
-  # generado (ver lib/mix/tasks/motor.reglas.andamiar.ex) — un módulo de
-  # negocio que compila y expone la función correcta pasa el chequeo
-  # estructural de validar_regla_de_negocio/4 aunque el cuerpo siga siendo
-  # el no-op del andamiaje. Buscar este string es la única forma barata de
-  # distinguir "completo" de "stub sin tocar" sin ejecutar el módulo.
-  @marcador_stub "# ESCRIBA SUS REGLAS AQUI"
+  alias MetadataApp.MetaSchema.{Estado, Transicion, TransicionEvento}
+  alias MetadataApp.MetaReglasCodigo
 
   # --- Estados ---------------------------------------------------------------
 
@@ -111,8 +85,7 @@ defmodule MetadataApp.MetaEstadosAdmin do
   def listar_transiciones(meta_schema_header_id) do
     from(t in Transicion,
       where: t.meta_schema_header_id == ^meta_schema_header_id and is_nil(t.delete_guid),
-      order_by: [asc: t.accion, asc: t.id],
-      preload: [reglas: ^reglas_query()]
+      order_by: [asc: t.accion, asc: t.id]
     )
     |> Repo.all()
   end
@@ -189,85 +162,28 @@ defmodule MetadataApp.MetaEstadosAdmin do
     |> Repo.update()
   end
 
-  # Soft-delete, y a diferencia de eliminar_estado/1 acá SÍ cascadea a sus
-  # propias reglas — una TransicionRegla no es una entidad compartida entre
-  # varias transiciones (a diferencia de un Estado, que sí puede ser
-  # origen/destino de muchas), es hija exclusiva: no tiene sentido dejarla
-  # viva colgando de una transición borrada. Todo o nada en una sola
-  # transacción (mismo criterio que crear_transiciones/1).
+  # Soft-delete simple — ya no cascadea a reglas (rediseño 2026-07-21): las
+  # reglas son código por catálogo, no filas hijas de la transición.
   def eliminar_transicion(%Transicion{} = transicion) do
-    Repo.transaction(fn ->
-      reglas_activas = listar_reglas(transicion.id)
-
-      Enum.each(reglas_activas, fn regla ->
-        case eliminar_regla(regla) do
-          {:ok, _} -> :ok
-          {:error, changeset} -> Repo.rollback(changeset)
-        end
-      end)
-
-      transicion
-      |> Ecto.Changeset.change(%{delete_guid: generar_guid()})
-      |> Repo.update()
-      |> case do
-        {:ok, transicion} -> transicion
-        {:error, changeset} -> Repo.rollback(changeset)
-      end
-    end)
-  end
-
-  # --- Reglas ------------------------------------------------------------------
-
-  def listar_reglas(transicion_id) do
-    transicion_id
-    |> reglas_de_transicion_query()
-    |> Repo.all()
-  end
-
-  def crear_regla(attrs) do
-    %TransicionRegla{}
-    |> TransicionRegla.changeset(attrs)
-    |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
-    |> Repo.insert()
-  end
-
-  # Todo o nada: ver crear_transiciones/1.
-  def crear_reglas(lista_attrs) do
-    Repo.transaction(fn ->
-      Enum.map(lista_attrs, fn attrs ->
-        case crear_regla(attrs) do
-          {:ok, regla} -> regla
-          {:error, changeset} -> Repo.rollback(changeset)
-        end
-      end)
-    end)
-  end
-
-  def actualizar_regla(%TransicionRegla{} = regla, attrs) do
-    regla
-    |> TransicionRegla.changeset(attrs)
-    |> Ecto.Changeset.change(%{update_guid: generar_guid()})
-    |> Repo.update()
-  end
-
-  # Hoja del árbol (nada referencia una TransicionRegla) — soft-delete
-  # directo, sin guardas de hijos.
-  def eliminar_regla(%TransicionRegla{} = regla) do
-    regla
+    transicion
     |> Ecto.Changeset.change(%{delete_guid: generar_guid()})
     |> Repo.update()
   end
 
   # --- Creación atómica completa (wizard "Nuevo Business Process") -------------
 
-  # Crea Contexto+Campos+Estados+Transiciones+Reglas en una única transacción
-  # — todo o nada. Pensado para el wizard completo: mientras no estén las 4
-  # piezas, no se persiste NADA (decisión explícita del usuario, más
-  # estricta que completitud/1, que hoy considera válido un catálogo sin
-  # ninguna regla). La generación de la tabla física (CatalogoGenerador) NO
-  # entra acá a propósito — no es reversible por Ecto (migración + archivo
-  # en disco + compile), así que corre aparte, best-effort, después de que
-  # esta transacción ya haya confirmado.
+  # Crea Contexto+Campos+Estados+Transiciones en una única transacción —
+  # todo o nada. Pensado para el wizard completo: mientras no estén las 3
+  # piezas, no se persiste NADA. La generación de la tabla física
+  # (CatalogoGenerador) NO entra acá a propósito — no es reversible por
+  # Ecto (migración + archivo en disco + compile), así que corre aparte,
+  # best-effort, después de que esta transacción ya haya confirmado.
+  #
+  # Ya NO exige "al menos una regla" (rediseño 2026-07-21): las reglas
+  # PRE/POST son código a nivel catálogo (ver MetaReglasCodigo), no algo
+  # que se pueda armar junto con la transición en este mismo paso — el
+  # catálogo tiene que existir primero para que el generador de stub sepa
+  # qué transiciones tiene.
   #
   # Espera:
   #   %{
@@ -275,7 +191,7 @@ defmodule MetadataApp.MetaEstadosAdmin do
   #     "estados" => [%{"nombre" =>, "orden" =>, "es_inicial" =>, "color" =>, "icono" =>}, ...],
   #     "transiciones" => [
   #       %{"accion" =>, "etiqueta" =>, "estado_origen" => nombre_o_nil, "estado_destino" => nombre,
-  #         "campos_editables" => [...], "reglas" => [%{"tipo" =>, "regla" =>, "params" =>, "orden" =>, "transaccional" =>}, ...]}
+  #         "campos_editables" => [...]}
   #     ]
   #   }
   #
@@ -311,7 +227,6 @@ defmodule MetadataApp.MetaEstadosAdmin do
   # dos alcanza, no hace falta exigir literalmente "alta" si ya hay inicial.
   defp validar_completo(header_attrs, estados_attrs, transiciones_attrs) do
     detalles = header_attrs["detalles"] || []
-    reglas_totales = Enum.flat_map(transiciones_attrs, &(&1["reglas"] || []))
     tiene_inicial? = Enum.any?(estados_attrs, & &1["es_inicial"])
     tiene_alta? = Enum.any?(transiciones_attrs, &(&1["accion"] == "alta" and &1["estado_origen"] in [nil, ""]))
 
@@ -319,7 +234,6 @@ defmodule MetadataApp.MetaEstadosAdmin do
       detalles == [] -> {:error, "hace falta al menos un campo"}
       estados_attrs == [] -> {:error, "hace falta al menos un estado"}
       not (tiene_inicial? or tiene_alta?) -> {:error, "hace falta un estado inicial o una transición de alta"}
-      reglas_totales == [] -> {:error, "hace falta al menos una regla (pre o post) en alguna transición"}
       true -> :ok
     end
   end
@@ -363,8 +277,7 @@ defmodule MetadataApp.MetaEstadosAdmin do
       Enum.reduce_while(transiciones_attrs, {:ok, []}, fn t_attrs, {:ok, acc} ->
         with {:ok, origen_id} <- resolver_estado_id(t_attrs["estado_origen"], estados_por_nombre),
              {:ok, destino_id} <- resolver_estado_id(t_attrs["estado_destino"], estados_por_nombre),
-             {:ok, transicion} <- insertar_una_transicion(repo, header, t_attrs, origen_id, destino_id),
-             {:ok, _reglas} <- insertar_reglas(repo, transicion, t_attrs["reglas"] || []) do
+             {:ok, transicion} <- insertar_una_transicion(repo, header, t_attrs, origen_id, destino_id) do
           {:cont, {:ok, [transicion | acc]}}
         else
           {:error, _} = error -> {:halt, error}
@@ -405,16 +318,6 @@ defmodule MetadataApp.MetaEstadosAdmin do
     end
   end
 
-  defp insertar_reglas(repo, transicion, reglas_attrs) do
-    insertar_todo_o_nada(reglas_attrs, fn regla_attrs ->
-      regla_attrs
-      |> Map.put("transicion_id", transicion.id)
-      |> then(&TransicionRegla.changeset(%TransicionRegla{}, &1))
-      |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
-      |> repo.insert()
-    end)
-  end
-
   # Inserta una lista todo-o-nada dentro de un paso de Multi.run — alcanza
   # con devolver {:error, _} en el primer fallo, Ecto.Multi ya se encarga
   # del rollback de toda la transacción (a diferencia de crear_header_con_detalles/1,
@@ -438,16 +341,22 @@ defmodule MetadataApp.MetaEstadosAdmin do
 
   # Cuántas filas tiene cada tabla del motor para este header — usado por
   # CatalogoAdminController.impacto para avisar qué se va a llevar puesto un
-  # borrado total, antes de que el usuario confirme.
+  # borrado total, antes de que el usuario confirme. "reglas" cuenta
+  # meta_schema_reglas_codigo (rediseño 2026-07-21, a lo sumo 2 filas: pre y
+  # post) — la tabla vieja meta_schema_transicion_reglas ya no la llena
+  # nadie, seguir contando ahí siempre daría 0 aunque el catálogo tenga
+  # código de negocio real que se pierde con el borrado.
   def contar_escenario(meta_schema_header_id) do
-    transicion_ids =
-      from(t in Transicion, where: t.meta_schema_header_id == ^meta_schema_header_id, select: t.id)
-      |> Repo.all()
-
     %{
       estados: Repo.aggregate(from(e in Estado, where: e.meta_schema_header_id == ^meta_schema_header_id), :count),
-      transiciones: length(transicion_ids),
-      reglas: Repo.aggregate(from(r in TransicionRegla, where: r.transicion_id in ^transicion_ids), :count),
+      transiciones: Repo.aggregate(from(t in Transicion, where: t.meta_schema_header_id == ^meta_schema_header_id), :count),
+      reglas:
+        Repo.aggregate(
+          from(r in MetadataApp.MetaSchema.ReglaCodigo,
+            where: r.meta_schema_header_id == ^meta_schema_header_id and is_nil(r.delete_guid)
+          ),
+          :count
+        ),
       eventos: Repo.aggregate(from(ev in TransicionEvento, where: ev.meta_schema_header_id == ^meta_schema_header_id), :count)
     }
   end
@@ -457,10 +366,10 @@ defmodule MetadataApp.MetaEstadosAdmin do
   # Checklist del ciclo completo de un Business Context: distinto de
   # validar_motor/1 (que dice "¿esto va a funcionar sin romperse?") — esto
   # dice "¿esto está terminado, o todavía es un borrador/andamiaje?".
-  # completo?/1 exige, además de la estructura sana, que NINGUNA regla de
-  # negocio siga siendo un stub sin completar — es la pregunta que
-  # validar_motor deliberadamente no contesta (una regla stub es
-  # estructuralmente válida: compila y expone la función correcta).
+  # Reglas PRE/POST (rediseño 2026-07-21) NO son obligatorias — si nunca se
+  # generó código para el catálogo, no cuenta en contra de completo?. Si SÍ
+  # se generó pero sigue siendo el stub sin tocar, ahí sí cuenta (empezado
+  # pero sin terminar).
   @spec completitud(String.t()) :: {:ok, map()} | {:error, String.t()}
   def completitud(catalogo) do
     case MetaSchemaContext.obtener_header_por_nombre(catalogo) do
@@ -481,9 +390,8 @@ defmodule MetadataApp.MetaEstadosAdmin do
 
         self_loops_sin_campos = Enum.count(self_loops, &(&1.campos_editables == []))
 
-        reglas = Enum.flat_map(transiciones, & &1.reglas)
-        {reglas_cerradas, reglas_negocio} = Enum.split_with(reglas, &Map.has_key?(@vocabulario, &1.regla))
-        reglas_negocio_stub = Enum.count(reglas_negocio, &stub_sin_completar?(catalogo, &1.regla))
+        pre_pendiente? = MetaReglasCodigo.pendiente?(header.id, "pre")
+        post_pendiente? = MetaReglasCodigo.pendiente?(header.id, "post")
 
         tiene_campos? = detalles != []
         tiene_estados? = estados != []
@@ -498,14 +406,12 @@ defmodule MetadataApp.MetaEstadosAdmin do
            transiciones_self_loop: length(self_loops),
            transiciones_self_loop_sin_campos_editables: self_loops_sin_campos,
            reglas: %{
-             total: length(reglas),
-             vocabulario_cerrado: length(reglas_cerradas),
-             negocio_completas: length(reglas_negocio) - reglas_negocio_stub,
-             negocio_stub: reglas_negocio_stub
+             pre_pendiente: pre_pendiente?,
+             post_pendiente: post_pendiente?
            },
            completo?:
              tiene_campos? and tiene_estados? and tiene_alta_o_inicial? and self_loops_ok? and
-               reglas_negocio_stub == 0
+               not pre_pendiente? and not post_pendiente?
          }}
     end
   end
@@ -534,7 +440,7 @@ defmodule MetadataApp.MetaEstadosAdmin do
           |> validar_alta_o_inicial(estados, transiciones)
           |> validar_estados_huerfanos(estados, transiciones)
           |> validar_campos_editables_vacios(transiciones)
-          |> validar_reglas(transiciones, catalogo)
+          |> validar_reglas_codigo(header, transiciones)
           |> Enum.reverse()
 
         {:ok,
@@ -627,178 +533,47 @@ defmodule MetadataApp.MetaEstadosAdmin do
     end)
   end
 
-  defp validar_reglas(problemas, transiciones, catalogo) do
-    Enum.reduce(transiciones, problemas, fn t, acc ->
-      Enum.reduce(t.reglas, acc, &validar_regla(&2, t, &1, catalogo))
-    end)
+  # Advertencia (no error — el código puede ser correcto igual sin cubrir
+  # una transición nueva) si el catálogo ya tiene código pre/post pero le
+  # falta un `case` para alguna transición real — ver
+  # MetaReglasCodigo.transiciones_sin_case/3. Si el catálogo nunca generó
+  # código todavía, no hay nada que advertir (reglas no son obligatorias).
+  defp validar_reglas_codigo(problemas, header, transiciones) do
+    problemas
+    |> validar_reglas_codigo_tipo(header, transiciones, "pre")
+    |> validar_reglas_codigo_tipo(header, transiciones, "post")
   end
 
-  defp validar_regla(problemas, transicion, regla, catalogo) do
-    case Map.get(@vocabulario, regla.regla) do
-      nil ->
-        validar_regla_de_negocio(problemas, transicion, regla, catalogo)
-
-      {tipo_esperado, params_requeridos} ->
-        problemas
-        |> validar_tipo_regla(transicion, regla, tipo_esperado)
-        |> validar_params_regla(transicion, regla, params_requeridos)
-    end
+  defp validar_reglas_codigo_tipo(problemas, header, transiciones, tipo) do
+    problemas
+    |> validar_case_faltante(header, transiciones, tipo)
+    |> validar_reglas_sin_compilar(header, tipo)
   end
 
-  # No está en el vocabulario cerrado — puede ser un módulo de negocio
-  # (convención MetadataApp.MetaBusinessProcess.Reglas.<Catalogo>.<Regla>, ver Reglas.modulo_negocio/2).
-  # No se puede validar el CONTENIDO de un módulo Elixir libre sin
-  # ejecutarlo — esto solo confirma que existe y que implementa la función
-  # correcta, el mismo chequeo que corre el motor de verdad al despachar.
-  defp validar_regla_de_negocio(problemas, transicion, regla, catalogo) do
-    modulo = Reglas.modulo_negocio(catalogo, regla.regla)
-    {funcion, aridad} = if regla.tipo == "post", do: {:ejecutar, 4}, else: {:evaluar, 3}
-
-    cond do
-      not Code.ensure_loaded?(modulo) ->
-        [
-          problema(
-            :error,
-            "transición \"#{transicion.accion}\": la regla \"#{regla.regla}\" no existe en el vocabulario del motor ni como módulo de negocio (se esperaba #{inspect(modulo)})"
-          )
-          | problemas
-        ]
-
-      not function_exported?(modulo, funcion, aridad) ->
-        [
-          problema(:error, "transición \"#{transicion.accion}\": el módulo #{inspect(modulo)} existe pero no implementa #{funcion}/#{aridad}")
-          | problemas
-        ]
-
-      stub_sin_completar?(catalogo, regla.regla) ->
-        [
-          problema(
-            :advertencia,
-            "transición \"#{transicion.accion}\": la regla \"#{regla.regla}\" sigue siendo un stub de andamiaje sin completar (#{ruta_regla_negocio(catalogo, regla.regla)})"
-          )
-          | problemas
-        ]
-
-      true ->
-        problemas
-    end
-  end
-
-  def ruta_regla_negocio(catalogo, regla),
-    do: Path.join(["lib", "metadata_app", "meta_business_process", "reglas", catalogo, "#{regla}.ex"])
-
-  def stub_sin_completar?(catalogo, regla) do
-    ruta = ruta_regla_negocio(catalogo, regla)
-    File.exists?(ruta) and String.contains?(File.read!(ruta), @marcador_stub)
-  end
-
-  # --- Andamiaje de reglas de negocio (compartido entre BcMotorLive y
-  # Mix.Tasks.Motor.Reglas.Andamiar) ------------------------------------------
-
-  # Genera (si no existe) el stub de una regla de negocio para UNA
-  # transición y UN tipo puntual, y la engancha — mismo comportamiento que
-  # `mix motor.reglas.andamiar`, pero acotado a una sola transición/tipo en
-  # vez de recorrer todo el catálogo, para poder ofrecerlo como una acción
-  # de un click desde la UI. Vive acá (no en el Mix.Task) porque un Mix.Task
-  # no está pensado para invocarse desde un proceso de la app ya corriendo
-  # (BcMotorLive lo llama en caliente) — el Mix.Task pasa a ser un wrapper
-  # fino sobre esto para el uso por consola.
-  #
-  # Devuelve {:error, :ya_tiene_regla} si la transición ya tiene una regla
-  # de ese tipo (con el nombre que sea) — no la reemplaza ni agrega una
-  # segunda, mismo invariante que el Mix.Task.
-  @spec andamiar_regla_negocio(String.t(), Transicion.t(), String.t()) ::
-          {:ok, %{creado?: boolean(), ruta: String.t(), regla: String.t()}} | {:error, :ya_tiene_regla}
-  def andamiar_regla_negocio(catalogo, %Transicion{} = transicion, tipo) when tipo in ["pre", "post"] do
-    reglas_actuales = listar_reglas(transicion.id)
-
-    if Enum.any?(reglas_actuales, &(&1.tipo == tipo)) do
-      {:error, :ya_tiene_regla}
-    else
-      nombre_regla = "#{transicion.accion}_#{tipo}"
-      ruta = ruta_regla_negocio(catalogo, nombre_regla)
-      creado? = escribir_stub_si_no_existe(ruta, catalogo, nombre_regla, tipo)
-
-      case crear_regla(%{"transicion_id" => transicion.id, "tipo" => tipo, "regla" => nombre_regla, "orden" => 0}) do
-        {:ok, _regla} -> {:ok, %{creado?: creado?, ruta: ruta, regla: nombre_regla}}
-        {:error, changeset} -> {:error, changeset}
-      end
-    end
-  end
-
-  defp escribir_stub_si_no_existe(ruta, catalogo, nombre_regla, "pre") do
-    if File.exists?(ruta) do
-      false
-    else
-      File.mkdir_p!(Path.dirname(ruta))
-
-      File.write!(ruta, """
-      defmodule MetadataApp.MetaBusinessProcess.Reglas.#{Macro.camelize(catalogo)}.#{Macro.camelize(nombre_regla)} do
-        @behaviour MetadataApp.MetaStateEngine.ReglaPre
-
-        @impl true
-        def evaluar(_registro, _contexto, _params) do
-          # ESCRIBA SUS REGLAS AQUI
-          :ok
-        end
-      end
-      """)
-
-      true
-    end
-  end
-
-  defp escribir_stub_si_no_existe(ruta, catalogo, nombre_regla, "post") do
-    if File.exists?(ruta) do
-      false
-    else
-      File.mkdir_p!(Path.dirname(ruta))
-
-      File.write!(ruta, """
-      defmodule MetadataApp.MetaBusinessProcess.Reglas.#{Macro.camelize(catalogo)}.#{Macro.camelize(nombre_regla)} do
-        @behaviour MetadataApp.MetaStateEngine.ReglaPost
-
-        @impl true
-        def ejecutar(_registro, _contexto, _params, _repo) do
-          # ESCRIBA SUS REGLAS AQUI
-          {:ok, :sin_cambios}
-        end
-      end
-      """)
-
-      true
-    end
-  end
-
-  defp validar_tipo_regla(problemas, transicion, regla, tipo_esperado) do
-    if regla.tipo == tipo_esperado do
-      problemas
-    else
-      [
-        problema(
-          :error,
-          "transición \"#{transicion.accion}\": la regla \"#{regla.regla}\" está configurada como \"#{regla.tipo}\" pero solo existe como \"#{tipo_esperado}\" — nunca va a ejecutarse, o va a romper con un error interno"
-        )
-        | problemas
-      ]
-    end
-  end
-
-  defp validar_params_regla(problemas, transicion, regla, requeridos) do
-    faltantes = Enum.reject(requeridos, &Map.has_key?(regla.params, &1))
-
-    case faltantes do
+  defp validar_case_faltante(problemas, header, transiciones, tipo) do
+    case MetaReglasCodigo.transiciones_sin_case(header.id, tipo, transiciones) do
       [] ->
         problemas
 
-      _ ->
+      faltantes ->
         [
-          problema(
-            :error,
-            "transición \"#{transicion.accion}\": a la regla \"#{regla.regla}\" le falta(n) parámetro(s): #{Enum.join(faltantes, ", ")}"
-          )
+          problema(:advertencia, "código #{tipo} sin case para: #{Enum.join(faltantes, ", ")}")
           | problemas
         ]
+    end
+  end
+
+  # Solo aplica en dev/test (compilar_disponible?) — en producción no hay
+  # ".ex" en disco hasta que se hace git+deploy, así que comparar contra
+  # disco ahí daría falso positivo en TODO catálogo con reglas, siempre.
+  defp validar_reglas_sin_compilar(problemas, header, tipo) do
+    if MetaReglasCodigo.compilar_disponible?() and not MetaReglasCodigo.sincronizado?(header, tipo) do
+      [
+        problema(:advertencia, "código #{tipo} tiene cambios guardados sin compilar — el motor todavía corre la versión anterior")
+        | problemas
+      ]
+    else
+      problemas
     end
   end
 
@@ -853,7 +628,9 @@ defmodule MetadataApp.MetaEstadosAdmin do
   end
 
   # estado_origen puede ser nil (transición de "alta" — el registro
-  # todavía no existe, ver MetaSchema.Transicion).
+  # todavía no existe, ver MetaSchema.Transicion). "reglas" queda vacío a
+  # propósito (compatibilidad de forma con el .motor.json viejo) — el
+  # código PRE/POST ya no vive acá, ver MetaReglasCodigo.
   defp exportar_transicion(t, nombres_por_id) do
     %{
       accion: t.accion,
@@ -862,20 +639,8 @@ defmodule MetadataApp.MetaEstadosAdmin do
       estado_origen: t.estado_origen_id && Map.fetch!(nombres_por_id, t.estado_origen_id),
       estado_destino: Map.fetch!(nombres_por_id, t.estado_destino_id),
       campos_editables: t.campos_editables,
-      reglas: Enum.map(t.reglas, &exportar_regla/1)
+      reglas: []
     }
-  end
-
-  defp exportar_regla(r) do
-    %{tipo: r.tipo, regla: r.regla, params: r.params, orden: r.orden, transaccional: r.transaccional}
-  end
-
-  defp reglas_query, do: from(r in TransicionRegla, where: is_nil(r.delete_guid), order_by: [asc: r.orden, asc: r.id])
-
-  defp reglas_de_transicion_query(transicion_id) do
-    from r in TransicionRegla,
-      where: r.transicion_id == ^transicion_id and is_nil(r.delete_guid),
-      order_by: [asc: r.orden, asc: r.id]
   end
 
   defp generar_guid do

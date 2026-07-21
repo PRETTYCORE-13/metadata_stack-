@@ -55,7 +55,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
      |> assign(:campo_form, nil)
      |> assign(:estado_form, nil)
      |> assign(:transicion_form, nil)
-     |> assign(:regla_form, nil)
      |> cargar_estado_inicial(params)}
   end
 
@@ -342,8 +341,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
           "etiqueta" => etiqueta,
           "estado_origen" => nil_si_vacio(params["estado_origen"]),
           "estado_destino" => destino,
-          "campos_editables" => campos_editables,
-          "reglas" => []
+          "campos_editables" => campos_editables
         }
 
         {:noreply,
@@ -356,57 +354,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   def handle_event("quitar_transicion", %{"idx" => idx}, socket) do
     idx = String.to_integer(idx)
     {:noreply, update(socket, :transiciones, &List.delete_at(&1, idx))}
-  end
-
-  # --- Reglas: agregar/quitar sobre una transición en memoria -----------------
-
-  def handle_event("abrir_form_regla", %{"transicion_idx" => idx}, socket) do
-    {:noreply, assign(socket, :regla_form, %{transicion_idx: String.to_integer(idx), regla: nil, error: nil})}
-  end
-
-  def handle_event("cerrar_form_regla", _params, socket) do
-    {:noreply, assign(socket, :regla_form, nil)}
-  end
-
-  def handle_event("elegir_regla", %{"regla" => nombre}, socket) do
-    nombre = if nombre == "", do: nil, else: nombre
-    {:noreply, update(socket, :regla_form, &Map.put(&1, :regla, nombre))}
-  end
-
-  def handle_event("guardar_regla", %{"regla" => nombre} = params, socket) do
-    case Map.fetch(MetaEstadosAdmin.vocabulario(), nombre) do
-      {:ok, {tipo, _requeridos}} ->
-        regla = %{
-          "tipo" => tipo,
-          "regla" => nombre,
-          "params" => normalizar_params_regla(nombre, Map.get(params, "params", %{})),
-          "orden" => 0,
-          "transaccional" => true
-        }
-
-        idx = socket.assigns.regla_form.transicion_idx
-
-        transiciones =
-          List.update_at(socket.assigns.transiciones, idx, &Map.update!(&1, "reglas", fn r -> r ++ [regla] end))
-
-        {:noreply,
-         socket
-         |> assign(:transiciones, transiciones)
-         |> assign(:regla_form, nil)}
-
-      :error ->
-        {:noreply, update(socket, :regla_form, &Map.put(&1, :error, "Elegí una regla de la lista."))}
-    end
-  end
-
-  def handle_event("quitar_regla", %{"transicion_idx" => tidx, "regla_idx" => ridx}, socket) do
-    tidx = String.to_integer(tidx)
-    ridx = String.to_integer(ridx)
-
-    transiciones =
-      List.update_at(socket.assigns.transiciones, tidx, &Map.update!(&1, "reglas", fn r -> List.delete_at(r, ridx) end))
-
-    {:noreply, assign(socket, :transiciones, transiciones)}
   end
 
   # Página completa navegada normalmente — "Cancelar" navega de vuelta a la
@@ -508,20 +455,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   end
 
   # campos_requeridos.campos: texto separado por coma -> lista, sin vacíos.
-  defp normalizar_params_regla("campos_requeridos", %{"campos" => campos}) do
-    lista = campos |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
-    %{"campos" => lista}
-  end
-
-  defp normalizar_params_regla(
-         "mutar_relacionados",
-         %{"entidad" => entidad, "campo_relacion" => cr, "cambio_campo" => cc, "cambio_valor" => cv}
-       ) do
-    %{"entidad" => entidad, "campo_relacion" => cr, "cambio" => %{"campo" => cc, "valor" => cv}}
-  end
-
-  defp normalizar_params_regla(_regla, params), do: params
-
   defp formatear_error_creacion({:error, motivo}) when is_binary(motivo), do: motivo
   defp formatear_error_creacion({:error, _paso, %Ecto.Changeset{} = changeset, _cambios}), do: resumen_errores(changeset)
   defp formatear_error_creacion({:error, _paso, motivo, _cambios}) when is_binary(motivo), do: motivo
@@ -647,8 +580,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   # en vivo antes de someterlo al servidor — la fuente de verdad real sigue
   # siendo la guarda del propio crear_proceso_completo/1.
   defp completo?(campos, estados, transiciones) do
-    campos != [] and estados != [] and tiene_alta_o_inicial?(estados, transiciones) and
-      Enum.any?(transiciones, &(&1["reglas"] != []))
+    campos != [] and estados != [] and tiene_alta_o_inicial?(estados, transiciones)
   end
 
   defp tiene_alta_o_inicial?(estados, transiciones) do
@@ -724,7 +656,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     <.modal_campo :if={@campo_form} form={@campo_form} tipos={@tipos_campo} catalogos={@catalogos_referenciables} />
     <.modal_estado :if={@estado_form} form={@estado_form} iconos_sugeridos={@iconos_sugeridos} />
     <.modal_transicion :if={@transicion_form} form={@transicion_form} estados={@estados} campos={@campos} />
-    <.modal_regla :if={@regla_form} form={@regla_form} vocabulario={MetaEstadosAdmin.vocabulario()} />
     """
   end
 
@@ -793,6 +724,10 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   # "Transiciones" no es parte de completo?/3 (ver arriba), se deriva igual
   # que en BcMotorLive: hay al menos una Y ninguna es un self-loop sin
   # campos editables configurados.
+  # Ya no hay paso "Reglas" acá (rediseño 2026-07-21): el código PRE/POST
+  # es a nivel catálogo, no se puede armar junto con transiciones que
+  # todavía no existen en la base — se agrega DESPUÉS de "Crear", desde
+  # BcMotorLive.
   defp pasos_wizard(campos, estados, transiciones) do
     tiene_transiciones? = transiciones != [] and self_loops_ok?(transiciones)
 
@@ -800,8 +735,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       {"Campos", campos != []},
       {"Estados", estados != []},
       {"Estado inicial", tiene_alta_o_inicial?(estados, transiciones)},
-      {"Transiciones", tiene_transiciones?},
-      {"Reglas", Enum.any?(transiciones, &(&1["reglas"] != []))}
+      {"Transiciones", tiene_transiciones?}
     ]
     |> marcar_estado_pasos()
   end
@@ -1034,7 +968,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
               <tr>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Acción</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Origen → Destino</th>
-                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Reglas</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
             </thead>
@@ -1044,21 +977,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
                   <td class="px-1.5 py-1.5 text-gray-900 font-mono">{t["accion"]}</td>
                   <td class="px-1.5 py-1.5 text-gray-600">
                     {t["estado_origen"] || "— (alta)"}<span class="text-gray-300 mx-1">→</span>{t["estado_destino"]}
-                  </td>
-                  <td class="px-1.5 py-1.5">
-                    <div class="flex flex-wrap gap-1 mb-1">
-                      <%= for {r, ridx} <- Enum.with_index(t["reglas"]) do %>
-                        <span class={[
-                          "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-mono",
-                          r["tipo"] == "pre" && "bg-gray-100 text-gray-700",
-                          r["tipo"] == "post" && "bg-purple-50 text-purple-700"
-                        ]}>
-                          {r["regla"]}
-                          <button type="button" phx-click="quitar_regla" phx-value-transicion_idx={idx} phx-value-regla_idx={ridx} class="text-gray-400 hover:text-red-600 leading-none">×</button>
-                        </span>
-                      <% end %>
-                    </div>
-                    <button type="button" phx-click="abrir_form_regla" phx-value-transicion_idx={idx} class="text-purple-700 hover:text-purple-900 font-semibold text-[11px]">+ Regla</button>
                   </td>
                   <td class="px-1.5 py-1.5">
                     <button type="button" phx-click="quitar_transicion" phx-value-idx={idx} class="text-red-600 hover:text-red-800 text-[11px] font-semibold">Quitar</button>
@@ -1282,79 +1200,4 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     """
   end
 
-  attr :form, :map, required: true
-  attr :vocabulario, :map, required: true
-
-  defp modal_regla(assigns) do
-    ~H"""
-    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div class="bg-white rounded-xl shadow-lg max-w-sm w-full p-4 text-xs">
-        <h2 class="text-sm font-bold text-gray-900 mb-1">Agregar regla</h2>
-        <p class="text-gray-500 mb-3">Vocabulario cerrado</p>
-        <%= if @form.error do %><div class="bg-red-50 text-red-700 rounded-lg px-2 py-1.5 mb-2">{@form.error}</div><% end %>
-        <form phx-submit="guardar_regla">
-          <label class="block font-medium text-gray-900 mb-1">Regla</label>
-          <select name="regla" phx-change="elegir_regla" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 mb-3 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500">
-            <option value="">— Elegir —</option>
-            <%= for {nombre, {tipo, _requeridos}} <- Enum.sort(@vocabulario) do %>
-              <option value={nombre} selected={@form.regla == nombre}>{tipo} · {nombre}</option>
-            <% end %>
-          </select>
-          <%= if @form.regla do %>
-            <% {_tipo, requeridos} = Map.fetch!(@vocabulario, @form.regla) %>
-            <div class="space-y-2 mb-3">
-              <%= for campo <- requeridos do %><.campo_param_regla regla={@form.regla} campo={campo} /><% end %>
-            </div>
-          <% end %>
-          <div class="flex justify-end gap-2">
-            <button type="button" phx-click="cerrar_form_regla" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">Cancelar</button>
-            <button type="submit" disabled={!@form.regla} class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed">Agregar</button>
-          </div>
-        </form>
-      </div>
-    </div>
-    """
-  end
-
-  attr :regla, :string, required: true
-  attr :campo, :string, required: true
-
-  defp campo_param_regla(%{regla: "campo_cumple", campo: "operador"} = assigns) do
-    ~H"""
-    <div>
-      <label class="block text-gray-700 mb-0.5">operador</label>
-      <select name="params[operador]" class="w-full border border-gray-300 rounded-lg px-2 py-1">
-        <option value=">">&gt;</option><option value=">=">&gt;=</option><option value="<">&lt;</option>
-        <option value="<=">&lt;=</option><option value="==">==</option><option value="!=">!=</option>
-      </select>
-    </div>
-    """
-  end
-
-  defp campo_param_regla(%{regla: "mutar_relacionados", campo: "cambio"} = assigns) do
-    ~H"""
-    <div class="grid grid-cols-2 gap-2">
-      <div><label class="block text-gray-700 mb-0.5">cambio: campo</label><input type="text" name="params[cambio_campo]" class="w-full border border-gray-300 rounded-lg px-2 py-1" /></div>
-      <div><label class="block text-gray-700 mb-0.5">cambio: valor</label><input type="text" name="params[cambio_valor]" class="w-full border border-gray-300 rounded-lg px-2 py-1" /></div>
-    </div>
-    """
-  end
-
-  defp campo_param_regla(%{campo: "campos"} = assigns) do
-    ~H"""
-    <div>
-      <label class="block text-gray-700 mb-0.5">campos (separados por coma)</label>
-      <input type="text" name="params[campos]" placeholder="campo_a, campo_b" class="w-full border border-gray-300 rounded-lg px-2 py-1" />
-    </div>
-    """
-  end
-
-  defp campo_param_regla(assigns) do
-    ~H"""
-    <div>
-      <label class="block text-gray-700 mb-0.5">{@campo}</label>
-      <input type="text" name={"params[#{@campo}]"} class="w-full border border-gray-300 rounded-lg px-2 py-1" />
-    </div>
-    """
-  end
 end

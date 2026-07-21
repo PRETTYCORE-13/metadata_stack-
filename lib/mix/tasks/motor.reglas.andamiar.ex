@@ -1,31 +1,20 @@
 defmodule Mix.Tasks.Motor.Reglas.Andamiar do
   use Mix.Task
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
-  alias MetadataApp.MetaEstadosAdmin
+  alias MetadataApp.MetaReglasCodigo
 
-  @shortdoc "Genera stubs de reglas PRE/POST para las transiciones de un catálogo que todavía no tienen una"
+  @shortdoc "Genera (si no existen) el código PRE/POST de un catálogo, uno por tipo, con un case por transición real"
 
   @moduledoc """
   Uso: mix motor.reglas.andamiar <catalogo>
 
-  Para cada transición del catálogo que todavía no tenga una regla "pre"
-  o "post" enganchada, genera un módulo stub
-  (`lib/metadata_app/meta_business_process/reglas/<catalogo>/<accion>_pre.ex`
-  y `..._post.ex`, con un `# ESCRIBA SUS REGLAS AQUI` donde va la lógica
-  de negocio) y lo engancha automáticamente vía
-  `meta_schema_transicion_reglas`. El cuerpo por defecto es un no-op
-  (`:ok` / `{:ok, :sin_cambios}`) — el autómata sigue funcionando igual
-  si nadie completa el stub.
-
-  Seguro de re-correr:
-    - NUNCA sobrescribe un archivo que ya existe (podría ser lógica de
-      negocio real ya escrita).
-    - NUNCA engancha una segunda regla si la transición ya tiene una de
-      ese tipo (pre/post), tenga el nombre que tenga.
-    - Si dos transiciones del catálogo comparten la misma "accion"
-      (distinto estado de origen), se saltan con una advertencia — el
-      nombre del archivo no alcanzaría para distinguirlas, hay que
-      engancharlas a mano.
+  Rediseño 2026-07-21: un catálogo tiene A LO SUMO un código pre y un
+  código post — ya no un archivo por transición. Si el catálogo todavía no
+  tiene código guardado para pre/post, genera un `case` con un branch por
+  cada transición real (marcador `# ESCRIBA SU CODIGO AQUÍ` en cada uno) y
+  lo guarda en `meta_schema_reglas_codigo`. Si ya existe código guardado,
+  NUNCA lo pisa — hay que editarlo desde la UI (BcMotorLive, tab de
+  reglas) o a mano.
   """
 
   def run([]), do: Mix.raise("Uso: mix motor.reglas.andamiar <catalogo>")
@@ -48,54 +37,25 @@ defmodule Mix.Tasks.Motor.Reglas.Andamiar do
         {:error, "catálogo no encontrado: #{catalogo}"}
 
       header ->
-        transiciones = MetaEstadosAdmin.listar_transiciones(header.id)
-
-        if transiciones == [] do
-          Mix.shell().info("\"#{catalogo}\" no tiene transiciones todavía — nada que andamiar.")
-        else
-          repetidas =
-            transiciones
-            |> Enum.frequencies_by(& &1.accion)
-            |> Enum.filter(fn {_accion, n} -> n > 1 end)
-            |> Enum.map(&elem(&1, 0))
-            |> MapSet.new()
-
-          Enum.each(transiciones, &andamiar_transicion(catalogo, &1, repetidas))
-        end
-
+        andamiar_tipo(header, "pre")
+        andamiar_tipo(header, "post")
         :ok
     end
   end
 
-  defp andamiar_transicion(catalogo, transicion, repetidas) do
-    if MapSet.member?(repetidas, transicion.accion) do
-      Mix.shell().info(
-        "  (salteada \"#{transicion.accion}\": hay más de una transición con esta acción en #{catalogo}, enganchá a mano)"
-      )
-    else
-      andamiar_tipo(catalogo, transicion, "pre")
-      andamiar_tipo(catalogo, transicion, "post")
-    end
-  end
+  defp andamiar_tipo(header, tipo) do
+    case MetaReglasCodigo.obtener_o_generar(header, tipo) do
+      {:existente, _regla_codigo} ->
+        Mix.shell().info("  = #{header.schema_context_name} (#{tipo}): ya tiene código guardado, sin tocar")
 
-  # Delega la parte que importa (plantilla del stub + enganche) en
-  # MetaEstadosAdmin.andamiar_regla_negocio/3 — así BcMotorLive puede
-  # ofrecer el mismo "crear regla de negocio" de un click sin duplicar la
-  # plantilla acá. Este task queda como wrapper fino: solo agrega la salida
-  # por Mix.shell().
-  defp andamiar_tipo(catalogo, transicion, tipo) do
-    case MetaEstadosAdmin.andamiar_regla_negocio(catalogo, transicion, tipo) do
-      {:ok, %{creado?: true, ruta: ruta}} ->
-        Mix.shell().info("  + #{catalogo} \"#{transicion.accion}\" (#{tipo}): stub creado y enganchado (#{ruta})")
+      {:nuevo, codigo_fuente} ->
+        case MetaReglasCodigo.guardar(header, tipo, codigo_fuente, "mix motor.reglas.andamiar") do
+          {:ok, _regla_codigo} ->
+            Mix.shell().info("  + #{header.schema_context_name} (#{tipo}): stub generado y guardado")
 
-      {:ok, %{creado?: false, ruta: ruta}} ->
-        Mix.shell().info("  + #{catalogo} \"#{transicion.accion}\" (#{tipo}): archivo ya existía, solo se enganchó (#{ruta})")
-
-      {:error, :ya_tiene_regla} ->
-        Mix.shell().info("  = #{catalogo} \"#{transicion.accion}\": ya tiene una regla #{tipo} enganchada, sin tocar")
-
-      {:error, changeset} ->
-        Mix.raise("no se pudo enganchar #{tipo} en \"#{transicion.accion}\": #{inspect(changeset.errors)}")
+          {:error, changeset} ->
+            Mix.raise("no se pudo guardar #{tipo} de #{header.schema_context_name}: #{inspect(changeset.errors)}")
+        end
     end
   end
 end

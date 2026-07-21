@@ -2,32 +2,32 @@
   "estados": [
     {
       "color": null,
-      "icono": null,
       "nombre": "Nuevo",
+      "icono": null,
       "orden": 1,
       "es_inicial": true,
       "empresa_id": null
     },
     {
       "color": "#7c3aed",
-      "icono": null,
       "nombre": "Prospecto",
+      "icono": null,
       "orden": 2,
       "es_inicial": false,
       "empresa_id": null
     },
     {
       "color": "#54ed40",
-      "icono": null,
       "nombre": "Activo",
+      "icono": null,
       "orden": 3,
       "es_inicial": false,
       "empresa_id": null
     },
     {
       "color": "#ed4040",
-      "icono": null,
       "nombre": "Baja",
+      "icono": null,
       "orden": 4,
       "es_inicial": false,
       "empresa_id": null
@@ -35,56 +35,56 @@
   ],
   "transiciones": [
     {
-      "etiqueta": "Activar",
       "accion": "activar",
-      "reglas": [],
-      "empresa_id": null,
+      "etiqueta": "Activar",
       "campos_editables": [
         "pty_clientes_nombre",
         "pty_clientes_edad"
       ],
+      "reglas": [],
+      "empresa_id": null,
       "estado_destino": "Activo",
       "estado_origen": "Prospecto"
     },
     {
-      "etiqueta": "Calificar como prospecto",
       "accion": "calificar",
+      "etiqueta": "Calificar como prospecto",
+      "campos_editables": [],
       "reglas": [],
       "empresa_id": null,
-      "campos_editables": [],
       "estado_destino": "Prospecto",
       "estado_origen": "Nuevo"
     },
     {
-      "etiqueta": "Dar de baja",
       "accion": "dar_de_baja",
-      "reglas": [],
-      "empresa_id": null,
+      "etiqueta": "Dar de baja",
       "campos_editables": [
         "pty_clientes_fecha_baja"
       ],
+      "reglas": [],
+      "empresa_id": null,
       "estado_destino": "Baja",
       "estado_origen": "Activo"
     },
     {
-      "etiqueta": "Guardar",
       "accion": "guardar",
-      "reglas": [],
-      "empresa_id": null,
+      "etiqueta": "Guardar",
       "campos_editables": [
         "pty_clientes_nombre",
         "pty_clientes_edad",
         "pty_clientes_venta"
       ],
+      "reglas": [],
+      "empresa_id": null,
       "estado_destino": "Activo",
       "estado_origen": "Activo"
     },
     {
-      "etiqueta": "Reactivar",
       "accion": "reactivar",
+      "etiqueta": "Reactivar",
+      "campos_editables": [],
       "reglas": [],
       "empresa_id": null,
-      "campos_editables": [],
       "estado_destino": "Activo",
       "estado_origen": "Baja"
     }
