@@ -3,6 +3,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   alias MetadataApp.Repo
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaEstadosAdmin
+  alias MetadataApp.MetaReglasCodigo
 
   # Genera migración y schema para schema_context_name a partir de lo
   # registrado en meta_schema_detail y corre la migración. Si el catálogo ya
@@ -110,7 +111,8 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
       with :ok <- MetaSchemaContext.eliminar_header(header) do
         archivo_eliminado? = borrar_schema_file(schema_context_name)
-        {:ok, %{tabla: schema_context_name, archivo_eliminado: archivo_eliminado?}}
+        reglas_eliminadas? = borrar_reglas_dir(schema_context_name)
+        {:ok, %{tabla: schema_context_name, archivo_eliminado: archivo_eliminado?, reglas_eliminadas: reglas_eliminadas?}}
       end
     end
   end
@@ -369,6 +371,18 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     case File.rm(path) do
       :ok -> true
       {:error, _motivo} -> false
+    end
+  end
+
+  # Bug real encontrado 2026-07-21: eliminar/3 borraba la fila de
+  # meta_schema_reglas_codigo (cascada por FK) y el .ex del SCHEMA, pero
+  # nunca tocaba lib/.../reglas/<catalogo>/pre.ex|post.ex que "Compilar"
+  # escribe a disco — quedaban huérfanos después de un borrado total.
+  defp borrar_reglas_dir(schema_context_name) do
+    case File.rm_rf(MetaReglasCodigo.ruta_disco_catalogo(schema_context_name)) do
+      {:ok, []} -> false
+      {:ok, _borrados} -> true
+      {:error, _motivo, _ruta} -> false
     end
   end
 

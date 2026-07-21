@@ -1,0 +1,3 @@
+defmodule MetadataApp.MetaBusinessProcess.Catalogos.PtyMaterial do
+  use MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico, tabla: "pty_material", campos: [{:pty_material_nombre, :string, %{opcional: false, longitud: 100, formato: nil}}, {:pty_material_segmento, :integer, %{opcional: false, tabla_referenciada: "pty_segmentos"}}, {:pty_material_marcas, :integer, %{opcional: false, tabla_referenciada: "pty_marcas"}}, {:pty_material_precio, :decimal, %{precision: 20, opcional: false, minimo: nil, maximo: nil, escala: 2}}, {:pty_material_fecha_alta, :date, %{opcional: false}}, {:pty_material_fecha_baja, :date, %{opcional: true}}]
+end

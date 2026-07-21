@@ -22,7 +22,15 @@ defmodule MetadataApp.MetaStateEngine do
   registro: struct Ecto de un catálogo generado (necesita :id y :estado_id).
   accion: string, nombre de la acción de negocio (no el estado destino).
   contexto: mapa con llaves string (usuario/roles + datos adicionales, ej.
-  %{"usuario_id" => 1, "motivo_baja" => "..."}).
+  %{"usuario_id" => 1, "motivo_baja" => "..."}) — si la transición
+  resuelta tiene `campos_editables`, las llaves de `contexto` que
+  coincidan con esos campos TAMBIÉN se aplican como cambio de datos, en
+  el mismo update atómico que el cambio de estado (agregado 2026-07-21:
+  antes una transición común solo cambiaba `estado_id`, nunca campos de
+  negocio, y la única puerta para editar campos era PATCH con una
+  transición "guardar" self-loop — ver `construir_changeset_transicion/3`
+  y `CatalogoGenerico.actualizar/2`, que sigue siendo el camino para
+  ediciones que NO cambian de estado).
 
   Devuelve {:ok, registro_actualizado} | {:error, razon_estructurada}.
   """
@@ -35,9 +43,45 @@ defmodule MetadataApp.MetaStateEngine do
     header = obtener_header!(modulo)
 
     with {:ok, transicion} <- resolver_transicion(header, registro_actual.estado_id, accion),
-         :ok <- evaluar_precondiciones(transicion, registro_actual, contexto) do
-      ejecutar_nucleo(registro_actual, header, transicion, contexto)
+         {:ok, changeset} <- construir_changeset_transicion(registro_actual, transicion, contexto),
+         :ok <- evaluar_precondiciones(transicion, Ecto.Changeset.apply_changes(changeset), contexto) do
+      ejecutar_nucleo(changeset, header, transicion, contexto)
     end
+  end
+
+  # Si la transición no tiene campos_editables, es un changeset vacío (0
+  # cambios) — mismo comportamiento de siempre, solo cambia estado_id. Si
+  # los tiene, mismo criterio de whitelist que ya usa CatalogoGenerico
+  # para PATCH (rechazo explícito, visible en el changeset, de cualquier
+  # campo real que no esté en la whitelist — nunca en silencio).
+  defp construir_changeset_transicion(registro, %Transicion{campos_editables: []}, _contexto) do
+    {:ok, Ecto.Changeset.change(registro)}
+  end
+
+  defp construir_changeset_transicion(registro, %Transicion{campos_editables: editables}, contexto) do
+    schema_mod = registro.__struct__
+    catalogo = schema_mod.__schema__(:source)
+    todos_los_campos = catalogo |> MetaSchemaContext.listar_detalles() |> Enum.map(& &1.schema_context_field)
+
+    changeset =
+      registro
+      |> schema_mod.changeset(contexto)
+      |> rechazar_no_editables_transicion(contexto, todos_los_campos, editables)
+
+    if changeset.valid?, do: {:ok, changeset}, else: {:error, changeset}
+  end
+
+  defp rechazar_no_editables_transicion(changeset, contexto, todos_los_campos, editables) do
+    editables_set = MapSet.new(editables)
+    protegidos = ["estado_id" | todos_los_campos]
+
+    contexto
+    |> Map.keys()
+    |> Enum.map(&to_string/1)
+    |> Enum.filter(&(&1 in protegidos and &1 not in editables_set))
+    |> Enum.reduce(changeset, fn campo, cs ->
+      Ecto.Changeset.add_error(cs, String.to_existing_atom(campo), "no editable en esta transición")
+    end)
   end
 
   @doc """
@@ -370,9 +414,14 @@ defmodule MetadataApp.MetaStateEngine do
 
   # --- Pasos 3-5a: núcleo transaccional --------------------------------------
 
-  defp ejecutar_nucleo(registro, header, transicion, contexto) do
+  # `changeset` trae los cambios de campo YA validados y restringidos a
+  # campos_editables (vacío si la transición no tiene ninguno) —
+  # construir_changeset_transicion/3 lo arma antes de llegar acá.
+  defp ejecutar_nucleo(changeset, header, transicion, contexto) do
+    registro = changeset.data
     modulo = registro.__struct__
     estado_leido = registro.estado_id
+    cambios_campos = Keyword.new(changeset.changes)
 
     multi =
       Multi.new()
@@ -382,7 +431,8 @@ defmodule MetadataApp.MetaStateEngine do
           modulo,
           registro.id,
           estado_leido,
-          transicion.estado_destino_id
+          transicion.estado_destino_id,
+          cambios_campos
         )
       end)
       |> Multi.insert(:evento, fn _changes ->
@@ -397,7 +447,7 @@ defmodule MetadataApp.MetaStateEngine do
           insert_guid: generar_guid()
         })
       end)
-      |> agregar_postcondicion(transicion, registro, contexto)
+      |> agregar_postcondicion(transicion, modulo, registro.id, contexto)
 
     case Repo.transaction(multi) do
       {:ok, _cambios} ->
@@ -412,24 +462,29 @@ defmodule MetadataApp.MetaStateEngine do
   end
 
   # Bloqueo optimista: el UPDATE solo pega si el estado sigue siendo el que
-  # leímos en el Paso 1. Si otra transición ya corrió en el medio, filas
-  # afectadas = 0 y abortamos todo el Multi.
-  defp actualizar_estado_con_lock(repo, modulo, id, estado_leido, estado_destino_id) do
+  # leímos en el Paso 1 — si otra transición ya corrió en el medio, filas
+  # afectadas = 0 y abortamos todo el Multi. `cambios_campos` (agregado
+  # 2026-07-21) viaja en el mismo SET que estado_id — un único UPDATE
+  # atómico, no dos pasos separados.
+  defp actualizar_estado_con_lock(repo, modulo, id, estado_leido, estado_destino_id, cambios_campos) do
     query = from r in modulo, where: r.id == ^id and r.estado_id == ^estado_leido
+    set = [estado_id: estado_destino_id] ++ cambios_campos
 
-    case repo.update_all(query, set: [estado_id: estado_destino_id]) do
+    case repo.update_all(query, set: set) do
       {1, _} -> {:ok, :actualizado}
       {0, _} -> {:error, :conflicto_concurrencia}
     end
   end
 
-  # Variante con `registro` por closure (no por Multi context): acá el
-  # registro se leyó en el Paso 1, ANTES del cambio de estado — mismo
-  # comportamiento que ya tenía el mecanismo viejo, no se re-lee adentro
-  # del Multi.
-  defp agregar_postcondicion(multi, transicion, registro, contexto) do
+  # Re-lee el registro YA actualizado (a diferencia de antes de 2026-07-21,
+  # que pasaba el struct pre-transición por closure): con campos_editables
+  # aplicándose en esta misma transición, POST tiene que ver los valores
+  # nuevos, no los viejos — mismo criterio que ya usaba
+  # ejecutar_nucleo_editar/3 para el self-loop "guardar".
+  defp agregar_postcondicion(multi, transicion, modulo, id, contexto) do
     Multi.run(multi, :post, fn repo, _cambios ->
-      Reglas.ejecutar_post(transicion.accion, registro, contexto, repo)
+      registro_actualizado = repo.get!(modulo, id)
+      Reglas.ejecutar_post(transicion.accion, registro_actualizado, contexto, repo)
     end)
   end
 

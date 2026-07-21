@@ -1,15 +1,15 @@
-defmodule MetadataApp.MetaBusinessProcess.Reglas.PtyCanales.Pre do
+defmodule MetadataApp.MetaBusinessProcess.Reglas.PtySegmentos.Pre do
   @behaviour MetadataApp.MetaStateEngine.ReglaPre
 
   @impl true
   def evaluar(accion, _registro, _contexto) do
     case accion do
-      "nuevo" ->
-        # ESCRIBA SU CODIGO AQUÍ
+      "alta" ->
+
         :ok
 
-      "registrar" ->
-        # ESCRIBA SU CODIGO AQUÍ
+      "guardar" ->
+
         :ok
 
       _ -> :ok

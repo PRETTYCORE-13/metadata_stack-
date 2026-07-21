@@ -1,26 +1,14 @@
-defmodule MetadataApp.MetaBusinessProcess.Reglas.PtyClientes.Pre do
+defmodule MetadataApp.MetaBusinessProcess.Reglas.PtyMarcas.Pre do
   @behaviour MetadataApp.MetaStateEngine.ReglaPre
 
   @impl true
   def evaluar(accion, _registro, _contexto) do
     case accion do
-      "activar" ->
-
-        :ok
-
-      "calificar" ->
-
-        :ok
-
-      "dar_de_baja" ->
+      "alta" ->
 
         :ok
 
       "guardar" ->
-
-        :ok
-
-      "reactivar" ->
 
         :ok
 

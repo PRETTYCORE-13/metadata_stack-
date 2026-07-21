@@ -628,58 +628,36 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # separado de cargar_motor/1 vía reglas_mensajes, así un mensaje de
   # éxito/error no se pierde en el siguiente recálculo.
 
-  # Un solo evento/form para PRE y POST juntos: un solo submit trae
-  # codigo_pre Y codigo_post, y la MISMA acción se intenta en los dos por
-  # separado. "validar" solo parsea, nunca toca la base.
-  def handle_event("reglas_accion", %{"accion" => accion} = params, socket) when accion in ~w(validar guardar compilar publicar) do
+  # Un solo botón "Compilar" (retirados Validar sintaxis/Guardar/Publicar
+  # como acciones separadas — a pedido explícito, no aportaban nada que
+  # "Compilar" no hiciera ya): valida sintaxis, si es válida guarda Y
+  # compila; si no es válida, no guarda nada y avisa el error. "Publicar"
+  # ya no vive acá — el commit real de las reglas va con
+  # `mix motor.publicar <catalogo>` (que ya incluye la carpeta de reglas
+  # completa) o el flujo normal de git+CI/CD, no un botón aparte en esta
+  # pantalla. Un solo submit trae codigo_pre Y codigo_post, cada uno se
+  # procesa por separado.
+  def handle_event("reglas_compilar", params, socket) do
     codigos = %{"pre" => params["codigo_pre"] || "", "post" => params["codigo_post"] || ""}
 
     {socket, recargar?} =
       Enum.reduce(~w(pre post), {socket, false}, fn tipo, {socket, recargar_acc?} ->
-        {socket, recargar?} = aplicar_reglas_accion(socket, tipo, accion, codigos[tipo])
+        {socket, recargar?} = validar_guardar_y_compilar(socket, tipo, codigos[tipo])
         {socket, recargar_acc? or recargar?}
       end)
 
     {:noreply, if(recargar?, do: cargar_motor(socket), else: socket)}
   end
 
-  defp aplicar_reglas_accion(socket, tipo, "validar", codigo) do
-    case MetaReglasCodigo.validar_sintaxis(codigo) do
-      :ok -> {put_reglas_mensaje(socket, tipo, {:info, "Sintaxis correcta."}), false}
-      {:error, motivo} -> {put_reglas_mensaje(socket, tipo, {:error, motivo}), false}
-    end
-  end
-
-  defp aplicar_reglas_accion(socket, tipo, "guardar", codigo) do
-    case MetaReglasCodigo.guardar(socket.assigns.header, tipo, codigo) do
-      {:ok, _fila} -> {put_reglas_mensaje(socket, tipo, {:info, "Guardado."}), true}
-      {:error, motivo} -> {put_reglas_mensaje(socket, tipo, {:error, "No se pudo guardar: #{inspect(motivo)}"}), false}
-    end
-  end
-
-  # compilar/publicar operan sobre el código YA GUARDADO (ver
-  # MetaReglasCodigo.compilar/2) — si el cuadro de texto tiene cambios sin
-  # guardar, avisar en vez de compilar algo distinto a lo que el usuario
-  # está mirando.
-  defp aplicar_reglas_accion(socket, tipo, accion, codigo) when accion in ~w(compilar publicar) do
-    fila = MetaReglasCodigo.obtener(socket.assigns.header.id, tipo)
-
-    cond do
-      fila != nil and codigo != fila.codigo_fuente ->
-        {put_reglas_mensaje(socket, tipo, {:error, "Guardá los cambios antes de #{accion} — usa el código ya guardado, no el del cuadro de texto."}), false}
-
-      accion == "compilar" ->
-        case MetaReglasCodigo.compilar(socket.assigns.header, tipo) do
-          {:ok, modulo} -> {put_reglas_mensaje(socket, tipo, {:info, "Compilado: #{inspect(modulo)}."}), true}
-          {:error, motivo} -> {put_reglas_mensaje(socket, tipo, {:error, motivo}), false}
-        end
-
-      accion == "publicar" ->
-        case MetaReglasCodigo.publicar(socket.assigns.header, tipo) do
-          :ok -> {put_reglas_mensaje(socket, tipo, {:info, "Publicado — commit local creado (el push queda manual)."}), true}
-          {:ok, :sin_cambios} -> {put_reglas_mensaje(socket, tipo, {:info, "No había cambios para publicar."}), false}
-          {:error, motivo} -> {put_reglas_mensaje(socket, tipo, {:error, motivo}), false}
-        end
+  defp validar_guardar_y_compilar(socket, tipo, codigo) do
+    with :ok <- MetaReglasCodigo.validar_sintaxis(codigo),
+         {:ok, _fila} <- MetaReglasCodigo.guardar(socket.assigns.header, tipo, codigo) do
+      case MetaReglasCodigo.compilar(socket.assigns.header, tipo) do
+        {:ok, modulo} -> {put_reglas_mensaje(socket, tipo, {:info, "Guardado y compilado: #{inspect(modulo)}."}), true}
+        {:error, motivo} -> {put_reglas_mensaje(socket, tipo, {:error, "Se guardó, pero no compiló: #{motivo}"}), true}
+      end
+    else
+      {:error, motivo} -> {put_reglas_mensaje(socket, tipo, {:error, "Error de sintaxis: #{motivo}"}), false}
     end
   end
 
@@ -772,7 +750,21 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  defp json_pretty(dato), do: Jason.encode!(dato, pretty: true)
+  # Un Map chico de Elixir NO conserva el orden en que se escribió en el
+  # código — Jason.encode!/2 itera el orden interno del VM (ninguna
+  # garantía, no es alfabético ni de inserción, se verificó a mano). Para
+  # que "id" salga primero de verdad en los ejemplos de esta pestaña, hay
+  # que forzarlo con Jason.OrderedObject — recursivo porque hay mapas
+  # anidados (ej. {"data": {"id": ..., ...}} o listas de registros).
+  defp json_pretty(dato), do: dato |> id_primero() |> Jason.encode!(pretty: true)
+
+  defp id_primero(mapa) when is_map(mapa) do
+    {con_id, resto} = Enum.split_with(mapa, fn {k, _v} -> to_string(k) == "id" end)
+    Jason.OrderedObject.new(Enum.map(con_id ++ resto, fn {k, v} -> {k, id_primero(v)} end))
+  end
+
+  defp id_primero(lista) when is_list(lista), do: Enum.map(lista, &id_primero/1)
+  defp id_primero(valor), do: valor
 
   # --- Render ------------------------------------------------------------------
 
@@ -788,13 +780,19 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     ~H"""
     <div class="max-w-7xl mx-auto p-6 text-xs font-sans space-y-4">
       <div class="flex items-start justify-between gap-4">
-        <div>
-          <h1 class="text-lg font-bold text-gray-900">{@header.schema_context_label}</h1>
-          <p class="mt-0.5 text-gray-500">
-            <span class="font-mono">{@header.schema_context_name}</span>
-            <span class="mx-1.5 text-gray-300">·</span>
-            <span class="font-mono">{@header.schema_context_nav}</span>
-          </p>
+        <div class="flex items-start gap-2">
+          <.link navigate={~p"/sysadmin/bc-list"} title="Volver al listado de BC"
+            class="mt-0.5 w-7 h-7 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors shrink-0">
+            <span class="material-symbols-outlined" style="font-size: 18px">arrow_back</span>
+          </.link>
+          <div>
+            <h1 class="text-lg font-bold text-gray-900">{@header.schema_context_label}</h1>
+            <p class="mt-0.5 text-gray-500">
+              <span class="font-mono">{@header.schema_context_name}</span>
+              <span class="mx-1.5 text-gray-300">·</span>
+              <span class="font-mono">{@header.schema_context_nav}</span>
+            </p>
+          </div>
         </div>
         <div class="shrink-0 flex items-start gap-2">
           <div :if={@compilar_disponible} class="flex flex-col items-center">
@@ -860,7 +858,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     alias_por_id = estados |> Enum.with_index(1) |> Map.new(fn {e, i} -> {e.id, "e#{i}"} end)
 
     declaraciones =
-      Enum.map(estados, fn e -> ~s(    state "#{e.id} - #{escapar_mermaid(e.nombre)}" as #{Map.fetch!(alias_por_id, e.id)}) end)
+      Enum.map(estados, fn e -> ~s(    state "#{e.orden} - #{escapar_mermaid(e.nombre)}" as #{Map.fetch!(alias_por_id, e.id)}) end)
 
     iniciales =
       estados
@@ -1298,33 +1296,26 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   attr :reglas_mensajes, :map, required: true
   attr :compilar_disponible, :boolean, required: true
 
-  # Un solo <form> envuelve los dos textareas (PRE y POST) y una sola barra
-  # de 4 botones arriba — sin candado (retirado 2026-07-21): las reglas
-  # quedan siempre editables por cualquiera hasta que exista
-  # autenticación de verdad.
+  # Un solo <form> envuelve los dos textareas (PRE y POST) y un solo botón
+  # "Compilar" — retirados Validar sintaxis/Guardar/Publicar como acciones
+  # separadas a pedido explícito (ver validar_guardar_y_compilar/3).
+  # Compilar solo existe en dev/test; sin eso no hay forma de que editar
+  # acá sirva de algo (nada se compila en un release de producción), así
+  # que ahí el bloque queda de solo lectura con una nota.
   defp panel_reglas(assigns) do
     ~H"""
     <div class="space-y-4">
-      <form phx-submit="reglas_accion" class="space-y-4">
-        <div class="flex items-center gap-2 border border-gray-200 rounded-lg p-2 bg-gray-50">
-          <span class="text-gray-500 mr-1">Acciones (aplican a PRE y POST):</span>
-          <button type="submit" name="accion" value="validar"
-            class="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 font-semibold hover:bg-gray-100">
-            Validar sintaxis
+      <form phx-submit="reglas_compilar" class="space-y-4">
+        <div :if={@compilar_disponible} class="flex items-center gap-2 border border-gray-200 rounded-lg p-2 bg-gray-50">
+          <span class="text-gray-500 mr-1">Aplica a PRE y POST:</span>
+          <button type="submit" class="px-3 py-1.5 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700">
+            Compilar
           </button>
-          <button type="submit" name="accion" value="guardar"
-            class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">
-            Guardar
-          </button>
-          <button :if={@compilar_disponible} type="submit" name="accion" value="compilar"
-            class="px-3 py-1.5 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700">
-            Compilar (dev)
-          </button>
-          <button type="submit" name="accion" value="publicar"
-            class="px-3 py-1.5 rounded-lg bg-gray-900 text-white font-semibold hover:bg-black">
-            Publicar
-          </button>
+          <span class="text-gray-400">Valida sintaxis, guarda y compila — si hay error, no guarda nada.</span>
         </div>
+        <p :if={!@compilar_disponible} class="text-gray-500 border border-gray-200 rounded-lg p-2 bg-gray-50">
+          Edición solo disponible en dev/test — en producción se llega a través de git + release, no desde esta pantalla.
+        </p>
 
         <.tabs_motor id="reglas" tabs={[
           %{key: "pre", label: "PRECONDICIONES"},
@@ -1385,8 +1376,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           <span :if={@sin_compilar} class="text-blue-600">Guardado sin compilar — el motor corre la versión anterior</span>
         </div>
 
-        <textarea name={@nombre_campo} rows="14" spellcheck="false"
-          class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono text-[11px] leading-relaxed bg-white text-gray-900">{@codigo}</textarea>
+        <textarea name={@nombre_campo} readonly={!@compilar_disponible} rows="14" spellcheck="false" class={[
+          "w-full border rounded-lg px-2 py-1.5 font-mono text-[11px] leading-relaxed",
+          @compilar_disponible && "border-gray-300 bg-white text-gray-900",
+          !@compilar_disponible && "border-gray-200 bg-gray-50 text-gray-500"
+        ]}>{@codigo}</textarea>
       </div>
     </div>
     """
@@ -1397,38 +1391,40 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   attr :estados, :list, required: true
   attr :transiciones, :list, required: true
 
-  # PATCH NO es un update libre — CatalogoGenerico.actualizar/2 solo deja
-  # tocar los campos que estén en la whitelist de una transición "guardar"
-  # (self-loop: mismo estado de origen y destino) configurada para el
-  # estado ACTUAL del registro. Sin ese self-loop, campos_editables/2
-  # devuelve [] y CADA campo que mandes se rechaza — no hay "todo o nada",
-  # se rechaza siempre. Documentar esto con datos reales del catálogo en
-  # vez de un ejemplo genérico que siempre "funciona" evita el malentendido
-  # de que PATCH puentea al autómata.
+  # Sin PATCH/DELETE (retirados 2026-07-21 a pedido explícito): la mayoría
+  # de la carga real es por lotes vía POST, y editar campos ahora es
+  # responsabilidad de las transiciones (ver ejecutar_transicion/3en
+  # MetaStateEngine, extendido el mismo día para aplicar campos_editables
+  # junto con el cambio de estado, un solo POST). Se documenta acá el
+  # descubrimiento (GET) y CADA transición real configurada, con su
+  # payload si tiene campos editables — nunca un ejemplo genérico que
+  # "funciona siempre" y esconde que el 422 depende del estado actual.
   defp panel_api(assigns) do
     tabla = assigns.header.schema_context_name
     registro = ejemplo_registro(assigns.campos, assigns.estados)
     meta_campos = Enum.map(assigns.campos, &%{"schema_context_field" => &1.schema_context_field, "schema_context_properties" => &1.schema_context_properties})
     estados_por_id = Map.new(assigns.estados, &{&1.id, &1.nombre})
 
-    transiciones_guardar =
-      Enum.filter(assigns.transiciones, &(&1.accion == "guardar" and &1.estado_origen_id == &1.estado_destino_id))
-
-    transicion_editable = Enum.find(transiciones_guardar, &(&1.campos_editables != []))
-
-    {payload_editar, patch_status, patch_respuesta, patch_nota} =
-      ejemplo_patch(assigns.campos, registro, transicion_editable, transiciones_guardar, estados_por_id, tabla)
+    # "alta" (estado_origen_id: nil) NUNCA se llama vía POST .../transiciones/
+    # :accion — ese endpoint busca la transición por el estado_id de un
+    # registro que YA EXISTE (resolver_transicion/3 en MetaStateEngine), y
+    # un registro recién creado nunca tiene estado_id: nil. "alta" corre
+    # solo, automáticamente, DENTRO del POST /api/:tabla de siempre (ver
+    # CatalogoGenerico.crear/2) — documentarla como si tuviera su propio
+    # endpoint /:id/transiciones/alta describe un request que siempre
+    # devuelve error, nunca funciona.
+    {transiciones_alta, transiciones_normales} = Enum.split_with(assigns.transiciones, &is_nil(&1.estado_origen_id))
+    transiciones_doc = Enum.map(transiciones_normales, &ejemplo_transicion(&1, assigns.campos, registro, estados_por_id, tabla))
 
     assigns =
       assigns
       |> assign(:tabla, tabla)
       |> assign(:tiene_estados, assigns.estados != [])
+      |> assign(:tiene_transiciones, transiciones_normales != [])
+      |> assign(:transiciones_alta, transiciones_alta)
+      |> assign(:transiciones_doc, transiciones_doc)
       |> assign(:ejemplo_wrap, "{\"#{tabla}\": {...}}")
       |> assign(:payload_crear, ejemplo_payload(assigns.campos) |> json_pretty())
-      |> assign(:payload_editar, payload_editar |> json_pretty())
-      |> assign(:patch_status, patch_status)
-      |> assign(:patch_respuesta, patch_respuesta |> json_pretty())
-      |> assign(:patch_nota, patch_nota)
       |> assign(
         :respuesta_lista,
         %{
@@ -1440,18 +1436,28 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       )
       |> assign(:respuesta_uno, %{"meta_campos" => meta_campos, "data" => registro} |> json_pretty())
       |> assign(:respuesta_creado, %{"data" => registro} |> json_pretty())
+      |> assign(:payload_crear_lote, %{tabla => [ejemplo_payload(assigns.campos), ejemplo_payload(assigns.campos)]} |> json_pretty())
+      |> assign(:respuesta_creado_lote, %{"data" => [registro, Map.put(registro, "id", 2)]} |> json_pretty())
+      |> assign(:respuesta_transiciones, ejemplo_transiciones_disponibles(assigns.transiciones) |> json_pretty())
 
     ~H"""
     <div class="space-y-4">
       <div class="bg-blue-50 border border-blue-200 text-blue-800 rounded-lg px-3 py-2">
         <p>
           Mismo endpoint genérico para cualquier catálogo — lo único que cambia entre uno y otro es la tabla y sus
-          campos. El body de POST/PATCH acepta los campos sueltos (como abajo) o envueltos bajo la clave del
-          catálogo, <span class="font-mono">{@ejemplo_wrap}</span> — las dos formas funcionan.
+          campos. El body de POST acepta los campos sueltos (como abajo) o envueltos bajo la clave del catálogo,
+          <span class="font-mono">{@ejemplo_wrap}</span> — las dos formas funcionan.
+        </p>
+        <p class="mt-1">
+          <span class="font-mono">POST /api/{@tabla}</span> también acepta un <strong>lote</strong>: si el body es
+          una lista en vez de un objeto (envuelta bajo la clave del catálogo, como en el ejemplo de abajo), crea
+          todos los registros en un solo request — pensado para cargas de más de un registro, el caso más común en
+          la práctica.
         </p>
         <p :if={@tiene_estados} class="mt-1">
-          <span class="font-mono">estado_id</span> nunca se manda en el body de POST/PATCH — el estado solo cambia
-          con <span class="font-mono">POST /api/{@tabla}/:id/transiciones/:accion</span>.
+          <span class="font-mono">estado_id</span> nunca se manda en el body de POST — el estado solo cambia con
+          <span class="font-mono">POST /api/{@tabla}/:id/transiciones/:accion</span>. Si esa transición tiene campos
+          editables configurados, van en el mismo body y se aplican junto con el cambio de estado.
         </p>
       </div>
 
@@ -1464,60 +1470,86 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       <.tarjeta_endpoint metodo="POST" url={"/api/#{@tabla}"} descripcion="Crea un registro nuevo."
         body={@payload_crear} respuesta_status="201 Created" respuesta={@respuesta_creado} />
 
-      <.tarjeta_endpoint metodo="PATCH" url={"/api/#{@tabla}/:id"} descripcion={@patch_nota}
-        body={@payload_editar} respuesta_status={@patch_status} respuesta={@patch_respuesta} />
+      <.tarjeta_endpoint metodo="POST" url={"/api/#{@tabla}"} descripcion="Crea varios registros en un solo request (body = lista)."
+        body={@payload_crear_lote} respuesta_status="201 Created" respuesta={@respuesta_creado_lote} />
 
-      <.tarjeta_endpoint metodo="DELETE" url={"/api/#{@tabla}/:id"} descripcion="Borrado lógico (soft-delete)."
-        respuesta_status="204 No Content (sin body)" />
+      <div :if={@transiciones_alta != []} class="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2">
+        <p>
+          <span :for={t <- @transiciones_alta} class="font-mono">"{t.accion}"</span>
+          {if length(@transiciones_alta) == 1, do: "es la transición de alta", else: "son transiciones de alta"} de este
+          catálogo (arranca cada registro nuevo en su estado inicial) — corre <strong>automáticamente</strong> dentro
+          del <span class="font-mono">POST /api/{@tabla}</span> de arriba, con los campos del body de siempre. No
+          existe <span class="font-mono">POST /:id/transiciones/{Enum.map_join(@transiciones_alta, "|", & &1.accion)}</span>
+          como endpoint aparte — un registro recién creado nunca tiene <span class="font-mono">estado_id: nil</span>
+          para que esa combinación resuelva.
+        </p>
+      </div>
+
+      <.tarjeta_endpoint :if={@tiene_transiciones} metodo="GET" url={"/api/#{@tabla}/:id/transiciones"}
+        descripcion="Transiciones disponibles desde el estado ACTUAL de ese registro puntual, con precondiciones ya evaluadas."
+        respuesta_status="200 OK" respuesta={@respuesta_transiciones} />
+
+      <.tarjeta_endpoint :for={t <- @transiciones_doc} metodo="POST" url={t.url} descripcion={t.descripcion}
+        body={t.body} respuesta_status="200 OK" respuesta={t.respuesta} />
+
+      <p :if={!@tiene_transiciones} class="text-gray-400">Este catálogo todavía no tiene transiciones definidas.</p>
     </div>
     """
   end
 
-  # Ningún estado tiene una transición "guardar" (self-loop) configurada:
-  # PATCH rechaza cualquier campo que mandes, siempre — 422 real, no un
-  # ejemplo que "funciona" y engaña sobre el comportamiento actual.
-  defp ejemplo_patch(campos, _registro, nil, [], _estados_por_id, _tabla) do
-    campo = List.first(campos)
-    payload = if campo, do: %{campo.schema_context_field => valor_ejemplo_campo(campo.schema_context_properties)}, else: %{}
-    errores = Map.new(payload, fn {campo, _valor} -> {campo, ["no editable en el estado actual"]} end)
-
-    nota =
-      "Este catálogo no tiene ninguna transición \"guardar\" (self-loop) configurada en ningún estado — PATCH " <>
-        "rechaza cualquier campo que mandes, sin importar cuál. Para habilitar edición directa hay que agregar una " <>
-        "transición con acción \"guardar\", mismo estado de origen y destino, y elegir ahí qué campos quedan editables."
-
-    {payload, "422 Unprocessable Entity", %{"errors" => errores}, nota}
+  # Ejemplo genérico (independiente de cualquier registro real) de lo que
+  # devuelve GET .../transiciones — el real depende del estado en que esté
+  # ESE registro puntual (evalúa precondiciones en vivo), acá solo se
+  # ilustra la forma con las transiciones configuradas.
+  defp ejemplo_transiciones_disponibles(transiciones) do
+    %{"data" => Enum.map(transiciones, &%{"accion" => &1.accion, "etiqueta" => &1.etiqueta, "disponible" => true, "razones" => []})}
   end
 
-  # Hay transiciones "guardar" pero ninguna con campos editables — existen
-  # solo para correr reglas pre/post al guardar (ver MetaStateEngine), no
-  # para exponer ningún campo. Mismo rechazo que el caso sin self-loop.
-  defp ejemplo_patch(campos, registro, nil, transiciones_guardar, estados_por_id, tabla) do
-    {payload, status, respuesta, _nota} = ejemplo_patch(campos, registro, nil, [], estados_por_id, tabla)
-    estados_nombres = transiciones_guardar |> Enum.map(&Map.get(estados_por_id, &1.estado_origen_id)) |> Enum.join(", ")
-    nota = "Hay transición \"guardar\" en #{estados_nombres}, pero sin campos editables configurados — solo corre reglas, no deja tocar nada. PATCH sigue rechazando cualquier campo."
-    {payload, status, respuesta, nota}
+  defp ejemplo_transicion(transicion, campos, registro, estados_por_id, tabla) do
+    origen = Map.get(estados_por_id, transicion.estado_origen_id, "— (alta)")
+    destino = Map.get(estados_por_id, transicion.estado_destino_id, "?")
+
+    {body, descripcion} =
+      case transicion.campos_editables do
+        [] ->
+          {%{} |> json_pretty(), "\"#{transicion.accion}\": #{origen} → #{destino}. No acepta campos, solo cambia el estado."}
+
+        editables ->
+          campos_por_nombre = Map.new(campos, &{&1.schema_context_field, &1})
+
+          payload =
+            Map.new(editables, fn nombre ->
+              case Map.get(campos_por_nombre, nombre) do
+                nil -> {nombre, "texto"}
+                campo -> {nombre, valor_ejemplo_campo(campo.schema_context_properties)}
+              end
+            end)
+
+          {payload |> json_pretty(),
+           "\"#{transicion.accion}\": #{origen} → #{destino}. Campos editables en esta transición: #{Enum.join(editables, ", ")}."}
+      end
+
+    registro_tras_transicion =
+      registro
+      |> Map.put("estado_id", transicion.estado_destino_id)
+      |> Map.put("estado_nombre", destino)
+      |> Map.merge(Map.new(transicion.campos_editables, &{&1, valor_ejemplo_campo_por_nombre(campos, &1)}))
+
+    respuesta = %{"data" => registro_tras_transicion} |> json_pretty()
+
+    %{
+      url: "/api/#{tabla}/:id/transiciones/#{transicion.accion}",
+      descripcion: descripcion,
+      body: body,
+      respuesta: respuesta
+    }
   end
 
-  defp ejemplo_patch(campos, registro, transicion, _transiciones_guardar, estados_por_id, _tabla) do
-    campos_por_nombre = Map.new(campos, &{&1.schema_context_field, &1})
-
-    payload =
-      Map.new(transicion.campos_editables, fn nombre ->
-        case Map.get(campos_por_nombre, nombre) do
-          nil -> {nombre, "texto"}
-          campo -> {nombre, valor_ejemplo_campo(campo.schema_context_properties)}
-        end
-      end)
-
-    respuesta = %{"data" => Map.merge(registro, payload)}
-    nombre_estado = Map.get(estados_por_id, transicion.estado_origen_id)
-
-    nota =
-      "Solo funciona si el registro está en el estado \"#{nombre_estado}\" — ahí los campos editables son: " <>
-        "#{Enum.join(transicion.campos_editables, ", ")}. En cualquier otro estado (o con otro campo), PATCH lo rechaza."
-
-    {payload, "200 OK", respuesta, nota}
+  defp valor_ejemplo_campo_por_nombre(campos, nombre) do
+    case Enum.find(campos, &(&1.schema_context_field == nombre)) do
+      nil -> "texto"
+      campo -> valor_ejemplo_campo(campo.schema_context_properties)
+    end
   end
 
   attr :metodo, :string, required: true

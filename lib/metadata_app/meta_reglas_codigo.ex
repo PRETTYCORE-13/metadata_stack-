@@ -9,12 +9,15 @@ defmodule MetadataApp.MetaReglasCodigo do
   es válido — `MetaStateEngine.Reglas` trata "no existe el módulo
   compilado" como "no hace nada".
 
-  Ciclo completo: Validar sintaxis (`validar_sintaxis/1`, solo parseo) →
-  Guardar (`guardar/4`, solo persiste texto) → Compilar (`compilar/2`,
-  SOLO dev/test — mismo guard que `generar_catalogos_en_caliente`, nunca
-  corre en un release de producción) → Publicar (`publicar/2`, `git
-  add`+`git commit` LOCAL, nunca `git push` — checkpoint humano antes de
-  tocar `origin/main` compartido, mismo criterio que `mix motor.publicar`).
+  Ciclo (UI en BcMotorLive, un solo botón "Compilar"): valida sintaxis
+  (`validar_sintaxis/1`) → si es válida, guarda (`guardar/4`) → compila
+  (`compilar/2`, SOLO dev/test — mismo guard que
+  `generar_catalogos_en_caliente`, nunca corre en un release de
+  producción). Si la sintaxis tiene error, no guarda nada. Sin botón
+  "Publicar" propio (retirado 2026-07-21 a pedido explícito — "no tiene
+  caso, publicar será con el pipeline"): el commit real de una carpeta de
+  reglas va con `mix motor.publicar <catalogo>` (que ya la incluye) o el
+  flujo normal de git+CI/CD, no una acción aparte de este módulo.
 
   Sin candado de edición (retirado 2026-07-21 a pedido explícito): sin
   login real todavía, un candado autodeclarado por nombre no era más que
@@ -186,9 +189,11 @@ defmodule MetadataApp.MetaReglasCodigo do
     end
   end
 
+  @doc "Carpeta de reglas en disco de `catalogo` — contiene a lo sumo `pre.ex`/`post.ex`."
+  def ruta_disco_catalogo(catalogo), do: Path.join(["lib", "metadata_app", "meta_business_process", "reglas", catalogo])
+
   @doc "Ruta del `.ex` real de `catalogo`/`tipo` — un archivo por catálogo (ya no uno por transición)."
-  def ruta_disco(catalogo, tipo) when tipo in @tipos,
-    do: Path.join(["lib", "metadata_app", "meta_business_process", "reglas", catalogo, "#{tipo}.ex"])
+  def ruta_disco(catalogo, tipo) when tipo in @tipos, do: Path.join(ruta_disco_catalogo(catalogo), "#{tipo}.ex")
 
   # Guardar (persistir texto) y Compilar (dejarlo corriendo de verdad) son
   # pasos separados a propósito — eso significa que puede haber deriva: el
@@ -288,39 +293,6 @@ defmodule MetadataApp.MetaReglasCodigo do
     if function_exported?(modulo, :ejecutar, 4),
       do: {:ok, modulo},
       else: {:error, "#{inspect(modulo)} compiló pero no implementa ejecutar/4"}
-  end
-
-  @doc """
-  Compila (mismo chequeo que `compilar/2`) y, si sale bien, `git add` +
-  `git commit` LOCAL del archivo — nunca `git push`. Mismo criterio que
-  `mix motor.publicar`: publicar acá deja el commit listo, pero mandarlo a
-  `origin` compartido sigue siendo una acción humana explícita.
-  """
-  def publicar(header, tipo) when tipo in @tipos do
-    with {:ok, _modulo} <- compilar(header, tipo) do
-      ruta = ruta_disco(header.schema_context_name, tipo)
-      git_commit_archivo(ruta, "Reglas #{tipo} de #{header.schema_context_name}")
-    end
-  end
-
-  defp git_commit_archivo(ruta, mensaje) do
-    case System.cmd("git", ["add", ruta], cd: File.cwd!(), stderr_to_stdout: true) do
-      {_saida, 0} ->
-        case System.cmd("git", ["commit", "-m", mensaje, "--", ruta], cd: File.cwd!(), stderr_to_stdout: true) do
-          {_saida, 0} ->
-            :ok
-
-          {saida, _status} ->
-            if String.contains?(saida, "nothing to commit") do
-              {:ok, :sin_cambios}
-            else
-              {:error, "git commit falló: #{saida}"}
-            end
-        end
-
-      {saida, _status} ->
-        {:error, "git add falló: #{saida}"}
-    end
   end
 
   defp generar_guid do

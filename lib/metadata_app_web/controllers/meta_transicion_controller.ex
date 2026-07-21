@@ -49,13 +49,16 @@ defmodule MetadataAppWeb.MetaTransicionController do
     end
   end
 
+  # Sin :requiere (retirado junto con requiere_de/1 en el rediseño de
+  # reglas 2026-07-21 — MetaStateEngine.transiciones_disponibles/2 ya no
+  # lo genera). Bug real: este map literal seguía leyéndolo y crasheaba
+  # (KeyError) cada vez que alguien pegaba GET /:tabla/:id/transiciones.
   defp serializar_transicion(t) do
     %{
       accion: t.accion,
       etiqueta: t.etiqueta,
       disponible: t.disponible,
-      razones: t.razones,
-      requiere: t.requiere
+      razones: t.razones
     }
   end
 

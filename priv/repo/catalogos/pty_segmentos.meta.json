@@ -1,0 +1,23 @@
+{
+  "schema_context_label": "Catálogo de segmentos",
+  "schema_visible": true,
+  "schema_context_nav": "/alyconfig/segmentos",
+  "schema_context_name": "pty_segmentos",
+  "schema_context_type": 1,
+  "schema_set_permissions": null,
+  "schema_profiles": null,
+  "detalles": [
+    {
+      "schema_context_field": "pty_segmento_nombre",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Segmento",
+        "longitud": 15,
+        "opcional": false,
+        "orden": 1,
+        "tipo": "string",
+        "visible": true
+      }
+    }
+  ]
+}

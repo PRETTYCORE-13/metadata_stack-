@@ -1,0 +1,37 @@
+{
+  "estados": [
+    {
+      "color": "#40ed62",
+      "nombre": "Activo",
+      "icono": null,
+      "orden": 1,
+      "es_inicial": true,
+      "empresa_id": null
+    }
+  ],
+  "transiciones": [
+    {
+      "accion": "alta",
+      "etiqueta": "Nuevo",
+      "campos_editables": [
+        "pty_segmento_nombre"
+      ],
+      "reglas": [],
+      "empresa_id": null,
+      "estado_destino": "Activo",
+      "estado_origen": null
+    },
+    {
+      "accion": "guardar",
+      "etiqueta": "Guardar",
+      "campos_editables": [
+        "pty_segmento_nombre"
+      ],
+      "reglas": [],
+      "empresa_id": null,
+      "estado_destino": "Activo",
+      "estado_origen": "Activo"
+    }
+  ],
+  "catalogo": "pty_segmentos"
+}

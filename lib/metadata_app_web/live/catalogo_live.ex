@@ -364,6 +364,7 @@ defmodule MetadataAppWeb.CatalogoLive do
           <table class="min-w-full divide-y divide-gray-200 text-sm">
             <thead class="bg-gray-50">
               <tr>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">ID</th>
                 <%= for columna <- @columnas do %>
                   <th class={[
                     "px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide",
@@ -380,6 +381,7 @@ defmodule MetadataAppWeb.CatalogoLive do
             <tbody class="divide-y divide-gray-100">
               <%= for fila <- @filas do %>
                 <tr class="hover:bg-purple-50/60 transition-colors">
+                  <td class="px-4 py-1.5 text-xs text-gray-700">{fila.id}</td>
                   <%= for columna <- @columnas do %>
                     <td class={["px-4 py-1.5 text-xs text-gray-700", alineacion_columna(columna)]}>
                       {Map.get(fila, String.to_existing_atom(columna.schema_context_field))}
@@ -394,7 +396,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <tr>
                   <td
                     class="px-4 py-10 text-center text-gray-400 text-sm"
-                    colspan={length(@columnas) + if @mostrar_estado?, do: 1, else: 0}
+                    colspan={1 + length(@columnas) + if @mostrar_estado?, do: 1, else: 0}
                   >
                     Sin registros todavía
                   </td>
