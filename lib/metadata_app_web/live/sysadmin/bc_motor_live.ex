@@ -11,6 +11,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador}
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.MetaReglasCodigo
+  alias MetadataAppWeb.AdminNav
   alias Phoenix.LiveView.JS
 
   @menu [
@@ -157,6 +158,16 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     completitud.completo? and validacion.valido? and
       not MetaReglasCodigo.con_error_sintaxis?(header) and
       not MetaReglasCodigo.sin_compilar?(header)
+  end
+
+  # Bug real encontrado 2026-07-21: el botón de colapsar/expandir sidebar
+  # (en MenuLayout.sidebar/1) empuja "change_page" con %{"id" =>
+  # "toggle_sidebar"} — sin este handler, LiveView no tenía ninguna
+  # clausula que matcheara y la pantalla explotaba con solo tocar ese
+  # botón. Las demás pantallas admin (ej. BcListLive) ya delegaban a
+  # AdminNav.handle_nav/3, acá faltaba.
+  def handle_event("change_page", %{"id" => id}, socket) do
+    AdminNav.handle_nav(id, socket, socket.assigns.current_page)
   end
 
   # --- Encabezado: etiqueta/navegación/ícono ----------------------------------
