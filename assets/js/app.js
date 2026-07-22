@@ -201,6 +201,28 @@ const CopiarRuta = {
   },
 }
 
+// Copia el contenido de un <textarea> al portapapeles — usado en el editor
+// de reglas PRE/POST de BcMotorLive (panel_reglas), para poder trabajar la
+// regla en otro editor y volver a pegarla acá antes de "Compilar". Lee
+// .value del textarea en el momento del click (no al montar), así copia lo
+// que el usuario tiene tipeado ahora mismo, incluso si todavía no lo guardó.
+const CopiarTextarea = {
+  mounted() {
+    this.el.addEventListener("click", () => this.copiar())
+  },
+  copiar() {
+    const targetId = this.el.dataset.target
+    const textarea = targetId && document.getElementById(targetId)
+    if (!textarea) return
+    navigator.clipboard.writeText(textarea.value).then(() => {
+      const original = this.el.textContent
+      this.el.textContent = "Copiado"
+      clearTimeout(this._timeout)
+      this._timeout = setTimeout(() => { this.el.textContent = original }, 1200)
+    })
+  },
+}
+
 // Diagrama de estados del Motor (BcMotorLive) — Mermaid pesa ~3.5MB, así
 // que se carga on-demand (script inyectado dinámicamente) solo cuando este
 // hook monta, no en el bundle principal que se sirve en cada página.
@@ -243,7 +265,7 @@ const DiagramaMotor = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, CopiarRuta, DiagramaMotor},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, CopiarRuta, CopiarTextarea, DiagramaMotor},
 })
 
 // Show progress bar on live navigation and form submits

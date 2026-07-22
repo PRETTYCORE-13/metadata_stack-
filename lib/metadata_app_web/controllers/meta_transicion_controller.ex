@@ -5,9 +5,13 @@ defmodule MetadataAppWeb.MetaTransicionController do
   - `index/2`: Contrato 1 (descubrimiento) — transiciones disponibles desde
     el estado actual del registro, con precondiciones ya evaluadas.
   - `ejecutar/2`: Contrato 2 (ejecución) — corre
-    `MetadataApp.MetaStateEngine.ejecutar_transicion/3`; los desenlaces de error
+    `MetadataApp.MetaStateEngine.ejecutar_transicion/4`; los desenlaces de error
     del ciclo los traduce `MetadataAppWeb.FallbackController` a los códigos
-    HTTP de la tabla del spec.
+    HTTP de la tabla del spec. Catálogo Maestro-Detalle (Fase 2): el body
+    puede traer `"renglones": {"<catalogo_detalle>": [renglon_id, ...]}`
+    para mover renglones junto con el encabezado en la misma transición —
+    esa llave se saca de `contexto` antes de pasarlo, nunca llega como un
+    intento de editar un campo del header.
   """
 
   use MetadataAppWeb, :controller
@@ -33,9 +37,10 @@ defmodule MetadataAppWeb.MetaTransicionController do
   def ejecutar(conn, %{"tabla" => tabla, "id" => id, "accion" => accion} = params) do
     with {:ok, schema_mod} <- resolver(tabla) do
       registro = CatalogoGenerico.obtener!(schema_mod, id)
-      contexto = Map.drop(params, ["tabla", "id", "accion"])
+      renglones = Map.get(params, "renglones", %{})
+      contexto = Map.drop(params, ["tabla", "id", "accion", "renglones"])
 
-      with {:ok, actualizado} <- MetaStateEngine.ejecutar_transicion(registro, accion, contexto) do
+      with {:ok, actualizado} <- MetaStateEngine.ejecutar_transicion(registro, accion, contexto, renglones: renglones) do
         # Descubrimiento incluido desde el nuevo estado, para que el
         # frontend repinte los botones disponibles en un solo viaje.
         transiciones =

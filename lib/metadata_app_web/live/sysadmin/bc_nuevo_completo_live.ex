@@ -50,6 +50,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
      |> assign(:sidebar_open, false)
      |> assign(:carpetas, MetaSchemaContext.listar_carpetas_existentes())
      |> assign(:catalogos_referenciables, MetaSchemaContext.listar_catalogos_referenciables())
+     |> assign(:catalogos_maestro_candidatos, MetaSchemaContext.listar_catalogos_maestro_candidatos())
      |> assign(:iconos_sugeridos, @iconos_sugeridos)
      |> assign(:mensaje, nil)
      |> assign(:contexto_nav_error, nil)
@@ -94,7 +95,8 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       "icono" => "",
       "visible" => true,
       "es_transaccional" => false,
-      "codigo_trn" => ""
+      "codigo_trn" => "",
+      "encabezado_de" => ""
     })
     |> assign(:campos, [])
     |> assign(:estados, [])
@@ -175,11 +177,52 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     {:noreply, assign(socket, :campo_form, campo_form)}
   end
 
+  # Referencia (correcciones de compliance): nombre/etiqueta/opcional NUNCA
+  # vienen del form — se derivan del catálogo destino (@catalogos_referenciables,
+  # ya en memoria), siempre obligatoria. Mismo criterio que BcMotorLive.
+  def handle_event("guardar_campo", %{"tipo" => "referencia"} = params, socket) do
+    catalogo = params["catalogo"] || ""
+    nombre_actual = nombre_sistema_desde(socket.assigns.contexto["nombre"])
+
+    case catalogo do
+      "" ->
+        {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Elegí a qué catálogo apunta la referencia."))}
+
+      _catalogo ->
+        case Enum.find(socket.assigns.catalogos_referenciables, &(&1.nombre == catalogo)) do
+          nil ->
+            {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Ese catálogo destino ya no existe."))}
+
+          destino ->
+            nombre = "#{nombre_actual}_#{String.replace_prefix(catalogo, "pty_", "")}"
+
+            if Enum.any?(socket.assigns.campos, &(&1["nombre"] == nombre)) do
+              {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Ya hay un campo con ese nombre."))}
+            else
+              campo = %{
+                "nombre" => nombre,
+                "etiqueta" => destino.etiqueta,
+                "tipo" => "referencia",
+                "longitud" => "",
+                "precision" => "",
+                "escala" => "",
+                "catalogo" => catalogo,
+                "opcional" => false
+              }
+
+              {:noreply,
+               socket
+               |> update(:campos, &(&1 ++ [campo]))
+               |> assign(:campo_form, nil)}
+            end
+        end
+    end
+  end
+
   def handle_event("guardar_campo", params, socket) do
     nombre = String.trim(params["nombre"] || "")
     etiqueta = String.trim(params["etiqueta"] || "")
     tipo = params["tipo"] || "string"
-    catalogo = params["catalogo"] || ""
 
     cond do
       not Regex.match?(~r/^[a-z][a-z0-9_]{0,49}$/, nombre) ->
@@ -196,9 +239,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       Enum.any?(socket.assigns.campos, &(&1["nombre"] == nombre)) ->
         {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Ya hay un campo con ese nombre."))}
 
-      tipo == "referencia" and catalogo == "" ->
-        {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Elegí a qué catálogo apunta la referencia."))}
-
       true ->
         campo = %{
           "nombre" => nombre,
@@ -207,7 +247,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
           "longitud" => params["longitud"] || "",
           "precision" => params["precision"] || "",
           "escala" => params["escala"] || "",
-          "catalogo" => catalogo,
+          "catalogo" => "",
           "opcional" => params["opcional"] == "true"
         }
 
@@ -236,7 +276,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
          "orden" => to_string(length(socket.assigns.estados) + 1),
          "es_inicial" => socket.assigns.estados == [],
          "color" => "#7c3aed",
-         "icono" => "",
          "error" => nil
        })}
     else
@@ -246,10 +285,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
 
   def handle_event("cerrar_form_estado", _params, socket) do
     {:noreply, assign(socket, :estado_form, nil)}
-  end
-
-  def handle_event("elegir_icono_estado", %{"icono" => icono}, socket) do
-    {:noreply, update(socket, :estado_form, &Map.put(&1, "icono", icono))}
   end
 
   def handle_event("guardar_estado", params, socket) do
@@ -276,8 +311,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
           "nombre" => nombre,
           "orden" => params["orden"],
           "es_inicial" => es_inicial,
-          "color" => nil_si_vacio(params["color"]),
-          "icono" => nil_si_vacio(normalizar_icono(params["icono"]))
+          "color" => nil_si_vacio(params["color"])
         }
 
         {:noreply,
@@ -413,6 +447,8 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     nav = componer_nav(contexto["carpeta_padre"], contexto["nombre"])
     es_transaccional? = contexto["es_transaccional"] == true
 
+    encabezado_id = encabezado_id_desde_nombre(contexto["encabezado_de"])
+
     case validar_contexto(nombre_sistema, nav, contexto["etiqueta"], es_transaccional?, contexto["codigo_trn"] || "") do
       :ok ->
         attrs = %{
@@ -425,6 +461,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
             "schema_context_icono" => nil_si_vacio(contexto["icono"]),
             "schema_es_transaccional" => es_transaccional?,
             "codigo_trn" => if(es_transaccional?, do: contexto["codigo_trn"], else: nil),
+            "schema_encabezado_id" => encabezado_id,
             "detalles" => Enum.map(socket.assigns.campos, &detalle_attrs/1)
           },
           "estados" => socket.assigns.estados,
@@ -583,6 +620,19 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     |> String.slice(0, 4)
   end
 
+  # Catálogo Maestro-Detalle: el <select> manda el schema_context_name del
+  # maestro (string), acá se resuelve al id real que necesita
+  # schema_encabezado_id. "" u otro valor sin catálogo real = nil (no es
+  # detalle de nada), mismo criterio que nil_si_vacio/1 para otros campos.
+  defp encabezado_id_desde_nombre(nombre) when nombre in [nil, ""], do: nil
+
+  defp encabezado_id_desde_nombre(nombre) do
+    case MetaSchemaContext.obtener_header_por_nombre(nombre) do
+      nil -> nil
+      header -> header.id
+    end
+  end
+
   defp quitar_acentos(valor) do
     valor |> String.normalize(:nfd) |> String.replace(~r/\p{Mn}/u, "")
   end
@@ -602,7 +652,15 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   # recalculados client-side sobre lo que hay en memoria para dar feedback
   # en vivo antes de someterlo al servidor — la fuente de verdad real sigue
   # siendo la guarda del propio crear_proceso_completo/1.
-  defp completo?(campos, estados, transiciones) do
+  #
+  # Catálogo Maestro-Detalle: un catálogo marcado "Detalle de" no necesita
+  # estados/transiciones propias (ver validar_completo/3 en MetaEstadosAdmin
+  # para el motivo) — solo campos.
+  defp completo?(campos, _estados, _transiciones, encabezado_de) when encabezado_de not in [nil, ""] do
+    campos != []
+  end
+
+  defp completo?(campos, estados, transiciones, _encabezado_de) do
     campos != [] and estados != [] and tiene_alta_o_inicial?(estados, transiciones)
   end
 
@@ -623,7 +681,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       |> assign(:nav_preview, nav_preview)
       |> assign(:tipos_campo, @tipos_campo)
       |> assign(:diagrama, diagrama_mermaid_staged(assigns.estados, assigns.transiciones))
-      |> assign(:completo?, completo?(assigns.campos, assigns.estados, assigns.transiciones))
+      |> assign(:completo?, completo?(assigns.campos, assigns.estados, assigns.transiciones, assigns.contexto["encabezado_de"]))
 
     ~H"""
     <div class="max-w-7xl mx-auto p-6 text-xs font-sans space-y-4">
@@ -664,6 +722,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
 
       <div id="wizard-panel-config" class="space-y-4">
         <.panel_contexto contexto={@contexto} carpetas={@carpetas} iconos_sugeridos={@iconos_sugeridos}
+          catalogos_maestro_candidatos={@catalogos_maestro_candidatos}
           nombre_sistema_preview={@nombre_sistema_preview} nav_preview={@nav_preview} nav_error={@contexto_nav_error} />
         <.panel_campos campos={@campos} />
         <.panel_estados estados={@estados} puede_agregar={@campos != []} />
@@ -677,7 +736,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     </div>
 
     <.modal_campo :if={@campo_form} form={@campo_form} tipos={@tipos_campo} catalogos={@catalogos_referenciables} />
-    <.modal_estado :if={@estado_form} form={@estado_form} iconos_sugeridos={@iconos_sugeridos} />
+    <.modal_estado :if={@estado_form} form={@estado_form} />
     <.modal_transicion :if={@transicion_form} form={@transicion_form} estados={@estados} campos={@campos} />
     """
   end
@@ -796,6 +855,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   attr :contexto, :map, required: true
   attr :carpetas, :list, required: true
   attr :iconos_sugeridos, :list, required: true
+  attr :catalogos_maestro_candidatos, :list, required: true
   attr :nombre_sistema_preview, :string, required: true
   attr :nav_preview, :string, required: true
   attr :nav_error, :string, default: nil
@@ -895,6 +955,23 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
               <input type="text" name="contexto[codigo_trn]" value={@contexto["codigo_trn"]} required maxlength="4"
                 class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 w-20 font-mono uppercase focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" placeholder="VENT" />
             </div>
+          <% end %>
+        </div>
+
+        <label class="font-medium text-gray-900 pt-1">Detalle de:</label>
+        <div>
+          <select name="contexto[encabezado_de]"
+            title="Si este catálogo es el detalle de otro (ej. items de un pedido), elegí acá su maestro."
+            class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 w-full focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500">
+            <option value="" selected={(@contexto["encabezado_de"] || "") == ""}>— No es detalle de nada (catálogo normal) —</option>
+            <%= for catalogo <- @catalogos_maestro_candidatos do %>
+              <option value={catalogo.nombre} selected={@contexto["encabezado_de"] == catalogo.nombre}>{catalogo.etiqueta}</option>
+            <% end %>
+          </select>
+          <%= if (@contexto["encabezado_de"] || "") != "" do %>
+            <p class="mt-0.5 text-gray-500">
+              Fase 1: los renglones comparten estado con el maestro más adelante (Fase 2) — por ahora no le definas Estados/Transiciones propias a este catálogo.
+            </p>
           <% end %>
         </div>
       </form>
@@ -1070,22 +1147,15 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
         <%= if @form["error"] do %><div class="bg-red-50 text-red-700 rounded-lg px-2 py-1.5 mb-2">{@form["error"]}</div><% end %>
         <form phx-submit="guardar_campo" phx-change="validar_campo" class="space-y-2">
           <div>
-            <label class="block text-gray-700 mb-0.5">Nombre</label>
-            <input type="text" name="nombre" value={@form["nombre"]} placeholder="pty_carro_color" required
-              pattern="[a-z][a-z0-9_]*" maxlength="50"
-              class="w-full border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
-          </div>
-          <div>
-            <label class="block text-gray-700 mb-0.5">Etiqueta</label>
-            <input type="text" name="etiqueta" value={@form["etiqueta"]} required maxlength="100"
-              class="w-full border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
-          </div>
-          <div>
             <label class="block text-gray-700 mb-0.5">Tipo</label>
             <select name="tipo" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
               <%= for tipo <- @tipos do %><option value={tipo} selected={@form["tipo"] == tipo}>{tipo}</option><% end %>
             </select>
           </div>
+
+          <%!-- Referencia: nombre/etiqueta/longitud/precisión/escala/opcional
+               NO se capturan — se derivan del catálogo destino, siempre
+               obligatoria. Mismo criterio que BcMotorLive. --%>
           <%= if @form["tipo"] == "referencia" do %>
             <div>
               <label class="block text-gray-700 mb-0.5">Catálogo destino</label>
@@ -1095,18 +1165,33 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
                   <option value={c.nombre} selected={@form["catalogo"] == c.nombre}>{c.etiqueta}</option>
                 <% end %>
               </select>
+              <p class="mt-0.5 text-gray-500">
+                El nombre, la etiqueta y el resto de las propiedades del campo se toman del catálogo elegido — siempre obligatorio.
+              </p>
             </div>
+          <% else %>
+            <div>
+              <label class="block text-gray-700 mb-0.5">Nombre</label>
+              <input type="text" name="nombre" value={@form["nombre"]} placeholder="pty_carro_color" required
+                pattern="[a-z][a-z0-9_]*" maxlength="50"
+                class="w-full border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
+            </div>
+            <div>
+              <label class="block text-gray-700 mb-0.5">Etiqueta</label>
+              <input type="text" name="etiqueta" value={@form["etiqueta"]} required maxlength="100"
+                class="w-full border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
+            </div>
+            <div class="grid grid-cols-3 gap-2">
+              <div><label class="block text-gray-700 mb-0.5">longitud</label><input type="number" name="longitud" value={@form["longitud"]} class="w-full border border-gray-300 rounded-lg px-2 py-1" /></div>
+              <div><label class="block text-gray-700 mb-0.5">precisión</label><input type="number" name="precision" value={@form["precision"]} class="w-full border border-gray-300 rounded-lg px-2 py-1" /></div>
+              <div><label class="block text-gray-700 mb-0.5">escala</label><input type="number" name="escala" value={@form["escala"]} class="w-full border border-gray-300 rounded-lg px-2 py-1" /></div>
+            </div>
+            <label class="flex items-center gap-1.5">
+              <input type="hidden" name="opcional" value="false" />
+              <input type="checkbox" name="opcional" value="true" checked={@form["opcional"] == true} class="accent-purple-600" />
+              Opcional
+            </label>
           <% end %>
-          <div class="grid grid-cols-3 gap-2">
-            <div><label class="block text-gray-700 mb-0.5">longitud</label><input type="number" name="longitud" value={@form["longitud"]} class="w-full border border-gray-300 rounded-lg px-2 py-1" /></div>
-            <div><label class="block text-gray-700 mb-0.5">precisión</label><input type="number" name="precision" value={@form["precision"]} class="w-full border border-gray-300 rounded-lg px-2 py-1" /></div>
-            <div><label class="block text-gray-700 mb-0.5">escala</label><input type="number" name="escala" value={@form["escala"]} class="w-full border border-gray-300 rounded-lg px-2 py-1" /></div>
-          </div>
-          <label class="flex items-center gap-1.5">
-            <input type="hidden" name="opcional" value="false" />
-            <input type="checkbox" name="opcional" value="true" checked={@form["opcional"] == true} class="accent-purple-600" />
-            Opcional
-          </label>
           <div class="flex justify-end gap-2 pt-2">
             <button type="button" phx-click="cerrar_form_campo" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">Cancelar</button>
             <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">Agregar</button>
@@ -1118,7 +1203,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   end
 
   attr :form, :map, required: true
-  attr :iconos_sugeridos, :list, required: true
 
   defp modal_estado(assigns) do
     ~H"""
@@ -1135,32 +1219,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
           <div class="grid grid-cols-2 gap-2">
             <div><label class="block text-gray-700 mb-0.5">Orden</label><input type="number" name="orden" value={@form["orden"]} required class="w-full border border-gray-300 rounded-lg px-2 py-1.5" /></div>
             <div><label class="block text-gray-700 mb-0.5">Color</label><input type="color" name="color" value={@form["color"]} class="w-full h-[30px] border border-gray-300 rounded-lg px-1 py-0.5" /></div>
-          </div>
-          <div>
-            <label class="block text-gray-700 mb-0.5">Ícono</label>
-            <input type="hidden" name="icono" value={@form["icono"]} />
-            <button type="button" phx-click={JS.toggle(to: "#selector-iconos-estado-nuevo")}
-              class="w-6 h-6 flex items-center justify-center border border-gray-300 rounded-lg bg-gray-50 hover:bg-gray-100 text-gray-700" title="Elegir ícono">
-              <%= if @form["icono"] not in [nil, ""] do %>
-                <span class="material-symbols-outlined" style="font-size: 16px">{@form["icono"]}</span>
-              <% else %>
-                <span class="material-symbols-outlined text-gray-400" style="font-size: 16px">apps</span>
-              <% end %>
-            </button>
-            <div id="selector-iconos-estado-nuevo" class="hidden mt-1 border border-gray-200 rounded-lg bg-white shadow-lg p-1.5 max-w-md">
-              <div class="grid grid-cols-10 gap-0.5 max-h-40 overflow-y-auto">
-                <%= for icono <- @iconos_sugeridos do %>
-                  <button type="button" title={icono}
-                    phx-click={JS.push("elegir_icono_estado", value: %{icono: icono}) |> JS.hide(to: "#selector-iconos-estado-nuevo")}
-                    class={[
-                      "w-6 h-6 flex items-center justify-center rounded-lg text-gray-700 hover:bg-purple-50 hover:text-purple-700",
-                      @form["icono"] == icono && "bg-purple-100 text-purple-700"
-                    ]}>
-                    <span class="material-symbols-outlined" style="font-size: 16px">{icono}</span>
-                  </button>
-                <% end %>
-              </div>
-            </div>
           </div>
           <label class="flex items-center gap-1.5">
             <input type="hidden" name="es_inicial" value="false" />

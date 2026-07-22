@@ -1,0 +1,43 @@
+{
+  "estados": [
+    {
+      "color": "#40edc2",
+      "nombre": "Activo",
+      "icono": null,
+      "orden": 1,
+      "es_inicial": true,
+      "empresa_id": null
+    }
+  ],
+  "transiciones": [
+    {
+      "accion": "alta",
+      "etiqueta": "Alta",
+      "reglas": [],
+      "campos_editables": [
+        "pty_pedidoenc_sucursal",
+        "pty_pedidoenc_cliente",
+        "pty_pedidoenc_fecha",
+        "pty_pedidodet_producto",
+        "pty_pedidodet_cantidad",
+        "pty_pedidodet_precio"
+      ],
+      "empresa_id": null,
+      "estado_destino": "Activo",
+      "estado_origen": null
+    },
+    {
+      "accion": "guardar",
+      "etiqueta": "Guardar",
+      "reglas": [],
+      "campos_editables": [
+        "pty_pedidoenc_fecha",
+        "pty_pedidodet_cantidad"
+      ],
+      "empresa_id": null,
+      "estado_destino": "Activo",
+      "estado_origen": "Activo"
+    }
+  ],
+  "catalogo": "pty_pedido_enc"
+}

@@ -198,6 +198,38 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
 
   def obtener_header!(id), do: Repo.get!(Header, id)
 
+  # Catálogos detalle de UN maestro (schema_encabezado_id == header_maestro_id)
+  # — usado por MetaEstadosAdmin.validar_campos_editables/1 (Fase 3, R4) para
+  # aceptar en una transición del maestro tanto sus propios campos como los
+  # de cualquiera de sus catálogos detalle, y por meta_campos_por_detalle/1
+  # y BcMotorLive (Fase 4, R7/R10).
+  def listar_catalogos_detalle(header_maestro_id) do
+    from(h in Header, where: is_nil(h.delete_guid) and h.schema_encabezado_id == ^header_maestro_id)
+    |> Repo.all()
+  end
+
+  # Bloque de meta_campos por cada catálogo detalle de un maestro (Fase 4,
+  # R10) — %{} si no tiene detalles, para que el contrato de siempre no
+  # gane una llave nueva en el caso común (retrocompatible). Mismo shape
+  # que "meta_campos" de siempre, uno por catálogo detalle.
+  def meta_campos_por_detalle(header_maestro_id) do
+    header_maestro_id
+    |> listar_catalogos_detalle()
+    |> Map.new(fn h -> {h.schema_context_name, h.schema_context_name |> listar_detalles() |> Enum.map(&serializar_detalle/1)} end)
+  end
+
+  # Catálogos que se pueden elegir como maestro al crear un detalle — un
+  # catálogo real (no carpeta) que a su vez NO sea ya detalle de otro
+  # (evita ofrecer multinivel desde la UI, ver header.ex/validar_encabezado).
+  def listar_catalogos_maestro_candidatos do
+    from(h in Header,
+      where: is_nil(h.delete_guid) and h.schema_context_type == 1 and is_nil(h.schema_encabezado_id),
+      order_by: h.schema_context_label
+    )
+    |> Repo.all()
+    |> Enum.map(&%{nombre: &1.schema_context_name, etiqueta: &1.schema_context_label})
+  end
+
   # schema_context_name cubre hoy el rol que antes cumplían schema_nombre y
   # tabla por separado: identifica el catálogo y es el nombre físico de la
   # tabla de Postgres.

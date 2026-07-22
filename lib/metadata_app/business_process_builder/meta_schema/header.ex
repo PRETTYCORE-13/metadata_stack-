@@ -19,6 +19,12 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :schema_es_transaccional, :boolean, default: false
     field :codigo_trn, :string
 
+    # Catálogo Maestro-Detalle (ver docs/catalogo-maestro-detalle-requerimientos.md,
+    # R1/R16) — no nulo implica "este catálogo es detalle de otro". No se
+    # reusó schema_context_type (ya usa 2 para "carpeta", otra dimensión)
+    # por el mismo criterio que separó schema_es_transaccional de ese campo.
+    field :schema_encabezado_id, :id
+
     field :insert_guid, :string
     field :update_guid, :string
     field :delete_guid, :string
@@ -38,10 +44,11 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
 
   def changeset(header, attrs) do
     header
-    |> cast(attrs, @requeridos ++ [:schema_context_icono, :schema_set_permissions, :schema_profiles, :schema_es_transaccional, :codigo_trn])
+    |> cast(attrs, @requeridos ++ [:schema_context_icono, :schema_set_permissions, :schema_profiles, :schema_es_transaccional, :codigo_trn, :schema_encabezado_id])
     |> validate_required(@requeridos)
     |> update_change(:codigo_trn, &nil_si_vacio_o_mayusculas/1)
     |> validar_codigo_trn()
+    |> validar_encabezado()
     |> unique_constraint(:schema_context_name)
     |> unique_constraint(:codigo_trn, name: :meta_schema_header_codigo_trn_unico_index)
   end
@@ -61,6 +68,37 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
       |> validate_format(:codigo_trn, ~r/^[A-Z0-9]{4}$/, message: "debe ser exactamente 4 letras/dígitos (ej. VENT)")
     else
       changeset
+    end
+  end
+
+  # Sin multinivel (R1/§3 del requerimiento): el maestro tiene que ser un
+  # catálogo normal (schema_context_type == 1, no una carpeta) y no puede
+  # a su vez ser detalle de otro. Consulta eager acá mismo (no vía
+  # MetaSchemaContext, para no crear una dependencia de Header hacia su
+  # propio módulo de contexto) — mismo criterio que ya usa
+  # CatalogoGenerador.validar_referencias/1 para "referencia".
+  defp validar_encabezado(changeset) do
+    case get_field(changeset, :schema_encabezado_id) do
+      nil ->
+        changeset
+
+      id ->
+        case MetadataApp.Repo.get(__MODULE__, id) do
+          nil ->
+            add_error(changeset, :schema_encabezado_id, "el catálogo maestro no existe")
+
+          %__MODULE__{delete_guid: dg} when not is_nil(dg) ->
+            add_error(changeset, :schema_encabezado_id, "el catálogo maestro no existe")
+
+          %__MODULE__{schema_encabezado_id: mid} when not is_nil(mid) ->
+            add_error(changeset, :schema_encabezado_id, "no puede ser detalle de otro catálogo que ya es detalle (sin multinivel)")
+
+          %__MODULE__{schema_context_type: tipo} when tipo != 1 ->
+            add_error(changeset, :schema_encabezado_id, "el catálogo maestro debe ser un catálogo, no una carpeta")
+
+          _maestro ->
+            changeset
+        end
     end
   end
 end

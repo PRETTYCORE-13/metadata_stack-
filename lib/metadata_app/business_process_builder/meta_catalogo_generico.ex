@@ -20,6 +20,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
 
     transaccional? = Keyword.get(opts, :transaccional, false)
     codigo_trn = Keyword.get(opts, :codigo_trn)
+    detalle_de = Keyword.get(opts, :detalle_de)
 
     campo_nombres = Enum.map(campos, &elem(&1, 0))
 
@@ -38,6 +39,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
 
     trn_field_asts = trn_field_asts(transaccional?)
     trn_behaviour_ast = trn_behaviour_ast(transaccional?, codigo_trn)
+    detalle_field_asts = detalle_field_asts(detalle_de)
 
     quote do
       use Ecto.Schema
@@ -59,6 +61,13 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
         # asignarlos es MetadataApp.TRN.asignar_si_transaccional/1, nunca
         # un PATCH. Solo existen si `transaccional: true`.
         unquote_splicing(trn_field_asts)
+
+        # Catálogo Maestro-Detalle (Fase 1) — deliberadamente fuera de
+        # @campos: el único camino para asignarlos es
+        # MetadataApp.Renglones.preparar/3 (llamado desde
+        # CatalogoGenerico.crear/2), nunca un cast directo. Solo existen
+        # si `detalle_de` está seteado.
+        unquote_splicing(detalle_field_asts)
       end
 
       unquote(trn_behaviour_ast)
@@ -95,6 +104,15 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
       @impl true
       def transaction_code, do: unquote(codigo)
     end
+  end
+
+  defp detalle_field_asts(nil), do: []
+
+  defp detalle_field_asts(_tabla_maestro) do
+    [
+      quote(do: field(:encabezado_id, :id)),
+      quote(do: field(:renglon_id, :integer))
+    ]
   end
 
   import Ecto.Changeset

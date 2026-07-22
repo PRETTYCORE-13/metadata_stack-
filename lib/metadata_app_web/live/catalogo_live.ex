@@ -37,6 +37,24 @@ defmodule MetadataAppWeb.CatalogoLive do
 
         estados_por_id = MetaStateEngine.mapa_nombres_estados(header.schema_context_name)
 
+        # Catálogo Maestro-Detalle (Fase 5): catálogos detalle de ESTE
+        # header, con sus propios campos visibles/ordenados (mismo criterio
+        # que `columnas` arriba) — [] para la enorme mayoría de catálogos,
+        # que siguen sin ningún cambio de comportamiento.
+        catalogos_detalle =
+          header.id
+          |> MetaSchemaContext.listar_catalogos_detalle()
+          |> Enum.map(fn h ->
+            columnas_detalle =
+              h.schema_context_name
+              |> MetaSchemaContext.listar_detalles()
+              |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
+              |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
+              |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
+
+            %{nombre: h.schema_context_name, etiqueta: h.schema_context_label, columnas: columnas_detalle}
+          end)
+
         {:ok,
          socket
          |> assign(:current_page, header.schema_context_name)
@@ -54,12 +72,100 @@ defmodule MetadataAppWeb.CatalogoLive do
          |> assign(:busqueda_campo_filtro, "")
          |> assign(:busqueda_general, "")
          |> assign(:mostrar_filtros, false)
+         |> assign(:catalogos_detalle, catalogos_detalle)
+         |> assign(:es_maestro?, catalogos_detalle != [])
+         |> assign(:detalle_modal, nil)
+         |> assign(:detalle_renglones, %{})
+         |> assign(:detalle_seleccion, %{})
+         |> assign(:detalle_nuevo_renglon_form, nil)
+         |> assign(:detalle_form_error, nil)
+         |> assign(:detalle_error, nil)
          |> cargar_filas()}
     end
   end
 
   def handle_event("change_page", %{"id" => id}, socket) do
     AdminNav.handle_nav(id, socket, socket.assigns.current_page)
+  end
+
+  # --- Catálogo Maestro-Detalle (Fase 5): modal encabezado + renglones ------
+
+  def handle_event("abrir_detalle", %{"id" => id}, socket) do
+    {:noreply, cargar_detalle_modal(socket, String.to_integer(id))}
+  end
+
+  def handle_event("cerrar_detalle", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:detalle_modal, nil)
+     |> assign(:detalle_renglones, %{})
+     |> assign(:detalle_seleccion, %{})
+     |> assign(:detalle_nuevo_renglon_form, nil)
+     |> assign(:detalle_form_error, nil)
+     |> assign(:detalle_error, nil)}
+  end
+
+  def handle_event("toggle_renglon", %{"catalogo" => catalogo, "renglon_id" => renglon_id}, socket) do
+    renglon_id = String.to_integer(renglon_id)
+
+    {:noreply,
+     update(socket, :detalle_seleccion, fn seleccion ->
+       Map.update(seleccion, catalogo, MapSet.new([renglon_id]), fn set ->
+         if MapSet.member?(set, renglon_id), do: MapSet.delete(set, renglon_id), else: MapSet.put(set, renglon_id)
+       end)
+     end)}
+  end
+
+  def handle_event("abrir_form_renglon", %{"catalogo" => catalogo}, socket) do
+    {:noreply, socket |> assign(:detalle_nuevo_renglon_form, catalogo) |> assign(:detalle_form_error, nil)}
+  end
+
+  def handle_event("cancelar_form_renglon", _params, socket) do
+    {:noreply, socket |> assign(:detalle_nuevo_renglon_form, nil) |> assign(:detalle_form_error, nil)}
+  end
+
+  # Sin borrar/editar acá a propósito (R12/R13 del requerimiento): un
+  # renglón nace y después solo se mueve por transición — nunca se
+  # soft-deletea ni se edita libre desde esta grilla.
+  def handle_event("guardar_renglon", %{"catalogo" => catalogo} = params, socket) do
+    campos_attrs = Map.get(params, "campos", %{})
+    detalle_modulo = MetaSchemaContext.modulo_por_nombre(catalogo)
+    encabezado_id = socket.assigns.detalle_modal.registro.id
+    attrs = Map.put(campos_attrs, "encabezado_id", encabezado_id)
+
+    case CatalogoGenerico.crear(detalle_modulo, attrs) do
+      {:ok, _renglon} ->
+        {:noreply,
+         socket
+         |> assign(:detalle_nuevo_renglon_form, nil)
+         |> assign(:detalle_form_error, nil)
+         |> recargar_renglones(catalogo)}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:noreply, assign(socket, :detalle_form_error, resumen_errores_simple(changeset))}
+    end
+  end
+
+  # renglones_payload: %{"catalogo" => [renglon_id, ...]} a partir de la
+  # selección de checkboxes — solo mueve estado (Fase 2), sin edición de
+  # campos por renglón desde esta pantalla todavía (posible extensión
+  # futura, no pedida para esta fase).
+  def handle_event("ejecutar_transicion_detalle", %{"accion" => accion}, socket) do
+    %{modulo: modulo, detalle_modal: %{registro: registro}, detalle_seleccion: seleccion} = socket.assigns
+    registro_struct = CatalogoGenerico.obtener!(modulo, registro.id)
+
+    renglones_payload =
+      seleccion
+      |> Enum.reject(fn {_catalogo, set} -> MapSet.size(set) == 0 end)
+      |> Map.new(fn {catalogo, set} -> {catalogo, MapSet.to_list(set)} end)
+
+    case MetaStateEngine.ejecutar_transicion(registro_struct, accion, %{}, renglones: renglones_payload) do
+      {:ok, _actualizado} ->
+        {:noreply, socket |> assign(:detalle_error, nil) |> cargar_detalle_modal(registro.id)}
+
+      {:error, razon} ->
+        {:noreply, assign(socket, :detalle_error, formatear_error_transicion(razon))}
+    end
   end
 
   # Búsqueda general: mismo texto contra CUALQUIER columna (OR), a
@@ -176,6 +282,77 @@ defmodule MetadataAppWeb.CatalogoLive do
       |> assign(:inicio, 0)
       |> assign(:fin, 0)
     end
+  end
+
+  # Carga/recarga TODO el estado del modal (registro + transiciones
+  # disponibles + renglones de cada catálogo detalle) desde cero — se usa
+  # tanto para abrirlo como para refrescarlo después de ejecutar una
+  # transición (Fase 2/3: el header y los renglones seleccionados ya
+  # cambiaron de estado en la misma transacción atómica del motor).
+  defp cargar_detalle_modal(socket, id) do
+    %{modulo: modulo, estados_por_id: estados_por_id, catalogos_detalle: catalogos_detalle} = socket.assigns
+
+    registro_struct = CatalogoGenerico.obtener!(modulo, id)
+    registro = CatalogoGenerico.serializar(registro_struct, estados_por_id)
+    transiciones = MetaStateEngine.transiciones_disponibles(registro_struct, %{})
+
+    renglones =
+      Map.new(catalogos_detalle, fn %{nombre: nombre} ->
+        detalle_modulo = MetaSchemaContext.modulo_por_nombre(nombre)
+
+        filas =
+          detalle_modulo
+          |> CatalogoGenerico.listar(%{"encabezado_id" => id})
+          |> Enum.map(&CatalogoGenerico.serializar(&1, estados_por_id))
+
+        {nombre, filas}
+      end)
+
+    socket
+    |> assign(:detalle_modal, %{registro: registro, transiciones: transiciones})
+    |> assign(:detalle_renglones, renglones)
+    |> assign(:detalle_seleccion, Map.new(catalogos_detalle, &{&1.nombre, MapSet.new()}))
+    |> assign(:detalle_nuevo_renglon_form, nil)
+    |> assign(:detalle_form_error, nil)
+  end
+
+  defp recargar_renglones(socket, catalogo) do
+    %{estados_por_id: estados_por_id, detalle_modal: %{registro: registro}} = socket.assigns
+    detalle_modulo = MetaSchemaContext.modulo_por_nombre(catalogo)
+
+    filas =
+      detalle_modulo
+      |> CatalogoGenerico.listar(%{"encabezado_id" => registro.id})
+      |> Enum.map(&CatalogoGenerico.serializar(&1, estados_por_id))
+
+    update(socket, :detalle_renglones, &Map.put(&1, catalogo, filas))
+  end
+
+  # Mismos desenlaces estructurados que ya traduce MetadataAppWeb.FallbackController
+  # para la API HTTP — acá en texto plano para mostrar en el modal.
+  defp formatear_error_transicion({:precondiciones, fallas}) do
+    Enum.map_join(fallas, " | ", fn
+      %{mensaje: msg, renglon: %{catalogo: cat, renglon_id: rid}} -> "#{cat} renglón #{rid}: #{msg}"
+      %{mensaje: msg} -> msg
+    end)
+  end
+
+  defp formatear_error_transicion(:conflicto_concurrencia),
+    do: "El registro cambió mientras tenías el modal abierto — cerrá y volvé a abrir."
+
+  defp formatear_error_transicion({:transicion_invalida, _}),
+    do: "Esa transición ya no está disponible desde el estado actual — cerrá y volvé a abrir."
+
+  defp formatear_error_transicion(%Ecto.Changeset{} = changeset), do: resumen_errores_simple(changeset)
+  defp formatear_error_transicion({:postcondicion_fallida, _}), do: "Error interno, no se aplicó el cambio."
+  defp formatear_error_transicion(_otro), do: "No se pudo ejecutar la transición."
+
+  defp resumen_errores_simple(changeset) do
+    changeset
+    |> Ecto.Changeset.traverse_errors(fn {msg, opts} ->
+      Enum.reduce(opts, msg, fn {k, v}, acc -> String.replace(acc, "%{#{k}}", to_string(v)) end)
+    end)
+    |> Enum.map_join("; ", fn {campo, mensajes} -> "#{campo}: #{Enum.join(mensajes, ", ")}" end)
   end
 
   # A partir de los valores crudos de la barra de filtros (todo strings,
@@ -385,7 +562,14 @@ defmodule MetadataAppWeb.CatalogoLive do
             <tbody class="divide-y divide-gray-100">
               <%= for fila <- @filas do %>
                 <tr class="hover:bg-purple-50/60 transition-colors">
-                  <td class="px-4 py-1.5 text-xs text-gray-700">{fila.id}</td>
+                  <td class="px-4 py-1.5 text-xs text-gray-700">
+                    <%= if @es_maestro? do %>
+                      <button type="button" phx-click="abrir_detalle" phx-value-id={fila.id}
+                        class="text-purple-700 font-semibold hover:underline">{fila.id}</button>
+                    <% else %>
+                      {fila.id}
+                    <% end %>
+                  </td>
                   <%= for columna <- @columnas do %>
                     <td class={["px-4 py-1.5 text-xs text-gray-700", alineacion_columna(columna)]}>
                       {Map.get(fila, String.to_existing_atom(columna.schema_context_field))}
@@ -413,6 +597,11 @@ defmodule MetadataAppWeb.CatalogoLive do
           </table>
         </div>
       </div>
+
+      <.detalle_modal :if={@detalle_modal} modal={@detalle_modal} renglones={@detalle_renglones}
+        catalogos_detalle={@catalogos_detalle} seleccion={@detalle_seleccion}
+        nuevo_renglon_form={@detalle_nuevo_renglon_form} form_error={@detalle_form_error} error={@detalle_error}
+        header_columnas={@columnas} estados_por_id={@estados_por_id} label={@label} />
     </div>
     """
   end
@@ -628,6 +817,197 @@ defmodule MetadataAppWeb.CatalogoLive do
         phx-debounce="400"
         class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5"
       />
+    </div>
+    """
+  end
+
+  # --- Catálogo Maestro-Detalle (Fase 5): modal encabezado + renglones -----
+  # Mismo patrón visual que los modales de BcMotorLive (overlay fixed +
+  # tarjeta blanca centrada) — sin ruta propia, popup interno sobre el
+  # listado (decisión explícita: no pantalla aparte).
+
+  attr :modal, :map, required: true
+  attr :renglones, :map, required: true
+  attr :catalogos_detalle, :list, required: true
+  attr :seleccion, :map, required: true
+  attr :nuevo_renglon_form, :string, default: nil
+  attr :form_error, :string, default: nil
+  attr :error, :string, default: nil
+  attr :header_columnas, :list, required: true
+  attr :estados_por_id, :map, required: true
+  attr :label, :string, required: true
+
+  defp detalle_modal(assigns) do
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto text-xs">
+        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 sticky top-0 bg-white rounded-t-xl">
+          <div>
+            <h2 class="text-sm font-bold text-gray-900">{@label} #{@modal.registro.id}</h2>
+            <span class="text-gray-500">
+              Estado: <strong class="text-gray-800">{Map.get(@modal.registro, :estado_nombre) || "—"}</strong>
+            </span>
+          </div>
+          <button type="button" phx-click="cerrar_detalle" aria-label="Cerrar"
+            class="w-7 h-7 flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="p-4 space-y-4">
+          <div :if={@error} class="bg-red-50 text-red-700 rounded-lg px-3 py-2">{@error}</div>
+
+          <div class="border border-gray-200 rounded-lg p-3">
+            <div class="grid grid-cols-3 gap-2">
+              <div :for={col <- @header_columnas}>
+                <span class="block text-gray-400">{col.schema_context_properties["etiqueta"]}</span>
+                <span class="text-gray-900 font-medium">
+                  {Map.get(@modal.registro, String.to_existing_atom(col.schema_context_field))}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div :if={@modal.transiciones != []} class="flex flex-wrap gap-2">
+            <button :for={t <- @modal.transiciones} type="button"
+              phx-click="ejecutar_transicion_detalle" phx-value-accion={t.accion} disabled={!t.disponible}
+              title={if !t.disponible, do: Enum.map_join(t.razones, "; ", & &1.mensaje)}
+              class={[
+                "px-3 py-1.5 rounded-lg font-semibold transition-colors",
+                t.disponible && "bg-purple-600 text-white hover:bg-purple-700",
+                !t.disponible && "bg-gray-100 text-gray-400 cursor-not-allowed"
+              ]}>
+              {t.etiqueta}
+            </button>
+          </div>
+          <p :if={@modal.transiciones == []} class="text-gray-400">Sin transiciones disponibles desde este estado.</p>
+
+          <div :for={cat <- @catalogos_detalle} class="border border-gray-200 rounded-lg">
+            <div class="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-gray-50 rounded-t-lg">
+              <span class="font-bold text-gray-700">{cat.etiqueta}</span>
+              <button type="button" phx-click="abrir_form_renglon" phx-value-catalogo={cat.nombre}
+                class="text-purple-700 font-semibold hover:underline">+ Agregar renglón</button>
+            </div>
+
+            <div :if={@nuevo_renglon_form == cat.nombre} class="px-3 py-2 border-b border-gray-100 bg-purple-50/40">
+              <div :if={@form_error} class="bg-red-50 text-red-700 rounded px-2 py-1 mb-1.5">{@form_error}</div>
+              <form phx-submit="guardar_renglon" class="grid grid-cols-3 gap-2 items-end">
+                <input type="hidden" name="catalogo" value={cat.nombre} />
+                <.campo_input :for={col <- cat.columnas} columna={col} />
+                <div class="flex gap-1">
+                  <button type="submit" class="px-2.5 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">
+                    Guardar
+                  </button>
+                  <button type="button" phx-click="cancelar_form_renglon"
+                    class="px-2.5 py-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100">
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-gray-100">
+                <thead class="bg-gray-50">
+                  <tr>
+                    <th class="px-2 py-1.5 w-6"></th>
+                    <th class="px-2 py-1.5 text-left text-gray-500">#</th>
+                    <th :for={col <- cat.columnas} class="px-2 py-1.5 text-left text-gray-500">
+                      {col.schema_context_properties["etiqueta"]}
+                    </th>
+                    <th class="px-2 py-1.5 text-left text-gray-500">Estado</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-50">
+                  <tr :for={r <- Map.get(@renglones, cat.nombre, [])}>
+                    <td class="px-2 py-1">
+                      <input type="checkbox" phx-click="toggle_renglon" phx-value-catalogo={cat.nombre}
+                        phx-value-renglon_id={r.renglon_id}
+                        checked={MapSet.member?(Map.get(@seleccion, cat.nombre, MapSet.new()), r.renglon_id)}
+                        class="accent-purple-600" />
+                    </td>
+                    <td class="px-2 py-1 text-gray-500">{r.renglon_id}</td>
+                    <td :for={col <- cat.columnas} class="px-2 py-1 text-gray-800">
+                      {Map.get(r, String.to_existing_atom(col.schema_context_field))}
+                    </td>
+                    <td class="px-2 py-1 text-gray-600">{Map.get(@estados_por_id, r.estado_id) || "—"}</td>
+                  </tr>
+                  <tr :if={Map.get(@renglones, cat.nombre, []) == []}>
+                    <td colspan={2 + length(cat.columnas)} class="px-2 py-4 text-center text-gray-400">
+                      Sin renglones todavía.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  # Input de un campo del form "+ Agregar renglón", según su tipo — mismo
+  # criterio de dispatch que filtro_columna/1, adaptado a un valor único
+  # (no rango) para crear, no filtrar.
+  attr :columna, :map, required: true
+
+  defp campo_input(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
+    ~H"""
+    <label class="flex items-center gap-1.5 mb-0.5">
+      <input type="hidden" name={"campos[#{@columna.schema_context_field}]"} value="false" />
+      <input type="checkbox" name={"campos[#{@columna.schema_context_field}]"} value="true" class="accent-purple-600" />
+      {@columna.schema_context_properties["etiqueta"]}
+    </label>
+    """
+  end
+
+  defp campo_input(%{columna: %{schema_context_properties: %{"tipo" => "enum"}}} = assigns) do
+    ~H"""
+    <div>
+      <label class="block text-gray-500 mb-0.5">{@columna.schema_context_properties["etiqueta"]}</label>
+      <select name={"campos[#{@columna.schema_context_field}]"} required
+        class="w-full border border-gray-300 rounded text-gray-900 px-2 py-1.5">
+        <option :for={v <- @columna.schema_context_properties["valores"]} value={v}>{v}</option>
+      </select>
+    </div>
+    """
+  end
+
+  defp campo_input(%{columna: %{schema_context_properties: %{"tipo" => tipo}}} = assigns)
+       when tipo in ["integer", "decimal"] do
+    assigns = assign(assigns, :step, if(tipo == "decimal", do: "any"))
+
+    ~H"""
+    <div>
+      <label class="block text-gray-500 mb-0.5">{@columna.schema_context_properties["etiqueta"]}</label>
+      <input type="number" step={@step} name={"campos[#{@columna.schema_context_field}]"} required
+        class="w-full border border-gray-300 rounded text-gray-900 px-2 py-1.5" />
+    </div>
+    """
+  end
+
+  defp campo_input(%{columna: %{schema_context_properties: %{"tipo" => "date"}}} = assigns) do
+    ~H"""
+    <div>
+      <label class="block text-gray-500 mb-0.5">{@columna.schema_context_properties["etiqueta"]}</label>
+      <input type="date" name={"campos[#{@columna.schema_context_field}]"} required
+        class="w-full border border-gray-300 rounded text-gray-900 px-2 py-1.5" />
+    </div>
+    """
+  end
+
+  # Default (string, referencia sin picker todavía — ver
+  # project_frontend_referencia_ux, responsabilidad de Frontend a futuro).
+  defp campo_input(assigns) do
+    ~H"""
+    <div>
+      <label class="block text-gray-500 mb-0.5">{@columna.schema_context_properties["etiqueta"]}</label>
+      <input type="text" name={"campos[#{@columna.schema_context_field}]"} required
+        maxlength={@columna.schema_context_properties["longitud"]}
+        class="w-full border border-gray-300 rounded text-gray-900 px-2 py-1.5" />
     </div>
     """
   end

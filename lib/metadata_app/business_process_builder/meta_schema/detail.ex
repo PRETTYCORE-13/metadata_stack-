@@ -18,7 +18,10 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Detail do
     |> cast(attrs, [:meta_schema_header_id, :schema_context_field, :schema_context_properties])
     |> validate_required([:meta_schema_header_id, :schema_context_field, :schema_context_properties])
     |> validate_properties()
-    |> unique_constraint([:meta_schema_header_id, :schema_context_field], name: :meta_schema_detail_unico_index)
+    |> unique_constraint([:schema_context_field, :meta_schema_header_id],
+      name: :meta_schema_detail_unico_index,
+      message: "ya existe un campo con este nombre en este catálogo — si es una referencia, ya hay una al mismo catálogo destino"
+    )
   end
 
   # Valida que schema_context_properties tenga las llaves mínimas requeridas

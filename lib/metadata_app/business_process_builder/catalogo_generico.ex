@@ -117,13 +117,20 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # (estampar_valor, notificar, ...) al crear, no solo al transicionar
   # después. Si el catálogo nunca definió esa transición (ej. pty_clientes
   # hoy), sigue el insert directo de siempre — 100% retrocompatible.
-  def crear(schema_mod, attrs) do
+  #
+  # Catálogo Maestro-Detalle (R6, alta atómica): `opciones[:renglones]`
+  # (mapa `%{"catalogo_detalle" => [attrs, ...]}`, default `%{}`) crea los
+  # renglones iniciales del maestro en el MISMO ciclo — ver
+  # `MetadataApp.Renglones.crear_todos/3`. `%{}` = comportamiento 100%
+  # igual que siempre para cualquier catálogo sin detalles.
+  def crear(schema_mod, attrs, opciones \\ []) do
     catalogo = schema_mod.__schema__(:source)
+    renglones_spec = Keyword.get(opciones, :renglones, %{})
 
     resultado =
       case MetadataApp.MetaStateEngine.transicion_alta(catalogo) do
-        nil -> crear_simple(schema_mod, attrs)
-        transicion -> MetadataApp.MetaStateEngine.dar_de_alta(schema_mod, attrs, transicion, attrs)
+        nil -> crear_simple(schema_mod, attrs, renglones_spec)
+        transicion -> MetadataApp.MetaStateEngine.dar_de_alta(schema_mod, attrs, transicion, attrs, renglones_spec)
       end
 
     # PrettyCore TRN (Fase 1) — Regla #1: ninguna operación transaccional
@@ -135,16 +142,42 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     MetadataApp.TRN.asignar_si_transaccional(resultado)
   end
 
-  defp crear_simple(schema_mod, attrs) do
+  # Envuelto en Repo.transaction/1 (aunque un solo Repo.insert/1 ya sería
+  # atómico por sí mismo) porque MetadataApp.Renglones.preparar/3 puede
+  # necesitar un SELECT ... FOR UPDATE previo sobre la fila del maestro
+  # (catálogos detalle) que tiene que quedar en la MISMA transacción que el
+  # insert final — para un catálogo que no es detalle, es un no-op extra
+  # sin costo real. Devuelve el mismo shape de siempre ({:ok, registro} |
+  # {:error, changeset}), Repo.transaction/1 solo envuelve, no lo cambia.
+  # `renglones_spec` (Fase 6, R6): después del insert, crea los renglones
+  # iniciales de ESTE registro (si tiene catálogos detalle) — mismo
+  # aplanado de transacción anidada que ya describe el moduledoc de
+  # `MetadataApp.Renglones`.
+  defp crear_simple(schema_mod, attrs, renglones_spec) do
     catalogo = schema_mod.__schema__(:source)
     estado_inicial = MetadataApp.MetaStateEngine.estado_inicial(catalogo)
 
-    schema_mod
-    |> struct()
-    |> schema_mod.changeset(attrs)
-    |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
-    |> asignar_estado_inicial(estado_inicial)
-    |> Repo.insert()
+    Repo.transaction(fn ->
+      resultado =
+        schema_mod
+        |> struct()
+        |> schema_mod.changeset(attrs)
+        |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+        |> asignar_estado_inicial(estado_inicial)
+        |> MetadataApp.Renglones.preparar(catalogo, attrs)
+        |> Repo.insert()
+
+      case resultado do
+        {:ok, registro} ->
+          case MetadataApp.Renglones.crear_todos(catalogo, registro.id, renglones_spec) do
+            {:ok, _renglones} -> registro
+            {:error, motivo} -> Repo.rollback(motivo)
+          end
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
   end
 
   # Si el catálogo adoptó el motor de estados, todo registro nuevo nace en
@@ -156,11 +189,15 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     do: Ecto.Changeset.change(changeset, %{estado_id: estado_inicial.id})
 
   # Crea varios registros del mismo catálogo en una sola transacción.
-  # Si alguno falla, se revierten todos (todo o nada).
+  # Si alguno falla, se revierten todos (todo o nada). Cada item puede
+  # traer su propia "renglones" (R6) — un lote de maestros, cada uno con
+  # sus propios renglones iniciales.
   def crear_muchos(schema_mod, lista_attrs) when is_list(lista_attrs) do
     Repo.transaction(fn ->
-      Enum.map(lista_attrs, fn attrs ->
-        case crear(schema_mod, attrs) do
+      Enum.map(lista_attrs, fn item ->
+        {renglones, attrs} = Map.pop(item, "renglones", %{})
+
+        case crear(schema_mod, attrs, renglones: renglones) do
           {:ok, registro} -> registro
           {:error, changeset} -> Repo.rollback(changeset)
         end
@@ -175,9 +212,31 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # momento de guardar, no después), y las POST pueden reaccionar al
   # cambio. Si el catálogo nunca definió esa transición, sigue el update
   # directo de siempre — 100% retrocompatible.
+  #
+  # CompliancePty (docs/compliance-pty.md, C6): un catálogo detalle NUNCA
+  # acepta PUT/PATCH directo — bug real encontrado en producción antes de
+  # esta guarda: campos_editables/2 mira SI EL CATÁLOGO adoptó el motor
+  # consultando SUS PROPIOS meta_schema_estados, que un catálogo detalle
+  # nunca tiene (viven en el maestro, R3) — así que lo trataba como "sin
+  # motor" y dejaba editar CUALQUIER campo sin pasar por ninguna
+  # transición, sin campos_editables, sin evento de auditoría. La única
+  # forma de tocar un campo de un renglón es una transición del maestro
+  # con "renglones" (R4) — mismo criterio que ya usa eliminar/1 para
+  # bloquear el DELETE de un renglón (R12).
   def actualizar(registro, attrs) do
     schema_mod = registro.__struct__
     catalogo = schema_mod.__schema__(:source)
+    header = MetadataApp.BusinessProcessBuilder.MetaSchemaContext.obtener_header_por_nombre(catalogo)
+
+    if header && header.schema_encabezado_id do
+      {:error,
+       "los campos de un renglón de un catálogo detalle no se editan por PUT/PATCH directo — use una transición del maestro con \"renglones\""}
+    else
+      actualizar_directo(registro, attrs, schema_mod, catalogo)
+    end
+  end
+
+  defp actualizar_directo(registro, attrs, schema_mod, catalogo) do
     transicion = MetadataApp.MetaStateEngine.transicion_guardar(catalogo, registro.estado_id)
     editables = MetadataApp.MetaStateEngine.campos_editables(catalogo, transicion)
 
@@ -226,10 +285,24 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     end)
   end
 
+  # R12 del Maestro-Detalle: un renglón de un catálogo detalle nunca se
+  # borra (ni soft-delete) — el único camino para "sacarlo" es una
+  # transición del autómata a un estado tipo Cancelado. `header` se
+  # resuelve por nombre de tabla (mismo patrón que MetadataApp.TRN), no
+  # por una función exportada por el schema — evita otro mecanismo de
+  # "preguntarle al módulo" aparte del que ya existe.
   def eliminar(registro) do
-    registro
-    |> Ecto.Changeset.change(%{delete_guid: generar_guid()})
-    |> Repo.update()
+    catalogo = registro.__struct__.__schema__(:source)
+    header = MetadataApp.BusinessProcessBuilder.MetaSchemaContext.obtener_header_por_nombre(catalogo)
+
+    if header && header.schema_encabezado_id do
+      {:error,
+       "los renglones de un catálogo detalle no se borran — use una transición del autómata para pasarlo a un estado tipo \"Cancelado\""}
+    else
+      registro
+      |> Ecto.Changeset.change(%{delete_guid: generar_guid()})
+      |> Repo.update()
+    end
   end
 
   # estados_por_id: %{estado_id => nombre} (ver MetaStateEngine.mapa_nombres_estados/1)

@@ -154,10 +154,16 @@ defmodule MetadataApp.MetaEstadosAdmin do
                   []
 
                 header ->
+                  # Fase 3 (R4): además de los campos propios del catálogo de
+                  # esta transición, acepta los de cualquiera de sus
+                  # catálogos DETALLE — así una transición del maestro puede
+                  # declarar editables campos de sus renglones, sin choque
+                  # de nombres porque schema_context_field ya viene
+                  # prefijado por tabla.
                   campos_validos =
-                    header.schema_context_name
-                    |> MetaSchemaContext.listar_detalles()
-                    |> MapSet.new(& &1.schema_context_field)
+                    [header | MetaSchemaContext.listar_catalogos_detalle(header.id)]
+                    |> Enum.flat_map(fn h -> h.schema_context_name |> MetaSchemaContext.listar_detalles() |> Enum.map(& &1.schema_context_field) end)
+                    |> MapSet.new()
 
                   desconocidos = Enum.reject(campos, &MapSet.member?(campos_validos, &1))
 
@@ -258,13 +264,21 @@ defmodule MetadataApp.MetaEstadosAdmin do
   # Mismo criterio que validar_alta_o_inicial/2 (más abajo, para autómatas ya
   # guardados): un estado inicial O una transición de alta cualquiera de las
   # dos alcanza, no hace falta exigir literalmente "alta" si ya hay inicial.
+  #
+  # Catálogo Maestro-Detalle (R3): un catálogo marcado "detalle de" (schema_encabezado_id
+  # seteado) NUNCA usa sus propios estados/transiciones — el renglón nace
+  # con el estado del maestro y se mueve solo cuando el maestro ejecuta una
+  # transición compartida (ver MetaStateEngine.ejecutar_transicion/4). Exigirle
+  # estados acá sería forzar a definir algo que el motor jamás va a leer.
   defp validar_completo(header_attrs, estados_attrs, transiciones_attrs) do
     detalles = header_attrs["detalles"] || []
+    es_detalle? = header_attrs["schema_encabezado_id"] != nil
     tiene_inicial? = Enum.any?(estados_attrs, & &1["es_inicial"])
     tiene_alta? = Enum.any?(transiciones_attrs, &(&1["accion"] == "alta" and &1["estado_origen"] in [nil, ""]))
 
     cond do
       detalles == [] -> {:error, "hace falta al menos un campo"}
+      es_detalle? -> :ok
       estados_attrs == [] -> {:error, "hace falta al menos un estado"}
       not (tiene_inicial? or tiene_alta?) -> {:error, "hace falta un estado inicial o una transición de alta"}
       true -> :ok
@@ -429,10 +443,25 @@ defmodule MetadataApp.MetaEstadosAdmin do
         tiene_campos? = detalles != []
         tiene_estados? = estados != []
         self_loops_ok? = self_loops_sin_campos == 0
+        # Catálogo Maestro-Detalle (R3): un catálogo detalle nunca tiene
+        # autómata propio — mismo criterio que validar_completo/3 (creación
+        # vía wizard), acá para el gate de "Guardar BC" de un catálogo ya
+        # existente. Sin esto, quedaba bloqueado para siempre (nunca puede
+        # cumplir tiene_estados?/tiene_alta_o_inicial?, que no le aplican).
+        es_detalle? = header.schema_encabezado_id != nil
+
+        completo? =
+          if es_detalle? do
+            tiene_campos? and not pre_pendiente? and not post_pendiente?
+          else
+            tiene_campos? and tiene_estados? and tiene_alta_o_inicial? and self_loops_ok? and
+              not pre_pendiente? and not post_pendiente?
+          end
 
         {:ok,
          %{
            catalogo: catalogo,
+           es_detalle: es_detalle?,
            tiene_campos: tiene_campos?,
            tiene_estados: tiene_estados?,
            tiene_alta_o_inicial: tiene_alta_o_inicial?,
@@ -442,9 +471,7 @@ defmodule MetadataApp.MetaEstadosAdmin do
              pre_pendiente: pre_pendiente?,
              post_pendiente: post_pendiente?
            },
-           completo?:
-             tiene_campos? and tiene_estados? and tiene_alta_o_inicial? and self_loops_ok? and
-               not pre_pendiente? and not post_pendiente?
+           completo?: completo?
          }}
     end
   end

@@ -37,7 +37,8 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
         detalles ->
           with :ok <- validar_tabla(schema_context_name),
-               :ok <- validar_referencias(detalles) do
+               :ok <- validar_referencias(detalles),
+               :ok <- validar_maestro_generado(header) do
             campos =
               for detalle <- detalles do
                 propiedades = detalle.schema_context_properties || %{}
@@ -463,6 +464,22 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     end
   end
 
+  # Un catálogo detalle necesita la tabla física del maestro ya creada
+  # (para poder referenciarla en `references(:tabla_maestro)`) — mismo
+  # motivo que validar_referencias/1 para campos tipo "referencia".
+  defp validar_maestro_generado(nil), do: :ok
+  defp validar_maestro_generado(%{schema_encabezado_id: nil}), do: :ok
+
+  defp validar_maestro_generado(%{schema_encabezado_id: id}) do
+    maestro = MetaSchemaContext.obtener_header!(id)
+
+    if File.exists?("lib/metadata_app/meta_business_process/catalogos/#{maestro.schema_context_name}.ex") do
+      :ok
+    else
+      {:error, "el catálogo maestro '#{maestro.schema_context_name}' todavía no está generado"}
+    end
+  end
+
   defp tipo_ecto("integer"), do: :integer
   defp tipo_ecto("decimal"), do: :decimal
   defp tipo_ecto("boolean"), do: :boolean
@@ -558,6 +575,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     nombres_campos = Enum.map(campos, fn {campo, _, _} -> ":#{campo}" end) |> Enum.join(", ")
     nombre_indice = nombre_indice_unico(schema_context_name)
     {columnas_trn, indices_trn} = columnas_trn(schema_context_name, header)
+    {columnas_encab, indices_encab} = columnas_encabezado_detalle(schema_context_name, header)
 
     contenido = """
     defmodule MetadataApp.Repo.Migrations.#{modulo_migracion} do
@@ -572,11 +590,11 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
           add :delete_guid, :string, size: 32, null: true
 
           add :estado_id, references(:meta_schema_estados), null: true
-    #{columnas_trn}
+    #{columnas_trn}#{columnas_encab}
         end
 
         create unique_index(:#{schema_context_name}, [#{nombres_campos}], name: :#{nombre_indice})
-    #{indices_trn}
+    #{indices_trn}#{indices_encab}
       end
     end
     """
@@ -606,6 +624,35 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     {columnas, indices}
   end
 
+  # Catálogo Maestro-Detalle (Fase 1, ver docs/catalogo-maestro-detalle-requerimientos.md
+  # R1/R14) — encabezado_id/renglon_id solo se agregan si el header es
+  # detalle de otro. `encabezado_id` referencia la FILA del maestro (no
+  # solo el catálogo); `renglon_id` es un contador por maestro, lo asigna
+  # `MetadataApp.Renglones` en cada alta (nunca un SERIAL de Postgres,
+  # que sería global). Índice único compuesto, mismo criterio que
+  # nombre_indice_unico/1.
+  defp columnas_encabezado_detalle(_schema_context_name, nil), do: {"", ""}
+  defp columnas_encabezado_detalle(_schema_context_name, %{schema_encabezado_id: nil}), do: {"", ""}
+
+  defp columnas_encabezado_detalle(schema_context_name, %{schema_encabezado_id: encabezado_id}) do
+    maestro = MetaSchemaContext.obtener_header!(encabezado_id)
+
+    columnas = """
+
+          add :encabezado_id, references(:#{maestro.schema_context_name}), null: false
+          add :renglon_id, :integer, null: false
+    """
+
+    indices = """
+        create unique_index(:#{schema_context_name}, [:encabezado_id, :renglon_id], name: :#{nombre_indice_renglon(schema_context_name)})
+    """
+
+    {columnas, indices}
+  end
+
+  @doc "Nombre determinista del índice único (encabezado_id, renglon_id) de un catálogo detalle — misma fuente de verdad para la migración y para MetadataApp.Renglones."
+  def nombre_indice_renglon(tabla), do: "#{tabla}_encabezado_renglon_unico_index"
+
   defp crear_schema(schema_context_name, modulo, campos, header) do
     path = "lib/metadata_app/meta_business_process/catalogos/#{schema_context_name}.ex"
 
@@ -617,10 +664,11 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
       |> Enum.join(", ")
 
     opciones_trn = opciones_trn_use(header)
+    opciones_detalle = opciones_detalle_use(header)
 
     contenido = """
     defmodule MetadataApp.MetaBusinessProcess.Catalogos.#{modulo} do
-      use MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico, tabla: "#{schema_context_name}", campos: [#{campos_literal}]#{opciones_trn}
+      use MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico, tabla: "#{schema_context_name}", campos: [#{campos_literal}]#{opciones_trn}#{opciones_detalle}
     end
     """
 
@@ -629,6 +677,13 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
   defp opciones_trn_use(%{schema_es_transaccional: true, codigo_trn: codigo}), do: ", transaccional: true, codigo_trn: #{inspect(codigo)}"
   defp opciones_trn_use(_header), do: ""
+
+  defp opciones_detalle_use(%{schema_encabezado_id: id}) when not is_nil(id) do
+    maestro = MetaSchemaContext.obtener_header!(id)
+    ", detalle_de: #{inspect(maestro.schema_context_name)}"
+  end
+
+  defp opciones_detalle_use(_header), do: ""
 
   # Con solo segundos de resolución, dos catálogos creados/borrados en el
   # mismo segundo generan el mismo número de versión — Ecto trata la segunda
