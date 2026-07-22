@@ -44,6 +44,7 @@ defmodule MetadataAppWeb.CatalogoLive do
          |> assign(:label, header.schema_context_label)
          |> assign(:columnas, columnas)
          |> assign(:mostrar_estado?, estados_por_id != %{})
+         |> assign(:mostrar_trn?, header.schema_es_transaccional)
          |> assign(:modulo, modulo)
          |> assign(:estados_por_id, estados_por_id)
          |> assign(:pagina, 1)
@@ -376,6 +377,9 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <%= if @mostrar_estado? do %>
                   <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Estado</th>
                 <% end %>
+                <%= if @mostrar_trn? do %>
+                  <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">TRN</th>
+                <% end %>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
@@ -390,13 +394,16 @@ defmodule MetadataAppWeb.CatalogoLive do
                   <%= if @mostrar_estado? do %>
                     <td class="px-4 py-1.5 text-xs text-gray-700">{Map.get(fila, :estado_nombre)}</td>
                   <% end %>
+                  <%= if @mostrar_trn? do %>
+                    <td class="px-4 py-1.5 text-xs text-gray-700 font-mono" title={Map.get(fila, :ulid)}>{Map.get(fila, :trn)}</td>
+                  <% end %>
                 </tr>
               <% end %>
               <%= if @filas == [] do %>
                 <tr>
                   <td
                     class="px-4 py-10 text-center text-gray-400 text-sm"
-                    colspan={1 + length(@columnas) + if @mostrar_estado?, do: 1, else: 0}
+                    colspan={1 + (if @mostrar_trn?, do: 1, else: 0) + length(@columnas) + if @mostrar_estado?, do: 1, else: 0}
                   >
                     Sin registros todavía
                   </td>

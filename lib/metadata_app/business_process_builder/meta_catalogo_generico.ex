@@ -18,6 +18,9 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
     # sin efectos.
     {campos, _bindings} = Code.eval_quoted(campos_ast, [], __CALLER__)
 
+    transaccional? = Keyword.get(opts, :transaccional, false)
+    codigo_trn = Keyword.get(opts, :codigo_trn)
+
     campo_nombres = Enum.map(campos, &elem(&1, 0))
 
     campo_nombres_requeridos =
@@ -33,6 +36,9 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
         end
       end
 
+    trn_field_asts = trn_field_asts(transaccional?)
+    trn_behaviour_ast = trn_behaviour_ast(transaccional?, codigo_trn)
+
     quote do
       use Ecto.Schema
       import Ecto.Changeset
@@ -47,7 +53,15 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
         # @campos: nunca se castea acá — el único camino para cambiarlo es
         # MetadataApp.MetaStateEngine.ejecutar_transicion/3.
         field :estado_id, :integer
+
+        # PrettyCore TRN (Fase 1, 2026-07-21) — deliberadamente fuera de
+        # @campos, mismo criterio que estado_id: el único camino para
+        # asignarlos es MetadataApp.TRN.asignar_si_transaccional/1, nunca
+        # un PATCH. Solo existen si `transaccional: true`.
+        unquote_splicing(trn_field_asts)
       end
+
+      unquote(trn_behaviour_ast)
 
       @campos unquote(campo_nombres)
       @campos_requeridos unquote(campo_nombres_requeridos)
@@ -61,6 +75,25 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
         |> MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.aplicar_validaciones(@campos_meta)
         |> unique_constraint(@campos, name: @nombre_indice)
       end
+    end
+  end
+
+  defp trn_field_asts(false), do: []
+
+  defp trn_field_asts(true) do
+    [
+      quote(do: field(:trn, :string)),
+      quote(do: field(:ulid, :string))
+    ]
+  end
+
+  defp trn_behaviour_ast(false, _codigo), do: quote(do: nil)
+
+  defp trn_behaviour_ast(true, codigo) do
+    quote do
+      @behaviour MetadataApp.Transaction
+      @impl true
+      def transaction_code, do: unquote(codigo)
     end
   end
 

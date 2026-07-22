@@ -5,11 +5,11 @@ defmodule MetadataApp.MetaBusinessProcess.Reglas.PtyMarcas.Post do
   def ejecutar(accion, _registro, _contexto, _repo) do
     case accion do
       "alta" ->
-
+         
         {:ok, :sin_cambios}
 
       "guardar" ->
-
+        
         {:ok, :sin_cambios}
 
       _ -> {:ok, :sin_cambios}

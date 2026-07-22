@@ -15,7 +15,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   alias Phoenix.LiveView.JS
 
   @menu [
-    %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"}
+    %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
+    %{tipo: :pagina, id: "buscar_trn", label: "Buscar TRN", nav: "/sysadmin/buscar-trn"}
   ]
 
   # Mismo set curado que BcListLive (modales de carpeta) — el ícono del
@@ -376,12 +377,15 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # por si alguien manda el evento igual saltándose el disabled del cliente.
   def handle_event("abrir_form_estado", _params, socket) do
     if socket.assigns.completitud.tiene_campos do
+      es_el_primero? = socket.assigns.estados == []
+
       {:noreply,
        assign(socket, :estado_form, %{
          "id" => nil,
          "nombre" => "",
          "orden" => to_string(length(socket.assigns.estados) + 1),
-         "es_inicial" => false,
+         "es_inicial" => es_el_primero?,
+         "es_inicial_forzado" => es_el_primero?,
          "color" => "#7c3aed",
          "icono" => "",
          "error" => nil
@@ -400,6 +404,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
        "nombre" => estado.nombre,
        "orden" => to_string(estado.orden),
        "es_inicial" => estado.es_inicial,
+       "es_inicial_forzado" => false,
        "color" => estado.color || "#7c3aed",
        "icono" => estado.icono || "",
        "error" => nil
@@ -827,7 +832,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         %{key: "config", label: "Configuración"},
         %{key: "reglas", label: "Reglas"},
         %{key: "diagrama", label: "Diagrama"},
-        %{key: "api", label: "API"}
+        %{key: "api", label: "Contrato"}
       ]} />
 
       <div id="motor-panel-config" class="space-y-4">
@@ -932,10 +937,16 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   defp pasos_motor(completitud, transiciones) do
     tiene_transiciones? = transiciones != [] and completitud.transiciones_self_loop_sin_campos_editables == 0
 
+    # "Estado inicial" antes que "Estados" (invertido 2026-07-21, a pedido
+    # explícito): ahora coinciden siempre en el mismo momento — el primer
+    # Estado que se crea ya nace forzado como inicial (ver
+    # MetaEstadosAdmin.crear_estado/1) — el orden nuevo refleja que
+    # establecer el inicial es lo que de verdad importa primero, no una
+    # etapa separada que viene después de tener "estados" en plural.
     [
       {"Campos", completitud.tiene_campos},
-      {"Estados", completitud.tiene_estados},
       {"Estado inicial", completitud.tiene_alta_o_inicial},
+      {"Estados", completitud.tiene_estados},
       {"Transiciones", tiene_transiciones?},
       {"Reglas", not completitud.reglas.pre_pendiente and not completitud.reglas.post_pendiente}
     ]
@@ -1779,11 +1790,19 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             </div>
           </div>
 
-          <label class="flex items-center gap-1.5">
-            <input type="hidden" name="es_inicial" value="false" />
-            <input type="checkbox" name="es_inicial" value="true" checked={@form["es_inicial"] == true} class="accent-purple-600" />
-            Es el estado inicial
-          </label>
+          <%= if @form["es_inicial_forzado"] do %>
+            <div class="flex items-center gap-1.5 text-gray-600">
+              <input type="hidden" name="es_inicial" value="true" />
+              <span class="material-symbols-outlined text-purple-600" style="font-size: 16px">check_circle</span>
+              Va a ser el estado inicial — es el primer estado del catálogo, no se puede desmarcar.
+            </div>
+          <% else %>
+            <label class="flex items-center gap-1.5">
+              <input type="hidden" name="es_inicial" value="false" />
+              <input type="checkbox" name="es_inicial" value="true" checked={@form["es_inicial"] == true} class="accent-purple-600" />
+              Es el estado inicial
+            </label>
+          <% end %>
 
           <div class="flex justify-end gap-2 pt-2">
             <button type="button" phx-click="cerrar_form_estado" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">

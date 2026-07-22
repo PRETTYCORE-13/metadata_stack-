@@ -5,11 +5,11 @@ defmodule MetadataApp.MetaBusinessProcess.Reglas.PtyMarcas.Pre do
   def evaluar(accion, _registro, _contexto) do
     case accion do
       "alta" ->
-
+        
         :ok
 
       "guardar" ->
-
+        
         :ok
 
       _ -> :ok

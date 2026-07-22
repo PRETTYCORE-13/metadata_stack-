@@ -26,7 +26,8 @@
         "pty_material_segmento",
         "pty_material_marcas",
         "pty_material_precio",
-        "pty_material_fecha_alta"
+        "pty_material_fecha_alta",
+        "pty_material_peso"
       ],
       "reglas": [],
       "empresa_id": null,
@@ -51,7 +52,8 @@
         "pty_material_nombre",
         "pty_material_segmento",
         "pty_material_marcas",
-        "pty_material_precio"
+        "pty_material_precio",
+        "pty_material_peso"
       ],
       "reglas": [],
       "empresa_id": null,

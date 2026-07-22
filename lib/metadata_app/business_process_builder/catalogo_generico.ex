@@ -120,10 +120,19 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   def crear(schema_mod, attrs) do
     catalogo = schema_mod.__schema__(:source)
 
-    case MetadataApp.MetaStateEngine.transicion_alta(catalogo) do
-      nil -> crear_simple(schema_mod, attrs)
-      transicion -> MetadataApp.MetaStateEngine.dar_de_alta(schema_mod, attrs, transicion, attrs)
-    end
+    resultado =
+      case MetadataApp.MetaStateEngine.transicion_alta(catalogo) do
+        nil -> crear_simple(schema_mod, attrs)
+        transicion -> MetadataApp.MetaStateEngine.dar_de_alta(schema_mod, attrs, transicion, attrs)
+      end
+
+    # PrettyCore TRN (Fase 1) — Regla #1: ninguna operación transaccional
+    # nace sin TRN. Corre DESPUÉS del insert (no en el mismo changeset)
+    # para no acoplar MetadataApp.MetaStateEngine —deliberadamente
+    # agnóstico del catálogo— a este concepto de negocio. Sin ventana
+    # observable desde afuera: crear/2 no devuelve el registro hasta que
+    # esto termina. No hace nada si el catálogo no es transaccional.
+    MetadataApp.TRN.asignar_si_transaccional(resultado)
   end
 
   defp crear_simple(schema_mod, attrs) do
@@ -195,12 +204,14 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # Rechaza explícitamente (error visible en el changeset, no ignorado en
   # silencio) cualquier intento de tocar un campo que no esté en la
   # whitelist de editables para el estado actual del registro. `estado_id`
-  # se protege aparte porque no es un campo "de negocio" (no vive en
-  # meta_schema_detail, así que nunca aparece en `todos_los_campos`) — el
-  # único camino para cambiarlo es `MetaStateEngine.ejecutar_transicion/3`.
+  # y `trn`/`ulid` se protegen aparte porque no son campos "de negocio"
+  # (no viven en meta_schema_detail, así que nunca aparecen en
+  # `todos_los_campos`) — el único camino para cambiarlos es
+  # `MetaStateEngine.ejecutar_transicion/3` y `MetadataApp.TRN`
+  # respectivamente, nunca un PATCH.
   defp rechazar_no_editables(changeset, attrs, todos_los_campos, editables) do
     editables_set = MapSet.new(editables)
-    protegidos = ["estado_id" | todos_los_campos]
+    protegidos = ["estado_id", "trn", "ulid" | todos_los_campos]
 
     attrs
     |> Map.keys()
@@ -229,6 +240,18 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     |> Map.from_struct()
     |> Map.drop([:__meta__, :insert_guid, :update_guid, :delete_guid])
     |> agregar_estado_nombre(estados_por_id)
+  end
+
+  # Reordena el mapa de serializar/2 para que el TRN quede siempre al final,
+  # después del estado. Aparte de serializar/2 (que otros módulos internos
+  # como CatalogoLive siguen usando como mapa plano) porque esto devuelve un
+  # Jason.OrderedObject — solo debe usarse justo antes de json/2 en los
+  # controllers, no como resultado de uso interno.
+  def trn_al_final(mapa) do
+    case Map.pop(mapa, :trn) do
+      {nil, _mapa} -> mapa
+      {trn, resto} -> Jason.OrderedObject.new(Map.to_list(resto) ++ [trn: trn])
+    end
   end
 
   defp agregar_estado_nombre(%{estado_id: nil} = mapa, _estados_por_id), do: mapa

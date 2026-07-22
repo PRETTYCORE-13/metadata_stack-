@@ -29,11 +29,44 @@ defmodule MetadataApp.MetaEstadosAdmin do
     |> Repo.all()
   end
 
+  # El PRIMER estado real de un catálogo siempre nace marcado inicial —
+  # sin importar qué haya tildado el usuario en el form, no queda a su
+  # criterio (agregado 2026-07-21, pedido explícito). Evita el estado
+  # intermedio inválido "hay estados pero ninguno es inicial" que
+  # validar_motor/1 ya reportaba como advertencia — ahora es
+  # estructuralmente imposible llegar ahí desde esta pantalla.
   def crear_estado(attrs) do
+    attrs
+    |> forzar_inicial_si_es_el_primero()
+    |> insertar_estado()
+  end
+
+  # mix motor.import reproduce un export ya generado desde una base donde
+  # el invariante de arriba ya se cumplía — forzarlo de nuevo acá podría
+  # divergir en el caso raro de que el orden de exportación no coincida
+  # con cuál estado es_inicial en el archivo. Import siempre pasa por
+  # acá, nunca por crear_estado/1.
+  def crear_estado_importado(attrs), do: insertar_estado(attrs)
+
+  defp insertar_estado(attrs) do
     %Estado{}
     |> Estado.changeset(attrs)
     |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
     |> Repo.insert()
+  end
+
+  defp forzar_inicial_si_es_el_primero(attrs) do
+    header_id = Map.get(attrs, "meta_schema_header_id")
+
+    if header_id && not tiene_algun_estado?(header_id) do
+      Map.put(attrs, "es_inicial", true)
+    else
+      attrs
+    end
+  end
+
+  defp tiene_algun_estado?(header_id) do
+    Repo.exists?(from e in Estado, where: e.meta_schema_header_id == ^header_id and is_nil(e.delete_guid))
   end
 
   # Todo o nada: ver crear_transiciones/1.

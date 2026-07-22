@@ -1,7 +1,7 @@
 {
   "schema_context_label": "Materiales",
   "schema_visible": true,
-  "schema_context_nav": "/alyconfig/material",
+  "schema_context_nav": "/alyconfig/configuracion/material",
   "schema_context_name": "pty_material",
   "schema_context_type": 1,
   "schema_set_permissions": null,
@@ -75,6 +75,19 @@
         "opcional": true,
         "orden": 1,
         "tipo": "date",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "pty_material_peso",
+      "schema_context_properties": {
+        "editable": true,
+        "escala": 2,
+        "etiqueta": "Peso",
+        "opcional": false,
+        "orden": 7,
+        "precision": 20,
+        "tipo": "decimal",
         "visible": true
       }
     }

@@ -18,6 +18,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
           | {:ok, %{:tabla => any(), :ya_existia => boolean(), optional(:modulo) => binary()}}
   def generar(schema_context_name) do
     schema_path = "lib/metadata_app/meta_business_process/catalogos/#{schema_context_name}.ex"
+    header = MetaSchemaContext.obtener_header_por_nombre(schema_context_name)
 
     if File.exists?(schema_path) do
       asegurar_estado_id(schema_context_name)
@@ -48,8 +49,8 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
             modulo = Macro.camelize(schema_context_name)
 
-            crear_migracion(schema_context_name, campos)
-            crear_schema(schema_context_name, modulo, campos)
+            crear_migracion(schema_context_name, campos, header)
+            crear_schema(schema_context_name, modulo, campos, header)
             migrar()
             recompilar_schema(schema_context_name)
 
@@ -108,6 +109,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
       crear_migracion_drop(schema_context_name)
       migrar()
       MetaEstadosAdmin.purgar_historial(header.id)
+      MetadataApp.TRN.purgar_registro_central(header.id)
 
       with :ok <- MetaSchemaContext.eliminar_header(header) do
         archivo_eliminado? = borrar_schema_file(schema_context_name)
@@ -210,6 +212,8 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   # asegurar_estado_id/1 (timestamps de 17 dígitos de este generador ordenan
   # siempre después que cualquier migración escrita a mano de 14).
   defp asegurar_campos_nuevos(schema_context_name) do
+    header = MetaSchemaContext.obtener_header_por_nombre(schema_context_name)
+
     detalles =
       schema_context_name
       |> MetaSchemaContext.listar_detalles()
@@ -232,14 +236,40 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
       end)
 
     if campos_nuevos != [], do: agregar_columnas(schema_context_name, campos_nuevos)
+    asegurar_trn(schema_context_name, header, columnas_actuales)
 
     # Siempre regenera el schema (no solo cuando hay columnas nuevas): así
     # también recoge cambios de propiedades en campos que ya existían como
     # columna (ej. marcar uno como "opcional" después de agregarlo). Barato
     # e idempotente — sobreescribe el mismo contenido si nada cambió.
     modulo = Macro.camelize(schema_context_name)
-    crear_schema(schema_context_name, modulo, campos)
+    crear_schema(schema_context_name, modulo, campos, header)
     recompilar_schema(schema_context_name)
+    :ok
+  end
+
+  # Backfill de trn/ulid para un catálogo que se marcó transaccional
+  # DESPUÉS de ya haber sido generado (mismo criterio que
+  # asegurar_estado_id/1 — no versionado, IF NOT EXISTS, idempotente).
+  # Nullable a nivel de columna a propósito: las filas viejas no tienen
+  # forma de conseguir un TRN retroactivo sin inventar uno; las nuevas
+  # SIEMPRE lo tienen porque MetadataApp.TRN.asignar_si_transaccional/1
+  # corre en cada alta — la garantía de la Regla #1 es de aplicación, no
+  # de constraint de base.
+  defp asegurar_trn(_schema_context_name, %{schema_es_transaccional: false}, _columnas), do: :ok
+  defp asegurar_trn(_schema_context_name, nil, _columnas), do: :ok
+
+  defp asegurar_trn(schema_context_name, %{schema_es_transaccional: true}, columnas_actuales) do
+    if "trn" not in columnas_actuales do
+      Repo.query!("ALTER TABLE #{schema_context_name} ADD COLUMN IF NOT EXISTS trn varchar(23)")
+      Repo.query!("CREATE UNIQUE INDEX IF NOT EXISTS #{MetadataApp.TRN.nombre_indice(schema_context_name, "trn")} ON #{schema_context_name} (trn) WHERE trn IS NOT NULL")
+    end
+
+    if "ulid" not in columnas_actuales do
+      Repo.query!("ALTER TABLE #{schema_context_name} ADD COLUMN IF NOT EXISTS ulid varchar(26)")
+      Repo.query!("CREATE UNIQUE INDEX IF NOT EXISTS #{MetadataApp.TRN.nombre_indice(schema_context_name, "ulid")} ON #{schema_context_name} (ulid) WHERE ulid IS NOT NULL")
+    end
+
     :ok
   end
 
@@ -511,7 +541,10 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
   # Mismo motivo que en crear_migracion_drop/1: el sufijo hace único el
   # nombre descriptivo aunque el catálogo se regenere varias veces.
-  defp crear_migracion(schema_context_name, campos) do
+  # `header` (agregado 2026-07-21, TRN Fase 1) decide si se agregan las
+  # columnas trn/ulid — nil o schema_es_transaccional: false = catálogo
+  # normal, sin cambios respecto de antes.
+  defp crear_migracion(schema_context_name, campos, header) do
     timestamp = timestamp_utc()
     modulo_migracion = "Crear" <> Macro.camelize(schema_context_name) <> timestamp
     path = "priv/repo/migrations/#{timestamp}_crear_#{schema_context_name}_#{timestamp}.exs"
@@ -524,6 +557,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
     nombres_campos = Enum.map(campos, fn {campo, _, _} -> ":#{campo}" end) |> Enum.join(", ")
     nombre_indice = nombre_indice_unico(schema_context_name)
+    {columnas_trn, indices_trn} = columnas_trn(schema_context_name, header)
 
     contenido = """
     defmodule MetadataApp.Repo.Migrations.#{modulo_migracion} do
@@ -538,9 +572,11 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
           add :delete_guid, :string, size: 32, null: true
 
           add :estado_id, references(:meta_schema_estados), null: true
+    #{columnas_trn}
         end
 
         create unique_index(:#{schema_context_name}, [#{nombres_campos}], name: :#{nombre_indice})
+    #{indices_trn}
       end
     end
     """
@@ -548,7 +584,29 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     File.write!(path, contenido)
   end
 
-  defp crear_schema(schema_context_name, modulo, campos) do
+  # PrettyCore TRN (Fase 1) — trn/ulid solo se agregan si el header está
+  # marcado schema_es_transaccional. Nullable a nivel columna a propósito
+  # (mismo criterio que estado_id): la garantía de "siempre tiene TRN" es
+  # de aplicación (MetadataApp.TRN corre en cada alta), no de constraint.
+  defp columnas_trn(_schema_context_name, nil), do: {"", ""}
+  defp columnas_trn(_schema_context_name, %{schema_es_transaccional: false}), do: {"", ""}
+
+  defp columnas_trn(schema_context_name, %{schema_es_transaccional: true}) do
+    columnas = """
+
+          add :trn, :string, size: 23, null: true
+          add :ulid, :string, size: 26, null: true
+    """
+
+    indices = """
+        create unique_index(:#{schema_context_name}, [:trn], name: :#{MetadataApp.TRN.nombre_indice(schema_context_name, "trn")})
+        create unique_index(:#{schema_context_name}, [:ulid], name: :#{MetadataApp.TRN.nombre_indice(schema_context_name, "ulid")})
+    """
+
+    {columnas, indices}
+  end
+
+  defp crear_schema(schema_context_name, modulo, campos, header) do
     path = "lib/metadata_app/meta_business_process/catalogos/#{schema_context_name}.ex"
 
     campos_literal =
@@ -558,14 +616,19 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
       end)
       |> Enum.join(", ")
 
+    opciones_trn = opciones_trn_use(header)
+
     contenido = """
     defmodule MetadataApp.MetaBusinessProcess.Catalogos.#{modulo} do
-      use MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico, tabla: "#{schema_context_name}", campos: [#{campos_literal}]
+      use MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico, tabla: "#{schema_context_name}", campos: [#{campos_literal}]#{opciones_trn}
     end
     """
 
     File.write!(path, contenido)
   end
+
+  defp opciones_trn_use(%{schema_es_transaccional: true, codigo_trn: codigo}), do: ", transaccional: true, codigo_trn: #{inspect(codigo)}"
+  defp opciones_trn_use(_header), do: ""
 
   # Con solo segundos de resolución, dos catálogos creados/borrados en el
   # mismo segundo generan el mismo número de versión — Ecto trata la segunda

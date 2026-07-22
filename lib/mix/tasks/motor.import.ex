@@ -74,7 +74,7 @@ defmodule Mix.Tasks.Motor.Import do
           "empresa_id" => attrs["empresa_id"]
         }
 
-        case MetaEstadosAdmin.crear_estado(atributos) do
+        case MetaEstadosAdmin.crear_estado_importado(atributos) do
           {:ok, estado} ->
             Mix.shell().info("+ #{header.schema_context_name} estado \"#{nombre}\": creado")
             Map.put(acc, nombre, estado)

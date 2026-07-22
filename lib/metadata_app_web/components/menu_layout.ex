@@ -56,6 +56,20 @@ defmodule MetadataAppWeb.MenuLayout do
           <span class="pc-topbar-empresa">{@nombre_empresa}</span>
         </.link>
         <div class="pc-topbar-derecha">
+          <!-- Buscador TRN (PrettyCore TRN, Fase 3): form GET plano, no
+               LiveView — navega directo a BuscadorTrnLive con ?query=...
+               así funciona igual desde CUALQUIER pantalla que use este
+               layout compartido, sin que cada LiveView tenga que
+               implementar un handle_event en común. -->
+          <form action="/sysadmin/buscar-trn" method="get" class="pc-topbar-buscar-trn">
+            <label for="topbar-buscar-trn" class="pc-topbar-buscar-trn-label">TRN:</label>
+            <input type="text" name="query" id="topbar-buscar-trn" autocomplete="off" class="pc-topbar-buscar-trn-input" />
+            <button type="submit" class="pc-topbar-buscar-trn-btn" title="Buscar">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.803 5.803a7.5 7.5 0 0010 10z" />
+              </svg>
+            </button>
+          </form>
           <.live_component
             module={MetadataAppWeb.NotifBellComponent}
             id="notif-bell"

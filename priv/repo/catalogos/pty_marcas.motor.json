@@ -1,7 +1,7 @@
 {
   "estados": [
     {
-      "color": "#4bed40",
+      "color": "#40ed94",
       "nombre": "Activo",
       "icono": null,
       "orden": 1,
@@ -13,22 +13,22 @@
     {
       "accion": "alta",
       "etiqueta": "Alta",
+      "reglas": [],
+      "empresa_id": null,
       "campos_editables": [
         "pty_marcas_nombre"
       ],
-      "reglas": [],
-      "empresa_id": null,
       "estado_destino": "Activo",
       "estado_origen": null
     },
     {
       "accion": "guardar",
       "etiqueta": "Guardar",
+      "reglas": [],
+      "empresa_id": null,
       "campos_editables": [
         "pty_marcas_nombre"
       ],
-      "reglas": [],
-      "empresa_id": null,
       "estado_destino": "Activo",
       "estado_origen": "Activo"
     }

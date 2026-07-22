@@ -31,7 +31,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # esta pantalla es de acceso directo. Según se agreguen secciones, se
   # suman aquí (por ahora solo "BC List").
   @menu [
-    %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"}
+    %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
+    %{tipo: :pagina, id: "buscar_trn", label: "Buscar TRN", nav: "/sysadmin/buscar-trn"}
   ]
 
   def mount(_params, _session, socket) do

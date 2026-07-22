@@ -26,7 +26,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
         conn,
         Jason.OrderedObject.new(
           meta_campos: meta_campos,
-          data: Enum.map(items, &CatalogoGenerico.serializar(&1, estados_por_id)),
+          data: Enum.map(items, &serializar_json(&1, estados_por_id)),
           paginacion: %{
             pagina: pagina,
             por_pagina: por_pagina,
@@ -67,7 +67,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
 
       json(
         conn,
-        Jason.OrderedObject.new(meta_campos: meta_campos, data: CatalogoGenerico.serializar(item, estados_por_id))
+        Jason.OrderedObject.new(meta_campos: meta_campos, data: serializar_json(item, estados_por_id))
       )
     end
   end
@@ -81,13 +81,13 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
         with {:ok, items} <- CatalogoGenerico.crear_muchos(schema_mod, attrs) do
           conn
           |> put_status(:created)
-          |> json(%{data: Enum.map(items, &CatalogoGenerico.serializar(&1, estados_por_id))})
+          |> json(%{data: Enum.map(items, &serializar_json(&1, estados_por_id))})
         end
       else
         with {:ok, item} <- CatalogoGenerico.crear(schema_mod, attrs) do
           conn
           |> put_status(:created)
-          |> json(%{data: CatalogoGenerico.serializar(item, estados_por_id)})
+          |> json(%{data: serializar_json(item, estados_por_id)})
         end
       end
     end
@@ -99,7 +99,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
       item = CatalogoGenerico.obtener!(schema_mod, id)
 
       with {:ok, item} <- CatalogoGenerico.actualizar(item, attrs) do
-        json(conn, %{data: CatalogoGenerico.serializar(item, MetaStateEngine.mapa_nombres_estados(tabla))})
+        json(conn, %{data: serializar_json(item, MetaStateEngine.mapa_nombres_estados(tabla))})
       end
     end
   end
@@ -112,6 +112,12 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
         send_resp(conn, :no_content, "")
       end
     end
+  end
+
+  defp serializar_json(item, estados_por_id) do
+    item
+    |> CatalogoGenerico.serializar(estados_por_id)
+    |> CatalogoGenerico.trn_al_final()
   end
 
   defp resolver(tabla) do

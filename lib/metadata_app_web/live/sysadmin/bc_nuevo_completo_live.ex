@@ -23,7 +23,8 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   @topic "bc_contextos"
 
   @menu [
-    %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"}
+    %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
+    %{tipo: :pagina, id: "buscar_trn", label: "Buscar TRN", nav: "/sysadmin/buscar-trn"}
   ]
 
   @tipos_campo ~w(string integer decimal boolean date enum referencia)
@@ -91,7 +92,9 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       "etiqueta" => "Catálogo de ",
       "carpeta_padre" => "",
       "icono" => "",
-      "visible" => true
+      "visible" => true,
+      "es_transaccional" => false,
+      "codigo_trn" => ""
     })
     |> assign(:campos, [])
     |> assign(:estados, [])
@@ -112,6 +115,8 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       |> Map.put("visible", contexto["visible"] == "true")
       |> Map.put("nombre", normalizar_identificador(contexto["nombre"]))
       |> Map.put("icono", normalizar_icono(contexto["icono"]))
+      |> Map.put("es_transaccional", contexto["es_transaccional"] == "true")
+      |> Map.put("codigo_trn", normalizar_codigo_trn(contexto["codigo_trn"]))
 
     nav = componer_nav(contexto["carpeta_padre"], contexto["nombre"])
 
@@ -406,8 +411,9 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     contexto = socket.assigns.contexto
     nombre_sistema = nombre_sistema_desde(contexto["nombre"])
     nav = componer_nav(contexto["carpeta_padre"], contexto["nombre"])
+    es_transaccional? = contexto["es_transaccional"] == true
 
-    case validar_contexto(nombre_sistema, nav, contexto["etiqueta"]) do
+    case validar_contexto(nombre_sistema, nav, contexto["etiqueta"], es_transaccional?, contexto["codigo_trn"] || "") do
       :ok ->
         attrs = %{
           "header" => %{
@@ -417,6 +423,8 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
             "schema_visible" => contexto["visible"] == true,
             "schema_context_type" => 1,
             "schema_context_icono" => nil_si_vacio(contexto["icono"]),
+            "schema_es_transaccional" => es_transaccional?,
+            "codigo_trn" => if(es_transaccional?, do: contexto["codigo_trn"], else: nil),
             "detalles" => Enum.map(socket.assigns.campos, &detalle_attrs/1)
           },
           "estados" => socket.assigns.estados,
@@ -463,13 +471,18 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   @identificador ~r/^[a-z][a-z0-9_]{0,49}$/
   @nav ~r/^\/[a-z0-9\-\/]{0,49}$/
 
-  defp validar_contexto(nombre, nav, etiqueta) do
+  defp validar_contexto(nombre, nav, etiqueta, es_transaccional?, codigo_trn) do
     with :ok <- validar_regex(nombre, @identificador, "Nombre de sistema"),
          :ok <- validar_regex(nav, @nav, "Navegación"),
-         :ok <- validar_completado(etiqueta, "Catálogo de", "Etiqueta") do
-      validar_nav_libre(nav)
+         :ok <- validar_completado(etiqueta, "Catálogo de", "Etiqueta"),
+         :ok <- validar_nav_libre(nav) do
+      validar_codigo_trn_requerido(es_transaccional?, codigo_trn)
     end
   end
+
+  defp validar_codigo_trn_requerido(false, _codigo_trn), do: :ok
+  defp validar_codigo_trn_requerido(true, codigo_trn) when byte_size(codigo_trn) == 4, do: :ok
+  defp validar_codigo_trn_requerido(true, _codigo_trn), do: {:error, "Código de módulo TRN inválido: debe ser exactamente 4 caracteres (ej. VENT)."}
 
   defp validar_regex(valor, regex, etiqueta) do
     if valor && Regex.match?(regex, valor) do
@@ -558,6 +571,16 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     |> String.replace(~r/[^a-z0-9]+/, "_")
     |> String.trim("_")
     |> String.slice(0, 50)
+  end
+
+  # PrettyCore TRN: mismo criterio que codigo_trn en Header.changeset/2
+  # (mayúsculas, máx 4) — se normaliza acá TAMBIÉN para que la vista previa
+  # del wizard ya muestre el valor real antes de llegar al changeset.
+  defp normalizar_codigo_trn(valor) do
+    (valor || "")
+    |> String.trim()
+    |> String.upcase()
+    |> String.slice(0, 4)
   end
 
   defp quitar_acentos(valor) do
@@ -728,13 +751,16 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   # es a nivel catálogo, no se puede armar junto con transiciones que
   # todavía no existen en la base — se agrega DESPUÉS de "Crear", desde
   # BcMotorLive.
+  # "Estado inicial" antes que "Estados" (invertido 2026-07-21, mismo
+  # criterio que BcMotorLive — ver pasos_motor/2 ahí): consistencia visual
+  # entre las dos pantallas que muestran este stepper.
   defp pasos_wizard(campos, estados, transiciones) do
     tiene_transiciones? = transiciones != [] and self_loops_ok?(transiciones)
 
     [
       {"Campos", campos != []},
-      {"Estados", estados != []},
       {"Estado inicial", tiene_alta_o_inicial?(estados, transiciones)},
+      {"Estados", estados != []},
       {"Transiciones", tiene_transiciones?}
     ]
     |> marcar_estado_pasos()
@@ -854,6 +880,22 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
               <% end %>
             </div>
           </div>
+        </div>
+
+        <label class="font-medium text-gray-900 pt-1">TRN:</label>
+        <div>
+          <label class="flex items-center gap-1.5 font-medium text-gray-900 cursor-pointer select-none">
+            <input type="hidden" name="contexto[es_transaccional]" value="false" />
+            <input type="checkbox" name="contexto[es_transaccional]" value="true" checked={@contexto["es_transaccional"] == true} class="accent-purple-600" />
+            Es una operación transaccional (necesita TRN — Venta, Factura, Cobro, etc.)
+          </label>
+          <%= if @contexto["es_transaccional"] do %>
+            <div class="mt-1 flex items-center gap-1">
+              <span class="text-gray-600">Código de módulo (4 caracteres, ej. VENT):</span>
+              <input type="text" name="contexto[codigo_trn]" value={@contexto["codigo_trn"]} required maxlength="4"
+                class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 w-20 font-mono uppercase focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" placeholder="VENT" />
+            </div>
+          <% end %>
         </div>
       </form>
     </div>
