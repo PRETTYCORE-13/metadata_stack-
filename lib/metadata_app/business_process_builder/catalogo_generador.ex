@@ -298,11 +298,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
     columnas =
       for {campo, tipo, opciones} <- campos_nuevos do
-        # Los registros ya existentes no tienen valor para este campo nuevo,
-        # así que acá SIEMPRE es null: true, a diferencia de columna_migracion/3
-        # (pensada para CREATE TABLE, donde todo campo de negocio es
-        # obligatorio desde el principio).
-        columna_migracion(campo, tipo, opciones) |> String.replace("null: false", "null: true")
+        columna_migracion_agregar(campo, tipo, opciones)
       end
       |> Enum.join("\n")
 
@@ -321,6 +317,55 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     File.write!(path, contenido)
     migrar()
   end
+
+  # Los registros ya existentes no tienen valor para este campo nuevo — a
+  # diferencia de columna_migracion/3 (pensada para CREATE TABLE, tabla
+  # vacía, donde todo campo de negocio es obligatorio desde el principio),
+  # acá la tabla puede tener millones de filas. Sin un valor por default no
+  # hay forma de que Postgres satisfaga NOT NULL en las filas viejas — se
+  # degrada a null: true (obligatorio solo desde la aplicación en
+  # adelante, ver docs/catalogo-maestro-detalle-requerimientos.md §R13).
+  # CON un valor por default constante, en cambio, SÍ se pone null: false
+  # real: Postgres 11+ guarda un default constante como metadata del
+  # catálogo en vez de reescribir la tabla — instantáneo aunque la tabla
+  # tenga millones de filas, sin ventana de bloqueo larga.
+  #
+  # Una referencia nunca ofrece default (no hay un valor razonable:
+  # inventar una FK significaría enganchar a ciegas todas las filas viejas
+  # a un mismo registro ajeno) — se mantiene siempre nullable, igual que
+  # antes de este cambio.
+  defp columna_migracion_agregar(campo, tipo, %{tabla_referenciada: _} = opciones) do
+    columna_migracion(campo, tipo, opciones) |> String.replace("null: false", "null: true")
+  end
+
+  defp columna_migracion_agregar(campo, tipo, opciones) do
+    base = columna_migracion(campo, tipo, opciones)
+
+    case formatear_default(tipo, opciones[:valor_default]) do
+      nil -> String.replace(base, "null: false", "null: true")
+      literal -> String.replace(base, "null: false", "null: false, default: #{literal}")
+    end
+  end
+
+  # Devuelve el texto Elixir literal a escribir en la migración, o nil si
+  # no hay valor (o no es válido para el tipo — defensa en profundidad:
+  # BcMotorLive ya valida esto antes de llegar acá, pero este módulo
+  # escribe código fuente a disco que después se COMPILA Y CORRE como
+  # migración, así que no confía ciegamente en el caller). string/date
+  # usan inspect/1 (siempre produce un literal Elixir escapado, seguro sin
+  # importar el contenido); integer/decimal/boolean se validan con regex
+  # antes de insertarse SIN comillas — insertar ese texto crudo sin validar
+  # sería, en los hechos, ejecutar lo que sea que alguien haya escrito ahí.
+  defp formatear_default(_tipo, valor) when valor in [nil, ""], do: nil
+  defp formatear_default(tipo, valor) when tipo in [:string, :date], do: inspect(valor)
+  defp formatear_default(:boolean, valor) when valor in ["true", "false"], do: valor
+  defp formatear_default(:boolean, _valor), do: nil
+
+  defp formatear_default(tipo, valor) when tipo in [:integer, :decimal] do
+    if Regex.match?(~r/^-?\d+(\.\d+)?$/, valor), do: valor, else: nil
+  end
+
+  defp formatear_default(_tipo, _valor), do: nil
 
   # Sin esto, el módulo recién reescrito en disco queda desactualizado en la
   # sesión BEAM que está corriendo ahora mismo (ej. un mix run de seeds que
@@ -525,13 +570,11 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
   defp base_opciones(propiedades) do
     opcional = Map.get(propiedades, "opcional", false)
+    base = %{opcional: opcional, valor_default: Map.get(propiedades, "valor_default")}
 
     case Map.get(propiedades, "unico_en") do
-      %{"tabla" => tabla, "campo" => campo_externo} ->
-        %{unico_en: {tabla, campo_externo}, opcional: opcional}
-
-      _ ->
-        %{opcional: opcional}
+      %{"tabla" => tabla, "campo" => campo_externo} -> Map.put(base, :unico_en, {tabla, campo_externo})
+      _ -> base
     end
   end
 

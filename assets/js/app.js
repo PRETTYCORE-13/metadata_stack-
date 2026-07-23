@@ -223,6 +223,57 @@ const CopiarTextarea = {
   },
 }
 
+// Aviso de "salir sin guardar" para el editor de reglas PRE/POST
+// (panel_reglas en BcMotorLive) — el <textarea> NO tiene phx-change (ver
+// CopiarTextarea más arriba: se lee .value recién al copiar/compilar), así
+// que mientras se tipea el servidor no se entera de nada. Si se navega a
+// otra pantalla sin darle "Compilar" antes, ese texto se pierde entero sin
+// aviso (LiveView desmonta esta vista). Un hook por textarea (PRE y POST
+// por separado, cada uno con su propio data-tipo) compara el valor actual
+// contra el que había al montar (= lo último realmente compilado, porque
+// bloque_regla/1 siempre renderiza fila.codigo_fuente de la base) — si
+// difieren, intercepta tanto el cierre/recarga de pestaña (beforeunload)
+// como un click en cualquier link/botón de navegación interna de
+// LiveView (data-phx-link de <.link navigate>/<.link patch>, o los
+// botones del sidebar con phx-click="change_page").
+const AvisoReglasSinGuardar = {
+  mounted() {
+    this.original = this.el.value
+
+    this.alDescargar = (e) => {
+      if (this.el.value === this.original) return
+      e.preventDefault()
+      e.returnValue = ""
+    }
+    window.addEventListener("beforeunload", this.alDescargar)
+
+    this.alHacerClick = (e) => {
+      if (this.el.value === this.original) return
+
+      const destino = e.target.closest('[data-phx-link], [phx-click="change_page"]')
+      if (!destino || this.el.contains(destino)) return
+
+      if (!window.confirm("Tienes cambios sin compilar, ¿seguro que quieres salir?")) {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+      }
+    }
+    document.addEventListener("click", this.alHacerClick, true)
+
+    // El servidor avisa acá cuando ESTE tipo (pre/post) se compiló de
+    // verdad (validar_guardar_y_compilar/3) — recién ahí el valor actual
+    // pasa a ser "lo último guardado", no antes (un intento fallido por
+    // error de sintaxis no cuenta: nada se guardó, sigue pendiente).
+    this.handleEvent("regla_guardada", ({tipo}) => {
+      if (tipo === this.el.dataset.tipo) this.original = this.el.value
+    })
+  },
+  destroyed() {
+    window.removeEventListener("beforeunload", this.alDescargar)
+    document.removeEventListener("click", this.alHacerClick, true)
+  },
+}
+
 // Diagrama de estados del Motor (BcMotorLive) — Mermaid pesa ~3.5MB, así
 // que se carga on-demand (script inyectado dinámicamente) solo cuando este
 // hook monta, no en el bundle principal que se sirve en cada página.
@@ -265,7 +316,7 @@ const DiagramaMotor = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, CopiarRuta, CopiarTextarea, DiagramaMotor},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, CopiarRuta, CopiarTextarea, AvisoReglasSinGuardar, DiagramaMotor},
 })
 
 // Show progress bar on live navigation and form submits

@@ -476,6 +476,30 @@ defmodule MetadataApp.MetaEstadosAdmin do
     end
   end
 
+  # Gate único de "¿este BC está listo para desplegar?" — mismo criterio
+  # que antes vivía como puede_guardar_bc?/3 dentro de BcMotorLive (botón
+  # "Guardar BC", retirado de ahí el 2026-07-23 y movido a "Despliegue" en
+  # BcListLive). Completo (completitud/1) + estructuralmente válido
+  # (validar_motor/1) + código de reglas sin error de sintaxis + en dev/
+  # test, ya compilado (en producción no hay compilador, sin_compilar?/1
+  # da false ahí siempre).
+  def puede_desplegar?(catalogo) do
+    case MetaSchemaContext.obtener_header_por_nombre(catalogo) do
+      nil ->
+        false
+
+      header ->
+        with {:ok, completitud} <- completitud(catalogo),
+             {:ok, validacion} <- validar_motor(catalogo) do
+          completitud.completo? and validacion.valido? and
+            not MetaReglasCodigo.con_error_sintaxis?(header) and
+            not MetaReglasCodigo.sin_compilar?(header)
+        else
+          _ -> false
+        end
+    end
+  end
+
   # --- Validación estructural del autómata ("¿esto va a funcionar?") -----------
 
   # Chequeo estructural: "¿esto va a funcionar sin romperse?" — distinto de

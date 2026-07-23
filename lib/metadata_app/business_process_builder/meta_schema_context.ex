@@ -46,6 +46,8 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   def item_de_header(h) do
     %{
       id: h.schema_context_name,
+      header_id: h.id,
+      schema_encabezado_id: h.schema_encabezado_id,
       label: h.schema_context_label,
       nav: h.schema_context_nav,
       visible: h.schema_visible,
@@ -158,6 +160,54 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     |> Enum.sort_by(fn
       %{tipo: :carpeta, nombre: nombre} -> {0, nombre}
       %{tipo: :pagina, label: label} -> {1, label}
+    end)
+    |> reordenar_detalles_bajo_maestro()
+  end
+
+  # Catálogo Maestro-Detalle: el orden alfabético por label (de arriba) no
+  # tiene por qué dejar a un detalle cerca de su maestro (ej. "ECC Det"
+  # ordena antes que "ECC - Ennova..." si el label no coincide a propósito).
+  # Acá, DENTRO de cada nivel del árbol (una carpeta a la vez, ya
+  # recursivo por venir de mapa_a_lista_ordenada/1), cualquier página que
+  # sea detalle de OTRA página presente en el mismo nivel se saca de su
+  # posición alfabética y se reinserta justo debajo de su maestro, en
+  # orden de creación entre sí (header_id ascendente). Un detalle cuyo
+  # maestro no está en este mismo nivel (otra carpeta, o filtrado por
+  # búsqueda/paginación) se queda donde el orden alfabético lo puso —
+  # no hay maestro visible con quien agruparlo.
+  defp reordenar_detalles_bajo_maestro(nodos) do
+    # header_id (PK numérica) — no confundir con :id (schema_context_name,
+    # string): schema_encabezado_id de un detalle apunta al header_id
+    # numérico del maestro, así que la membresía "¿el maestro está en este
+    # mismo nivel?" tiene que chequearse contra header_id, no contra :id.
+    header_ids_presentes =
+      nodos
+      |> Enum.filter(&(&1.tipo == :pagina))
+      |> MapSet.new(& &1.header_id)
+
+    detalles_por_maestro =
+      nodos
+      |> Enum.filter(fn
+        %{tipo: :pagina, schema_encabezado_id: id} -> not is_nil(id) and MapSet.member?(header_ids_presentes, id)
+        _ -> false
+      end)
+      |> Enum.group_by(& &1.schema_encabezado_id)
+      |> Map.new(fn {maestro_id, detalles} -> {maestro_id, Enum.sort_by(detalles, & &1.header_id)} end)
+
+    header_ids_ya_agrupados =
+      detalles_por_maestro |> Map.values() |> List.flatten() |> MapSet.new(& &1.header_id)
+
+    Enum.flat_map(nodos, fn nodo ->
+      cond do
+        nodo.tipo == :pagina and MapSet.member?(header_ids_ya_agrupados, nodo.header_id) ->
+          []
+
+        nodo.tipo == :pagina and Map.has_key?(detalles_por_maestro, nodo.header_id) ->
+          [nodo | Map.fetch!(detalles_por_maestro, nodo.header_id)]
+
+        true ->
+          [nodo]
+      end
     end)
   end
 

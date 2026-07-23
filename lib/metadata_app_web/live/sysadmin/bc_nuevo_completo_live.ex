@@ -220,12 +220,13 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   end
 
   def handle_event("guardar_campo", params, socket) do
-    nombre = String.trim(params["nombre"] || "")
+    sufijo = String.trim(params["nombre"] || "")
     etiqueta = String.trim(params["etiqueta"] || "")
     tipo = params["tipo"] || "string"
+    nombre = "#{nombre_sistema_desde(socket.assigns.contexto["nombre"])}_#{sufijo}"
 
     cond do
-      not Regex.match?(~r/^[a-z][a-z0-9_]{0,49}$/, nombre) ->
+      not Regex.match?(~r/^[a-z][a-z0-9_]{0,49}$/, sufijo) ->
         {:noreply,
          update(
            socket,
@@ -640,13 +641,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   defp nil_si_vacio(""), do: nil
   defp nil_si_vacio(valor), do: valor
 
-  defp resumen_errores(changeset) do
-    changeset
-    |> Ecto.Changeset.traverse_errors(fn {msg, opts} ->
-      Enum.reduce(opts, msg, fn {k, v}, acc -> String.replace(acc, "%{#{k}}", to_string(v)) end)
-    end)
-    |> inspect()
-  end
+  defp resumen_errores(changeset), do: changeset |> MetadataApp.MetaErrores.traducir() |> inspect()
 
   # Mismos chequeos que MetaEstadosAdmin.validar_completo/3 (Fase 1), acá
   # recalculados client-side sobre lo que hay en memoria para dar feedback
@@ -735,7 +730,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       </div>
     </div>
 
-    <.modal_campo :if={@campo_form} form={@campo_form} tipos={@tipos_campo} catalogos={@catalogos_referenciables} />
+    <.modal_campo :if={@campo_form} form={@campo_form} tipos={@tipos_campo} catalogos={@catalogos_referenciables} nombre_base={nombre_sistema_desde(@contexto["nombre"])} />
     <.modal_estado :if={@estado_form} form={@estado_form} />
     <.modal_transicion :if={@transicion_form} form={@transicion_form} estados={@estados} campos={@campos} />
     """
@@ -1138,6 +1133,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   attr :form, :map, required: true
   attr :tipos, :list, required: true
   attr :catalogos, :list, required: true
+  attr :nombre_base, :string, required: true
 
   defp modal_campo(assigns) do
     ~H"""
@@ -1172,9 +1168,12 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
           <% else %>
             <div>
               <label class="block text-gray-700 mb-0.5">Nombre</label>
-              <input type="text" name="nombre" value={@form["nombre"]} placeholder="pty_carro_color" required
+              <input type="text" name="nombre" value={@form["nombre"]} placeholder="color" required
                 pattern="[a-z][a-z0-9_]*" maxlength="50"
                 class="w-full border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
+              <p class="mt-0.5 text-gray-500">
+                Se va a crear como <strong class="font-mono">{@nombre_base}_{if @form["nombre"] in [nil, ""], do: "…", else: @form["nombre"]}</strong>
+              </p>
             </div>
             <div>
               <label class="block text-gray-700 mb-0.5">Etiqueta</label>

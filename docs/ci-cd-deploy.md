@@ -35,6 +35,23 @@ Tres ambientes distintos, cada uno con un rol:
 
 Con el compilador de Elixir disponible, corrés las tareas mix que generan un catálogo nuevo (migración, schema Ecto, context, controller) a partir de la metadata versionada (Business Contexts). Lo probás ahí mismo. Cuando estás conforme, commiteás el código generado + la metadata.
 
+## Qué se commitea y qué no — BPB (core) vs BC (`pty_*`)
+
+Este repo es el **BPB** (Business Process Builder): la plataforma compartida que usa todo el equipo (Uriel, Liz, Jesus). Los **BC** (Business Contexts) que cada uno genera probando el motor — catálogos con prefijo **`pty_*`** — son "micro apps" que cada desarrollador arma localmente con el BPB, no código de la plataforma. **Nunca van a este repo, ni de prueba ni reales.**
+
+El discriminador es puramente de nombre, ya establecido en todo el proyecto: **`meta_schema_*`/`Meta*`** = core del BPB, siempre se commitea. **`pty_*`** = BC generado, nunca se commitea. Formalizado en `.gitignore` (agregado 2026-07-23):
+```
+lib/metadata_app/meta_business_process/catalogos/pty_*.ex
+lib/metadata_app/meta_business_process/reglas/pty_*/
+priv/repo/catalogos/pty_*.json
+priv/repo/migrations/*pty_*.exs
+```
+Cualquier `pty_*` que generes localmente (catálogo, regla, export, migración) nunca aparece en `git status` — no hace falta acordarte de no commitearlo, Git ya no lo deja. El mismo día se hizo una limpieza retroactiva de todo `pty_*` que ya estaba trackeado de sesiones anteriores (`git rm --cached` + borrado en disco, commit `0647531`).
+
+**Efecto colateral real sobre el job `validate`**: el paso 3 de CI ("importa la metadata versionada y regenera todos los catálogos") ahora no tiene ningún `pty_*.meta.json`/`.motor.json` para importar — nunca hay un BC real corriendo por el pipeline de CI. El chequeo de drift (paso 4) sigue siendo válido para el core del BPB, pero **ya no ejercita el ciclo completo de generación de un catálogo de negocio real**. Si hace falta volver a probar ese ciclo en CI, va a necesitar un catálogo de ejemplo que viva bajo otro prefijo (no `pty_*`) pensado a propósito para eso, no uno real de ADN.
+
+**Pendiente sin resolver todavía**: cómo llega un BC de verdad (compilado por ADN con el BPB) a Linux Trixie (producción) **sin pasar por este repo** — hoy el único camino a producción es el que describe este documento (push → CI → imagen), que es exclusivamente para el BPB. Ese mecanismo para BCs es diseño nuevo, no existe todavía.
+
 ## Paso 2 — `git push` dispara el CI
 
 El workflow vive en [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) y tiene dos jobs:

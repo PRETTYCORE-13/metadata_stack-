@@ -3,6 +3,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerador
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
+  alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.BorradoresMotor
   alias MetadataAppWeb.AdminNav
   alias Phoenix.LiveView.JS
@@ -52,6 +53,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:pagina, 1)
      |> assign(:carpetas_colapsadas, MapSet.new())
      |> assign(:accion_eliminar, nil)
+     |> assign(:accion_desplegar, nil)
      |> assign(:carpeta_form, nil)
      |> assign(:carpeta_error, nil)
      |> assign(:carpetas_disponibles, [])
@@ -234,6 +236,89 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
            |> assign(:accion_eliminar, nil)
            |> put_flash(:error, "No se pudo eliminar #{tabla}: #{inspect(motivo)}")}
       end
+    end
+  end
+
+  # Despliegue (movido acá desde "Guardar BC" en BcMotorLive, 2026-07-23):
+  # exporta la definición completa del catálogo (campos, estados,
+  # transiciones) a priv/repo/catalogos/<catalogo>.meta.json + .motor.json.
+  # No toca git ni publica nada a producción todavía — es el primer paso de
+  # ese flujo (ver docs/upcoming-features.md, ítem 7).
+  #
+  # Catálogo Maestro-Detalle: un detalle nunca ofrece "Despliegue" propio
+  # (ver adjuntar_puede_desplegar/1, boton_desplegar/1) — alcanza con
+  # desplegar el maestro, que acá arrastra a sus detalles con él.
+  def handle_event("pedir_desplegar", %{"tabla" => tabla, "label" => label}, socket) do
+    detalles =
+      case MetaSchemaContext.obtener_header_por_nombre(tabla) do
+        nil -> []
+        header -> MetaSchemaContext.listar_catalogos_detalle(header.id)
+      end
+
+    {:noreply,
+     assign(socket, :accion_desplegar, %{
+       tabla: tabla,
+       label: label,
+       detalles: Enum.map(detalles, & &1.schema_context_label)
+     })}
+  end
+
+  def handle_event("cancelar_desplegar", _params, socket) do
+    {:noreply, assign(socket, :accion_desplegar, nil)}
+  end
+
+  # Revalida puede_desplegar?/1 en el momento del click, no solo confía en
+  # el estado del botón cuando se pintó la fila (mismo criterio que
+  # confirmar_eliminar_carpeta: puede pasar tiempo entre abrir el modal y
+  # confirmar, y algo pudo haber cambiado en el medio).
+  def handle_event("confirmar_desplegar", _params, socket) do
+    %{tabla: tabla} = socket.assigns.accion_desplegar
+
+    case MetaSchemaContext.obtener_header_por_nombre(tabla) do
+      nil ->
+        {:noreply,
+         socket
+         |> assign(:accion_desplegar, nil)
+         |> put_flash(:error, "Ese catálogo ya no existe.")}
+
+      header ->
+        if MetaEstadosAdmin.puede_desplegar?(tabla) do
+          MetaSchemaContext.exportar_header(header)
+          MetaEstadosAdmin.exportar_header(header)
+
+          # Los detalles nunca tienen autómata propio (exportar_header del
+          # motor devuelve nil sin escribir nada ahí, ver
+          # MetaEstadosAdmin.exportar_header/2) — igual se llaman los dos
+          # por simetría con el maestro, solo el .meta.json de cada uno
+          # termina escribiéndose de verdad.
+          detalles = MetaSchemaContext.listar_catalogos_detalle(header.id)
+
+          Enum.each(detalles, fn detalle ->
+            MetaSchemaContext.exportar_header(detalle)
+            MetaEstadosAdmin.exportar_header(detalle)
+          end)
+
+          mensaje =
+            case detalles do
+              [] ->
+                "Desplegado: priv/repo/catalogos/#{tabla}.meta.json + .motor.json actualizados."
+
+              _ ->
+                nombres = Enum.map_join(detalles, ", ", & &1.schema_context_name)
+                "Desplegado: #{tabla} + #{length(detalles)} detalle(s) (#{nombres}) actualizados en priv/repo/catalogos/."
+            end
+
+          {:noreply,
+           socket
+           |> assign(:accion_desplegar, nil)
+           |> put_flash(:info, mensaje)
+           |> cargar_headers()}
+        else
+          {:noreply,
+           socket
+           |> assign(:accion_desplegar, nil)
+           |> put_flash(:error, "#{tabla} ya no cumple las condiciones para desplegar — revisá completitud/validación/compilación.")}
+        end
     end
   end
 
@@ -466,6 +551,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     arbol =
       filtrados
       |> Enum.slice((pagina - 1) * @por_pagina, @por_pagina)
+      |> Enum.map(&adjuntar_puede_desplegar/1)
       |> MetaSchemaContext.construir_arbol()
 
     socket
@@ -474,6 +560,23 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     |> assign(:total_paginas, total_paginas)
     |> assign(:total_items, total_items)
   end
+
+  # Se calcula solo sobre la página visible (no sobre @total_items), mismo
+  # trade-off de paginar-antes-de-armar-el-árbol de cargar_headers/1 — una
+  # carpeta no tiene autómata propio, no le aplica.
+  #
+  # Catálogo Maestro-Detalle: un detalle nunca se despliega por separado
+  # (comparte el ciclo del maestro, mismo criterio que ya rige sus
+  # estados/transiciones/contrato) — acá directamente NO se le calcula
+  # puede_desplegar?/1 real, se marca :no_aplica para que
+  # boton_desplegar/1 no pinte ni el link ni el placeholder deshabilitado.
+  defp adjuntar_puede_desplegar(%{es_carpeta: true} = item), do: item
+
+  defp adjuntar_puede_desplegar(%{schema_encabezado_id: id} = item) when not is_nil(id),
+    do: Map.put(item, :puede_desplegar, :no_aplica)
+
+  defp adjuntar_puede_desplegar(item),
+    do: Map.put(item, :puede_desplegar, MetaEstadosAdmin.puede_desplegar?(item.id))
 
   defp coincide_busqueda?(_item, ""), do: true
 
@@ -641,13 +744,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     end
   end
 
-  defp resumen_errores_carpeta(changeset) do
-    changeset
-    |> Ecto.Changeset.traverse_errors(fn {msg, opts} ->
-      Enum.reduce(opts, msg, fn {k, v}, acc -> String.replace(acc, "%{#{k}}", to_string(v)) end)
-    end)
-    |> inspect()
-  end
+  defp resumen_errores_carpeta(changeset), do: changeset |> MetadataApp.MetaErrores.traducir() |> inspect()
 
   def render(assigns) do
     ~H"""
@@ -735,6 +832,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     </div>
 
     <.modal_eliminar accion={@accion_eliminar} />
+    <.modal_desplegar accion={@accion_desplegar} />
     <.modal_carpeta form={@carpeta_form} error={@carpeta_error} carpetas={@carpetas_disponibles} />
     <.modal_editar_carpeta editar={@carpeta_editar} error={@carpeta_editar_error} />
     """
@@ -1118,6 +1216,83 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     """
   end
 
+  # Confirmación de despliegue — sin texto a teclear (a diferencia de
+  # modal_eliminar/:confirmar): exportar a JSON no es destructivo ni
+  # irreversible como un DELETE físico, alcanza con Aceptar/Cancelar.
+  attr :accion, :map, default: nil
+
+  defp modal_desplegar(%{accion: nil} = assigns), do: ~H""
+
+  defp modal_desplegar(assigns) do
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+        <h2 class="text-lg font-bold text-gray-900 mb-2">Desplegar catálogo</h2>
+        <p class="text-sm text-gray-700 mb-6">
+          Se va a exportar <strong>{@accion.label}</strong> (<span class="font-mono">{@accion.tabla}</span>) a
+          <span class="font-mono">priv/repo/catalogos/{@accion.tabla}.meta.json</span> y
+          <span class="font-mono">.motor.json</span> — la definición completa (campos, estados, transiciones) queda
+          lista para versionar. Esto no toca git ni publica nada a producción todavía.
+        </p>
+        <p :if={@accion.detalles != []} class="text-xs text-gray-500 mb-4 -mt-3">
+          Incluye sus catálogos detalle: <strong>{Enum.join(@accion.detalles, ", ")}</strong>.
+        </p>
+        <div class="flex justify-end gap-3">
+          <button
+            type="button"
+            phx-click="cancelar_desplegar"
+            class="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            phx-click="confirmar_desplegar"
+            class="px-4 py-2 rounded bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700"
+          >
+            Aceptar
+          </button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  # Tres variantes según lo que calculó adjuntar_puede_desplegar/1:
+  # :no_aplica (catálogo detalle — ni el link ni el placeholder, no es una
+  # acción que le corresponda), true (habilitado) o false (deshabilitado,
+  # con el motivo en el title).
+  attr :puede_desplegar, :any, required: true
+  attr :tabla, :string, required: true
+  attr :label, :string, required: true
+
+  defp boton_desplegar(%{puede_desplegar: :no_aplica} = assigns), do: ~H""
+
+  defp boton_desplegar(%{puede_desplegar: true} = assigns) do
+    ~H"""
+    <button
+      type="button"
+      phx-click="pedir_desplegar"
+      phx-value-tabla={@tabla}
+      phx-value-label={@label}
+      class="text-purple-600 hover:text-purple-800 text-xs font-semibold"
+    >
+      Despliegue
+    </button>
+    """
+  end
+
+  defp boton_desplegar(assigns) do
+    ~H"""
+    <span
+      class="text-gray-300 text-xs font-semibold cursor-not-allowed"
+      title="El BC tiene que estar completo, ser válido y estar compilado sin errores para desplegar."
+    >
+      Despliegue
+    </span>
+    """
+  end
+
   # Filas de la tabla agrupadas igual que el menú: una fila de encabezado
   # gris por carpeta, recursivo para soportar carpetas anidadas.
   attr :nodos, :list, required: true
@@ -1198,6 +1373,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               >
                 Eliminar
               </button>
+              <.boton_desplegar puede_desplegar={nodo.puede_desplegar} tabla={nodo.id} label={nodo.label} />
             </div>
           </td>
         </tr>

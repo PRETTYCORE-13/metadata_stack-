@@ -347,13 +347,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   defp formatear_error_transicion({:postcondicion_fallida, _}), do: "Error interno, no se aplicó el cambio."
   defp formatear_error_transicion(_otro), do: "No se pudo ejecutar la transición."
 
-  defp resumen_errores_simple(changeset) do
-    changeset
-    |> Ecto.Changeset.traverse_errors(fn {msg, opts} ->
-      Enum.reduce(opts, msg, fn {k, v}, acc -> String.replace(acc, "%{#{k}}", to_string(v)) end)
-    end)
-    |> Enum.map_join("; ", fn {campo, mensajes} -> "#{campo}: #{Enum.join(mensajes, ", ")}" end)
-  end
+  defp resumen_errores_simple(changeset), do: MetadataApp.MetaErrores.resumen(changeset)
 
   # A partir de los valores crudos de la barra de filtros (todo strings,
   # como llega cualquier form) arma el mapa de filtros que entiende

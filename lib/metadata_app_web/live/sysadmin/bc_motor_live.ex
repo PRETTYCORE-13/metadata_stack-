@@ -150,7 +150,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     |> assign(:completitud, completitud)
     |> assign(:validacion, validacion)
     |> assign(:reglas, %{"pre" => MetaReglasCodigo.obtener(header.id, "pre"), "post" => MetaReglasCodigo.obtener(header.id, "post")})
-    |> assign(:puede_guardar_bc, puede_guardar_bc?(header, completitud, validacion))
   end
 
   # "grupo" del selector de campos editables: "header" o el
@@ -163,30 +162,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       nil -> []
       cat -> cat.campos
     end
-  end
-
-  # Candado de Guardar BC (agregado 2026-07-21): además de lo que ya exigía
-  # (completo? y valido?), ahora también exige código de reglas sin errores
-  # de sintaxis y, en dev/test, ya compilado — no tiene sentido exportar un
-  # catálogo con código guardado que ni parsea o que el motor todavía no
-  # está corriendo (ver MetaReglasCodigo.con_error_sintaxis?/1 y
-  # sin_compilar?/1).
-  #
-  # OJO — "Compila Todo" en verde NO alcanza para desbloquear este botón:
-  # compilar y completar son cosas distintas. Un stub con
-  # "#ESCRIBA SU CODIGO AQUÍ" sin tocar COMPILA perfecto (es código Elixir
-  # válido) y por lo tanto no dispara con_error_sintaxis? ni sin_compilar?
-  # — pero completitud.completo? sigue en false mientras el marcador siga
-  # presente en cualquier rama de PRE o POST (ver
-  # MetaReglasCodigo.pendiente?/2, que busca ese texto literal, y
-  # MetaEstadosAdmin.completitud/1, que lo exige junto con post_pendiente?).
-  # Si "Compila Todo" tira éxito pero Guardar BC sigue deshabilitado, el
-  # motivo casi siempre es ESE: falta terminar (o borrar el marcador de)
-  # alguna rama de la pestaña Reglas, no un problema de compilación.
-  defp puede_guardar_bc?(header, completitud, validacion) do
-    completitud.completo? and validacion.valido? and
-      not MetaReglasCodigo.con_error_sintaxis?(header) and
-      not MetaReglasCodigo.sin_compilar?(header)
   end
 
   # Bug real encontrado 2026-07-21: el botón de colapsar/expandir sidebar
@@ -278,6 +253,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
        "escala" => "",
        "catalogo" => "",
        "opcional" => true,
+       "valor_default" => "",
        "error" => nil
      })}
   end
@@ -298,6 +274,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       "escala" => params["escala"] || "",
       "catalogo" => params["catalogo"] || "",
       "opcional" => params["opcional"] == "true",
+      "valor_default" => params["valor_default"] || "",
       "error" => nil
     }
 
@@ -354,12 +331,15 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   def handle_event("guardar_campo", params, socket) do
     header = socket.assigns.header
-    nombre = String.trim(params["nombre"] || "")
+    sufijo = String.trim(params["nombre"] || "")
     etiqueta = String.trim(params["etiqueta"] || "")
     tipo = params["tipo"] || "string"
+    opcional = params["opcional"] == "true"
+    valor_default = String.trim(params["valor_default"] || "")
+    nombre = "#{header.schema_context_name}_#{sufijo}"
 
     cond do
-      not Regex.match?(~r/^[a-z][a-z0-9_]{0,49}$/, nombre) ->
+      not Regex.match?(~r/^[a-z][a-z0-9_]{0,49}$/, sufijo) ->
         {:noreply,
          update(
            socket,
@@ -370,6 +350,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       etiqueta == "" ->
         {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "La etiqueta no puede quedar vacía."))}
 
+      not opcional and valor_default != "" and not valor_default_valido?(tipo, valor_default) ->
+        {:noreply, update(socket, :campo_form, &Map.put(&1, "error", mensaje_valor_default_invalido(tipo)))}
+
       true ->
         propiedades =
           %{
@@ -378,9 +361,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             "orden" => length(socket.assigns.campos) + 1,
             "visible" => true,
             "editable" => true,
-            "opcional" => params["opcional"] == "true"
+            "opcional" => opcional
           }
           |> agregar_opciones_tipo_campo(tipo, params)
+          |> agregar_valor_default(opcional, valor_default)
 
         guardar_campo_y_generar(socket, header, nombre, propiedades)
     end
@@ -682,41 +666,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
      end}
   end
 
-  # --- Guardar BC: validar y exportar a JSON versionado -----------------------
-
-  # Cada pieza (Estado/Transición/Regla/Campo) ya se persiste sola en la
-  # base al crearla — "guardar" acá no significa insertar nada nuevo, sino
-  # volcar la definición completa a priv/repo/catalogos/<catalogo>.meta.json
-  # + .motor.json (lo que ya hacen mix meta.export/motor.export para TODOS
-  # los catálogos, acá acotado a este solo). Sin esto, cualquier cosa
-  # agregada por esta pantalla se pierde si alguien reproduce el entorno
-  # desde cero sin acordarse de exportar a mano — el mismo gotcha que ya
-  # documentamos más de una vez en este proyecto. No toca git — eso sigue
-  # siendo `mix motor.publicar`, una acción aparte y más pesada.
-  def handle_event("guardar_bc", _params, socket) do
-    %{puede_guardar_bc: puede_guardar_bc, header: header} = socket.assigns
-
-    if puede_guardar_bc do
-      MetaSchemaContext.exportar_header(header)
-      MetaEstadosAdmin.exportar_header(header)
-
-      {:noreply,
-       put_flash(
-         socket,
-         :info,
-         "Guardado: priv/repo/catalogos/#{header.schema_context_name}.meta.json + .motor.json actualizados."
-       )}
-    else
-      {:noreply,
-       put_flash(
-         socket,
-         :error,
-         "No se puede guardar todavía — hay problemas pendientes en el panel de validación, código de reglas con " <>
-           "error de sintaxis, o reglas guardadas sin compilar."
-       )}
-    end
-  end
-
   # --- Reglas: código PRE/POST por catálogo -----------------------------------
   # Sin candado (retirado 2026-07-21 a pedido explícito): sin login real
   # todavía, un candado autodeclarado por nombre no era más que teatro de
@@ -749,6 +698,14 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   defp validar_guardar_y_compilar(socket, tipo, codigo) do
     with :ok <- MetaReglasCodigo.validar_sintaxis(codigo),
          {:ok, _fila} <- MetaReglasCodigo.guardar(socket.assigns.header, tipo, codigo) do
+      # push_event ANTES de mirar el resultado de compilar/2 a propósito:
+      # guardar/3 ya persistió el código en base en los dos casos de abajo
+      # (compile exitoso o "se guardó pero no compiló") — el aviso de
+      # "salir sin guardar" del lado del cliente (AvisoReglasSinGuardar en
+      # assets/js/app.js) tiene que bajar apenas deja de haber texto sin
+      # persistir, no recién cuando compila limpio.
+      socket = push_event(socket, "regla_guardada", %{tipo: tipo})
+
       case MetaReglasCodigo.compilar(socket.assigns.header, tipo) do
         {:ok, modulo} -> {put_reglas_mensaje(socket, tipo, {:info, "Guardado y compilado: #{inspect(modulo)}."}), true}
         {:error, motivo} -> {put_reglas_mensaje(socket, tipo, {:error, "Se guardó, pero no compiló: #{motivo}"}), true}
@@ -792,6 +749,31 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   defp agregar_opciones_tipo_campo(propiedades, _tipo, _params), do: propiedades
 
+  # El campo "Valor por default" solo tiene sentido para un campo
+  # OBLIGATORIO agregado a un catálogo que ya existe (ver
+  # CatalogoGenerador.columna_migracion_agregar/3 y
+  # docs/catalogo-maestro-detalle-requerimientos.md §R13) — si es
+  # opcional o no se completó, no se manda la propiedad.
+  defp agregar_valor_default(propiedades, true, _valor), do: propiedades
+  defp agregar_valor_default(propiedades, false, ""), do: propiedades
+  defp agregar_valor_default(propiedades, false, valor), do: Map.put(propiedades, "valor_default", valor)
+
+  defp valor_default_valido?("integer", valor), do: Regex.match?(~r/^-?\d+$/, valor)
+  defp valor_default_valido?("decimal", valor), do: Regex.match?(~r/^-?\d+(\.\d+)?$/, valor)
+  defp valor_default_valido?("boolean", valor), do: valor in ["true", "false"]
+  defp valor_default_valido?("date", valor), do: match?({:ok, _}, Date.from_iso8601(valor))
+  defp valor_default_valido?(_tipo, _valor), do: true
+
+  defp mensaje_valor_default_invalido("integer"), do: "El valor por default tiene que ser un número entero."
+  defp mensaje_valor_default_invalido("decimal"), do: "El valor por default tiene que ser un número (con decimales si hace falta)."
+  defp mensaje_valor_default_invalido("boolean"), do: "El valor por default tiene que ser Verdadero o Falso."
+  defp mensaje_valor_default_invalido("date"), do: "El valor por default tiene que ser una fecha válida."
+  defp mensaje_valor_default_invalido(_tipo), do: "Valor por default inválido."
+
+  defp placeholder_valor_default("integer"), do: "0"
+  defp placeholder_valor_default("decimal"), do: "0.00"
+  defp placeholder_valor_default(_tipo), do: "texto"
+
   defp maybe_put_int(map, _key, val) when val in ["", nil], do: map
 
   defp maybe_put_int(map, key, val) do
@@ -825,13 +807,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # banner de error del modal, ilegible para un usuario real. Ahora arma un
   # texto plano "campo: mensaje" (mismo criterio que ya usan otras pantallas
   # de este proyecto para errores de changeset).
-  defp resumen_errores(changeset) do
-    changeset
-    |> Ecto.Changeset.traverse_errors(fn {msg, opts} ->
-      Enum.reduce(opts, msg, fn {k, v}, acc -> String.replace(acc, "%{#{k}}", to_string(v)) end)
-    end)
-    |> Enum.map_join("; ", fn {campo, mensajes} -> "#{campo}: #{Enum.join(mensajes, ", ")}" end)
-  end
+  defp resumen_errores(changeset), do: MetadataApp.MetaErrores.resumen(changeset)
 
   # --- Tab API: ejemplos de payload por verbo ---------------------------------
   # Documentación generada a partir de los campos REALES del catálogo (no
@@ -944,10 +920,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             </button>
             <span class="mt-1 text-[10px] text-gray-400">Recompila tabla + reglas (modo dev)</span>
           </div>
-          <button type="button" phx-click="guardar_bc" disabled={!@puede_guardar_bc}
-            class="px-4 py-2 rounded-lg bg-purple-600 text-white font-bold hover:bg-purple-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-            Guardar BC
-          </button>
         </div>
       </div>
 
@@ -1005,7 +977,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       <% end %>
     </div>
 
-    <.modal_campo :if={@campo_form} form={@campo_form} catalogos={@catalogos_referenciables} />
+    <.modal_campo :if={@campo_form} form={@campo_form} catalogos={@catalogos_referenciables} nombre_base={@header.schema_context_name} />
     <.modal_eliminar_campo :if={@eliminar_campo_form} form={@eliminar_campo_form} />
     <.modal_estado :if={@estado_form} form={@estado_form} />
     <.modal_transicion :if={@transicion_form} form={@transicion_form} estados={@estados} campos={@campos} catalogos_detalle={@catalogos_detalle} />
@@ -1565,7 +1537,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           </button>
         </div>
 
-        <textarea id={@nombre_campo} name={@nombre_campo} readonly={!@compilar_disponible} rows="14" spellcheck="false" class={[
+        <textarea id={@nombre_campo} name={@nombre_campo} readonly={!@compilar_disponible} rows="14" spellcheck="false"
+          phx-hook={if @compilar_disponible, do: "AvisoReglasSinGuardar"} data-tipo={@tipo}
+          class={[
           "w-full border rounded-lg px-2 py-1.5 font-mono text-[11px] leading-relaxed",
           @compilar_disponible && "border-gray-300 bg-white text-gray-900",
           !@compilar_disponible && "border-gray-200 bg-gray-50 text-gray-500"
@@ -1897,6 +1871,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   attr :form, :map, required: true
   attr :catalogos, :list, required: true
+  attr :nombre_base, :string, required: true
 
   defp modal_campo(assigns) do
     assigns = assign(assigns, :tipos, @tipos_campo)
@@ -1941,9 +1916,12 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           <% else %>
             <div>
               <label class="block text-gray-700 mb-0.5">Nombre</label>
-              <input type="text" name="nombre" value={@form["nombre"]} placeholder="pty_carro_color" required
+              <input type="text" name="nombre" value={@form["nombre"]} placeholder="color" required
                 pattern="[a-z][a-z0-9_]*" maxlength="50"
                 class="w-full border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
+              <p class="mt-0.5 text-gray-500">
+                Se va a crear como <strong class="font-mono">{@nombre_base}_{if @form["nombre"] in [nil, ""], do: "…", else: @form["nombre"]}</strong>
+              </p>
             </div>
             <div>
               <label class="block text-gray-700 mb-0.5">Etiqueta</label>
@@ -1969,6 +1947,37 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
               <input type="checkbox" name="opcional" value="true" checked={@form["opcional"] == true} class="accent-purple-600" />
               Opcional (recomendado — el catálogo ya puede tener filas sin este campo)
             </label>
+
+            <%!-- Solo tiene sentido para un campo OBLIGATORIO en un catálogo que
+                 YA existe (BcMotorLive siempre opera sobre uno ya generado —
+                 ver CatalogoGenerador.columna_migracion_agregar/3): sin esto,
+                 agregar un campo obligatorio a una tabla con millones de filas
+                 queda "obligatorio de palabra" (nullable en Postgres, exigido
+                 solo desde la app en adelante). Con un valor acá, Postgres 11+
+                 lo aplica de una como NOT NULL real, sin reescribir la tabla. --%>
+            <div :if={@form["opcional"] != true}>
+              <label class="block text-gray-700 mb-0.5">Valor por default (opcional)</label>
+              <%= if @form["tipo"] == "boolean" do %>
+                <select name="valor_default" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                  <option value="" selected={@form["valor_default"] in [nil, ""]}>— Sin default (nullable en filas viejas) —</option>
+                  <option value="true" selected={@form["valor_default"] == "true"}>Verdadero</option>
+                  <option value="false" selected={@form["valor_default"] == "false"}>Falso</option>
+                </select>
+              <% else %>
+                <input
+                  type={if @form["tipo"] == "date", do: "date", else: "text"}
+                  name="valor_default"
+                  value={@form["valor_default"]}
+                  placeholder={placeholder_valor_default(@form["tipo"])}
+                  class="w-full border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500"
+                />
+              <% end %>
+              <p class="mt-0.5 text-gray-500">
+                Sin default, el campo queda obligatorio solo desde ahora (filas viejas se quedan sin valor). Con un
+                default, las filas viejas también lo reciben y el campo queda realmente NOT NULL — instantáneo aunque
+                el catálogo tenga millones de filas.
+              </p>
+            </div>
           <% end %>
 
           <div class="flex justify-end gap-2 pt-2">

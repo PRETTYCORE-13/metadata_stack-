@@ -5,7 +5,7 @@ defmodule MetadataAppWeb.FallbackController do
   def call(conn, {:error, %Ecto.Changeset{} = changeset}) do
     conn
     |> put_status(:unprocessable_entity)
-    |> json(%{errors: traducir_errores(changeset)})
+    |> json(%{errors: MetadataApp.MetaErrores.traducir(changeset)})
   end
 
   def call(conn, {:error, :not_found}) do
@@ -56,11 +56,4 @@ defmodule MetadataAppWeb.FallbackController do
     |> json(%{errors: %{detail: mensaje}})
   end
 
-  defp traducir_errores(changeset) do
-    Ecto.Changeset.traverse_errors(changeset, fn {msg, opts} ->
-      Enum.reduce(opts, msg, fn {key, value}, acc ->
-        String.replace(acc, "%{#{key}}", to_string(value))
-      end)
-    end)
-  end
 end

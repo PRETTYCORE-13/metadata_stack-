@@ -80,9 +80,9 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
       def changeset(struct, attrs) do
         struct
         |> cast(attrs, @campos)
-        |> validate_required(@campos_requeridos)
+        |> validate_required(@campos_requeridos, message: "no puede quedar vacío")
         |> MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.aplicar_validaciones(@campos_meta)
-        |> unique_constraint(@campos, name: @nombre_indice)
+        |> unique_constraint(@campos, name: @nombre_indice, message: "ya existe un registro con estos valores")
       end
     end
   end
@@ -131,12 +131,12 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
   end
 
   defp aplicar_longitud(cs, campo, %{longitud: longitud}) when is_integer(longitud),
-    do: validate_length(cs, campo, max: longitud)
+    do: validate_length(cs, campo, max: longitud, message: "no puede tener más de %{count} caracteres")
 
   defp aplicar_longitud(cs, _campo, _opciones), do: cs
 
   defp aplicar_formato(cs, campo, %{formato: formato}) when is_binary(formato),
-    do: validate_format(cs, campo, Regex.compile!(formato))
+    do: validate_format(cs, campo, Regex.compile!(formato), message: "no tiene el formato correcto")
 
   defp aplicar_formato(cs, _campo, _opciones), do: cs
 
@@ -149,12 +149,12 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
   defp aplicar_minimo(cs, _campo, nil), do: cs
 
   defp aplicar_minimo(cs, campo, minimo),
-    do: validate_number(cs, campo, greater_than_or_equal_to: minimo)
+    do: validate_number(cs, campo, greater_than_or_equal_to: minimo, message: "debe ser mayor o igual a %{number}")
 
   defp aplicar_maximo(cs, _campo, nil), do: cs
 
   defp aplicar_maximo(cs, campo, maximo),
-    do: validate_number(cs, campo, less_than_or_equal_to: maximo)
+    do: validate_number(cs, campo, less_than_or_equal_to: maximo, message: "debe ser menor o igual a %{number}")
 
   defp aplicar_escala(cs, campo, %{escala: escala}) when is_integer(escala) do
     validate_change(cs, campo, fn _campo, valor ->
@@ -173,12 +173,12 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
   defp aplicar_escala(cs, _campo, _opciones), do: cs
 
   defp aplicar_valores(cs, campo, %{valores: valores}) when is_list(valores),
-    do: validate_inclusion(cs, campo, valores)
+    do: validate_inclusion(cs, campo, valores, message: "no es un valor permitido")
 
   defp aplicar_valores(cs, _campo, _opciones), do: cs
 
   defp aplicar_referencia(cs, campo, %{tabla_referenciada: tabla}) when is_binary(tabla),
-    do: foreign_key_constraint(cs, campo)
+    do: foreign_key_constraint(cs, campo, message: "no existe un registro con este valor")
 
   defp aplicar_referencia(cs, _campo, _opciones), do: cs
 
