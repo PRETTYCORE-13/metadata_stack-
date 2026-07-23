@@ -26,12 +26,18 @@ defmodule Mix.Tasks.Motor.Import do
     Mix.Task.run("app.config")
 
     dir = List.first(args) || "priv/repo/catalogos"
-    unless File.dir?(dir), do: Mix.raise("No existe el directorio #{dir}")
 
+    # Mismo criterio que mix meta.import: directorio ausente = cero
+    # catálogos, no un error — estado normal de un checkout limpio sin
+    # ningún BC desplegado todavía (ningún pty_* vive en git).
     catalogos =
-      dir
-      |> File.ls!()
-      |> Enum.filter(&String.ends_with?(&1, ".motor.json"))
+      if File.dir?(dir) do
+        dir
+        |> File.ls!()
+        |> Enum.filter(&String.ends_with?(&1, ".motor.json"))
+      else
+        []
+      end
       |> Enum.sort()
       |> Enum.map(&(dir |> Path.join(&1) |> File.read!() |> Jason.decode!()))
 

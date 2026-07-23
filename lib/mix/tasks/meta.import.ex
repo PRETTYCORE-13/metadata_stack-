@@ -20,12 +20,19 @@ defmodule Mix.Tasks.Meta.Import do
     Mix.Task.run("app.config")
 
     dir = List.first(args) || "priv/repo/catalogos"
-    unless File.dir?(dir), do: Mix.raise("No existe el directorio #{dir}")
 
+    # Directorio ausente = cero catálogos para importar, no un error — es
+    # el estado normal de un checkout limpio desde que ningún pty_* vive
+    # en git (ver .gitignore): git no trackea directorios vacíos, así que
+    # si nadie desplegó todavía ningún BC, esta carpeta ni existe.
     contextos =
-      dir
-      |> File.ls!()
-      |> Enum.filter(&String.ends_with?(&1, ".meta.json"))
+      if File.dir?(dir) do
+        dir
+        |> File.ls!()
+        |> Enum.filter(&String.ends_with?(&1, ".meta.json"))
+      else
+        []
+      end
       |> Enum.sort()
       |> Enum.map(&(dir |> Path.join(&1) |> File.read!() |> Jason.decode!()))
 
