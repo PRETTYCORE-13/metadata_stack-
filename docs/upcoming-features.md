@@ -37,9 +37,11 @@ Procesamiento en background — falta decidir la herramienta "lo más nativo que
 
 Hoy cada catálogo generado graba `insert_guid`/`update_guid`/`delete_guid` (un GUID por operación, ver `docs/arquitectura-bpb.md`), pero **no** quién la hizo. Se pide una tabla de auditoría (`record` o similar) que capture, por cada GUID: usuario, hora, IP, MAC, nombre de la PC, sesión. Depende de [[#3]] — sin login no hay "usuario" que registrar.
 
-## 7 — Deploy de BC hechos por ADN
+## 7 — Deploy de BC hechos por ADN ✅ implementado (2026-07-23)
 
-Mismo pendiente ya abierto en la limpieza de Git/CI-CD de hoy — ver memoria de proyecto `project_git_cicd_pty_cleanup` (equivalente a `docs/ci-cd-deploy.md` + esta sesión): falta el mecanismo real para que un BC construido localmente por ADN con el BPB llegue a Linux Trixie (producción simulada) **sin** pasar por el repo git compartido. Candidato a explorar: adaptar `mix motor.publicar` (hoy publica el JSON de un catálogo a git) hacia un flujo de publicación directa a producción en vez de a git.
+`mix motor.publicar <catalogo>` ya no commitea a git — dispara `.github/workflows/bc-deploy.yml`, un workflow dedicado que arma la imagen de producción con el BC embebido y la despliega, **sin que `origin/main` se entere de que ese BC existió** (ni un `git add`, ni commit, ni push en ningún paso). Detalle técnico completo en `docs/ci-cd-deploy.md`.
+
+Elegido sobre la alternativa de hot code loading (compilar en la laptop de ADN y cargar los `.beam` directo en el nodo BEAM vivo, sin rebuild) por seguridad (imagen inmutable con SHA vs. carga de código sin artefacto auditable), escalabilidad (Swarm con más de una réplica no necesita nada especial) y simplicidad (reusa el 95% del pipeline de CI ya construido y probado).
 
 ## 8 — Campos calculados y campos estéticos en formularios ABC
 

@@ -107,6 +107,32 @@ El job usa `appleboy/ssh-action` con 3 secrets del repo (**Settings → Secrets 
 - `DEPLOY_USER` — el usuario SSH.
 - `DEPLOY_SSH_KEY` — clave privada ed25519 dedicada a este deploy (no la personal de nadie). Generarla con `ssh-keygen -t ed25519 -C "github-actions-deploy@metadata_stack" -N ""`, agregar la **pública** a `~/.ssh/authorized_keys` del usuario en el servidor, y la **privada** como el secret.
 
+## Deploy de un BC (Business Context) hecho por ADN
+
+Todo lo de arriba despliega el **BPB** (la plataforma) — este mecanismo aparte, `mix motor.publicar <catalogo>`, despliega **un catálogo de negocio construido por ADN**, sin que su código toque nunca el repo compartido (`pty_*` está en `.gitignore` a propósito, ver "Qué se commitea y qué no" arriba).
+
+```
+[Máquina de ADN]                    [GitHub Actions]                  [Servidor de producción]
+   mix motor.publicar <catalogo>  →  bc-deploy.yml (workflow_dispatch)  →  Docker Swarm
+   (valida, exporta, arma           checkout de main (limpio, SIN el     (mismo docker service
+   un .tar.gz, lo manda en          BC) + el bundle se EXTRAE ENCIMA      update de siempre)
+   base64 vía "gh workflow run")    → compila → build-image → deploy
+```
+
+**Por qué nunca toca `origin/main`**: el workflow hace `actions/checkout@v4` de `main` tal cual está, y el bundle del BC se extrae sobre el working directory EFÍMERO de ese runner — ni un `git add`, ni commit, ni push en ningún paso. Cuando el job termina, el runner se destruye junto con esos archivos; el repo remoto nunca se enteró de que ese BC existió.
+
+**Qué lleva el bundle** (armado por `mix motor.publicar`, ver `lib/mix/tasks/motor.publicar.ex`): por el catálogo pedido y, si es maestro, sus catálogos detalle automáticamente (mismo criterio que el botón "Despliegue" de BC List) —
+- `lib/.../catalogos/<catalogo>.ex` (el schema ya generado)
+- `priv/repo/migrations/*<catalogo>*.exs` (sus migraciones)
+- `priv/repo/catalogos/<catalogo>.meta.json` (+ `.motor.json` si tiene autómata propio)
+- `lib/.../reglas/<catalogo>/` (si tiene reglas de negocio)
+
+**Credenciales**: `mix motor.publicar` no ve ni necesita ninguna — corre enteramente con `gh` (GitHub CLI) autenticado, y el workflow reusa los mismos 3 secrets ya configurados para el deploy del BPB (`DEPLOY_HOST`/`DEPLOY_USER`/`DEPLOY_SSH_KEY`) más el `GITHUB_TOKEN` de siempre para `ghcr.io`. Nadie necesita copiar credenciales de producción a su máquina para publicar un BC.
+
+**Por qué no hot code loading**: se evaluó compilar el BC en la máquina de ADN y cargar los `.beam` directo en el nodo BEAM vivo del servidor (nativo de Erlang/OTP, cero downtime). Se descartó por seguridad (sin un artefacto inmutable/auditable de por medio — en los hechos, ejecución de código arbitrario contra quien tenga la SSH key), por escalabilidad (no sirve solo si algún día Swarm corre más de una réplica, sin repetir el hot-load en cada una a mano) y porque el patrón de imagen+rollback ya está construido y probado — hot-loading hubiera sido un mecanismo nuevo y frágil al lado de uno que ya funciona.
+
+**Probado localmente de punta a punta** (armado del bundle + build de Docker real con el BC embebido, `.beam` confirmados dentro del release) — el disparo real del workflow contra producción se prueba la primera vez que ADN publique un BC de verdad.
+
 ## Estado actual
 
 El servidor de oficina (`reiayanami.mine.nu`) funciona hoy como **producción simulada** — todavía no hay un ambiente de staging separado. El objetivo de esta etapa es dominar el proceso de punta a punta antes de sumar más ambientes. Ver la memoria del proyecto para el detalle operativo (credenciales, nombres exactos de servicios) — no se documenta acá porque este archivo es público.

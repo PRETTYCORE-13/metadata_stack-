@@ -1,0 +1,119 @@
+name: BC Deploy
+
+# Despliega UN Business Context (BC) construido localmente por ADN con el
+# BPB, directo a Linux Trixie (producción) -- SIN pasar por el repo
+# compartido metadata_stack-. Disparado por `mix motor.publicar <catalogo>`
+# (nunca a mano desde la UI de Actions -- necesita el bundle en base64 que
+# arma ese task).
+#
+# Cómo evita tocar el repo compartido: el checkout de acá abajo es de
+# `main` tal cual está, el bundle del BC se EXTRAE ENCIMA solo en el
+# working directory efímero de ESTE runner -- nunca hay git add/commit/push
+# en ningún paso. Cuando el job termina, el runner se destruye y esos
+# archivos desaparecen con él; origin/main nunca se entera de que este BC
+# existió.
+on:
+  workflow_dispatch:
+    inputs:
+      catalogo:
+        description: "Nombre del catálogo (BC) principal a desplegar"
+        required: true
+      bundle_b64:
+        description: "Bundle .tar.gz (schema + migraciones + meta/motor.json + reglas) en base64, armado por mix motor.publicar"
+        required: true
+
+env:
+  ELIXIR_VERSION: "1.18.4"
+  OTP_VERSION: "28.0.4"
+
+jobs:
+  deploy-bc:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extraer el bundle del BC sobre el checkout del BPB
+        run: |
+          echo "${{ inputs.bundle_b64 }}" | base64 -d > /tmp/bc-bundle.tar.gz
+          tar xzf /tmp/bc-bundle.tar.gz
+          rm /tmp/bc-bundle.tar.gz
+          echo "--- archivos del bundle ya extraidos ---"
+          git status --porcelain
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
+          restore-keys: ${{ runner.os }}-mix-
+
+      # Compila (con el .ex del bundle ya en su lugar) ANTES de armar la
+      # imagen -- si el BC no compila, el job falla acá, nunca llega a
+      # publicar ni desplegar nada roto.
+      - name: Instalar dependencias y compilar
+        run: |
+          mix deps.get
+          mix compile --warning-as-errors
+
+      - name: Nombre de imagen para ghcr.io (minúsculas, sin separador final)
+        run: |
+          repo="${GITHUB_REPOSITORY,,}"
+          repo="${repo%[-._]}"
+          echo "IMAGE_NAME=$repo" >> "$GITHUB_ENV"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Mismo Dockerfile de siempre -- el bundle ya extraído en el checkout
+      # es justo lo que "COPY lib lib" / "COPY priv priv" van a empaquetar.
+      # Tag "latest" se actualiza igual que un deploy normal del BPB (el
+      # BC pasa a ser parte de la imagen corriendo); el tag con el nombre
+      # del catálogo es para poder identificar/rollear a esta build puntual.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ env.IMAGE_NAME }}:latest
+            ghcr.io/${{ env.IMAGE_NAME }}:bc-${{ inputs.catalogo }}-${{ github.run_number }}
+
+      - name: Actualizar metadata_stack_app en Docker Swarm y migrar
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            docker pull ghcr.io/prettycore-13/metadata_stack:latest
+            docker service update --image ghcr.io/prettycore-13/metadata_stack:latest --force metadata_stack_app
+
+            echo "Esperando a que el servicio converja..."
+            for i in $(seq 1 12); do
+              REPLICAS=$(docker service ls --filter name=metadata_stack_app --format "{{.Replicas}}")
+              echo "  replicas: $REPLICAS"
+              if [ "$REPLICAS" = "1/1" ]; then break; fi
+              sleep 5
+            done
+
+            CONTAINER_ID=$(docker ps -q --filter "name=metadata_stack_app" | head -n1)
+            if [ -z "$CONTAINER_ID" ]; then
+              echo "No se encontró el contenedor de metadata_stack_app corriendo, no se pudo migrar"
+              exit 1
+            fi
+            docker exec "$CONTAINER_ID" /app/bin/migrate
