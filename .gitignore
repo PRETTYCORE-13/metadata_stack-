@@ -36,3 +36,12 @@ metadata_app-*.tar
 npm-debug.log
 /assets/node_modules/
 
+# BCs generados con el BPB (pty_*): son micro-apps que ADN arma localmente
+# a partir del motor, no código de la plataforma. Nunca van a este repo,
+# ni de prueba ni reales — se recrean con "mix gen.catalogos" a partir de
+# meta_schema_* o se despliegan aparte a producción.
+lib/metadata_app/meta_business_process/catalogos/pty_*.ex
+lib/metadata_app/meta_business_process/reglas/pty_*/
+priv/repo/catalogos/pty_*.json
+priv/repo/migrations/*pty_*.exs
+
