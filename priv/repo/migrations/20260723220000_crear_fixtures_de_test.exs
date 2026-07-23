@@ -12,43 +12,18 @@ defmodule MetadataApp.Repo.Migrations.CrearFixturesDeTest do
   # eso SÍ se commitea (el prefijo pty_ es lo único que el .gitignore
   # excluye).
   #
+  # Solo METADATA acá (meta_schema_header/detail) — a propósito NO crea la
+  # tabla física ni el schema Ecto a mano: eso lo hace `mix gen.catalogos`,
+  # el mismo generador que cualquier catálogo real usa, para que el
+  # fixture se comporte IDÉNTICO a cualquier otro catálogo (nada de un
+  # camino especial que gen.catalogos no reconozca y falle tratando de
+  # regenerar algo que ya existía a mano en otro lado).
+  #
   # schema_visible: false en los dos headers — no tienen que aparecer en
   # el menú real de navegación (MetaSchemaContext.listar_menu_arbol/0
   # filtra por schema_visible == true), solo son visibles/usables desde
   # BC List (listar_headers_arbol/0, sin filtro) y desde los tests.
   def change do
-    create table(:meta_fixture_cliente) do
-      add :meta_fixture_cliente_nombre, :string, size: 100, null: false
-      add :meta_fixture_cliente_edad, :integer, null: false
-      add :meta_fixture_cliente_venta, :decimal, precision: 10, scale: 2, null: false
-
-      add :insert_guid, :string, size: 32, null: false
-      add :update_guid, :string, size: 32, null: true
-      add :delete_guid, :string, size: 32, null: true
-
-      add :estado_id, references(:meta_schema_estados), null: true
-    end
-
-    create unique_index(
-             :meta_fixture_cliente,
-             [:meta_fixture_cliente_nombre, :meta_fixture_cliente_edad, :meta_fixture_cliente_venta],
-             name: :meta_fixture_cliente_unico_index
-           )
-
-    create table(:meta_fixture_equipo) do
-      add :meta_fixture_equipo_nombre_equipo, :string, size: 100, null: false
-
-      add :insert_guid, :string, size: 32, null: false
-      add :update_guid, :string, size: 32, null: true
-      add :delete_guid, :string, size: 32, null: true
-
-      add :estado_id, references(:meta_schema_estados), null: true
-    end
-
-    create unique_index(:meta_fixture_equipo, [:meta_fixture_equipo_nombre_equipo],
-             name: :meta_fixture_equipo_unico_index
-           )
-
     execute(
       """
       INSERT INTO meta_schema_header
