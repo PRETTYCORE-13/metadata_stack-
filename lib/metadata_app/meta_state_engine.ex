@@ -217,9 +217,9 @@ defmodule MetadataApp.MetaStateEngine do
 
     header.id
     |> transiciones_desde(registro_actual.estado_id)
-    |> Enum.map(fn transicion ->
-      razones = evaluar_precondiciones_lista(transicion, registro_actual, contexto)
-
+    |> Enum.map(&{&1, evaluar_precondiciones_lista(&1, registro_actual, contexto)})
+    |> Enum.reject(fn {_transicion, razones} -> Enum.any?(razones, &Map.get(&1, :sin_permiso)) end)
+    |> Enum.map(fn {transicion, razones} ->
       %{
         accion: transicion.accion,
         etiqueta: transicion.etiqueta,
@@ -468,6 +468,7 @@ defmodule MetadataApp.MetaStateEngine do
   defp evaluar_precondiciones_lista(transicion, registro, contexto) do
     case Reglas.evaluar_pre(transicion.accion, registro, contexto) do
       :ok -> []
+      {:error, :sin_permiso, mensaje} -> [%{regla: "pre", mensaje: mensaje, sin_permiso: true}]
       {:error, mensaje} -> [%{regla: "pre", mensaje: mensaje}]
     end
   end

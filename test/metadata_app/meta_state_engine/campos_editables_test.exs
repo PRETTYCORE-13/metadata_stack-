@@ -6,13 +6,13 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerico
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
   alias MetadataApp.MetaSchema.{Estado, Transicion, TransicionRegla}
-  alias MetadataApp.MetaBusinessProcess.Catalogos.{PtyClientes, PtyEquiposNfl}
+  alias MetadataApp.MetaBusinessProcess.Catalogos.{MetaFixtureCliente, MetaFixtureEquipo}
 
   defp guid, do: Ecto.UUID.generate() |> String.replace("-", "")
   defp unique, do: System.unique_integer([:positive])
 
-  defp header_clientes, do: Repo.get_by!(Header, schema_context_name: "pty_clientes")
-  defp header_equipos_nfl, do: Repo.get_by!(Header, schema_context_name: "pty_equipos_nfl")
+  defp header_clientes, do: Repo.get_by!(Header, schema_context_name: "meta_fixture_cliente")
+  defp header_equipos_nfl, do: Repo.get_by!(Header, schema_context_name: "meta_fixture_equipo")
 
   defp fixture_estado(header, attrs) do
     %Estado{}
@@ -31,9 +31,11 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
   # Vacía el autómata de `header` (reglas + transiciones + estados + su
   # historial) SOLO dentro de la transacción del test (sandbox: se revierte
   # solo al terminar) -- así se puede probar "catálogo sin motor de
-  # estados" reusando un catálogo real y permanente (pty_equipos_nfl) en vez
-  # de depender de uno descartable que puede borrarse entre sesiones (ya
-  # pasó una vez con pty_canal).
+  # estados" reusando un fixture real y permanente (meta_fixture_equipo,
+  # ver priv/repo/migrations/20260723220000_crear_fixtures_de_test.exs) en
+  # vez de depender de un catálogo pty_* descartable, que por diseño puede
+  # borrarse entre sesiones (nunca vive en git) y ya rompió este test más
+  # de una vez en el pasado.
   defp desactivar_motor(header) do
     MetaEstadosAdmin.purgar_historial(header.id)
 
@@ -48,13 +50,13 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
 
   defp fixture_cliente(estado_id) do
     attrs = %{
-      pty_clientes_nombre: "cliente #{unique()}",
-      pty_clientes_edad: 30,
-      pty_clientes_venta: Decimal.new("100.00")
+      meta_fixture_cliente_nombre: "cliente #{unique()}",
+      meta_fixture_cliente_edad: 30,
+      meta_fixture_cliente_venta: Decimal.new("100.00")
     }
 
-    %PtyClientes{}
-    |> PtyClientes.changeset(attrs)
+    %MetaFixtureCliente{}
+    |> MetaFixtureCliente.changeset(attrs)
     |> put_change(:insert_guid, guid())
     |> put_change(:estado_id, estado_id)
     |> Repo.insert!()
@@ -65,8 +67,8 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       header = header_equipos_nfl()
       desactivar_motor(header)
 
-      assert MetaStateEngine.campos_editables("pty_equipos_nfl", nil) == [
-               "pty_equipos_nfl_nombre_equipo"
+      assert MetaStateEngine.campos_editables("meta_fixture_equipo", nil) == [
+               "meta_fixture_equipo_nombre_equipo"
              ]
     end
   end
@@ -83,7 +85,7 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
           etiqueta: "Guardar",
           estado_origen_id: nuevo.id,
           estado_destino_id: nuevo.id,
-          campos_editables: ["pty_clientes_nombre"]
+          campos_editables: ["meta_fixture_cliente_nombre"]
         })
 
       t_activo =
@@ -92,14 +94,14 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
           etiqueta: "Guardar",
           estado_origen_id: activo.id,
           estado_destino_id: activo.id,
-          campos_editables: ["pty_clientes_nombre", "pty_clientes_edad"]
+          campos_editables: ["meta_fixture_cliente_nombre", "meta_fixture_cliente_edad"]
         })
 
-      assert MetaStateEngine.campos_editables("pty_clientes", t_nuevo) == ["pty_clientes_nombre"]
+      assert MetaStateEngine.campos_editables("meta_fixture_cliente", t_nuevo) == ["meta_fixture_cliente_nombre"]
 
-      assert Enum.sort(MetaStateEngine.campos_editables("pty_clientes", t_activo)) == [
-               "pty_clientes_edad",
-               "pty_clientes_nombre"
+      assert Enum.sort(MetaStateEngine.campos_editables("meta_fixture_cliente", t_activo)) == [
+               "meta_fixture_cliente_edad",
+               "meta_fixture_cliente_nombre"
              ]
     end
 
@@ -107,7 +109,7 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       header = header_clientes()
       fixture_estado(header, %{nombre: "editables_solo_#{unique()}", es_inicial: true})
 
-      assert MetaStateEngine.campos_editables("pty_clientes", nil) == []
+      assert MetaStateEngine.campos_editables("meta_fixture_cliente", nil) == []
     end
   end
 
@@ -116,7 +118,7 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       header = header_equipos_nfl()
       desactivar_motor(header)
 
-      assert MetaStateEngine.estado_inicial("pty_equipos_nfl") == nil
+      assert MetaStateEngine.estado_inicial("meta_fixture_equipo") == nil
     end
 
     test "devuelve el estado marcado es_inicial: true" do
@@ -124,7 +126,7 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       inicial = fixture_estado(header, %{nombre: "inicial_#{unique()}", es_inicial: true})
       fixture_estado(header, %{nombre: "otro_#{unique()}"})
 
-      assert MetaStateEngine.estado_inicial("pty_clientes").id == inicial.id
+      assert MetaStateEngine.estado_inicial("meta_fixture_cliente").id == inicial.id
     end
   end
 
@@ -134,8 +136,8 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       desactivar_motor(header)
 
       {:ok, equipo} =
-        CatalogoGenerico.crear(PtyEquiposNfl, %{
-          "pty_equipos_nfl_nombre_equipo" => "equipo #{unique()}"
+        CatalogoGenerico.crear(MetaFixtureEquipo, %{
+          "meta_fixture_equipo_nombre_equipo" => "equipo #{unique()}"
         })
 
       assert equipo.estado_id == nil
@@ -146,10 +148,10 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       inicial = fixture_estado(header, %{nombre: "crear_inicial_#{unique()}", es_inicial: true})
 
       {:ok, cliente} =
-        CatalogoGenerico.crear(PtyClientes, %{
-          "pty_clientes_nombre" => "cliente #{unique()}",
-          "pty_clientes_edad" => 25,
-          "pty_clientes_venta" => "10.00"
+        CatalogoGenerico.crear(MetaFixtureCliente, %{
+          "meta_fixture_cliente_nombre" => "cliente #{unique()}",
+          "meta_fixture_cliente_edad" => 25,
+          "meta_fixture_cliente_venta" => "10.00"
         })
 
       assert cliente.estado_id == inicial.id
@@ -166,15 +168,15 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
         etiqueta: "Guardar",
         estado_origen_id: estado.id,
         estado_destino_id: estado.id,
-        campos_editables: ["pty_clientes_nombre"]
+        campos_editables: ["meta_fixture_cliente_nombre"]
       })
 
       cliente = fixture_cliente(estado.id)
 
       assert {:ok, actualizado} =
-               CatalogoGenerico.actualizar(cliente, %{"pty_clientes_nombre" => "nombre nuevo"})
+               CatalogoGenerico.actualizar(cliente, %{"meta_fixture_cliente_nombre" => "nombre nuevo"})
 
-      assert actualizado.pty_clientes_nombre == "nombre nuevo"
+      assert actualizado.meta_fixture_cliente_nombre == "nombre nuevo"
     end
 
     test "rechaza (con error visible) un campo que no está en campos_editables de la transición actual" do
@@ -186,17 +188,17 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
         etiqueta: "Guardar",
         estado_origen_id: estado.id,
         estado_destino_id: estado.id,
-        campos_editables: ["pty_clientes_nombre"]
+        campos_editables: ["meta_fixture_cliente_nombre"]
       })
 
-      # pty_clientes_edad NO está en campos_editables de esta transición.
+      # meta_fixture_cliente_edad NO está en campos_editables de esta transición.
       cliente = fixture_cliente(estado.id)
 
       assert {:error, changeset} =
-               CatalogoGenerico.actualizar(cliente, %{"pty_clientes_edad" => 99})
+               CatalogoGenerico.actualizar(cliente, %{"meta_fixture_cliente_edad" => 99})
 
-      assert "no editable en el estado actual" in errors_on(changeset).pty_clientes_edad
-      assert Repo.get!(PtyClientes, cliente.id).pty_clientes_edad == 30
+      assert "no editable en el estado actual" in errors_on(changeset).meta_fixture_cliente_edad
+      assert Repo.get!(MetaFixtureCliente, cliente.id).meta_fixture_cliente_edad == 30
     end
 
     test "nunca permite tocar estado_id por esta vía, aunque venga en los attrs" do
@@ -209,19 +211,19 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
         etiqueta: "Guardar",
         estado_origen_id: estado.id,
         estado_destino_id: estado.id,
-        campos_editables: ["pty_clientes_nombre"]
+        campos_editables: ["meta_fixture_cliente_nombre"]
       })
 
       cliente = fixture_cliente(estado.id)
 
       assert {:error, changeset} =
                CatalogoGenerico.actualizar(cliente, %{
-                 "pty_clientes_nombre" => "cambio válido",
+                 "meta_fixture_cliente_nombre" => "cambio válido",
                  "estado_id" => otro.id
                })
 
       assert "no editable en el estado actual" in errors_on(changeset).estado_id
-      assert Repo.get!(PtyClientes, cliente.id).estado_id == estado.id
+      assert Repo.get!(MetaFixtureCliente, cliente.id).estado_id == estado.id
     end
 
     test "catálogo sin motor de estados sigue funcionando sin restricción (compat)" do
@@ -229,16 +231,16 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       desactivar_motor(header)
 
       {:ok, equipo} =
-        CatalogoGenerico.crear(PtyEquiposNfl, %{
-          "pty_equipos_nfl_nombre_equipo" => "equipo #{unique()}"
+        CatalogoGenerico.crear(MetaFixtureEquipo, %{
+          "meta_fixture_equipo_nombre_equipo" => "equipo #{unique()}"
         })
 
       assert {:ok, actualizado} =
                CatalogoGenerico.actualizar(equipo, %{
-                 "pty_equipos_nfl_nombre_equipo" => "otro nombre"
+                 "meta_fixture_equipo_nombre_equipo" => "otro nombre"
                })
 
-      assert actualizado.pty_equipos_nfl_nombre_equipo == "otro nombre"
+      assert actualizado.meta_fixture_equipo_nombre_equipo == "otro nombre"
     end
   end
 end

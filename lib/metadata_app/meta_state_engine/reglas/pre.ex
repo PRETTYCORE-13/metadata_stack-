@@ -65,11 +65,13 @@ defmodule MetadataApp.MetaStateEngine.Reglas.Pre do
   end
 
   # requiere_rol: {rol} — delega en MetadataApp.MetaPermissions.can?/3.
+  # :sin_permiso (no un {:error, mensaje} común): oculta la transición del
+  # descubrimiento en vez de solo deshabilitarla, ver ReglaPre.
   def evaluar("requiere_rol", _registro, contexto, %{"rol" => rol}) do
     if MetadataApp.MetaPermissions.can?(contexto, rol) do
       :ok
     else
-      {:error, "requiere el rol: #{rol}"}
+      {:error, :sin_permiso, "requiere el rol: #{rol}"}
     end
   end
 

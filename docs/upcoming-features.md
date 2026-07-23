@@ -8,9 +8,13 @@ Agregado 2026-07-23.
 
 Un mix task o módulo para que cada desarrollador (Liz, Jesus, Uriel) pueda dejar su Postgres local en un estado limpio antes de arrancar a trabajar — crear la base si no existe, crear solo las tablas core `meta_schema_*` (BPB), y parametrizar host/usuario/contraseña/nombre de base para "modo Developer". Surgió porque `git pull` limpia el repo de `pty_*` (ver [[#7]] y la limpieza de Git/CI-CD de esta sesión), pero **no** la base de datos local de cada uno — si alguien tiene tablas `pty_*` de pruebas viejas en su Postgres, `git pull` no las toca. Mismo pendiente que ya está anotado en la memoria de proyecto `project_modulo_setup_dev_db` — no iniciar hasta que se pida explícitamente.
 
-## 2 — Motor de roles y permisos
+## 2 — Motor de roles y permisos (RBAC)
+
+**Norte**: cuando se construya esto, tiene que ser un **RBAC** real (Role-Based Access Control) — roles con permisos asignados, usuarios con uno o más roles, chequeo de "¿este usuario puede hacer X?" resuelto por rol, no por usuario suelto ni hardcodeado por catálogo.
 
 Hoy existe solo un stub mínimo: `MetadataApp.MetaPermissions.can?/3`, que chequea `requiere_rol` contra `contexto["rol"]`/`["roles"]` pasado a mano en cada request — no hay sesión, usuario autenticado, ni tabla de roles/permisos real detrás. Ya estaba marcado como fuera de alcance explícito en `docs/compliance-pty.md`. Depende de que exista primero [[#3]] (no hay "rol de quién" sin login).
+
+**Ya preparado para ese día** (agregado 2026-07-23, sin esperar a este ítem): `MetaPermissions.can?/3` es a propósito el ÚNICO punto de integración que usa el motor — el día que exista RBAC real, se reemplaza esa implementación sin tocar nada más. Además, `{:error, :sin_permiso, mensaje}` (ver `MetadataApp.MetaStateEngine.ReglaPre`) ya es un mecanismo genérico de "ocultar por completo, no solo deshabilitar" — la regla `requiere_rol` ya lo usa hoy con el rol genérico de `contexto`, y cualquier chequeo de RBAC futuro (por permiso, no solo por rol) puede devolver la misma forma sin cambiar el motor de estados.
 
 ## 3 — Tenancy, Login y password de la plataforma
 

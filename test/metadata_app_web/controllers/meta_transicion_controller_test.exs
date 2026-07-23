@@ -3,13 +3,13 @@ defmodule MetadataAppWeb.MetaTransicionControllerTest do
 
   alias MetadataApp.Repo
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
-  alias MetadataApp.MetaSchema.{Estado, Transicion, TransicionRegla}
-  alias MetadataApp.MetaBusinessProcess.Catalogos.PtyClientes
+  alias MetadataApp.MetaSchema.{Estado, Transicion}
+  alias MetadataApp.MetaBusinessProcess.Catalogos.MetaFixtureCliente
 
   defp guid, do: Ecto.UUID.generate() |> String.replace("-", "")
   defp unique, do: System.unique_integer([:positive])
 
-  defp header_clientes, do: Repo.get_by!(Header, schema_context_name: "pty_clientes")
+  defp header_clientes, do: Repo.get_by!(Header, schema_context_name: "meta_fixture_cliente")
 
   defp fixture_estado(header, attrs) do
     %Estado{}
@@ -18,35 +18,29 @@ defmodule MetadataAppWeb.MetaTransicionControllerTest do
     |> Repo.insert!()
   end
 
-  defp fixture_transicion(header, origen, destino, accion, reglas \\ []) do
-    {:ok, transicion} =
-      %Transicion{}
-      |> Transicion.changeset(%{
-        meta_schema_header_id: header.id,
-        accion: accion,
-        etiqueta: String.capitalize(accion),
-        estado_origen_id: origen.id,
-        estado_destino_id: destino.id
-      })
-      |> Ecto.Changeset.put_change(:insert_guid, guid())
-      |> Repo.insert()
-
-    Enum.each(reglas, fn attrs ->
-      %TransicionRegla{}
-      |> TransicionRegla.changeset(Map.put(attrs, :transicion_id, transicion.id))
-      |> Ecto.Changeset.put_change(:insert_guid, guid())
-      |> Repo.insert!()
-    end)
-
-    transicion
+  # Sin `reglas`: el mecanismo actual (un módulo Pre por catálogo, ver
+  # test/support/reglas_meta_fixture_cliente.ex) despacha por el nombre de
+  # `accion` en código, no por filas en la base — el TransicionRegla que
+  # existía acá antes ya no tiene ningún uso real fuera de tests viejos.
+  defp fixture_transicion(header, origen, destino, accion) do
+    %Transicion{}
+    |> Transicion.changeset(%{
+      meta_schema_header_id: header.id,
+      accion: accion,
+      etiqueta: String.capitalize(accion),
+      estado_origen_id: origen.id,
+      estado_destino_id: destino.id
+    })
+    |> Ecto.Changeset.put_change(:insert_guid, guid())
+    |> Repo.insert!()
   end
 
   defp fixture_cliente(estado_id) do
-    %PtyClientes{}
-    |> PtyClientes.changeset(%{
-      pty_clientes_nombre: "cliente #{unique()}",
-      pty_clientes_edad: 30,
-      pty_clientes_venta: Decimal.new("100.00")
+    %MetaFixtureCliente{}
+    |> MetaFixtureCliente.changeset(%{
+      meta_fixture_cliente_nombre: "cliente #{unique()}",
+      meta_fixture_cliente_edad: 30,
+      meta_fixture_cliente_venta: Decimal.new("100.00")
     })
     |> Ecto.Changeset.put_change(:insert_guid, guid())
     |> Ecto.Changeset.put_change(:estado_id, estado_id)
@@ -61,7 +55,7 @@ defmodule MetadataAppWeb.MetaTransicionControllerTest do
       fixture_transicion(header, nuevo, activo, "activar")
       cliente = fixture_cliente(nuevo.id)
 
-      conn = get(conn, ~p"/api/pty_clientes/#{cliente.id}/transiciones")
+      conn = get(conn, ~p"/api/meta_fixture_cliente/#{cliente.id}/transiciones")
 
       assert %{"data" => [transicion]} = json_response(conn, 200)
       assert transicion["accion"] == "activar"
@@ -74,18 +68,15 @@ defmodule MetadataAppWeb.MetaTransicionControllerTest do
       nuevo = fixture_estado(header, %{nombre: "http_nuevo2_#{unique()}", es_inicial: true})
       activo = fixture_estado(header, %{nombre: "http_activo2_#{unique()}"})
 
-      fixture_transicion(header, nuevo, activo, "activar", [
-        %{tipo: "pre", regla: "dato_en_contexto", params: %{"dato" => "motivo"}}
-      ])
+      fixture_transicion(header, nuevo, activo, "activar_con_dato")
 
       cliente = fixture_cliente(nuevo.id)
 
-      conn = get(conn, ~p"/api/pty_clientes/#{cliente.id}/transiciones")
+      conn = get(conn, ~p"/api/meta_fixture_cliente/#{cliente.id}/transiciones")
 
       assert %{"data" => [transicion]} = json_response(conn, 200)
       assert transicion["disponible"] == false
-      assert [%{"regla" => "dato_en_contexto"}] = transicion["razones"]
-      assert [%{"dato" => "motivo"}] = transicion["requiere"]
+      assert [%{"regla" => "pre", "mensaje" => "falta el dato: motivo"}] = transicion["razones"]
     end
 
     test "una falla de requiere_rol OCULTA la transición por completo", %{conn: conn} do
@@ -93,13 +84,11 @@ defmodule MetadataAppWeb.MetaTransicionControllerTest do
       nuevo = fixture_estado(header, %{nombre: "http_nuevo3_#{unique()}", es_inicial: true})
       activo = fixture_estado(header, %{nombre: "http_activo3_#{unique()}"})
 
-      fixture_transicion(header, nuevo, activo, "activar", [
-        %{tipo: "pre", regla: "requiere_rol", params: %{"rol" => "supervisor"}}
-      ])
+      fixture_transicion(header, nuevo, activo, "activar_con_rol")
 
       cliente = fixture_cliente(nuevo.id)
 
-      conn = get(conn, ~p"/api/pty_clientes/#{cliente.id}/transiciones")
+      conn = get(conn, ~p"/api/meta_fixture_cliente/#{cliente.id}/transiciones")
 
       assert %{"data" => []} = json_response(conn, 200)
     end
@@ -113,7 +102,7 @@ defmodule MetadataAppWeb.MetaTransicionControllerTest do
       fixture_transicion(header, nuevo, activo, "activar")
       cliente = fixture_cliente(nuevo.id)
 
-      conn = post(conn, ~p"/api/pty_clientes/#{cliente.id}/transiciones/activar", %{})
+      conn = post(conn, ~p"/api/meta_fixture_cliente/#{cliente.id}/transiciones/activar", %{})
 
       assert %{"data" => data, "transiciones" => transiciones} = json_response(conn, 200)
       assert data["estado_id"] == activo.id
@@ -125,7 +114,7 @@ defmodule MetadataAppWeb.MetaTransicionControllerTest do
       nuevo = fixture_estado(header, %{nombre: "http_409a_#{unique()}", es_inicial: true})
       cliente = fixture_cliente(nuevo.id)
 
-      conn = post(conn, ~p"/api/pty_clientes/#{cliente.id}/transiciones/no_existe", %{})
+      conn = post(conn, ~p"/api/meta_fixture_cliente/#{cliente.id}/transiciones/no_existe", %{})
 
       assert %{"errors" => %{"detail" => _, "estado_actual_id" => estado_id}} =
                json_response(conn, 409)
@@ -138,15 +127,13 @@ defmodule MetadataAppWeb.MetaTransicionControllerTest do
       nuevo = fixture_estado(header, %{nombre: "http_422_#{unique()}", es_inicial: true})
       activo = fixture_estado(header, %{nombre: "http_422b_#{unique()}"})
 
-      fixture_transicion(header, nuevo, activo, "activar", [
-        %{tipo: "pre", regla: "dato_en_contexto", params: %{"dato" => "motivo"}}
-      ])
+      fixture_transicion(header, nuevo, activo, "activar_con_dato")
 
       cliente = fixture_cliente(nuevo.id)
 
-      conn = post(conn, ~p"/api/pty_clientes/#{cliente.id}/transiciones/activar", %{})
+      conn = post(conn, ~p"/api/meta_fixture_cliente/#{cliente.id}/transiciones/activar_con_dato", %{})
 
-      assert %{"errors" => %{"razones" => [%{"regla" => "dato_en_contexto"}]}} =
+      assert %{"errors" => %{"razones" => [%{"regla" => "pre", "mensaje" => "falta el dato: motivo"}]}} =
                json_response(conn, 422)
     end
 
@@ -155,14 +142,12 @@ defmodule MetadataAppWeb.MetaTransicionControllerTest do
       nuevo = fixture_estado(header, %{nombre: "http_ok_dato_#{unique()}", es_inicial: true})
       activo = fixture_estado(header, %{nombre: "http_ok_dato2_#{unique()}"})
 
-      fixture_transicion(header, nuevo, activo, "activar", [
-        %{tipo: "pre", regla: "dato_en_contexto", params: %{"dato" => "motivo"}}
-      ])
+      fixture_transicion(header, nuevo, activo, "activar_con_dato")
 
       cliente = fixture_cliente(nuevo.id)
 
       conn =
-        post(conn, ~p"/api/pty_clientes/#{cliente.id}/transiciones/activar", %{
+        post(conn, ~p"/api/meta_fixture_cliente/#{cliente.id}/transiciones/activar_con_dato", %{
           "motivo" => "porque sí"
         })
 
