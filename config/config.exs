@@ -25,6 +25,15 @@ config :metadata_app, MetadataApp.Repo,
 # en tiempo de ejecución — eso rompería en un release compilado.
 config :metadata_app, generar_catalogos_en_caliente: Mix.env() != :prod
 
+# Local (dev/test) usa el BPB para construir y probar catálogos.
+# Producción detecta que es un deploy real y lo deshabilita del todo — ni
+# rutas ni links visibles — porque ahí no hay compilador (mismo motivo que
+# generar_catalogos_en_caliente de arriba), y porque un usuario de negocio
+# en producción no tiene nada que hacer en la herramienta de construcción.
+# Concepto separado a propósito, aunque hoy tenga el mismo valor: son dos
+# decisiones de diseño distintas, ver docs/upcoming-features.md #7.
+config :metadata_app, bpb_habilitado: Mix.env() != :prod
+
 # Configures the endpoint
 config :metadata_app, MetadataAppWeb.Endpoint,
   url: [host: "localhost"],

@@ -69,10 +69,17 @@ defmodule MetadataAppWeb.Router do
     pipe_through :browser
 
     live "/", InicioLive
-    live "/sysadmin/bc-list", Sysadmin.BcListLive
-    live "/sysadmin/bc-list/nuevo-completo", Sysadmin.BcNuevoCompletoLive
-    live "/sysadmin/bc-list/:nombre/motor", Sysadmin.BcMotorLive
-    live "/sysadmin/buscar-trn", Sysadmin.BuscadorTrnLive
+
+    # Ni existen en producción — ni la ruta ni el link del Frame (ver
+    # menu_layout.ex) tienen sentido ahí, no hay compilador para construir
+    # nada. Compile-time (no Mix.env() en runtime, rompería en un release
+    # compilado), mismo criterio que :dev_routes de arriba.
+    if Application.compile_env(:metadata_app, :bpb_habilitado) do
+      live "/sysadmin/bc-list", Sysadmin.BcListLive
+      live "/sysadmin/bc-list/nuevo-completo", Sysadmin.BcNuevoCompletoLive
+      live "/sysadmin/bc-list/:nombre/motor", Sysadmin.BcMotorLive
+      live "/sysadmin/buscar-trn", Sysadmin.BuscadorTrnLive
+    end
 
     # Comodín al final: cualquier ruta de navegación de un catálogo (con la
     # profundidad de carpetas que sea, ej. "/listas/motos" o

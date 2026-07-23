@@ -30,6 +30,7 @@ defmodule MetadataAppWeb.MenuLayout do
       |> assign(:nodo_actual, buscar_nodo_actual(assigns.menu_items, assigns.current_page))
       |> assign(:nombre_empresa, Application.get_env(:metadata_app, :nombre_empresa, "Prettycore"))
       |> assign(:anio_actual, Date.utc_today().year)
+      |> assign(:bpb_habilitado, Application.get_env(:metadata_app, :bpb_habilitado, false))
 
     ~H"""
     <div class="pc-platform">
@@ -61,7 +62,7 @@ defmodule MetadataAppWeb.MenuLayout do
                así funciona igual desde CUALQUIER pantalla que use este
                layout compartido, sin que cada LiveView tenga que
                implementar un handle_event en común. -->
-          <form action="/sysadmin/buscar-trn" method="get" class="pc-topbar-buscar-trn">
+          <form :if={@bpb_habilitado} action="/sysadmin/buscar-trn" method="get" class="pc-topbar-buscar-trn">
             <label for="topbar-buscar-trn" class="pc-topbar-buscar-trn-label">TRN:</label>
             <input type="text" name="query" id="topbar-buscar-trn" autocomplete="off" class="pc-topbar-buscar-trn-input" />
             <button type="submit" class="pc-topbar-buscar-trn-btn" title="Buscar">
@@ -102,7 +103,7 @@ defmodule MetadataAppWeb.MenuLayout do
               class="pc-user-menu-dropdown"
               phx-click-away={JS.hide(to: "#user-menu-dropdown")}
             >
-              <.link navigate="/sysadmin/bc-list" class="pc-user-menu-item">
+              <.link :if={@bpb_habilitado} navigate="/sysadmin/bc-list" class="pc-user-menu-item">
                 Business Process Builder
               </.link>
               <button
