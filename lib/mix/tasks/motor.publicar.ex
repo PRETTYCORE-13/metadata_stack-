@@ -21,7 +21,12 @@ defmodule Mix.Tasks.Motor.Publicar do
        errores estructurales. Si `<catalogo>` es maestro de uno o más
        catálogos detalle (`MetaSchemaContext.listar_catalogos_detalle/1`),
        se incluyen automáticamente — un detalle nunca se publica solo (mismo
-       criterio que "Despliegue" en BcListLive).
+       criterio que "Despliegue" en BcListLive). Cualquier campo tipo
+       `referencia` (del catálogo o de sus detalles) también arrastra al
+       catálogo referenciado, recursivo — si el catálogo destino nunca se
+       desplegó antes, su migración crea una FK contra una tabla que en
+       producción todavía no existe, y la migración completa del bundle
+       falla (encontrado real: la primera prueba de este mecanismo).
     2. `mix meta.export` + `mix motor.export` (de TODOS los catálogos, como
        siempre — solo cambia en disco el archivo del que de verdad se tocó).
     3. Arma un `.tar.gz` con, por cada catálogo en alcance: su schema
@@ -50,12 +55,16 @@ defmodule Mix.Tasks.Motor.Publicar do
     Mix.Task.run("app.config")
 
     Mix.shell().info("== validando \"#{catalogo}\" ==")
-    {header, detalles} = validar!(catalogo)
-
-    catalogos = [catalogo | Enum.map(detalles, & &1.schema_context_name)]
+    {header, detalles, catalogos} = validar!(catalogo)
 
     if detalles != [] do
       Mix.shell().info("  incluye detalle(s): #{Enum.join(Enum.map(detalles, & &1.schema_context_name), ", ")}")
+    end
+
+    referenciados = catalogos -- [catalogo | Enum.map(detalles, & &1.schema_context_name)]
+
+    if referenciados != [] do
+      Mix.shell().info("  incluye referenciado(s): #{Enum.join(referenciados, ", ")}")
     end
 
     Mix.shell().info("\n== exportando catálogos + autómata ==")
@@ -75,18 +84,25 @@ defmodule Mix.Tasks.Motor.Publicar do
       Ecto.Migrator.with_repo(MetadataApp.Repo, fn _repo ->
         header = MetaSchemaContext.obtener_header_por_nombre(catalogo)
         validacion = MetaEstadosAdmin.validar_motor(catalogo)
-        detalles = header && MetaSchemaContext.listar_catalogos_detalle(header.id)
-        {header, validacion, detalles || []}
+
+        if header do
+          detalles = MetaSchemaContext.listar_catalogos_detalle(header.id)
+          base = [catalogo | Enum.map(detalles, & &1.schema_context_name)]
+          catalogos = expandir_referencias(base, MapSet.new(base))
+          {header, validacion, detalles, catalogos}
+        else
+          {header, validacion, [], []}
+        end
       end)
 
     case resultado do
-      {nil, _validacion, _detalles} ->
+      {nil, _validacion, _detalles, _catalogos} ->
         Mix.raise("\"#{catalogo}\" no existe.")
 
-      {_header, {:error, motivo}, _detalles} ->
+      {_header, {:error, motivo}, _detalles, _catalogos} ->
         Mix.raise("#{catalogo}: #{motivo}")
 
-      {header, {:ok, %{problemas: problemas, valido?: valido?}}, detalles} ->
+      {header, {:ok, %{problemas: problemas, valido?: valido?}}, detalles, catalogos} ->
         Enum.each(problemas, fn p ->
           etiqueta = if p.severidad == :error, do: "ERROR", else: "advertencia"
           Mix.shell().info("  [#{etiqueta}] #{p.mensaje}")
@@ -98,8 +114,32 @@ defmodule Mix.Tasks.Motor.Publicar do
           Mix.raise("\"#{catalogo}\" no pasa validar_motor — corregí los errores de arriba antes de publicar.")
         end
 
-        {header, detalles}
+        {header, detalles, catalogos}
     end
+  end
+
+  # Cierre transitivo de dependencias por campo "referencia" — si A
+  # referencia a B y B referencia a C, publicar A tiene que arrastrar
+  # también a B y C (su migración crea una FK contra una tabla que en
+  # producción, si nunca se desplegó nada antes, todavía no existe).
+  defp expandir_referencias(pendientes, vistos) do
+    nuevos =
+      pendientes
+      |> Enum.flat_map(&referencias_de/1)
+      |> Enum.uniq()
+      |> Enum.reject(&MapSet.member?(vistos, &1))
+
+    case nuevos do
+      [] -> MapSet.to_list(vistos)
+      _ -> expandir_referencias(nuevos, Enum.reduce(nuevos, vistos, &MapSet.put(&2, &1)))
+    end
+  end
+
+  defp referencias_de(catalogo) do
+    catalogo
+    |> MetaSchemaContext.listar_detalles()
+    |> Enum.filter(&(&1.schema_context_properties["tipo"] == "referencia"))
+    |> Enum.map(& &1.schema_context_properties["catalogo"])
   end
 
   defp armar_bundle(catalogos) do

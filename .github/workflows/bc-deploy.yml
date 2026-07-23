@@ -117,3 +117,9 @@ jobs:
               exit 1
             fi
             docker exec "$CONTAINER_ID" /app/bin/migrate
+            # La migración crea la TABLA física del BC -- esto crea el
+            # registro en meta_schema_header/detail/estados/transiciones
+            # que hace que el motor reconozca esa tabla como un Business
+            # Context real (sin esto la tabla existe pero la API responde
+            # "no encontrado", ver MetadataApp.Release.import_meta/0).
+            docker exec "$CONTAINER_ID" /app/bin/import_meta
