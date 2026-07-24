@@ -44,6 +44,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       |> assign(:sidebar_open, false)
       |> assign(:campo_form, nil)
       |> assign(:eliminar_campo_form, nil)
+      |> assign(:relacion_form, nil)
       |> assign(:estado_form, nil)
       |> assign(:transicion_form, nil)
       |> assign(:header, header)
@@ -406,6 +407,47 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       {:error, motivo} ->
         {:noreply, put_flash(socket, :error, "No se pudo eliminar el campo: #{inspect(motivo)}")}
+    end
+  end
+
+  # --- Relaciones: qué campos de OTRO catálogo (el referenciado) trae de
+  # prestado un campo tipo "referencia" de este ------------------------------
+
+  def handle_event("abrir_form_relacion", %{"campo" => campo}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = detalle.schema_context_properties
+    campos_destino = MetaSchemaContext.listar_detalles(props["catalogo"]) |> Enum.map(& &1.schema_context_field)
+
+    {:noreply,
+     assign(socket, :relacion_form, %{
+       "campo" => campo,
+       "catalogo_destino" => props["catalogo"],
+       "campos_destino" => campos_destino,
+       "seleccionados" => props["campos_acompanamiento"] || [],
+       "error" => nil
+     })}
+  end
+
+  def handle_event("cerrar_form_relacion", _params, socket) do
+    {:noreply, assign(socket, :relacion_form, nil)}
+  end
+
+  def handle_event("guardar_relacion", params, socket) do
+    %{"campo" => campo} = socket.assigns.relacion_form
+    campos_seleccionados = params |> Map.get("campos", []) |> List.wrap() |> Enum.reject(&(&1 == ""))
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "campos_acompanamiento", campos_seleccionados)
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} ->
+        {:noreply,
+         socket
+         |> assign(:relacion_form, nil)
+         |> put_flash(:info, "Relación de \"#{campo}\" actualizada.")
+         |> cargar_motor()}
+
+      {:error, changeset} ->
+        {:noreply, update(socket, :relacion_form, &Map.put(&1, "error", resumen_errores(changeset)))}
     end
   end
 
@@ -950,6 +992,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       <div id="motor-panel-config" class="space-y-4">
         <.panel_encabezado header_form={@header_form} iconos_sugeridos={@iconos_sugeridos} carpetas={@carpetas} />
         <.panel_campos campos={@campos} />
+        <.panel_relaciones campos={@campos} />
         <%= if @es_detalle? do %>
           <div class="border border-gray-200 rounded-lg p-3 text-gray-500">
             Sin estados/transiciones propias — este catálogo se mueve junto con <strong>{@maestro.schema_context_label}</strong>.
@@ -981,6 +1024,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     <.modal_eliminar_campo :if={@eliminar_campo_form} form={@eliminar_campo_form} />
     <.modal_estado :if={@estado_form} form={@estado_form} />
     <.modal_transicion :if={@transicion_form} form={@transicion_form} estados={@estados} campos={@campos} catalogos_detalle={@catalogos_detalle} />
+    <.modal_relacion :if={@relacion_form} form={@relacion_form} />
     """
   end
 
@@ -1239,7 +1283,16 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <tr class="border-b border-gray-100 hover:bg-gray-50">
                   <td class="px-1.5 py-1 text-gray-900 font-mono">{c.schema_context_field}</td>
                   <td class="px-1.5 py-1 text-gray-700">{Map.get(props, "etiqueta")}</td>
-                  <td class="px-1.5 py-1 text-gray-600">{Map.get(props, "tipo")}</td>
+                  <td class="px-1.5 py-1 text-gray-600">
+                    <%= if Map.get(props, "tipo") == "referencia" do %>
+                      <span class="inline-flex items-center gap-0.5 bg-blue-50 text-blue-700 rounded-full px-1.5 py-0.5 font-semibold" title={"Relación con #{Map.get(props, "catalogo")}"}>
+                        <span class="material-symbols-outlined" style="font-size: 12px">link</span>
+                        referencia
+                      </span>
+                    <% else %>
+                      {Map.get(props, "tipo")}
+                    <% end %>
+                  </td>
                   <td class="px-1.5 py-1 text-gray-600">{if Map.get(props, "opcional"), do: "Sí", else: "—"}</td>
                   <td class="px-1.5 py-1">
                     <button type="button" phx-click="abrir_eliminar_campo" phx-value-campo={c.schema_context_field}
@@ -1254,6 +1307,65 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         <button type="button" phx-click="abrir_form_campo" class="text-purple-700 hover:text-purple-900 font-semibold">
           + Agregar campo
         </button>
+      </div>
+    </div>
+    """
+  end
+
+  attr :campos, :list, required: true
+
+  # Relaciones: qué campos de OTRO catálogo (el referenciado) trae de
+  # prestado cada campo tipo "referencia" de este — ver
+  # docs/roadmap-campos-acompanamiento.md. El campo local tiene que
+  # existir YA como tipo "referencia" (se crea en el panel Campos de
+  # arriba, eligiendo catálogo destino) — acá solo se elige QUÉ trae.
+  defp panel_relaciones(assigns) do
+    referencias = Enum.filter(assigns.campos, &(get_in(&1.schema_context_properties, ["tipo"]) == "referencia"))
+    assigns = assign(assigns, :referencias, referencias)
+
+    ~H"""
+    <div class="border border-gray-200 rounded-lg">
+      <div class="px-1.5 ml-2 -mb-2 relative">
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Relaciones</span>
+      </div>
+      <div class="p-3 pt-4 overflow-x-auto">
+        <%= if @referencias == [] do %>
+          <p class="text-gray-400">
+            Este catálogo no tiene ningún campo tipo <span class="font-mono">referencia</span> todavía — agrega uno en "Campos" (arriba), eligiendo a qué catálogo apunta, para poder configurar acá qué trae de prestado.
+          </p>
+        <% else %>
+          <table class="min-w-full mb-2">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campo local</th>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Catálogo destino</th>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campos que trae</th>
+                <th class="px-1.5 py-1 border-b border-gray-200"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <%= for c <- @referencias do %>
+                <% props = c.schema_context_properties %>
+                <% traidos = Map.get(props, "campos_acompanamiento", []) %>
+                <tr class="border-b border-gray-100 hover:bg-gray-50">
+                  <td class="px-1.5 py-1 text-gray-900 font-mono">{c.schema_context_field}</td>
+                  <td class="px-1.5 py-1 text-gray-700 font-mono">{Map.get(props, "catalogo")}</td>
+                  <td class="px-1.5 py-1 text-gray-600">
+                    <%= if traidos == [] do %>
+                      <span class="text-gray-400">sin configurar</span>
+                    <% else %>
+                      {Enum.join(traidos, ", ")}
+                    <% end %>
+                  </td>
+                  <td class="px-1.5 py-1">
+                    <button type="button" phx-click="abrir_form_relacion" phx-value-campo={c.schema_context_field}
+                      class="text-blue-600 hover:text-blue-800 text-[11px] font-semibold">Configurar</button>
+                  </td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        <% end %>
       </div>
     </div>
     """
@@ -2028,6 +2140,58 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             Eliminar
           </button>
         </div>
+      </div>
+    </div>
+    """
+  end
+
+  attr :form, :map, required: true
+
+  # Qué campos del catálogo REFERENCIADO trae de prestado este campo tipo
+  # "referencia" — lanzado desde el panel Relaciones.
+  defp modal_relacion(assigns) do
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div class="bg-white rounded-xl shadow-lg max-w-sm w-full p-4 text-xs">
+        <h2 class="text-sm font-bold text-gray-900 mb-1">Configurar relación</h2>
+        <p class="text-gray-600 mb-3">
+          Campos de <strong class="font-mono">{@form["catalogo_destino"]}</strong> que <strong class="font-mono">{@form["campo"]}</strong> trae de prestado al listar/consultar este catálogo.
+        </p>
+
+        <%= if @form["error"] do %>
+          <div class="bg-red-50 text-red-700 rounded-lg px-2 py-1.5 mb-2">{@form["error"]}</div>
+        <% end %>
+
+        <%= if @form["campos_destino"] == [] do %>
+          <p class="text-amber-600 mb-3">
+            <strong class="font-mono">{@form["catalogo_destino"]}</strong> todavía no tiene campos propios.
+          </p>
+          <div class="flex justify-end">
+            <button type="button" phx-click="cerrar_form_relacion" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
+              Cerrar
+            </button>
+          </div>
+        <% else %>
+          <form phx-submit="guardar_relacion">
+            <div class="flex flex-col gap-1.5 mb-3">
+              <%= for campo <- @form["campos_destino"] do %>
+                <label class="flex items-center gap-1.5">
+                  <input type="checkbox" name="campos[]" value={campo}
+                    checked={campo in @form["seleccionados"]} class="accent-purple-600" />
+                  <span class="font-mono">{campo}</span>
+                </label>
+              <% end %>
+            </div>
+            <div class="flex justify-end gap-2">
+              <button type="button" phx-click="cerrar_form_relacion" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
+                Cancelar
+              </button>
+              <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">
+                Guardar
+              </button>
+            </div>
+          </form>
+        <% end %>
       </div>
     </div>
     """

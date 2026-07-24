@@ -238,11 +238,22 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
 
   defp actualizar_directo(registro, attrs, schema_mod, catalogo) do
     transicion = MetadataApp.MetaStateEngine.transicion_guardar(catalogo, registro.estado_id)
-    editables = MetadataApp.MetaStateEngine.campos_editables(catalogo, transicion)
 
-    todos_los_campos =
-      MetadataApp.BusinessProcessBuilder.MetaSchemaContext.listar_detalles(catalogo)
+    detalles = MetadataApp.BusinessProcessBuilder.MetaSchemaContext.listar_detalles(catalogo)
+    todos_los_campos = Enum.map(detalles, & &1.schema_context_field)
+
+    # La propiedad "editable" del contrato (fija, por campo) manda además
+    # de — no en vez de — la whitelist que arma el motor de estados: un
+    # campo solo se puede tocar si pasa las dos restricciones.
+    campos_editables_contrato =
+      detalles
+      |> Enum.filter(&(&1.schema_context_properties["editable"] == true))
       |> Enum.map(& &1.schema_context_field)
+
+    editables =
+      catalogo
+      |> MetadataApp.MetaStateEngine.campos_editables(transicion)
+      |> Enum.filter(&(&1 in campos_editables_contrato))
 
     changeset =
       registro
@@ -308,11 +319,68 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # estados_por_id: %{estado_id => nombre} (ver MetaStateEngine.mapa_nombres_estados/1)
   # — opcional para no romper otros llamadores; sin él, o si el registro no
   # tiene estado_id asignado, no agrega estado_nombre.
-  def serializar(registro, estados_por_id \\ %{}) do
+  #
+  # acompanamiento: %{campo => %{id_referenciado => %{...}}} (ver
+  # mapa_acompanamiento/2) — opcional, mismo motivo. Reemplaza el id crudo
+  # de un campo tipo "referencia" por el objeto resuelto, ej.
+  # %{cliente_ecc: 1} -> %{cliente_ecc: %{id: 1, razon_social: "..."}}.
+  def serializar(registro, estados_por_id \\ %{}, acompanamiento \\ %{}) do
     registro
     |> Map.from_struct()
     |> Map.drop([:__meta__, :insert_guid, :update_guid, :delete_guid])
     |> agregar_estado_nombre(estados_por_id)
+    |> agregar_acompanamiento(acompanamiento)
+  end
+
+  # Arma, para cada campo tipo "referencia" con "campos_acompanamiento"
+  # configurado, un mapa %{id_referenciado => %{...}} usando SOLO los ids
+  # que de verdad aparecen en `filas` — una query batch por relación por
+  # página de resultados, nunca una query por fila (mismo espíritu que
+  # MetaStateEngine.mapa_nombres_estados/1 para estado_nombre).
+  def mapa_acompanamiento(catalogo, filas) do
+    catalogo
+    |> MetadataApp.BusinessProcessBuilder.MetaSchemaContext.listar_detalles()
+    |> Enum.filter(&campo_con_acompanamiento?/1)
+    |> Map.new(fn detalle ->
+      campo = String.to_existing_atom(detalle.schema_context_field)
+      props = detalle.schema_context_properties
+      modulo_destino = MetadataApp.BusinessProcessBuilder.MetaSchemaContext.modulo_por_nombre(props["catalogo"])
+
+      ids =
+        filas
+        |> Enum.map(&Map.get(&1, campo))
+        |> Enum.reject(&is_nil/1)
+        |> Enum.uniq()
+
+      {campo, resolver_acompanamiento(modulo_destino, ids, props["campos_acompanamiento"])}
+    end)
+  end
+
+  defp campo_con_acompanamiento?(detalle) do
+    props = detalle.schema_context_properties || %{}
+    props["tipo"] == "referencia" and is_list(props["campos_acompanamiento"]) and props["campos_acompanamiento"] != []
+  end
+
+  defp resolver_acompanamiento(nil, _ids, _campos), do: %{}
+  defp resolver_acompanamiento(_modulo, [], _campos), do: %{}
+
+  defp resolver_acompanamiento(modulo, ids, campos) do
+    campos_atoms = Enum.map(["id" | campos], &String.to_existing_atom/1)
+
+    from(t in modulo, where: t.id in ^ids, select: map(t, ^campos_atoms))
+    |> Repo.all()
+    |> Map.new(&{&1.id, &1})
+  end
+
+  defp agregar_acompanamiento(mapa, acompanamiento) when acompanamiento == %{}, do: mapa
+
+  defp agregar_acompanamiento(mapa, acompanamiento) do
+    Enum.reduce(acompanamiento, mapa, fn {campo, resueltos}, acc ->
+      case Map.get(acc, campo) do
+        nil -> acc
+        id -> Map.put(acc, campo, Map.get(resueltos, id))
+      end
+    end)
   end
 
   # Reordena el mapa de serializar/2 para que el TRN quede siempre al final,

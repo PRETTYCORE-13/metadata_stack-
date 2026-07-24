@@ -496,6 +496,49 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     |> Repo.insert()
   end
 
+  # Edita las propiedades de un campo que ya existe (a diferencia de
+  # agregar_detalle/2, que crea uno nuevo) — usado por el panel
+  # "Relaciones" para configurar "campos_acompanamiento" en un campo tipo
+  # "referencia" ya creado. No toca la columna física: eso solo aplica a
+  # campos nuevos o borrados (ver CatalogoGenerador), acá solo cambia
+  # metadata.
+  def actualizar_detalle(%Detail{} = detalle, attrs) do
+    detalle
+    |> Detail.changeset(attrs)
+    |> validar_campos_acompanamiento()
+    |> Ecto.Changeset.change(%{update_guid: generar_guid()})
+    |> Repo.update()
+  end
+
+  # Si el detalle es un campo tipo "referencia" con "campos_acompanamiento"
+  # configurado, cada uno de esos campos tiene que existir de verdad en el
+  # catálogo DESTINO (el referenciado) — solo una validación de existencia,
+  # no una whitelist de "exportables" (se consideró esa opción y se
+  # descartó: agregaba un paso extra sin pedirse). Ver
+  # docs/roadmap-campos-acompanamiento.md.
+  defp validar_campos_acompanamiento(changeset) do
+    case Ecto.Changeset.get_field(changeset, :schema_context_properties) do
+      %{"tipo" => "referencia", "catalogo" => catalogo, "campos_acompanamiento" => campos}
+      when is_list(campos) and campos != [] ->
+        campos_reales = catalogo |> listar_detalles() |> Enum.map(& &1.schema_context_field)
+
+        case campos -- campos_reales do
+          [] ->
+            changeset
+
+          inexistentes ->
+            Ecto.Changeset.add_error(
+              changeset,
+              :schema_context_properties,
+              "campo(s) inexistente(s) en #{catalogo}: #{Enum.join(inexistentes, ", ")}"
+            )
+        end
+
+      _ ->
+        changeset
+    end
+  end
+
   # Soft-delete de un campo — la columna física NO se toca acá (ver
   # CatalogoGenerador.eliminar_campo/3, que orquesta esto + el DROP COLUMN +
   # regenerar el schema, en ese orden).

@@ -29,6 +29,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
       total_filas = CatalogoGenerico.contar(schema_mod, filtros)
       meta_campos = tabla |> MetaSchemaContext.listar_detalles() |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
       estados_por_id = MetaStateEngine.mapa_nombres_estados(tabla)
+      acompanamiento = CatalogoGenerico.mapa_acompanamiento(tabla, items)
 
       json(
         conn,
@@ -36,7 +37,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
           [meta_campos: meta_campos] ++
             meta_campos_detalle_extra(tabla) ++
             [
-              data: Enum.map(items, &serializar_json(&1, estados_por_id)),
+              data: Enum.map(items, &serializar_json(&1, estados_por_id, acompanamiento)),
               paginacion: %{
                 pagina: pagina,
                 por_pagina: por_pagina,
@@ -120,11 +121,13 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
       item = CatalogoGenerico.obtener!(schema_mod, id)
       meta_campos = tabla |> MetaSchemaContext.listar_detalles() |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
       estados_por_id = MetaStateEngine.mapa_nombres_estados(tabla)
+      acompanamiento = CatalogoGenerico.mapa_acompanamiento(tabla, [item])
 
       json(
         conn,
         Jason.OrderedObject.new(
-          [meta_campos: meta_campos] ++ meta_campos_detalle_extra(tabla) ++ [data: serializar_json(item, estados_por_id)]
+          [meta_campos: meta_campos] ++
+            meta_campos_detalle_extra(tabla) ++ [data: serializar_json(item, estados_por_id, acompanamiento)]
         )
       )
     end
@@ -161,17 +164,21 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
 
       if is_list(attrs_bruto) do
         with {:ok, items} <- CatalogoGenerico.crear_muchos(schema_mod, attrs_bruto) do
+          acompanamiento = CatalogoGenerico.mapa_acompanamiento(tabla, items)
+
           conn
           |> put_status(:created)
-          |> json(%{data: Enum.map(items, &serializar_json(&1, estados_por_id))})
+          |> json(%{data: Enum.map(items, &serializar_json(&1, estados_por_id, acompanamiento))})
         end
       else
         {renglones, attrs} = Map.pop(attrs_bruto, "renglones", %{})
 
         with {:ok, item} <- CatalogoGenerico.crear(schema_mod, attrs, renglones: renglones) do
+          acompanamiento = CatalogoGenerico.mapa_acompanamiento(tabla, [item])
+
           conn
           |> put_status(:created)
-          |> json(%{data: serializar_json(item, estados_por_id)})
+          |> json(%{data: serializar_json(item, estados_por_id, acompanamiento)})
         end
       end
     end
@@ -183,7 +190,9 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
       item = CatalogoGenerico.obtener!(schema_mod, id)
 
       with {:ok, item} <- CatalogoGenerico.actualizar(item, attrs) do
-        json(conn, %{data: serializar_json(item, MetaStateEngine.mapa_nombres_estados(tabla))})
+        estados_por_id = MetaStateEngine.mapa_nombres_estados(tabla)
+        acompanamiento = CatalogoGenerico.mapa_acompanamiento(tabla, [item])
+        json(conn, %{data: serializar_json(item, estados_por_id, acompanamiento)})
       end
     end
   end
@@ -198,9 +207,9 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
     end
   end
 
-  defp serializar_json(item, estados_por_id) do
+  defp serializar_json(item, estados_por_id, acompanamiento) do
     item
-    |> CatalogoGenerico.serializar(estados_por_id)
+    |> CatalogoGenerico.serializar(estados_por_id, acompanamiento)
     |> CatalogoGenerico.trn_al_final()
   end
 
