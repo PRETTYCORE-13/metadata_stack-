@@ -19,9 +19,18 @@ defmodule MetadataApp.MetaImportExport do
 
   @doc "Importa cada `*.meta.json` de `dir` — crea el Header+Detalles si el catálogo no existe todavía, lo deja sin tocar si ya existe."
   def importar_meta(dir \\ "priv/repo/catalogos") do
-    dir
-    |> leer_json(".meta.json")
-    |> Enum.map(&importar_contexto/1)
+    # Maestros antes que detalles: un detalle trae "schema_encabezado_catalogo"
+    # (el NOMBRE de su maestro, ver MetaSchemaContext.exportar_header/2) que
+    # hay que resolver a un id local -- si el maestro todavía no se importó
+    # (ej. orden alfabético del directorio, donde "..._det" < "..._enc"),
+    # no hay id que resolver todavía. Sin multinivel (un detalle nunca es
+    # maestro de otro), dos pasadas alcanzan.
+    {sin_maestro, con_maestro} =
+      dir
+      |> leer_json(".meta.json")
+      |> Enum.split_with(&is_nil(&1["schema_encabezado_catalogo"]))
+
+    Enum.map(sin_maestro ++ con_maestro, &importar_contexto/1)
   end
 
   defp importar_contexto(contexto) do
@@ -29,15 +38,31 @@ defmodule MetadataApp.MetaImportExport do
 
     case MetaSchemaContext.obtener_header_por_nombre(nombre) do
       nil ->
-        case MetaSchemaContext.crear_header_con_detalles(contexto) do
-          {:ok, {_header, _detalles}} -> "+ #{nombre}: creado"
-          {:error, motivo} -> raise "Error importando #{nombre}: #{inspect(motivo)}"
+        case resolver_encabezado(contexto) do
+          {:error, mensaje} ->
+            raise "Error importando #{nombre}: #{mensaje}"
+
+          {:ok, contexto} ->
+            case MetaSchemaContext.crear_header_con_detalles(contexto) do
+              {:ok, {_header, _detalles}} -> "+ #{nombre}: creado"
+              {:error, motivo} -> raise "Error importando #{nombre}: #{inspect(motivo)}"
+            end
         end
 
       _existente ->
         "= #{nombre}: ya existía, sin cambios"
     end
   end
+
+  defp resolver_encabezado(%{"schema_encabezado_catalogo" => nombre_maestro} = contexto)
+       when not is_nil(nombre_maestro) do
+    case MetaSchemaContext.obtener_header_por_nombre(nombre_maestro) do
+      nil -> {:error, "su maestro \"#{nombre_maestro}\" no existe -- ¿faltó incluirlo en el bundle?"}
+      maestro -> {:ok, Map.put(contexto, "schema_encabezado_id", maestro.id)}
+    end
+  end
+
+  defp resolver_encabezado(contexto), do: {:ok, contexto}
 
   @doc "Importa cada `*.motor.json` de `dir` — recrea estados/transiciones resolviendo toda referencia por NOMBRE, no por id. Idempotente."
   def importar_motor(dir \\ "priv/repo/catalogos") do

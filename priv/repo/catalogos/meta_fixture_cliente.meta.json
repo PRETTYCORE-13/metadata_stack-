@@ -40,5 +40,6 @@
       },
       "schema_context_field": "meta_fixture_cliente_venta"
     }
-  ]
+  ],
+  "schema_encabezado_catalogo": null
 }

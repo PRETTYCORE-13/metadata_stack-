@@ -243,7 +243,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # exporta la definición completa del catálogo (campos, estados,
   # transiciones) a priv/repo/catalogos/<catalogo>.meta.json + .motor.json.
   # No toca git ni publica nada a producción todavía — es el primer paso de
-  # ese flujo (ver docs/upcoming-features.md, ítem 7).
+  # ese flujo (ver docs/roadmap.md, ítem 7).
   #
   # Catálogo Maestro-Detalle: un detalle nunca ofrece "Despliegue" propio
   # (ver adjuntar_puede_desplegar/1, boton_desplegar/1) — alcanza con

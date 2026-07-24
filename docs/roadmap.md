@@ -1,4 +1,4 @@
-# Upcoming Features — roadmap de PrettyCore / BPB
+# Roadmap — PrettyCore / BPB
 
 Lista de funcionalidades pedidas por el usuario para más adelante — **ninguna está diseñada ni iniciada todavía**. No es un compromiso de orden ni de fecha, es el backlog para no perder de vista qué falta cuando se retome cada tema. Cada entrada dice qué se pidió, qué relación tiene con lo que ya existe (si la hay), y qué queda por decidir antes de poder empezar.
 
@@ -62,3 +62,15 @@ Log técnico de excepciones/errores a nivel plataforma — distinto del log de a
 Hoy `MetadataApp.MetaErrores` (agregado 2026-07-23, ver `lib/metadata_app/meta_errores.ex`) centraliza en un solo lugar la traducción de errores de `Ecto.Changeset` a texto — antes esta lógica estaba duplicada en 6 archivos (`fallback_controller`, `catalogo_live`, `bc_list_live`, `bc_nuevo_completo_live`, `bc_motor_live`), cada uno con su propia copia. De paso se corrigió un bug real: `validate_inclusion` (campos `enum`) manda una lista en el dato del error, y `to_string/1` no sabe convertir una lista — antes tiraba `Protocol.UndefinedError` (un 500 real) en vez de mostrar el 422 de siempre.
 
 Los mensajes en español de cada validación (`"no puede quedar vacío"`, `"no es un valor permitido"`, etc., ver `meta_catalogo_generico.ex`) están **hardcodeados** — están bien para el caso de hoy, pero a futuro el usuario quiere poder **exponerlos/tunearlos** (ej. una pantalla admin donde ADN pueda ajustar la redacción de cada mensaje por catálogo o por campo, sin tocar código). Sin diseñar todavía: si es configuración global por tipo de validación, por catálogo, o por campo individual; dónde se guarda (¿tabla nueva, o una propiedad más en `schema_context_properties`?); si un catálogo sin configurar sigue usando los mensajes default de `MetaErrores` (probablemente sí, para no romper nada existente).
+
+## 12 — Transiciones ocultas para el Frontend (uso interno vía reglas)
+
+Poder marcar una transición como **"no mostrar al usuario final"** — sigue siendo una transición real y ejecutable (otra regla POST, propia o de otro catálogo, la puede disparar vía `MetaBcCliente.ejecutar_transicion`), pero no tiene que aparecer como botón/opción en ninguna pantalla de Frontend. Caso de uso: una transición "plomería" que solo existe para que la dispare la regla de OTRA transición (o de la misma), nunca pensada para que un humano la clickee directo.
+
+**Ya existe un mecanismo parecido, distinto en el motivo**: `{:error, :sin_permiso, mensaje}` (agregado 2026-07-23, ver ítem 2 de este roadmap) ya oculta una transición del descubrimiento (`MetaStateEngine.transiciones_disponibles/2`) — pero es una ocultación *condicional*, evaluada en cada request según el `contexto` (falla de rol/permiso). Esto es distinto: una marca **fija** en la transición misma (ej. un campo nuevo en `meta_schema_transiciones`, algo como `solo_interna: boolean`), sin depender de evaluar nada — se oculta siempre del descubrimiento, para cualquiera.
+
+Sin diseñar todavía: si además de ocultarla del descubrimiento (`GET .../transiciones`) hay que bloquear también el `POST .../transiciones/:accion` directo desde afuera (para que la única forma de dispararla sea vía regla, nunca por un cliente HTTP que se sepa el nombre de la acción) — son dos decisiones distintas (visibilidad vs. quién puede ejecutarla).
+
+## 13 — Log de quién crea/modifica/borra la DEFINICIÓN de cada motor (BC) hecho por ADN
+
+Distinto del ítem 6 (que es sobre **datos** — quién cambió un registro de negocio): esto es sobre la **definición** del catálogo mismo — campos, estados, transiciones, reglas. Por cada motor que arma ADN con el BPB, un log con: GUID, usuario que lo creó, usuario que lo actualizó (y cuándo), usuario que lo borró (y cuándo), fecha de cada cambio, y qué cambió puntualmente. Depende de [[#3]] — sin login no hay "usuario de ADN" que registrar, mismo motivo que el ítem 6.

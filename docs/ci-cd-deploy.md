@@ -121,7 +121,7 @@ Todo lo de arriba despliega el **BPB** (la plataforma) — este mecanismo aparte
 
 **Por qué nunca toca `origin/main`**: el workflow hace `actions/checkout@v4` de `main` tal cual está, y el bundle del BC se extrae sobre el working directory EFÍMERO de ese runner — ni un `git add`, ni commit, ni push en ningún paso. Cuando el job termina, el runner se destruye junto con esos archivos; el repo remoto nunca se enteró de que ese BC existió.
 
-**Qué lleva el bundle** (armado por `mix motor.publicar`, ver `lib/mix/tasks/motor.publicar.ex`): por el catálogo pedido y, si es maestro, sus catálogos detalle automáticamente (mismo criterio que el botón "Despliegue" de BC List) —
+**Qué lleva el bundle** (armado por `mix motor.publicar`, ver `lib/mix/tasks/motor.publicar.ex`): por el catálogo pedido, sus catálogos detalle si es maestro (mismo criterio que el botón "Despliegue" de BC List), **y todo catálogo que referencie** (`tipo: "referencia"`), recursivo —
 - `lib/.../catalogos/<catalogo>.ex` (el schema ya generado)
 - `priv/repo/migrations/*<catalogo>*.exs` (sus migraciones)
 - `priv/repo/catalogos/<catalogo>.meta.json` (+ `.motor.json` si tiene autómata propio)
@@ -131,7 +131,21 @@ Todo lo de arriba despliega el **BPB** (la plataforma) — este mecanismo aparte
 
 **Por qué no hot code loading**: se evaluó compilar el BC en la máquina de ADN y cargar los `.beam` directo en el nodo BEAM vivo del servidor (nativo de Erlang/OTP, cero downtime). Se descartó por seguridad (sin un artefacto inmutable/auditable de por medio — en los hechos, ejecución de código arbitrario contra quien tenga la SSH key), por escalabilidad (no sirve solo si algún día Swarm corre más de una réplica, sin repetir el hot-load en cada una a mano) y porque el patrón de imagen+rollback ya está construido y probado — hot-loading hubiera sido un mecanismo nuevo y frágil al lado de uno que ya funciona.
 
-**Probado localmente de punta a punta** (armado del bundle + build de Docker real con el BC embebido, `.beam` confirmados dentro del release) — el disparo real del workflow contra producción se prueba la primera vez que ADN publique un BC de verdad.
+**Probado real de punta a punta contra producción** (no solo local) el 2026-07-23 con `pty_crm_comando_enc` — quedó corriendo de verdad en `reiayanami.mine.nu`, confirmado con un `GET /api/pty_crm_comando_enc` real. El primer intento falló dos veces antes de salir bien — ver los 3 bugs reales de abajo, todos corregidos el mismo día.
+
+### 3 bugs reales encontrados en la primera corrida (y cómo se corrigieron)
+
+Una simulación local previa (armar el bundle + `docker build`) había salido limpia, pero no alcanzó para agarrar estos tres — solo aparecieron corriendo contra producción de verdad:
+
+1. **El bundle no arrastraba catálogos referenciados.** `pty_crm_comando_enc` tiene dos campos `referencia` (a `pty_crm_empresa` y `pty_crm_segmento`). Como era el primer BC desplegado, esos catálogos nunca habían existido en producción — la migración de `pty_crm_comando_enc` intentaba crear una FK contra una tabla inexistente y fallaba (`relation "pty_crm_empresa" does not exist`). **Fix**: `mix motor.publicar` ahora calcula el cierre transitivo de dependencias (A referencia a B, B referencia a C → se empaquetan los tres), mismo criterio que el orden topológico que ya usa `mix gen.catalogos`.
+
+2. **La migración crea la tabla, pero nadie importaba la metadata.** Después del fix #1, la migración corrió bien — pero la API seguía respondiendo `"Registro no encontrado"`. Causa: `docker exec ... /app/bin/migrate` crea la tabla FÍSICA, pero nunca hubo un paso que poblara `meta_schema_header`/`detail`/`estados`/`transiciones` — en producción no hay `mix`, así que `mix meta.import`/`mix motor.import` no se pueden correr ahí. **Fix**: nueva `MetadataApp.Release.import_meta/0` + `rel/overlays/bin/import_meta` (mismo patrón que `bin/migrate`), que el workflow corre justo después de migrar. La lógica de importación se sacó de los `Mix.Tasks.Meta.Import`/`Motor.Import` hacia `MetadataApp.MetaImportExport` (un módulo sin ninguna dependencia de `Mix`) para que tanto el task como el release compartan el mismo código.
+
+3. **La ruta relativa `"priv/repo/catalogos"` no resuelve en un release compilado.** Al escribir `import_meta`, el primer intento seguía sin encontrar los `.json` — `File.ls("priv/repo/catalogos")` devolvía `{:error, :enoent}`. En un release OTP, el `priv/` real de la app vive en `/app/lib/metadata_app-<vsn>/priv/...`, no en el directorio desde donde corre el proceso — una ruta relativa literal solo funciona corriendo con `mix` (que siempre se ejecuta desde la raíz del proyecto). **Fix**: `Application.app_dir(:metadata_app, "priv/repo/catalogos")`, la forma correcta de resolver esto en cualquier contexto (dev, test, o un release).
+
+**Gotcha aparte, solo para quien reproduzca esta prueba en Windows**: simular el build de Docker localmente (`git archive` + overlay + `docker build`) en una máquina con `core.autocrlf=true` convierte los scripts de `rel/overlays/bin/*` a CRLF, y `#!/bin/sh` con `\r` no corre. El blob real commiteado siempre tiene LF (confirmado con `git show HEAD:...`) — el problema es solo de la simulación local en Windows, nunca del runner Linux real de GitHub Actions. Si hace falta repetir la simulación, correr `sed -i 's/\r$//'` sobre esos scripts antes de `docker build`.
+
+**Pendiente real, sin resolver**: cualquier push normal a `main` (deploy del BPB solo, vía `ci.yml`) reconstruye la imagen `latest` **sin ningún BC embebido** — pisa la imagen que tenía el BC. Un BC publicado con `motor.publicar` queda "olvidado" en el próximo deploy normal del BPB hasta que se vuelva a publicar. Sin diseñar todavía cómo hacer que convivan.
 
 ## Estado actual
 

@@ -6,7 +6,7 @@ defmodule MetadataApp.Repo.Migrations.CrearFixturesDeTest do
   # campos_editables_test, catalogo_controller_test,
   # meta_transicion_controller_test) — esos dos ya no existen, porque
   # ningún pty_* vive en git desde la limpieza de Git/CI-CD (2026-07-23,
-  # ver docs/upcoming-features.md). Prefijo meta_fixture_ (no pty_) a
+  # ver docs/roadmap.md). Prefijo meta_fixture_ (no pty_) a
   # propósito: es infraestructura de TEST del BPB, no un Business Context
   # de negocio — nunca debería confundirse con algo que crea ADN, y por
   # eso SÍ se commitea (el prefijo pty_ es lo único que el .gitignore

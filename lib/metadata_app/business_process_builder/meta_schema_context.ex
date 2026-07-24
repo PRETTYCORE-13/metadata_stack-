@@ -425,6 +425,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
           schema_visible: header.schema_visible,
           schema_set_permissions: header.schema_set_permissions,
           schema_profiles: header.schema_profiles,
+          schema_encabezado_catalogo: nombre_encabezado(header.schema_encabezado_id),
           detalles: Enum.map(detalles, &serializar_detalle/1)
         },
         pretty: true
@@ -433,6 +434,16 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     File.write!(Path.join(dir, "#{header.schema_context_name}.meta.json"), contenido)
     header.schema_context_name
   end
+
+  # schema_encabezado_id es un id crudo (FK a otro meta_schema_header.id) --
+  # no sirve para exportar/importar entre ambientes distintos, donde los ids
+  # no coinciden (bug real: un detalle desplegado a producción vía
+  # motor.publicar quedaba con schema_encabezado_id nil porque el export
+  # nunca lo mandaba, y el maestro/detalle se rompía en runtime con "no es
+  # un catálogo detalle de este maestro"). Se exporta por NOMBRE, igual que
+  # estados/transiciones en motor.export, y se resuelve a id en el import.
+  defp nombre_encabezado(nil), do: nil
+  defp nombre_encabezado(id), do: Repo.get(Header, id).schema_context_name
 
   def actualizar_header(%Header{} = header, attrs) do
     header

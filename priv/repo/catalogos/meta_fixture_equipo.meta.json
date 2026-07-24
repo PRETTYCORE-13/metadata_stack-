@@ -18,5 +18,6 @@
       },
       "schema_context_field": "meta_fixture_equipo_nombre_equipo"
     }
-  ]
+  ],
+  "schema_encabezado_catalogo": null
 }

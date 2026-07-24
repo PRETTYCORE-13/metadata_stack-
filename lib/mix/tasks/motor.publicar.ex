@@ -10,7 +10,7 @@ defmodule Mix.Tasks.Motor.Publicar do
 
   Lleva un Business Context (BC) construido localmente con el BPB a Linux
   Trixie (producción) — **sin** pasar por el repo compartido
-  `metadata_stack-` (ningún `pty_*` va a git, ver docs/upcoming-features.md
+  `metadata_stack-` (ningún `pty_*` va a git, ver docs/roadmap.md
   #7 y la memoria de proyecto `project_git_cicd_pty_cleanup`). Reemplaza a
   la versión anterior de este mismo task (que armaba un `git commit` local
   del catálogo) — esa forma dejó de tener sentido el día que `pty_*` pasó a
@@ -27,14 +27,23 @@ defmodule Mix.Tasks.Motor.Publicar do
        desplegó antes, su migración crea una FK contra una tabla que en
        producción todavía no existe, y la migración completa del bundle
        falla (encontrado real: la primera prueba de este mecanismo).
-    2. `mix meta.export` + `mix motor.export` (de TODOS los catálogos, como
+    2. `mix gen.catalogos` — re-sincroniza cada schema `.ex` ya generado
+       contra la metadata actual antes de empaquetar nada (encontrado real:
+       un catálogo detalle cuyo `.ex` se había generado ANTES de quedar
+       enlazado a su maestro se publicó sin `encabezado_id`/`renglon_id` en
+       el schema Ecto — la tabla física sí los tenía, pero el módulo
+       compilado no, y el motor tronaba con `ArgumentError: unknown field
+       :encabezado_id` en cuanto alguien mandaba un alta con renglones).
+       Sin este paso, `motor.publicar` empaqueta ciegamente lo que haya en
+       disco, esté o no al día.
+    3. `mix meta.export` + `mix motor.export` (de TODOS los catálogos, como
        siempre — solo cambia en disco el archivo del que de verdad se tocó).
-    3. Arma un `.tar.gz` con, por cada catálogo en alcance: su schema
+    4. Arma un `.tar.gz` con, por cada catálogo en alcance: su schema
        (`lib/.../catalogos/<catalogo>.ex`), sus migraciones
        (`priv/repo/migrations/*<catalogo>*.exs`), su `<catalogo>.meta.json`
        (+ `.motor.json` si tiene autómata propio — un detalle no), y su
        carpeta de reglas de negocio si existe.
-    4. Dispara el workflow `.github/workflows/bc-deploy.yml` (GitHub
+    5. Dispara el workflow `.github/workflows/bc-deploy.yml` (GitHub
        Actions) vía `gh workflow run`, mandando el bundle en base64 como
        input — ese workflow extrae el bundle SOBRE un checkout efímero de
        `main`, compila, arma la imagen Docker y la despliega, todo dentro de
@@ -66,6 +75,9 @@ defmodule Mix.Tasks.Motor.Publicar do
     if referenciados != [] do
       Mix.shell().info("  incluye referenciado(s): #{Enum.join(referenciados, ", ")}")
     end
+
+    Mix.shell().info("\n== re-sincronizando schemas contra la metadata actual ==")
+    Mix.Task.rerun("gen.catalogos")
 
     Mix.shell().info("\n== exportando catálogos + autómata ==")
     Mix.Task.rerun("meta.export")
