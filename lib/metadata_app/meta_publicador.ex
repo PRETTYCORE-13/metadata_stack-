@@ -119,7 +119,16 @@ defmodule MetadataApp.MetaPublicador do
       tag = "bc-#{nombre}"
       asegurar_release(tag, nombre)
 
-      case System.cmd("gh", ["release", "upload", tag, bundle_path, "--clobber"], stderr_to_stdout: true) do
+      # "local_path#nombre_remoto": sin esto, cada publicación sube el
+      # asset con el nombre de archivo temporal de armar_bundle/1 (único
+      # por corrida, ej. "bc-bundle-1541.tar.gz") -- "--clobber" solo
+      # reemplaza un asset con el MISMO nombre, así que cada publicación
+      # se iba ACUMULANDO como un asset nuevo en vez de reemplazar el
+      # anterior (encontrado real: ci.yml empezó a fallar con "unable to
+      # write more than one asset" en cuanto hubo una segunda publicación).
+      # Con un nombre remoto fijo, "--clobber" reemplaza siempre el mismo
+      # asset -- el release nunca acumula más de uno.
+      case System.cmd("gh", ["release", "upload", tag, "#{bundle_path}#bundle.tar.gz", "--clobber"], stderr_to_stdout: true) do
         {_salida, 0} -> {:cont, {:ok, [tag | acc]}}
         {salida, status} -> {:halt, {:error, "gh release upload #{tag} falló (status #{status}):\n#{salida}"}}
       end
