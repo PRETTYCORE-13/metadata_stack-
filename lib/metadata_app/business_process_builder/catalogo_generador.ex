@@ -702,7 +702,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     campos_literal =
       campos
       |> Enum.map(fn {campo, tipo, opciones} ->
-        "{:#{campo}, :#{tipo}, #{inspect(opciones, limit: :infinity, printable_limit: :infinity)}}"
+        "{:#{campo}, :#{tipo}, #{formatear_opciones(opciones)}}"
       end)
       |> Enum.join(", ")
 
@@ -716,6 +716,25 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     """
 
     File.write!(path, contenido)
+  end
+
+  # inspect(mapa) NO alcanza acá -- el orden en que imprime las llaves de un
+  # mapa depende del orden interno de los átomos en ESA instancia de la VM
+  # (no es alfabético ni estable entre corridas distintas, confirmado real:
+  # el mismo código, corrido en dev local vs. el runner de CI, generaba
+  # ".ex" con las llaves en OTRO orden para el mismo contenido lógico —
+  # drift-check de ci.yml lo marcaba como "sin commitear" en un loop
+  # infinito). Enum.sort/1 sobre átomos sí es alfabético y estable siempre
+  # -- armar el texto a mano desde una lista ya ordenada garantiza el mismo
+  # archivo byte a byte sin importar en qué VM/máquina se generó.
+  defp formatear_opciones(opciones) do
+    cuerpo =
+      opciones
+      |> Enum.sort_by(fn {clave, _valor} -> clave end)
+      |> Enum.map(fn {clave, valor} -> "#{clave}: #{inspect(valor, limit: :infinity, printable_limit: :infinity)}" end)
+      |> Enum.join(", ")
+
+    "%{#{cuerpo}}"
   end
 
   defp opciones_trn_use(%{schema_es_transaccional: true, codigo_trn: codigo}), do: ", transaccional: true, codigo_trn: #{inspect(codigo)}"
