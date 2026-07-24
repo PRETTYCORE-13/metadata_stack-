@@ -4,6 +4,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerador
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaEstadosAdmin
+  alias MetadataApp.MetaPublicador
   alias MetadataApp.BorradoresMotor
   alias MetadataAppWeb.AdminNav
   alias Phoenix.LiveView.JS
@@ -53,7 +54,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:pagina, 1)
      |> assign(:carpetas_colapsadas, MapSet.new())
      |> assign(:accion_eliminar, nil)
-     |> assign(:accion_desplegar, nil)
+     |> assign(:seleccionados, MapSet.new())
+     |> assign(:wizard_publicar, nil)
      |> assign(:carpeta_form, nil)
      |> assign(:carpeta_error, nil)
      |> assign(:carpetas_disponibles, [])
@@ -239,86 +241,77 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     end
   end
 
-  # Despliegue (movido acá desde "Guardar BC" en BcMotorLive, 2026-07-23):
-  # exporta la definición completa del catálogo (campos, estados,
-  # transiciones) a priv/repo/catalogos/<catalogo>.meta.json + .motor.json.
-  # No toca git ni publica nada a producción todavía — es el primer paso de
-  # ese flujo (ver docs/roadmap.md, ítem 7).
-  #
-  # Catálogo Maestro-Detalle: un detalle nunca ofrece "Despliegue" propio
-  # (ver adjuntar_puede_desplegar/1, boton_desplegar/1) — alcanza con
-  # desplegar el maestro, que acá arrastra a sus detalles con él.
-  def handle_event("pedir_desplegar", %{"tabla" => tabla, "label" => label}, socket) do
-    detalles =
-      case MetaSchemaContext.obtener_header_por_nombre(tabla) do
-        nil -> []
-        header -> MetaSchemaContext.listar_catalogos_detalle(header.id)
+  # El botón "Despliegue" individual (exportaba .meta.json/.motor.json a
+  # disco, sin publicar nada) se sacó el 2026-07-24 al llegar el wizard de
+  # publicación: regenerar_paquete/1 + exportar_paquete/1, más abajo, ya
+  # hacen exactamente esto para el paquete completo como parte de publicar
+  # de verdad — mantener las dos acciones por separado solo generaba
+  # confusión (un botón que decía "Despliegue" pero nunca desplegaba nada).
+
+  # Selección para el wizard de publicación (multi-catálogo) — checkbox por
+  # fila, solo disponible donde adjuntar_puede_desplegar/1 marcó el
+  # catálogo como listo (real, completo, válido, compilado).
+  def handle_event("toggle_seleccion", %{"tabla" => tabla}, socket) do
+    seleccionados =
+      if MapSet.member?(socket.assigns.seleccionados, tabla) do
+        MapSet.delete(socket.assigns.seleccionados, tabla)
+      else
+        MapSet.put(socket.assigns.seleccionados, tabla)
       end
 
-    {:noreply,
-     assign(socket, :accion_desplegar, %{
-       tabla: tabla,
-       label: label,
-       detalles: Enum.map(detalles, & &1.schema_context_label)
-     })}
+    {:noreply, assign(socket, :seleccionados, seleccionados)}
   end
 
-  def handle_event("cancelar_desplegar", _params, socket) do
-    {:noreply, assign(socket, :accion_desplegar, nil)}
+  # Paso 1 del wizard: calcula el paquete completo (detalles + cierre de
+  # referencias, ya en orden) de todo lo seleccionado y lo muestra de solo
+  # lectura antes de tocar nada — mismo espíritu que "pedir_eliminar"
+  # (consultar impacto antes de confirmar), pero acá el "impacto" es qué se
+  # va a publicar y en qué orden.
+  def handle_event("abrir_wizard_publicar", _params, socket) do
+    nombres = socket.assigns.seleccionados |> MapSet.to_list() |> Enum.sort()
+
+    case MetaPublicador.validar(nombres) do
+      {:ok, %{catalogos: catalogos, problemas: problemas}} ->
+        {:noreply,
+         assign(socket, :wizard_publicar, %{
+           seleccionados: nombres,
+           catalogos: catalogos,
+           problemas: problemas,
+           error: nil
+         })}
+
+      {:error, mensaje} ->
+        {:noreply, put_flash(socket, :error, mensaje)}
+    end
   end
 
-  # Revalida puede_desplegar?/1 en el momento del click, no solo confía en
-  # el estado del botón cuando se pintó la fila (mismo criterio que
-  # confirmar_eliminar_carpeta: puede pasar tiempo entre abrir el modal y
-  # confirmar, y algo pudo haber cambiado en el medio).
-  def handle_event("confirmar_desplegar", _params, socket) do
-    %{tabla: tabla} = socket.assigns.accion_desplegar
+  def handle_event("cancelar_wizard_publicar", _params, socket) do
+    {:noreply, assign(socket, :wizard_publicar, nil)}
+  end
 
-    case MetaSchemaContext.obtener_header_por_nombre(tabla) do
-      nil ->
+  # Paso 2 (confirmar): re-sincroniza cada schema contra la metadata actual
+  # (mismo criterio que mix gen.catalogos, self-heal si algo quedó
+  # desactualizado — ver el bug real del 2026-07-23 documentado en
+  # CatalogoGenerador.generar/1), exporta metadata+autómata, arma el bundle
+  # y dispara bc-deploy.yml. Todo o nada: si algo falla, el error queda en
+  # el modal en vez de cerrarse solo.
+  def handle_event("confirmar_publicar", _params, socket) do
+    %{seleccionados: seleccionados, catalogos: catalogos} = socket.assigns.wizard_publicar
+
+    case publicar_paquete(seleccionados, catalogos) do
+      {:ok, _salida} ->
         {:noreply,
          socket
-         |> assign(:accion_desplegar, nil)
-         |> put_flash(:error, "Ese catálogo ya no existe.")}
+         |> assign(:wizard_publicar, nil)
+         |> assign(:seleccionados, MapSet.new())
+         |> put_flash(
+           :info,
+           "Publicado — #{Enum.join(seleccionados, ", ")} va(n) camino a producción. Seguí el progreso con \"gh run watch\" o \"gh run list\"."
+         )
+         |> cargar_headers()}
 
-      header ->
-        if MetaEstadosAdmin.puede_desplegar?(tabla) do
-          MetaSchemaContext.exportar_header(header)
-          MetaEstadosAdmin.exportar_header(header)
-
-          # Los detalles nunca tienen autómata propio (exportar_header del
-          # motor devuelve nil sin escribir nada ahí, ver
-          # MetaEstadosAdmin.exportar_header/2) — igual se llaman los dos
-          # por simetría con el maestro, solo el .meta.json de cada uno
-          # termina escribiéndose de verdad.
-          detalles = MetaSchemaContext.listar_catalogos_detalle(header.id)
-
-          Enum.each(detalles, fn detalle ->
-            MetaSchemaContext.exportar_header(detalle)
-            MetaEstadosAdmin.exportar_header(detalle)
-          end)
-
-          mensaje =
-            case detalles do
-              [] ->
-                "Desplegado: priv/repo/catalogos/#{tabla}.meta.json + .motor.json actualizados."
-
-              _ ->
-                nombres = Enum.map_join(detalles, ", ", & &1.schema_context_name)
-                "Desplegado: #{tabla} + #{length(detalles)} detalle(s) (#{nombres}) actualizados en priv/repo/catalogos/."
-            end
-
-          {:noreply,
-           socket
-           |> assign(:accion_desplegar, nil)
-           |> put_flash(:info, mensaje)
-           |> cargar_headers()}
-        else
-          {:noreply,
-           socket
-           |> assign(:accion_desplegar, nil)
-           |> put_flash(:error, "#{tabla} ya no cumple las condiciones para desplegar — revisá completitud/validación/compilación.")}
-        end
+      {:error, mensaje} ->
+        {:noreply, update(socket, :wizard_publicar, &Map.put(&1, :error, mensaje))}
     end
   end
 
@@ -565,11 +558,11 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # trade-off de paginar-antes-de-armar-el-árbol de cargar_headers/1 — una
   # carpeta no tiene autómata propio, no le aplica.
   #
-  # Catálogo Maestro-Detalle: un detalle nunca se despliega por separado
+  # Catálogo Maestro-Detalle: un detalle nunca se publica por separado
   # (comparte el ciclo del maestro, mismo criterio que ya rige sus
   # estados/transiciones/contrato) — acá directamente NO se le calcula
-  # puede_desplegar?/1 real, se marca :no_aplica para que
-  # boton_desplegar/1 no pinte ni el link ni el placeholder deshabilitado.
+  # puede_desplegar?/1 real, se marca :no_aplica para que el checkbox del
+  # wizard no se pinte para un detalle (ver filas_arbol/1).
   defp adjuntar_puede_desplegar(%{es_carpeta: true} = item), do: item
 
   defp adjuntar_puede_desplegar(%{schema_encabezado_id: id} = item) when not is_nil(id),
@@ -577,6 +570,47 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   defp adjuntar_puede_desplegar(item),
     do: Map.put(item, :puede_desplegar, MetaEstadosAdmin.puede_desplegar?(item.id))
+
+  # Orquesta el paquete completo desde la UI, sin pasar por ningún
+  # Mix.Task (a diferencia de "mix motor.publicar", que sí puede) — esto
+  # corre dentro de la app ya viva bajo supervisión, así que llama
+  # MetaSchemaContext.exportar_header/1 directo en vez de "mix meta.export".
+  defp publicar_paquete(seleccionados, catalogos) do
+    with :ok <- regenerar_paquete(catalogos),
+         :ok <- exportar_paquete(catalogos),
+         {:ok, bundle_path} <- MetaPublicador.armar_bundle(catalogos),
+         {:ok, _tags} <- MetaPublicador.persistir_bundle(seleccionados, bundle_path),
+         {:ok, salida} <- MetaPublicador.disparar_deploy(seleccionados, bundle_path) do
+      {:ok, salida}
+    end
+  end
+
+  # Equivalente de "mix gen.catalogos" para el paquete calculado — self-heal
+  # de cada schema .ex contra la metadata actual antes de empaquetar nada
+  # (mismo motivo que motor.publicar.ex: un .ex generado antes de que el
+  # catálogo quedara enlazado a un maestro, o antes de un campo nuevo,
+  # queda desactualizado en disco si nadie vuelve a correr esto).
+  defp regenerar_paquete(catalogos) do
+    Enum.reduce_while(catalogos, :ok, fn nombre, :ok ->
+      case CatalogoGenerador.generar(nombre) do
+        {:ok, _} -> {:cont, :ok}
+        {:error, motivo} -> {:halt, {:error, "#{nombre}: #{motivo}"}}
+      end
+    end)
+  end
+
+  defp exportar_paquete(catalogos) do
+    Enum.each(catalogos, fn nombre ->
+      case MetaSchemaContext.obtener_header_por_nombre(nombre) do
+        nil ->
+          :ok
+
+        header ->
+          MetaSchemaContext.exportar_header(header)
+          MetaEstadosAdmin.exportar_header(header)
+      end
+    end)
+  end
 
   defp coincide_busqueda?(_item, ""), do: true
 
@@ -769,21 +803,30 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
       <.seccion_borradores :if={@borradores != []} borradores={@borradores} />
 
-      <div class="mb-4">
+      <div class="mb-4 flex items-center gap-3">
         <input
           type="text"
           value={@busqueda}
           phx-keyup="buscar"
           phx-debounce="200"
           placeholder="Buscar por nombre o etiqueta..."
-          class="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm text-gray-900"
+          class="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm text-gray-900"
         />
+        <button
+          :if={MapSet.size(@seleccionados) > 0}
+          type="button"
+          phx-click="abrir_wizard_publicar"
+          class="flex-shrink-0 bg-purple-600 hover:bg-purple-700 text-white font-bold px-4 py-2 rounded text-sm whitespace-nowrap"
+        >
+          Publicar paquete ({MapSet.size(@seleccionados)})
+        </button>
       </div>
 
       <div class="overflow-x-auto rounded-xl border border-gray-200">
         <table class="min-w-full divide-y divide-gray-200 text-sm">
           <thead class="bg-gray-50">
             <tr>
+              <th class="px-4 py-2 w-8"></th>
               <th class="px-4 py-2 text-left font-semibold text-gray-600">Nombre de sistema</th>
               <th class="px-4 py-2 text-left font-semibold text-gray-600">Etiqueta</th>
               <th class="px-4 py-2 text-left font-semibold text-gray-600">Navegación</th>
@@ -792,10 +835,10 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100">
-            <.filas_arbol nodos={@arbol} carpetas_colapsadas={@carpetas_colapsadas} />
+            <.filas_arbol nodos={@arbol} carpetas_colapsadas={@carpetas_colapsadas} seleccionados={@seleccionados} />
             <%= if @arbol == [] do %>
               <tr>
-                <td class="px-4 py-6 text-center text-gray-400" colspan="5">
+                <td class="px-4 py-6 text-center text-gray-400" colspan="6">
                   {if @busqueda == "", do: "Todavía no hay contextos creados", else: "Sin resultados para \"#{@busqueda}\""}
                 </td>
               </tr>
@@ -832,7 +875,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     </div>
 
     <.modal_eliminar accion={@accion_eliminar} />
-    <.modal_desplegar accion={@accion_desplegar} />
+    <.modal_publicar wizard={@wizard_publicar} />
     <.modal_carpeta form={@carpeta_form} error={@carpeta_error} carpetas={@carpetas_disponibles} />
     <.modal_editar_carpeta editar={@carpeta_editar} error={@carpeta_editar_error} />
     """
@@ -1216,80 +1259,78 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     """
   end
 
-  # Confirmación de despliegue — sin texto a teclear (a diferencia de
-  # modal_eliminar/:confirmar): exportar a JSON no es destructivo ni
-  # irreversible como un DELETE físico, alcanza con Aceptar/Cancelar.
-  attr :accion, :map, default: nil
+  # Wizard de publicación: preview de solo lectura del paquete completo
+  # (calculado por MetaPublicador.validar/1 — detalles + cierre de
+  # referencias, ya en orden topológico) antes de tocar producción. El
+  # orden nunca lo elige quien publica — mismo criterio que ya usa
+  # cualquier gestor de paquetes real (ver docs/roadmap.md): un humano
+  # ordenando dependencias a mano es exactamente el error que causó el bug
+  # real del primer deploy (2026-07-23, catálogo referenciado que no
+  # existía todavía en producción).
+  attr :wizard, :map, default: nil
 
-  defp modal_desplegar(%{accion: nil} = assigns), do: ~H""
+  defp modal_publicar(%{wizard: nil} = assigns), do: ~H""
 
-  defp modal_desplegar(assigns) do
+  defp modal_publicar(assigns) do
+    assigns = assign(assigns, :automaticos, assigns.wizard.catalogos -- assigns.wizard.seleccionados)
+
     ~H"""
     <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
-        <h2 class="text-lg font-bold text-gray-900 mb-2">Desplegar catálogo</h2>
-        <p class="text-sm text-gray-700 mb-6">
-          Se va a exportar <strong>{@accion.label}</strong> (<span class="font-mono">{@accion.tabla}</span>) a
-          <span class="font-mono">priv/repo/catalogos/{@accion.tabla}.meta.json</span> y
-          <span class="font-mono">.motor.json</span> — la definición completa (campos, estados, transiciones) queda
-          lista para versionar. Esto no toca git ni publica nada a producción todavía.
+      <div class="bg-white rounded-xl shadow-lg max-w-lg w-full max-h-[90vh] overflow-y-auto p-6">
+        <h2 class="text-lg font-bold text-gray-900 mb-1">Publicar paquete</h2>
+        <p class="text-sm text-gray-600 mb-4">
+          Se va a armar un paquete con {length(@wizard.catalogos)} catálogo(s) y disparar el deploy a producción.
         </p>
-        <p :if={@accion.detalles != []} class="text-xs text-gray-500 mb-4 -mt-3">
-          Incluye sus catálogos detalle: <strong>{Enum.join(@accion.detalles, ", ")}</strong>.
+
+        <div :if={@wizard.error} class="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2">
+          {@wizard.error}
+        </div>
+
+        <div class="mb-4">
+          <h3 class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1.5">Seleccionados</h3>
+          <ul class="text-sm text-gray-800 space-y-0.5">
+            <li :for={nombre <- @wizard.seleccionados} class="font-mono">{nombre}</li>
+          </ul>
+        </div>
+
+        <div :if={@automaticos != []} class="mb-4">
+          <h3 class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1.5">
+            Incluidos automáticamente (detalles / referencias)
+          </h3>
+          <ul class="text-sm text-gray-500 space-y-0.5">
+            <li :for={nombre <- @automaticos} class="font-mono">{nombre}</li>
+          </ul>
+        </div>
+
+        <div :if={@wizard.problemas != []} class="mb-4">
+          <h3 class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1.5">Advertencias</h3>
+          <ul class="text-xs text-gray-600 space-y-0.5">
+            <li :for={p <- @wizard.problemas}>[{p.severidad}] {p.mensaje}</li>
+          </ul>
+        </div>
+
+        <p class="text-xs text-gray-500 mb-4">
+          Orden de publicación: <span class="font-mono">{Enum.join(@wizard.catalogos, " → ")}</span>
         </p>
-        <div class="flex justify-end gap-3">
+
+        <div class="flex justify-end gap-3 border-t border-gray-200 pt-4">
           <button
             type="button"
-            phx-click="cancelar_desplegar"
+            phx-click="cancelar_wizard_publicar"
             class="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50"
           >
             Cancelar
           </button>
           <button
             type="button"
-            phx-click="confirmar_desplegar"
+            phx-click="confirmar_publicar"
             class="px-4 py-2 rounded bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700"
           >
-            Aceptar
+            Publicar y desplegar
           </button>
         </div>
       </div>
     </div>
-    """
-  end
-
-  # Tres variantes según lo que calculó adjuntar_puede_desplegar/1:
-  # :no_aplica (catálogo detalle — ni el link ni el placeholder, no es una
-  # acción que le corresponda), true (habilitado) o false (deshabilitado,
-  # con el motivo en el title).
-  attr :puede_desplegar, :any, required: true
-  attr :tabla, :string, required: true
-  attr :label, :string, required: true
-
-  defp boton_desplegar(%{puede_desplegar: :no_aplica} = assigns), do: ~H""
-
-  defp boton_desplegar(%{puede_desplegar: true} = assigns) do
-    ~H"""
-    <button
-      type="button"
-      phx-click="pedir_desplegar"
-      phx-value-tabla={@tabla}
-      phx-value-label={@label}
-      class="text-purple-600 hover:text-purple-800 text-xs font-semibold"
-    >
-      Despliegue
-    </button>
-    """
-  end
-
-  defp boton_desplegar(assigns) do
-    ~H"""
-    <span
-      class="text-gray-300 text-xs font-semibold cursor-not-allowed"
-      title="El BC tiene que estar completo, ser válido y estar compilado sin errores para desplegar."
-    >
-      Despliegue
-    </span>
     """
   end
 
@@ -1300,6 +1341,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   attr :carpetas_colapsadas, :any, default: MapSet.new()
   attr :ruta_padre, :string, default: ""
+  attr :seleccionados, :any, default: MapSet.new()
 
   def filas_arbol(assigns) do
     ~H"""
@@ -1309,7 +1351,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         <% colapsada? = MapSet.member?(@carpetas_colapsadas, ruta) %>
         <tr class="bg-gray-50 hover:bg-gray-100">
           <td
-            colspan="5"
+            colspan="6"
             class="px-4 py-1.5 text-xs select-none"
             style={"padding-left: #{16 + @nivel * 20}px"}
           >
@@ -1351,10 +1393,20 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           </td>
         </tr>
         <%= if !colapsada? do %>
-          <.filas_arbol nodos={nodo.hijos} nivel={@nivel + 1} carpetas_colapsadas={@carpetas_colapsadas} ruta_padre={ruta} />
+          <.filas_arbol nodos={nodo.hijos} nivel={@nivel + 1} carpetas_colapsadas={@carpetas_colapsadas} ruta_padre={ruta} seleccionados={@seleccionados} />
         <% end %>
       <% else %>
         <tr>
+          <td class="px-4 py-2">
+            <input
+              :if={nodo.puede_desplegar == true}
+              type="checkbox"
+              checked={MapSet.member?(@seleccionados, nodo.id)}
+              phx-click="toggle_seleccion"
+              phx-value-tabla={nodo.id}
+              class="accent-purple-600"
+            />
+          </td>
           <td class="px-4 py-2 text-gray-800" style={"padding-left: #{16 + @nivel * 20}px"}>{nodo.id}</td>
           <td class="px-4 py-2 text-gray-800">{nodo.label}</td>
           <td class="px-4 py-2 text-gray-800">{nodo.nav}</td>
@@ -1373,7 +1425,6 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               >
                 Eliminar
               </button>
-              <.boton_desplegar puede_desplegar={nodo.puede_desplegar} tabla={nodo.id} label={nodo.label} />
             </div>
           </td>
         </tr>

@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       catalogo:
-        description: "Nombre del catálogo (BC) principal a desplegar"
+        description: "Catálogo(s) raíz a desplegar (uno o varios separados por '-') — solo para identificar el run/tag, el paquete completo ya viene armado en el bundle"
         required: true
       bundle_b64:
         description: "Bundle .tar.gz (schema + migraciones + meta/motor.json + reglas) en base64, armado por mix motor.publicar"

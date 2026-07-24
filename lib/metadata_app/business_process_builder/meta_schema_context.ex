@@ -350,6 +350,105 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     |> Repo.all()
   end
 
+  @doc """
+  A partir de una lista de catálogos raíz, calcula el paquete completo a
+  publicar: agrega los detalles de cada maestro, el cierre transitivo de
+  todo campo tipo "referencia" (si A referencia a B y B referencia a C,
+  publicar A tiene que arrastrar también a B y C, o su migración crea una
+  FK contra una tabla que en producción todavía no existe), y devuelve el
+  resultado en orden topológico (ver ordenar_por_dependencias/1).
+
+  Único lugar donde se calcula esto — antes `mix motor.publicar` tenía su
+  propia copia de la expansión de referencias y `mix gen.catalogos` la
+  suya del orden topológico; las dos formas de armar un paquete podían
+  desincronizarse con el tiempo. Pensado para que el wizard de
+  publicación (selección de varios BC a la vez) también lo use.
+  """
+  def calcular_paquete_publicacion(nombres_raiz) when is_list(nombres_raiz) do
+    con_detalles =
+      nombres_raiz
+      |> Enum.flat_map(&[&1 | detalles_de_catalogo(&1)])
+      |> Enum.uniq()
+
+    con_detalles
+    |> expandir_referencias(MapSet.new(con_detalles))
+    |> ordenar_por_dependencias()
+  end
+
+  defp detalles_de_catalogo(nombre) do
+    case obtener_header_por_nombre(nombre) do
+      nil -> []
+      header -> header.id |> listar_catalogos_detalle() |> Enum.map(& &1.schema_context_name)
+    end
+  end
+
+  defp expandir_referencias(pendientes, vistos) do
+    nuevos =
+      pendientes
+      |> Enum.flat_map(&referencias_de/1)
+      |> Enum.uniq()
+      |> Enum.reject(&MapSet.member?(vistos, &1))
+
+    case nuevos do
+      [] -> MapSet.to_list(vistos)
+      _ -> expandir_referencias(nuevos, Enum.reduce(nuevos, vistos, &MapSet.put(&2, &1)))
+    end
+  end
+
+  defp referencias_de(catalogo) do
+    catalogo
+    |> listar_detalles()
+    |> Enum.filter(&(&1.schema_context_properties["tipo"] == "referencia"))
+    |> Enum.map(& &1.schema_context_properties["catalogo"])
+  end
+
+  @doc """
+  Orden topológico (Kahn) sobre la relación "campo tipo referencia ->
+  catálogo": un catálogo se coloca después de todo lo que referencia. Sirve
+  tanto para TODOS los headers (`mix gen.catalogos`) como para un
+  subconjunto ya cerrado por dependencias (`calcular_paquete_publicacion/1`)
+  — las dependencias fuera de la lista dada simplemente se ignoran. Aborta
+  con excepción si queda un ciclo sin poder resolverse dentro del lote.
+  """
+  def ordenar_por_dependencias(nombres) do
+    nombres_set = MapSet.new(nombres)
+
+    dependencias =
+      Map.new(nombres, fn nombre ->
+        deps =
+          nombre
+          |> listar_detalles()
+          |> Enum.filter(&(Map.get(&1.schema_context_properties || %{}, "tipo") == "referencia"))
+          |> Enum.map(&Map.fetch!(&1.schema_context_properties, "catalogo"))
+          |> Enum.filter(&MapSet.member?(nombres_set, &1))
+          |> Enum.uniq()
+
+        {nombre, deps}
+      end)
+
+    ordenar_topologico(dependencias, [])
+  end
+
+  defp ordenar_topologico(pendientes, hechos) when map_size(pendientes) == 0, do: Enum.reverse(hechos)
+
+  defp ordenar_topologico(pendientes, hechos) do
+    hechos_set = MapSet.new(hechos)
+
+    {listos, resto} =
+      Enum.split_with(pendientes, fn {_nombre, deps} ->
+        Enum.all?(deps, &MapSet.member?(hechos_set, &1))
+      end)
+
+    case listos do
+      [] ->
+        raise "Dependencia circular entre catálogos, no se puede determinar un orden: #{inspect(Map.keys(pendientes))}"
+
+      _ ->
+        nombres_listos = Enum.map(listos, fn {nombre, _deps} -> nombre end)
+        ordenar_topologico(Map.new(resto), Enum.reverse(nombres_listos) ++ hechos)
+    end
+  end
+
   # Crea el Header y todos sus Detalles en una sola transacción: todo o nada.
   def crear_header_con_detalles(%{"detalles" => detalles} = header_attrs) when is_list(detalles) do
     Repo.transaction(fn ->

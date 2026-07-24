@@ -107,6 +107,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Un deploy normal del BPB, sin esto, reconstruye la imagen "limpia"
+      # -- sin ningún BC publicado con motor.publicar/el wizard de BC List
+      # adentro, porque pty_* nunca vive en el checkout de main (ver
+      # docs/roadmap.md, CD automático). Cada catálogo publicado tiene su
+      # bundle guardado como asset en un GitHub Release con tag "bc-<
+      # catálogo>" (MetaPublicador.persistir_bundle/2) -- el Release mismo
+      # ES el manifest de "esto debe quedar siempre vivo", no hace falta
+      # ningún archivo de texto aparte. Acá se restauran todos antes de
+      # armar la imagen, así este job nunca "olvida" un BC ya publicado.
+      - name: Restaurar BCs publicados (bc-*) para que este deploy no los olvide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TAGS=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[] | select(.tagName | startswith("bc-")) | .tagName')
+
+          if [ -z "$TAGS" ]; then
+            echo "Ningún BC publicado todavía -- nada que restaurar."
+          else
+            for tag in $TAGS; do
+              echo "== restaurando $tag =="
+              gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern '*.tar.gz' --output "/tmp/$tag.tar.gz" --clobber
+              tar xzf "/tmp/$tag.tar.gz"
+              rm "/tmp/$tag.tar.gz"
+            done
+            echo "--- BCs restaurados sobre el checkout ---"
+            git status --porcelain
+          fi
+
       - name: Nombre de imagen para ghcr.io (minúsculas, sin separador final)
         run: |
           repo="${GITHUB_REPOSITORY,,}"

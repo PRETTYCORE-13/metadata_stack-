@@ -43,6 +43,8 @@ Hoy cada catálogo generado graba `insert_guid`/`update_guid`/`delete_guid` (un 
 
 Elegido sobre la alternativa de hot code loading (compilar en la laptop de ADN y cargar los `.beam` directo en el nodo BEAM vivo, sin rebuild) por seguridad (imagen inmutable con SHA vs. carga de código sin artefacto auditable), escalabilidad (Swarm con más de una réplica no necesita nada especial) y simplicidad (reusa el 95% del pipeline de CI ya construido y probado).
 
+**CD automático ✅ implementado, pendiente de validar (2026-07-24)**: un deploy normal del BPB (push a `main`) ya no "olvida" los BCs publicados — cada publicación guarda su bundle en un GitHub Release (`bc-<catalogo>`, ver `MetaPublicador.persistir_bundle/2`), y `ci.yml` los restaura automáticamente antes de armar cualquier imagen. Además, BC List ahora tiene un wizard ("Publicar paquete") para seleccionar varios catálogos a la vez — el orden y las dependencias (detalles + referencias transitivas) se calculan solos, nunca a mano, mismo criterio que `terraform plan`/resolución de dependencias de gestores de paquetes reales. Falta la prueba real de punta a punta.
+
 ## 8 — Campos calculados y campos estéticos en formularios ABC
 
 Para las pantallas de alta/baja/cambio (Frontend, equipo de Liz): dos tipos de campo nuevos que hoy no existen en `schema_context_properties`:

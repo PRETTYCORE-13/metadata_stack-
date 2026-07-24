@@ -145,7 +145,13 @@ Una simulación local previa (armar el bundle + `docker build`) había salido li
 
 **Gotcha aparte, solo para quien reproduzca esta prueba en Windows**: simular el build de Docker localmente (`git archive` + overlay + `docker build`) en una máquina con `core.autocrlf=true` convierte los scripts de `rel/overlays/bin/*` a CRLF, y `#!/bin/sh` con `\r` no corre. El blob real commiteado siempre tiene LF (confirmado con `git show HEAD:...`) — el problema es solo de la simulación local en Windows, nunca del runner Linux real de GitHub Actions. Si hace falta repetir la simulación, correr `sed -i 's/\r$//'` sobre esos scripts antes de `docker build`.
 
-**Pendiente real, sin resolver**: cualquier push normal a `main` (deploy del BPB solo, vía `ci.yml`) reconstruye la imagen `latest` **sin ningún BC embebido** — pisa la imagen que tenía el BC. Un BC publicado con `motor.publicar` queda "olvidado" en el próximo deploy normal del BPB hasta que se vuelva a publicar. Sin diseñar todavía cómo hacer que convivan.
+**Pendiente resuelto (código listo, todavía no validado end-to-end — 2026-07-24)**: cualquier push normal a `main` reconstruía la imagen `latest` sin ningún BC embebido, "olvidando" cualquier BC publicado hasta que alguien lo volviera a publicar a mano (confirmado en vivo el 2026-07-23). Se resolvió con un mecanismo de dos partes:
+- `MetaPublicador.persistir_bundle/2` sube el bundle de cada publicación como asset de un GitHub Release, uno por catálogo raíz (tag `bc-<catalogo>`, pisa el anterior con `--clobber`). El Release mismo ES el manifest de "este catálogo debe quedar siempre vivo" — no hay ningún archivo de texto aparte que mantener sincronizado ni commitear.
+- `ci.yml` (job `build-image`), antes de armar la imagen, lista todos los releases `bc-*`, descarga cada bundle y lo extrae sobre el checkout — así cualquier deploy normal del BPB reconstruye la imagen con todos los BCs conocidos adentro, sin que nadie tenga que acordarse de nada.
+
+Además, `mix motor.publicar`/el wizard de publicación (BC List → "Publicar paquete") ahora aceptan **varios catálogos raíz a la vez** — el cálculo de dependencias (cierre transitivo de referencias + orden topológico) vive en un solo lugar (`MetaSchemaContext.calcular_paquete_publicacion/1`), y el wizard nunca le pide al humano que indique el orden: lo calcula solo y lo muestra de solo lectura antes de confirmar, mismo criterio que `terraform plan`/resolución de dependencias de `npm`/Helm.
+
+También se corrigió que agregar un campo nuevo a un catálogo ya publicado nunca actualizaba su metadata en producción (la tabla física sí, vía `ALTER TABLE`, pero `meta_campos` no se enteraba) — `MetaImportExport.importar_contexto/1` ahora sincroniza campos nuevos de un catálogo que ya existe, no solo crea catálogos nuevos.
 
 ## Estado actual
 

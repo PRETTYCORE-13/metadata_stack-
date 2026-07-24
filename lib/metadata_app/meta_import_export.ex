@@ -17,7 +17,7 @@ defmodule MetadataApp.MetaImportExport do
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaEstadosAdmin
 
-  @doc "Importa cada `*.meta.json` de `dir` — crea el Header+Detalles si el catálogo no existe todavía, lo deja sin tocar si ya existe."
+  @doc "Importa cada `*.meta.json` de `dir` — crea el Header+Detalles si el catálogo no existe todavía; si ya existe, sincroniza campos nuevos que no tenía."
   def importar_meta(dir \\ "priv/repo/catalogos") do
     # Maestros antes que detalles: un detalle trae "schema_encabezado_catalogo"
     # (el NOMBRE de su maestro, ver MetaSchemaContext.exportar_header/2) que
@@ -49,9 +49,42 @@ defmodule MetadataApp.MetaImportExport do
             end
         end
 
-      _existente ->
-        "= #{nombre}: ya existía, sin cambios"
+      existente ->
+        case sincronizar_detalles_nuevos(existente, contexto["detalles"] || []) do
+          [] -> "= #{nombre}: ya existía, sin cambios"
+          campos -> "= #{nombre}: ya existía, campo(s) nuevo(s) sincronizado(s): #{Enum.join(campos, ", ")}"
+        end
     end
+  end
+
+  # La tabla física de un campo agregado a un catálogo YA desplegado se
+  # actualiza sola (la migración ADD COLUMN que arma
+  # CatalogoGenerador.asegurar_campos_nuevos/1 viaja en el bundle igual que
+  # cualquier otra migración, y bin/migrate la corre). Lo que faltaba era
+  # esto: la metadata (meta_schema_detail) de un header que YA existe nunca
+  # se actualizaba -- importar_contexto/1 solo sabía "crear todo" o "no
+  # tocar nada". Sin esto, el campo nuevo funcionaba a nivel de API (el
+  # schema Ecto compilado ya lo tiene) pero nunca aparecía en meta_campos,
+  # así que Frontend no se enteraba de que existe. Mismo criterio que
+  # CatalogoGenerador.asegurar_campos_nuevos/1 usa en local, aplicado acá
+  # a la metadata en vez de a la columna física.
+  defp sincronizar_detalles_nuevos(header, detalles_json) do
+    existentes =
+      header.schema_context_name
+      |> MetaSchemaContext.listar_detalles()
+      |> MapSet.new(& &1.schema_context_field)
+
+    detalles_json
+    |> Enum.reject(&MapSet.member?(existentes, &1["schema_context_field"]))
+    |> Enum.map(fn detalle_attrs ->
+      case MetaSchemaContext.agregar_detalle(header, detalle_attrs) do
+        {:ok, detalle} ->
+          detalle.schema_context_field
+
+        {:error, changeset} ->
+          raise "Error sincronizando campo \"#{detalle_attrs["schema_context_field"]}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+      end
+    end)
   end
 
   defp resolver_encabezado(%{"schema_encabezado_catalogo" => nombre_maestro} = contexto)

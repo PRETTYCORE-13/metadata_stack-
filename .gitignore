@@ -45,3 +45,9 @@ lib/metadata_app/meta_business_process/reglas/pty_*/
 priv/repo/catalogos/pty_*.json
 priv/repo/migrations/*pty_*.exs
 
+# Bundle temporal de MetaPublicador.armar_bundle/1 -- se arma en la raíz
+# del proyecto (nombre relativo, para que tar nunca vea una ruta con
+# letra de unidad en Windows) y se mueve al temp dir del sistema al
+# toque. Esto es solo por si un crash justo en el medio deja uno tirado.
+bc-bundle-*.tar.gz
+
