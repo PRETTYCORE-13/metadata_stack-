@@ -15,7 +15,7 @@ defmodule MetadataApp.MetaStateEngine.ReglaPost do
   — no es responsabilidad del motor.
 
   Puede crear/actualizar/borrar datos — del propio registro o, vía
-  `MetadataApp.MetaBcCliente`, de otros catálogos (nunca tocando
+  `MetadataApp.MetaBcApi`, de otros catálogos (nunca tocando
   `CatalogoGenerico`/`MetaStateEngine` de otro catálogo directamente).
   """
 

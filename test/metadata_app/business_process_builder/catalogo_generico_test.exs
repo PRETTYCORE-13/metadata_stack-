@@ -22,7 +22,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenericoTest do
     end
   end
 
-  describe "listar/3 — sin opciones (compat con MetaBcCliente.listar/2)" do
+  describe "listar/3 — sin opciones (compat con MetaBcApi.listar/2)" do
     test "trae TODO sin límite cuando no se pasan opciones" do
       clientes = fixture_clientes(30)
 

@@ -18,7 +18,7 @@ Estas son las reglas que **toda transacción y todo catálogo maestro nuevo** de
 
 **Ya resuelto por el motor**: todo el ciclo de escritura corre dentro de un único `Ecto.Multi`/`Repo.transaction` — `CatalogoGenerico.crear/3`, `MetaStateEngine.ejecutar_transicion/4`, `MetaStateEngine.dar_de_alta/5`. Un `Repo.transaction` anidado dentro de otro ya activo (ej. crear un renglón desde adentro del alta del maestro) no abre una transacción real aparte — Ecto lo aplana, participa de la misma atomicidad.
 
-**Qué tenés que hacer vos**: si una operación de negocio necesita tocar más de una tabla (ej. "al confirmar el pedido, descontar stock"), hacelo desde una regla **POST** (`MetadataApp.MetaStateEngine.Reglas.<Catalogo>.Post`, vía `MetadataApp.MetaBcCliente`) — corre dentro de la MISMA transacción del motor, nunca como un request HTTP aparte después. Un segundo request nunca es atómico con el primero.
+**Qué tenés que hacer vos**: si una operación de negocio necesita tocar más de una tabla (ej. "al confirmar el pedido, descontar stock"), hacelo desde una regla **POST** (`MetadataApp.MetaStateEngine.Reglas.<Catalogo>.Post`, vía `MetadataApp.MetaBcApi`) — corre dentro de la MISMA transacción del motor, nunca como un request HTTP aparte después. Un segundo request nunca es atómico con el primero.
 
 ## C3 — Debe tener un TRN en su encabezado
 

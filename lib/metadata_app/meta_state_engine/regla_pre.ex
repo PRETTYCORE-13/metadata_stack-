@@ -21,7 +21,7 @@ defmodule MetadataApp.MetaStateEngine.ReglaPre do
   cualquier otro chequeo de "no debería ni saber que esto existe".
 
   Nunca debe actualizar datos — solo lectura. Para consultar OTRO catálogo
-  (no el propio), usar `MetadataApp.MetaBcCliente`, nunca
+  (no el propio), usar `MetadataApp.MetaBcApi`, nunca
   `CatalogoGenerico`/`MetaStateEngine` directamente.
   """
 

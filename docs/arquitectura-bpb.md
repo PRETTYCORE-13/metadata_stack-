@@ -95,7 +95,7 @@ lib/metadata_app/
 ├── meta_estados_admin.ex            MetadataApp.MetaEstadosAdmin
 │                                     CRUD admin de estados/transiciones/reglas
 │                                     (arma el autómata paso a paso desde la API).
-├── meta_bc_cliente.ex               MetadataApp.MetaBcCliente
+├── meta_bc_api.ex                    MetadataApp.MetaBcApi
 │                                     Puerta única para que una regla toque OTRO
 │                                     catálogo (cross-BC).
 └── meta_permissions.ex              MetadataApp.MetaPermissions

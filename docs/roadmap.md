@@ -67,7 +67,7 @@ Los mensajes en español de cada validación (`"no puede quedar vacío"`, `"no e
 
 ## 12 — Transiciones ocultas para el Frontend (uso interno vía reglas)
 
-Poder marcar una transición como **"no mostrar al usuario final"** — sigue siendo una transición real y ejecutable (otra regla POST, propia o de otro catálogo, la puede disparar vía `MetaBcCliente.ejecutar_transicion`), pero no tiene que aparecer como botón/opción en ninguna pantalla de Frontend. Caso de uso: una transición "plomería" que solo existe para que la dispare la regla de OTRA transición (o de la misma), nunca pensada para que un humano la clickee directo.
+Poder marcar una transición como **"no mostrar al usuario final"** — sigue siendo una transición real y ejecutable (otra regla POST, propia o de otro catálogo, la puede disparar vía `MetaBcApi.ejecutar_transicion`), pero no tiene que aparecer como botón/opción en ninguna pantalla de Frontend. Caso de uso: una transición "plomería" que solo existe para que la dispare la regla de OTRA transición (o de la misma), nunca pensada para que un humano la clickee directo.
 
 **Ya existe un mecanismo parecido, distinto en el motivo**: `{:error, :sin_permiso, mensaje}` (agregado 2026-07-23, ver ítem 2 de este roadmap) ya oculta una transición del descubrimiento (`MetaStateEngine.transiciones_disponibles/2`) — pero es una ocultación *condicional*, evaluada en cada request según el `contexto` (falla de rol/permiso). Esto es distinto: una marca **fija** en la transición misma (ej. un campo nuevo en `meta_schema_transiciones`, algo como `solo_interna: boolean`), sin depender de evaluar nada — se oculta siempre del descubrimiento, para cualquiera.
 

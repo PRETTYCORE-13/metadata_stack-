@@ -4,7 +4,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
 
   # filtros: %{"campo" => valor, ...} — combinados con AND, solo columnas
   # reales de la tabla (no campos calculados como estado_nombre). Usado por
-  # MetaBcCliente.listar/2 para que una regla de negocio pueda filtrar otro
+  # MetaBcApi.listar/2 para que una regla de negocio pueda filtrar otro
   # catálogo sin escribir la query a mano. `valor` acepta también una tupla
   # con operador — {:ilike, texto}, {:gte, valor}, {:lte, valor},
   # {:entre, {desde, hasta}} (cualquiera de los dos puede ir nil, ej.
@@ -13,7 +13,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # (no tupla) sigue siendo igualdad exacta, como siempre.
   #
   # opciones: [] por default — sin :limit/:offset trae TODO, el
-  # comportamiento de siempre. MetaBcCliente.listar/2 sigue llamando sin
+  # comportamiento de siempre. MetaBcApi.listar/2 sigue llamando sin
   # opciones a propósito: una regla de negocio necesita ver el conjunto
   # COMPLETO de relacionados (sin_relacionados, mutar_relacionados), no una
   # página — paginar ahí rompería esas reglas en silencio. El único caller

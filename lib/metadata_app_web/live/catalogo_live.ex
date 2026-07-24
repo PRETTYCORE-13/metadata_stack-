@@ -603,7 +603,7 @@ defmodule MetadataAppWeb.CatalogoLive do
         </div>
 
         <div class="overflow-x-auto rounded-xl border border-gray-200">
-          <table class="min-w-full divide-y divide-gray-200 text-sm">
+          <table class="min-w-full divide-y divide-gray-200 text-xs">
             <thead class="bg-gray-50">
               <tr>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">ID</th>
@@ -635,7 +635,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                   phx-click="abrir_editar"
                   phx-value-id={fila.id}
                 >
-                  <td class="px-4 py-1.5 text-xs text-gray-700">
+                  <td class="px-4 py-1.5 text-[10px] text-gray-700">
                     <%= if @es_maestro? do %>
                       <button type="button" phx-click="abrir_detalle" phx-value-id={fila.id}
                         class="text-purple-700 font-semibold hover:underline">{fila.id}</button>
@@ -646,7 +646,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                   <%= for columna <- @columnas do %>
                     <% valor = Map.get(fila, String.to_existing_atom(columna.schema_context_field)) %>
                     <td class={[
-                      "px-4 py-1.5 text-xs",
+                      "px-4 py-1.5 text-[10px]",
                       alineacion_columna(columna),
                       if(is_map(valor), do: "text-blue-700 font-medium", else: "text-gray-700")
                     ]}>
@@ -654,10 +654,10 @@ defmodule MetadataAppWeb.CatalogoLive do
                     </td>
                   <% end %>
                   <%= if @mostrar_estado? do %>
-                    <td class="px-4 py-1.5 text-xs text-gray-700">{Map.get(fila, :estado_nombre)}</td>
+                    <td class="px-4 py-1.5 text-[10px] text-gray-700">{Map.get(fila, :estado_nombre)}</td>
                   <% end %>
                   <%= if @mostrar_trn? do %>
-                    <td class="px-4 py-1.5 text-xs text-gray-700 font-mono" title={Map.get(fila, :ulid)}>{Map.get(fila, :trn)}</td>
+                    <td class="px-4 py-1.5 text-[10px] text-gray-700 font-mono" title={Map.get(fila, :ulid)}>{Map.get(fila, :trn)}</td>
                   <% end %>
                 </tr>
               <% end %>

@@ -1,4 +1,4 @@
-defmodule MetadataApp.MetaBcCliente do
+defmodule MetadataApp.MetaBcApi do
   @moduledoc """
   Única puerta de entrada para que una regla de negocio (`MetaStateEngine.
   ReglaPre`/`ReglaPost`) interactúe con OTRO Business Context. Una regla
