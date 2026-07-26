@@ -15,6 +15,9 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   # ninguna función de MetaEstadosAdmin/MetaSchemaContext todavía.
   use MetadataAppWeb, :live_view_admin
 
+  on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
+  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "crear"}}
+
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador}
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.BorradoresMotor
@@ -24,7 +27,10 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
 
   @menu [
     %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
-    %{tipo: :pagina, id: "buscar_trn", label: "Buscar TRN", nav: "/sysadmin/buscar-trn"}
+    %{tipo: :pagina, id: "buscar_trn", label: "Buscar TRN", nav: "/sysadmin/buscar-trn"},
+    %{tipo: :pagina, id: "roles", label: "Roles y Permisos", nav: "/sysadmin/roles"},
+    %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
+    %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"}
   ]
 
   @tipos_campo ~w(string integer decimal boolean date enum referencia)

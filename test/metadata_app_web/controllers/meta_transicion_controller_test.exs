@@ -2,9 +2,40 @@ defmodule MetadataAppWeb.MetaTransicionControllerTest do
   use MetadataAppWeb.ConnCase, async: true
 
   alias MetadataApp.Repo
+  alias MetadataApp.Autenticacion.{Empresa, Rol, UsuarioEmpresa}
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
   alias MetadataApp.MetaSchema.{Estado, Transicion}
   alias MetadataApp.MetaBusinessProcess.Catalogos.MetaFixtureCliente
+  alias MetadataApp.Permissions
+
+  import MetadataApp.AutenticacionFixtures
+
+  # RBAC (Fase 2, automático 2026-07-26): toda transición exige permiso —
+  # sin esto, cualquier POST/GET de este archivo caería en "sin permiso"
+  # sin importar lo que la prueba en realidad quiere ejercitar (precondición
+  # de negocio, no autorización — eso ya lo cubre permissions_test.exs).
+  # administrador ve cualquier permiso YA REGISTRADO sin necesitar
+  # rol_permiso explícito, así que alcanza con loguearse como tal y con que
+  # `fixture_transicion/4` registre el permiso de cada acción que crea.
+  setup %{conn: conn} do
+    usuario = usuario_fixture()
+
+    {:ok, empresa} =
+      %Empresa{} |> Empresa.changeset(%{nombre: "Empresa fixture #{System.unique_integer()}"}) |> Repo.insert()
+
+    {:ok, _} =
+      %UsuarioEmpresa{} |> UsuarioEmpresa.changeset(%{usuario_id: usuario.id, empresa_id: empresa.id}) |> Repo.insert()
+
+    rol_admin = Repo.get_by!(Rol, nombre: "administrador")
+    {:ok, _} = Permissions.asignar_rol(usuario.id, rol_admin.id, empresa.id)
+
+    conn =
+      conn
+      |> log_in_usuario(usuario)
+      |> Plug.Conn.put_session(:empresa_activa_id, empresa.id)
+
+    %{conn: conn, usuario: usuario, empresa: empresa}
+  end
 
   defp guid, do: Ecto.UUID.generate() |> String.replace("-", "")
   defp unique, do: System.unique_integer([:positive])
@@ -23,6 +54,8 @@ defmodule MetadataAppWeb.MetaTransicionControllerTest do
   # `accion` en código, no por filas en la base — el TransicionRegla que
   # existía acá antes ya no tiene ningún uso real fuera de tests viejos.
   defp fixture_transicion(header, origen, destino, accion) do
+    Permissions.crear_permiso(%{recurso: header.schema_context_name, accion: accion})
+
     %Transicion{}
     |> Transicion.changeset(%{
       meta_schema_header_id: header.id,

@@ -14,6 +14,26 @@ defmodule MetadataAppWeb.FallbackController do
     |> json(%{errors: %{detail: "Registro no encontrado"}})
   end
 
+  # --- RBAC (MetadataApp.Permissions) -------------------------------------
+
+  def call(conn, {:error, :no_encontrado}) do
+    conn
+    |> put_status(:not_found)
+    |> json(%{errors: %{detail: "Registro no encontrado"}})
+  end
+
+  def call(conn, {:error, :rol_de_sistema}) do
+    conn
+    |> put_status(:forbidden)
+    |> json(%{errors: %{detail: "los roles de sistema no se editan ni se eliminan"}})
+  end
+
+  def call(conn, {:error, :rol_de_otra_empresa}) do
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{errors: %{detail: "ese rol pertenece a otra empresa"}})
+  end
+
   # --- Desenlaces del ciclo de MetadataApp.MetaStateEngine.ejecutar_transicion/3
   # (spec sección 7, Contrato 2) ------------------------------------------
 

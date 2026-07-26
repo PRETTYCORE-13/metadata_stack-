@@ -1,6 +1,9 @@
 defmodule MetadataAppWeb.Sysadmin.BcListLive do
   use MetadataAppWeb, :live_view_admin
 
+  on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
+  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "leer"}}
+
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerador
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaEstadosAdmin
@@ -34,7 +37,9 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # suman aquí (por ahora solo "BC List").
   @menu [
     %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
-    %{tipo: :pagina, id: "buscar_trn", label: "Buscar TRN", nav: "/sysadmin/buscar-trn"}
+    %{tipo: :pagina, id: "buscar_trn", label: "Buscar TRN", nav: "/sysadmin/buscar-trn"},
+    %{tipo: :pagina, id: "roles", label: "Roles y Permisos", nav: "/sysadmin/roles"},
+    %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"}
   ]
 
   def mount(_params, _session, socket) do

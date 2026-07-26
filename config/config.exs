@@ -7,6 +7,19 @@
 # General application configuration
 import Config
 
+config :metadata_app, :scopes,
+  usuario: [
+    default: true,
+    module: MetadataApp.Autenticacion.Scope,
+    assign_key: :current_scope,
+    access_path: [:usuario, :id],
+    schema_key: :usuario_id,
+    schema_type: :id,
+    schema_table: :meta_schema_usuario,
+    test_data_fixture: MetadataApp.AutenticacionFixtures,
+    test_setup_helper: :register_and_log_in_usuario
+  ]
+
 config :metadata_app,
   ecto_repos: [MetadataApp.Repo],
   generators: [timestamp_type: :utc_datetime]

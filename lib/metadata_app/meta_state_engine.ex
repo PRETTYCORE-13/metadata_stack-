@@ -466,10 +466,51 @@ defmodule MetadataApp.MetaStateEngine do
   end
 
   defp evaluar_precondiciones_lista(transicion, registro, contexto) do
-    case Reglas.evaluar_pre(transicion.accion, registro, contexto) do
-      :ok -> []
-      {:error, :sin_permiso, mensaje} -> [%{regla: "pre", mensaje: mensaje, sin_permiso: true}]
-      {:error, mensaje} -> [%{regla: "pre", mensaje: mensaje}]
+    case verificar_permiso_transicion(transicion, registro, contexto) do
+      :ok ->
+        case Reglas.evaluar_pre(transicion.accion, registro, contexto) do
+          :ok -> []
+          {:error, :sin_permiso, mensaje} -> [%{regla: "pre", mensaje: mensaje, sin_permiso: true}]
+          {:error, mensaje} -> [%{regla: "pre", mensaje: mensaje}]
+        end
+
+      {:error, mensaje} ->
+        [%{regla: "pre", mensaje: mensaje, sin_permiso: true}]
+    end
+  end
+
+  # RBAC (automático, 2026-07-26): toda transición de todo catálogo exige
+  # el permiso {recurso: catálogo, accion: transicion.accion} — a
+  # diferencia de la regla `requiere_permiso` (opt-in, se agrega a mano en
+  # el Pre.ex de un catálogo puntual), esto corre siempre, sin que el
+  # catálogo tenga que pedirlo. Deny-by-default, mismo criterio que la
+  # poda del menú (Fase 2 Paso 5).
+  #
+  # Se salta el chequeo si `contexto` no trae NINGUNA de las llaves que
+  # `Permissions.contexto_confiable/1` siempre agrega en el límite web —
+  # eso indica una llamada interna (tests, seeds, un rol POST llamando a
+  # otro catálogo vía `MetaBcApi`) que nunca pasó por ese límite, no un
+  # usuario anónimo tratando de colarse. Un contexto que SÍ trae la llave
+  # pero en `nil` (usuario no autenticado) se deniega igual.
+  defp verificar_permiso_transicion(transicion, registro, contexto) do
+    if Map.has_key?(contexto, "usuario_id") do
+      usuario_id = Map.get(contexto, "usuario_id")
+      empresa_id = Map.get(contexto, "empresa_id")
+      recurso = registro.__struct__.__schema__(:source)
+
+      autorizado? =
+        not is_nil(usuario_id) and not is_nil(empresa_id) and
+          usuario_id
+          |> MetadataApp.Permissions.permisos_de_usuario(empresa_id)
+          |> Enum.any?(&(&1.recurso == recurso and &1.accion == transicion.accion))
+
+      if autorizado? do
+        :ok
+      else
+        {:error, "requiere el permiso: #{transicion.accion} sobre #{recurso}"}
+      end
+    else
+      :ok
     end
   end
 

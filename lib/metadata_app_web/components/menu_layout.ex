@@ -18,12 +18,20 @@ defmodule MetadataAppWeb.MenuLayout do
   # Si se pasa, se usa tal cual (menú hardcodeado, ej. sysadmin). Si no, se
   # trae el dinámico desde meta_schema_header.
   attr :menu_items, :list, default: nil
+  # RBAC (Fase 2): si viene un Scope con usuario+empresa_activa, el árbol se
+  # poda por permisos ("leer" por catálogo) ANTES de renderizar — una sola
+  # consulta a permisos_de_usuario/2 por render, nunca un can?/3 por nodo.
+  # Deny-by-default estricto: un catálogo sin ese permiso concedido (exista
+  # o no la fila en meta_schema_permiso) queda afuera. Sin scope resuelto,
+  # el árbol se muestra completo (no hay de dónde sacar los permisos).
+  attr :current_scope, :any, default: nil
   slot :inner_block, required: true
 
   def sidebar(assigns) do
     assigns =
       assigns
       |> assign(:menu_items, assigns.menu_items || MetadataApp.BusinessProcessBuilder.MetaSchemaContext.listar_menu_arbol())
+      |> podar_menu_por_permisos()
 
     assigns =
       assigns
@@ -106,6 +114,18 @@ defmodule MetadataAppWeb.MenuLayout do
               <.link :if={@bpb_habilitado} navigate="/sysadmin/bc-list" class="pc-user-menu-item">
                 Business Process Builder
               </.link>
+              <.link :if={@bpb_habilitado} navigate="/sysadmin/roles" class="pc-user-menu-item">
+                Roles y Permisos
+              </.link>
+              <.link :if={@bpb_habilitado} navigate="/sysadmin/usuarios" class="pc-user-menu-item">
+                Usuarios de la empresa
+              </.link>
+              <.link :if={@bpb_habilitado} navigate="/sysadmin/empresas" class="pc-user-menu-item">
+                Empresas
+              </.link>
+              <.link navigate="/meta_schema_usuario/settings" class="pc-user-menu-item">
+                Configuración de cuenta
+              </.link>
               <button
                 type="button"
                 class="pc-user-menu-item"
@@ -120,7 +140,8 @@ defmodule MetadataAppWeb.MenuLayout do
                 Datos del usuario
               </button>
               <.link
-                href="/logout"
+                href="/meta_schema_usuario/log-out"
+                method="delete"
                 class="pc-user-menu-item pc-user-menu-item-danger"
                 data-confirm="¿Cerrar sesión?"
               >
@@ -435,6 +456,31 @@ defmodule MetadataAppWeb.MenuLayout do
       <% end %>
     <% end %>
     """
+  end
+
+  ## RBAC — poda del árbol por permisos (Fase 2, ver attr :current_scope)
+  defp podar_menu_por_permisos(assigns) do
+    case assigns[:current_scope] do
+      %MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa}
+      when not is_nil(usuario) and not is_nil(empresa) ->
+        permisos = MetadataApp.Permissions.permisos_de_usuario(usuario.id, empresa.id)
+        assign(assigns, :menu_items, podar_nodos(assigns.menu_items, permisos))
+
+      _ ->
+        assigns
+    end
+  end
+
+  defp podar_nodos(nodos, permisos) do
+    nodos
+    |> Enum.map(fn
+      %{tipo: :carpeta, hijos: hijos} = nodo -> %{nodo | hijos: podar_nodos(hijos, permisos)}
+      nodo -> nodo
+    end)
+    |> Enum.filter(fn
+      %{tipo: :carpeta, hijos: hijos} -> hijos != []
+      %{tipo: :pagina, id: id} -> Enum.any?(permisos, &(&1.recurso == id and &1.accion == "leer"))
+    end)
   end
 
   ## HELPERS

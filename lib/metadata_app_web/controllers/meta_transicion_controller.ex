@@ -23,7 +23,11 @@ defmodule MetadataAppWeb.MetaTransicionController do
   def index(conn, %{"tabla" => tabla, "id" => id} = params) do
     with {:ok, schema_mod} <- resolver(tabla) do
       registro = CatalogoGenerico.obtener!(schema_mod, id)
-      contexto = Map.get(params, "contexto", %{})
+
+      contexto =
+        params
+        |> Map.get("contexto", %{})
+        |> Map.merge(MetadataApp.Permissions.contexto_confiable(conn.assigns[:current_scope]))
 
       data =
         registro
@@ -38,7 +42,11 @@ defmodule MetadataAppWeb.MetaTransicionController do
     with {:ok, schema_mod} <- resolver(tabla) do
       registro = CatalogoGenerico.obtener!(schema_mod, id)
       renglones = Map.get(params, "renglones", %{})
-      contexto = Map.drop(params, ["tabla", "id", "accion", "renglones"])
+
+      contexto =
+        params
+        |> Map.drop(["tabla", "id", "accion", "renglones"])
+        |> Map.merge(MetadataApp.Permissions.contexto_confiable(conn.assigns[:current_scope]))
 
       with {:ok, actualizado} <- MetaStateEngine.ejecutar_transicion(registro, accion, contexto, renglones: renglones) do
         # Descubrimiento incluido desde el nuevo estado, para que el

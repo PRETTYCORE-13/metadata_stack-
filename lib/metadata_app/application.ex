@@ -15,6 +15,9 @@ defmodule MetadataApp.Application do
       # Efectos de cortesía (Paso 5b) del Motor de Estados: notificaciones y
       # similares, despachadas fuera de la transacción, sin reintentos.
       {Task.Supervisor, name: MetadataApp.MetaStateEngine.TaskSupervisor},
+      # Dueño de la tabla ETS de permisos efectivos (RBAC) — separado del
+      # proceso que consulta para que la cache sobreviva su muerte.
+      MetadataApp.Permissions.Cache,
       # Start a worker by calling: MetadataApp.Worker.start_link(arg)
       # {MetadataApp.Worker, arg},
       # Start to serve requests, typically the last entry

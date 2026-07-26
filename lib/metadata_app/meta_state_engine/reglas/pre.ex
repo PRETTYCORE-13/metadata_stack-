@@ -75,6 +75,30 @@ defmodule MetadataApp.MetaStateEngine.Reglas.Pre do
     end
   end
 
+  # requiere_permiso: {recurso, accion} — delega en MetadataApp.Permissions
+  # (RBAC real), leyendo usuario_id/empresa_id de contexto. Esos dos valores
+  # los inyecta el controller/LiveView que arma el contexto (ver
+  # MetadataApp.Permissions.contexto_confiable/1) DESPUÉS de cualquier dato
+  # que venga del cliente — nunca hay que confiar en un "usuario_id" que
+  # llegue puesto a mano en el body. Mismo contrato :sin_permiso que
+  # requiere_rol: oculta la transición, no solo la deshabilita.
+  def evaluar("requiere_permiso", _registro, contexto, %{"recurso" => recurso, "accion" => accion}) do
+    usuario_id = Map.get(contexto, "usuario_id")
+    empresa_id = Map.get(contexto, "empresa_id")
+
+    autorizado? =
+      not is_nil(usuario_id) and not is_nil(empresa_id) and
+        usuario_id
+        |> MetadataApp.Permissions.permisos_de_usuario(empresa_id)
+        |> Enum.any?(&(&1.recurso == recurso and &1.accion == accion))
+
+    if autorizado? do
+      :ok
+    else
+      {:error, :sin_permiso, "requiere el permiso: #{accion} sobre #{recurso}"}
+    end
+  end
+
   # dato_en_contexto: {dato} — ej. motivo_baja capturado por el frontend.
   def evaluar("dato_en_contexto", _registro, contexto, %{"dato" => dato}) do
     case Map.get(contexto, dato) do

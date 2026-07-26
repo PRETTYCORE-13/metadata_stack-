@@ -1,6 +1,8 @@
 defmodule MetadataAppWeb.Router do
   use MetadataAppWeb, :router
 
+  import MetadataAppWeb.UsuarioAuth
+
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
@@ -8,10 +10,16 @@ defmodule MetadataAppWeb.Router do
     plug :put_root_layout, html: {MetadataAppWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+    plug :fetch_current_scope_for_usuario
   end
 
   pipeline :api do
     plug :accepts, ["json"]
+    # Necesario para que requiere_permiso tenga un usuario_id/empresa_id
+    # confiables (sesión de navegador vía cookie) — no habilita nada por sí
+    # solo, un request sin sesión simplemente llega con current_scope vacío.
+    plug :fetch_session
+    plug :fetch_current_scope_for_usuario
   end
 
   # Va antes del scope "/" browser: el catch-all "/*ruta" de más abajo matchea
@@ -29,6 +37,14 @@ defmodule MetadataAppWeb.Router do
     # catálogo (mismo motivo que el bug de scope /api vs /*ruta).
     resources "/meta_schema_estados", MetaEstadoController, only: [:index, :create]
     resources "/meta_schema_transiciones", MetaTransicionAdminController, only: [:index, :create]
+
+    # Administración de RBAC (Fase 2 Paso 6) — mismo motivo que las de
+    # arriba, nombres literales antes de "/:tabla".
+    resources "/roles", RolController
+    put "/roles/:id/permisos", RolController, :reemplazar_permisos
+    resources "/permisos", PermisoController, only: [:index, :create]
+    post "/usuarios/:usuario_id/roles", UsuarioRolController, :create
+    delete "/usuarios/:usuario_id/roles/:rol_id", UsuarioRolController, :delete
 
     get "/catalogos/:tabla/impacto", BusinessProcessBuilder.CatalogoAdminController, :impacto
     get "/catalogos/:tabla/validar_motor", BusinessProcessBuilder.CatalogoAdminController, :validar_motor
@@ -65,6 +81,38 @@ defmodule MetadataAppWeb.Router do
     end
   end
 
+  # Mismo motivo que el scope /api y /dev de arriba: las rutas de auth
+  # tienen que resolverse antes del comodín "/*ruta" de más abajo, si no
+  # "/meta_schema_usuario/register" etc. caerían en CatalogoLive y jamás se
+  # alcanzarían.
+  scope "/", MetadataAppWeb do
+    pipe_through [:browser, :require_authenticated_usuario]
+
+    live_session :require_authenticated_usuario,
+      on_mount: [{MetadataAppWeb.UsuarioAuth, :require_authenticated}] do
+      live "/meta_schema_usuario/settings", UsuarioLive.Settings, :edit
+      live "/meta_schema_usuario/settings/confirm-email/:token", UsuarioLive.Settings, :confirm_email
+      live "/meta_schema_usuario/seleccionar-empresa", UsuarioLive.SeleccionarEmpresa, :new
+    end
+
+    post "/meta_schema_usuario/update-password", UsuarioSessionController, :update_password
+    post "/meta_schema_usuario/empresa/:id/activar", EmpresaSessionController, :activar
+  end
+
+  scope "/", MetadataAppWeb do
+    pipe_through [:browser]
+
+    live_session :current_usuario,
+      on_mount: [{MetadataAppWeb.UsuarioAuth, :mount_current_scope}] do
+      live "/meta_schema_usuario/register", UsuarioLive.Registration, :new
+      live "/meta_schema_usuario/log-in", UsuarioLive.Login, :new
+      live "/meta_schema_usuario/log-in/:token", UsuarioLive.Confirmation, :new
+    end
+
+    post "/meta_schema_usuario/log-in", UsuarioSessionController, :create
+    delete "/meta_schema_usuario/log-out", UsuarioSessionController, :delete
+  end
+
   scope "/", MetadataAppWeb do
     pipe_through :browser
 
@@ -79,6 +127,10 @@ defmodule MetadataAppWeb.Router do
       live "/sysadmin/bc-list/nuevo-completo", Sysadmin.BcNuevoCompletoLive
       live "/sysadmin/bc-list/:nombre/motor", Sysadmin.BcMotorLive
       live "/sysadmin/buscar-trn", Sysadmin.BuscadorTrnLive
+      live "/sysadmin/roles", Sysadmin.RolesLive
+      live "/sysadmin/roles/:id", Sysadmin.RolDetalleLive
+      live "/sysadmin/usuarios", Sysadmin.UsuariosEmpresaLive
+      live "/sysadmin/empresas", Sysadmin.EmpresasLive
     end
 
     # Comodín al final: cualquier ruta de navegación de un catálogo (con la

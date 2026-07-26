@@ -1,6 +1,8 @@
 defmodule MetadataAppWeb.CatalogoLive do
   use MetadataAppWeb, :live_view_admin
 
+  on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
+
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerico
   alias MetadataApp.MetaStateEngine
@@ -161,7 +163,9 @@ defmodule MetadataAppWeb.CatalogoLive do
       |> Enum.reject(fn {_catalogo, set} -> MapSet.size(set) == 0 end)
       |> Map.new(fn {catalogo, set} -> {catalogo, MapSet.to_list(set)} end)
 
-    case MetaStateEngine.ejecutar_transicion(registro_struct, accion, %{}, renglones: renglones_payload) do
+    contexto = MetadataApp.Permissions.contexto_confiable(socket.assigns[:current_scope])
+
+    case MetaStateEngine.ejecutar_transicion(registro_struct, accion, contexto, renglones: renglones_payload) do
       {:ok, _actualizado} ->
         {:noreply, socket |> assign(:detalle_error, nil) |> cargar_detalle_modal(registro.id)}
 
