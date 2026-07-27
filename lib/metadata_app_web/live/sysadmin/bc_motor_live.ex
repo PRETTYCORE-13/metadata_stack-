@@ -1775,36 +1775,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
     ~H"""
     <div class="space-y-4">
-      <div class="bg-blue-50 border border-blue-200 text-blue-800 rounded-lg px-3 py-2">
-        <p>
-          Mismo endpoint genérico para cualquier catálogo — lo único que cambia entre uno y otro es la tabla y sus
-          campos. El body de POST acepta los campos sueltos (como abajo) o envueltos bajo la clave del catálogo,
-          <span class="font-mono">{@ejemplo_wrap}</span> — las dos formas funcionan.
-        </p>
-        <p class="mt-1">
-          <span class="font-mono">POST /api/{@tabla}</span> también acepta un <strong>lote</strong>: si el body es
-          una lista en vez de un objeto (envuelta bajo la clave del catálogo, como en el ejemplo de abajo), crea
-          todos los registros en un solo request — pensado para cargas de más de un registro, el caso más común en
-          la práctica.
-        </p>
-        <p :if={@tiene_estados} class="mt-1">
-          <span class="font-mono">estado_id</span> nunca se manda en el body de POST — el estado solo cambia con
-          <span class="font-mono">POST /api/{@tabla}/:id/transiciones/:accion</span>. Si esa transición tiene campos
-          editables configurados, van en el mismo body y se aplican junto con el cambio de estado.
-        </p>
-        <p :if={@tiene_detalles} class="mt-1">
-          Este catálogo es maestro de {length(@catalogos_detalle)}
-          {if length(@catalogos_detalle) == 1, do: "catálogo detalle", else: "catálogos detalle"}
-          (<span :for={{c, i} <- Enum.with_index(@catalogos_detalle)} class="font-mono">{if i > 0, do: ", "}{c.schema_context_name}</span>).
-          Sus renglones viajan bajo la clave <span class="font-mono">"renglones"</span>, tanto al <strong>crear</strong>
-          (<span class="font-mono">POST /api/{@tabla}</span>, alta atómica — encabezado + renglones iniciales en un
-          solo request, sin `renglon_id` porque son altas nuevas) como al <strong>transicionar</strong>
-          (<span class="font-mono">POST .../transiciones/:accion</span>, con <span class="font-mono">renglon_id</span>
-          porque ahí seleccionás renglones que ya existen — pelado para solo mover estado, o con más campos si esa
-          transición los permite editar).
-        </p>
-      </div>
-
       <.tarjeta_endpoint metodo="GET" url={"/api/#{@tabla}?pagina=1&por_pagina=25"} descripcion="Listado paginado."
         respuesta_status="200 OK" respuesta={@respuesta_lista} />
 
