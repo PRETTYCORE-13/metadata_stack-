@@ -8,6 +8,8 @@ defmodule MetadataAppWeb.CatalogoLive do
   alias MetadataApp.MetaStateEngine
   alias MetadataAppWeb.AdminNav
 
+  import MetadataAppWeb.CampoInputComponents, only: [campo_input: 1]
+
   @por_pagina 25
 
   def mount(%{"ruta" => segmentos}, _session, socket) do
@@ -29,6 +31,19 @@ defmodule MetadataAppWeb.CatalogoLive do
 
       header ->
         modulo = MetaSchemaContext.modulo_por_nombre(header.schema_context_name)
+        es_detalle? = not is_nil(header.schema_encabezado_id)
+
+        # Mismo criterio que ya usa el drawer de edición de FichaLive:
+        # campos_editables/2 de la transición "alta" — si el catálogo no
+        # adoptó el motor de estados, devuelve todos los campos (fail-open,
+        # retrocompatible); si adoptó pero no tiene "alta" configurada,
+        # devuelve [] y el botón de alta simplemente no aparece.
+        campos_alta =
+          if modulo && not es_detalle? do
+            MetaStateEngine.campos_editables(header.schema_context_name, MetaStateEngine.transicion_alta(header.schema_context_name))
+          else
+            []
+          end
 
         columnas =
           header.schema_context_name
@@ -66,6 +81,8 @@ defmodule MetadataAppWeb.CatalogoLive do
          |> assign(:mostrar_estado?, estados_por_id != %{})
          |> assign(:mostrar_trn?, header.schema_es_transaccional)
          |> assign(:modulo, modulo)
+         |> assign(:es_detalle?, es_detalle?)
+         |> assign(:campos_alta, campos_alta)
          |> assign(:estados_por_id, estados_por_id)
          |> assign(:pagina, 1)
          |> assign(:filtros, %{})
@@ -528,6 +545,13 @@ defmodule MetadataAppWeb.CatalogoLive do
           <h1 class="text-xl font-bold text-gray-900">{@label}</h1>
 
           <div class="flex items-center gap-2">
+            <.link :if={@campos_alta != []} navigate={"/registro/#{@current_page}/nuevo"}
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              Nuevo registro
+            </.link>
             <span class="text-xs font-medium text-gray-500 bg-gray-100 rounded-full px-3 py-1">
               {@inicio}-{@fin} de {@total_filas}
             </span>
@@ -630,6 +654,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <%= if @mostrar_trn? do %>
                   <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">TRN</th>
                 <% end %>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide"></th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
@@ -663,13 +688,22 @@ defmodule MetadataAppWeb.CatalogoLive do
                   <%= if @mostrar_trn? do %>
                     <td class="px-4 py-1.5 text-[10px] text-gray-700 font-mono" title={Map.get(fila, :ulid)}>{Map.get(fila, :trn)}</td>
                   <% end %>
+                  <td class="px-4 py-1.5 text-xs text-right">
+                    <.link navigate={"/registro/#{@current_page}/#{fila.id}"}
+                      title="Ver ficha 360°"
+                      class="inline-flex items-center justify-center w-6 h-6 rounded-md text-gray-400 hover:bg-purple-50 hover:text-purple-700">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" /><circle cx="12" cy="12" r="3" />
+                      </svg>
+                    </.link>
+                  </td>
                 </tr>
               <% end %>
               <%= if @filas == [] do %>
                 <tr>
                   <td
                     class="px-4 py-10 text-center text-gray-400 text-sm"
-                    colspan={1 + (if @mostrar_trn?, do: 1, else: 0) + length(@columnas) + if @mostrar_estado?, do: 1, else: 0}
+                    colspan={2 + (if @mostrar_trn?, do: 1, else: 0) + length(@columnas) + if @mostrar_estado?, do: 1, else: 0}
                   >
                     Sin registros todavía
                   </td>
@@ -684,9 +718,9 @@ defmodule MetadataAppWeb.CatalogoLive do
         catalogos_detalle={@catalogos_detalle} seleccion={@detalle_seleccion}
         nuevo_renglon_form={@detalle_nuevo_renglon_form} form_error={@detalle_form_error} error={@detalle_error}
         header_columnas={@columnas} estados_por_id={@estados_por_id} label={@label} />
-    </div>
 
-    <.modal_editar_fila fila_editando={@fila_editando} error={@error_edicion} />
+      <.modal_editar_fila fila_editando={@fila_editando} error={@error_edicion} />
+    </div>
     """
   end
 
@@ -1185,66 +1219,4 @@ defmodule MetadataAppWeb.CatalogoLive do
     """
   end
 
-  # Input de un campo del form "+ Agregar renglón", según su tipo — mismo
-  # criterio de dispatch que filtro_columna/1, adaptado a un valor único
-  # (no rango) para crear, no filtrar.
-  attr :columna, :map, required: true
-
-  defp campo_input(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
-    ~H"""
-    <label class="flex items-center gap-1.5 mb-0.5">
-      <input type="hidden" name={"campos[#{@columna.schema_context_field}]"} value="false" />
-      <input type="checkbox" name={"campos[#{@columna.schema_context_field}]"} value="true" class="accent-purple-600" />
-      {@columna.schema_context_properties["etiqueta"]}
-    </label>
-    """
-  end
-
-  defp campo_input(%{columna: %{schema_context_properties: %{"tipo" => "enum"}}} = assigns) do
-    ~H"""
-    <div>
-      <label class="block text-gray-500 mb-0.5">{@columna.schema_context_properties["etiqueta"]}</label>
-      <select name={"campos[#{@columna.schema_context_field}]"} required
-        class="w-full border border-gray-300 rounded text-gray-900 px-2 py-1.5">
-        <option :for={v <- @columna.schema_context_properties["valores"]} value={v}>{v}</option>
-      </select>
-    </div>
-    """
-  end
-
-  defp campo_input(%{columna: %{schema_context_properties: %{"tipo" => tipo}}} = assigns)
-       when tipo in ["integer", "decimal"] do
-    assigns = assign(assigns, :step, if(tipo == "decimal", do: "any"))
-
-    ~H"""
-    <div>
-      <label class="block text-gray-500 mb-0.5">{@columna.schema_context_properties["etiqueta"]}</label>
-      <input type="number" step={@step} name={"campos[#{@columna.schema_context_field}]"} required
-        class="w-full border border-gray-300 rounded text-gray-900 px-2 py-1.5" />
-    </div>
-    """
-  end
-
-  defp campo_input(%{columna: %{schema_context_properties: %{"tipo" => "date"}}} = assigns) do
-    ~H"""
-    <div>
-      <label class="block text-gray-500 mb-0.5">{@columna.schema_context_properties["etiqueta"]}</label>
-      <input type="date" name={"campos[#{@columna.schema_context_field}]"} required
-        class="w-full border border-gray-300 rounded text-gray-900 px-2 py-1.5" />
-    </div>
-    """
-  end
-
-  # Default (string, referencia sin picker todavía — ver
-  # project_frontend_referencia_ux, responsabilidad de Frontend a futuro).
-  defp campo_input(assigns) do
-    ~H"""
-    <div>
-      <label class="block text-gray-500 mb-0.5">{@columna.schema_context_properties["etiqueta"]}</label>
-      <input type="text" name={"campos[#{@columna.schema_context_field}]"} required
-        maxlength={@columna.schema_context_properties["longitud"]}
-        class="w-full border border-gray-300 rounded text-gray-900 px-2 py-1.5" />
-    </div>
-    """
-  end
 end

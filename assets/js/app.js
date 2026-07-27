@@ -24,6 +24,7 @@ import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/metadata_app"
 import topbar from "../vendor/topbar"
+import Sortable from "../vendor/sortable"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 
@@ -313,10 +314,69 @@ const DiagramaMotor = {
   },
 }
 
+// Arrastrar y soltar real en el Constructor de plantillas (PlantillaConstructorLive)
+// — un hook por cada lista de hijos (el lienzo raíz y adentro de cada
+// Sección), todas con el mismo `group` para poder arrastrar un componente
+// de una lista a otra (ej. sacarlo de una Sección y dejarlo suelto en la
+// raíz). Sortable muta el DOM al soltar (optimista); el servidor recién
+// después reordena `definicion` de verdad y LiveView repinta — por eso
+// `animation` bajo y sin esperar nada del servidor para que se sienta
+// instantáneo, aunque el estado real siempre termina siendo el que decide
+// el servidor (si el push falla o tarda, el próximo repintado corrige
+// cualquier diferencia).
+const ListaOrdenable = {
+  mounted() {
+    this.sortable = new Sortable(this.el, {
+      group: "plantilla-componentes",
+      animation: 120,
+      handle: ".jal-manija",
+      ghostClass: "jal-fantasma",
+      onEnd: (evt) => {
+        const id = evt.item.dataset.id
+        const contenedorId = evt.to.dataset.contenedorId || ""
+        if (!id) return
+        this.pushEvent("mover_a", {id, contenedor_id: contenedorId, index: evt.newIndex})
+      },
+    })
+  },
+  destroyed() {
+    this.sortable && this.sortable.destroy()
+  },
+}
+
+// Botón "Vista previa" del Constructor: el servidor guarda el borrador y
+// recién después empuja este evento (ver handle_event("vista_previa", ...)
+// en PlantillaConstructorLive) — abrir la pestaña nueva es la única parte
+// que el servidor no puede hacer solo. `window.open` DENTRO de
+// handleEvent llega tarde (después del viaje de ida y vuelta al
+// servidor) y el navegador lo bloquea como pop-up porque ya no lo ve como
+// resultado directo del click — por eso la pestaña se abre en blanco acá
+// mismo, de forma síncrona en el click, y recién se le pone la URL real
+// cuando el servidor confirma que guardó.
+const AbrirVistaPrevia = {
+  mounted() {
+    this.pestanaPrevia = null
+
+    this.el.addEventListener("click", () => {
+      this.pestanaPrevia = window.open("", "_blank")
+    })
+
+    this.handleEvent("abrir_vista_previa", ({url}) => {
+      if (this.pestanaPrevia && !this.pestanaPrevia.closed) this.pestanaPrevia.location = url
+      else window.open(url, "_blank")
+    })
+
+    this.handleEvent("cancelar_vista_previa", () => {
+      if (this.pestanaPrevia && !this.pestanaPrevia.closed) this.pestanaPrevia.close()
+      this.pestanaPrevia = null
+    })
+  },
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, CopiarRuta, CopiarTextarea, AvisoReglasSinGuardar, DiagramaMotor},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, CopiarRuta, CopiarTextarea, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia},
 })
 
 // Show progress bar on live navigation and form submits

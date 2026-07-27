@@ -4,6 +4,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.MetaReglasCodigo
+  alias MetadataApp.MetaPlantillas
 
   # Genera migración y schema para schema_context_name a partir de lo
   # registrado en meta_schema_detail y corre la migración. Si el catálogo ya
@@ -54,6 +55,12 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
             crear_schema(schema_context_name, modulo, campos, header)
             migrar()
             recompilar_schema(schema_context_name)
+
+            # Plantilla de Ficha 360° automática — solo acá (catálogo
+            # recién nacido), nunca en la rama "ya_existia" de arriba.
+            # Best-effort: si falla, el catálogo ya está creado igual, que
+            # es lo que de verdad importa.
+            MetaPlantillas.crear_plantilla_default(header)
 
             {:ok, %{tabla: schema_context_name, modulo: modulo, ya_existia: false}}
           end
