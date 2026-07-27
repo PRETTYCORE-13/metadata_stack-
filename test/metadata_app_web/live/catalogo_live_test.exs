@@ -3,11 +3,41 @@ defmodule MetadataAppWeb.CatalogoLiveTest do
 
   import Phoenix.LiveViewTest
   import Ecto.Changeset
+  import MetadataApp.AutenticacionFixtures
 
   alias MetadataApp.Repo
+  alias MetadataApp.Autenticacion.{Empresa, Rol, UsuarioEmpresa}
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
   alias MetadataApp.MetaBusinessProcess.Catalogos.MetaFixtureCliente
   alias MetadataApp.MetaSchema.Estado
+  alias MetadataApp.Permissions
+
+  # RBAC (2026-07-27): CatalogoLive ahora exige permiso "leer" sobre el
+  # recurso antes de montar cualquier dato — antes cualquiera (autenticado
+  # o no) podía entrar directo por URL sin importar permisos, ya que solo
+  # el árbol del sidebar se podaba (oculta el link, no bloquea la ruta).
+  # administrador ve cualquier permiso YA REGISTRADO sin rol_permiso
+  # explícito, alcanza con loguearse como tal y registrar el permiso.
+  setup %{conn: conn} do
+    usuario = usuario_fixture()
+
+    {:ok, empresa} =
+      %Empresa{} |> Empresa.changeset(%{nombre: "Empresa fixture #{System.unique_integer()}"}) |> Repo.insert()
+
+    {:ok, _} =
+      %UsuarioEmpresa{} |> UsuarioEmpresa.changeset(%{usuario_id: usuario.id, empresa_id: empresa.id}) |> Repo.insert()
+
+    rol_admin = Repo.get_by!(Rol, nombre: "administrador")
+    {:ok, _} = Permissions.asignar_rol(usuario.id, rol_admin.id, empresa.id)
+    Permissions.crear_permiso(%{recurso: "meta_fixture_cliente", accion: "leer"})
+
+    conn =
+      conn
+      |> log_in_usuario(usuario)
+      |> Plug.Conn.put_session(:empresa_activa_id, empresa.id)
+
+    %{conn: conn}
+  end
 
   defp guid, do: Ecto.UUID.generate() |> String.replace("-", "")
   defp unique, do: System.unique_integer([:positive])
