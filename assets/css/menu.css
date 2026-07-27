@@ -22,13 +22,23 @@
   font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
 }
 
-/* Layout */
+/* Layout: fila completa — el sidebar es hermano de pc-platform-content, no
+   queda metido debajo de una topbar de ancho completo, así ocupa todo el
+   lado izquierdo desde arriba (stretch por defecto en el eje cruzado). */
 .pc-platform {
   display: flex;
-  flex-direction: column;
   height: 100vh;       /* fallback */
   height: 100dvh;      /* Safari iOS: excluye barra del browser */
   background: #f5f5f5;
+}
+
+/* Columna derecha: topbar + contenido + footer, al lado del sidebar. */
+.pc-platform-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* ---- USER MENU (topbar): avatar + nombre + dropdown de 3 opciones ---- */
@@ -118,6 +128,40 @@
 .pc-user-menu-item-danger:hover {
   background: rgba(239, 68, 68, 0.08);
   color: #ef4444;
+}
+
+/* Grupo "Sysadmin" del dropdown de usuario — <details>/<summary> nativo,
+   mismo mecanismo sin JS que ya usa el árbol del sidebar (pc-menu-carpeta). */
+.pc-user-menu-submenu {
+  display: block;
+  width: 100%;
+}
+
+.pc-user-menu-item-submenu {
+  list-style: none;
+}
+
+.pc-user-menu-item-submenu::-webkit-details-marker {
+  display: none;
+}
+
+.pc-user-menu-item-submenu::before {
+  content: "▸";
+  display: inline-block;
+  width: 10px;
+  margin-right: 4px;
+  font-size: 10px;
+  color: #9ca3af;
+  transition: transform 0.15s ease;
+}
+
+.pc-user-menu-submenu[open] > .pc-user-menu-item-submenu::before {
+  transform: rotate(90deg);
+}
+
+.pc-user-menu-subitem {
+  padding-left: 30px;
+  font-size: 11.5px;
 }
 
 /* ---- TOPBAR (branding: logo + nombre de empresa configurable) ---- */
@@ -288,13 +332,6 @@
 
 .pc-breadcrumb-copiar.pc-breadcrumb-copiado .pc-breadcrumb-copiar-icono-listo {
   display: block;
-}
-
-/* Fila sidebar + contenido */
-.pc-platform-row {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
 }
 
 .pc-platform-main {
@@ -880,7 +917,7 @@
   }
 
   /* Evitar scroll horizontal */
-  .pc-platform-row {
+  .pc-platform-content {
     overflow-x: hidden;
   }
 }

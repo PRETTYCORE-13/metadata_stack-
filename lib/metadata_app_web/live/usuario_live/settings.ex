@@ -9,6 +9,12 @@ defmodule MetadataAppWeb.UsuarioLive.Settings do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope}>
+      <div class="flex items-center gap-2 mb-2">
+        <.link navigate={~p"/"} title="Volver al inicio"
+          class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors shrink-0">
+          <span class="material-symbols-outlined" style="font-size: 18px">arrow_back</span>
+        </.link>
+      </div>
       <div class="text-center">
         <.header>
           Account Settings
@@ -21,6 +27,19 @@ defmodule MetadataAppWeb.UsuarioLive.Settings do
           Cambiar de empresa
         </.link>
       </div>
+
+      <.form for={@alias_form} id="alias_form" phx-submit="update_alias" phx-change="validate_alias">
+        <.input
+          field={@alias_form[:alias]}
+          type="text"
+          label="Alias"
+          placeholder="Cómo querés que te muestre la barra superior"
+          maxlength="40"
+        />
+        <.button variant="primary" phx-disable-with="Guardando...">Guardar alias</.button>
+      </.form>
+
+      <div class="divider" />
 
       <.form for={@email_form} id="email_form" phx-submit="update_email" phx-change="validate_email">
         <.input
@@ -93,6 +112,7 @@ defmodule MetadataAppWeb.UsuarioLive.Settings do
     usuario = socket.assigns.current_scope.usuario
     email_changeset = Autenticacion.change_usuario_email(usuario, %{}, validate_unique: false)
     password_changeset = Autenticacion.change_usuario_password(usuario, %{}, hash_password: false)
+    alias_changeset = Autenticacion.change_usuario_alias(usuario)
     multiples_empresas? = length(Autenticacion.empresas_de_usuario(usuario.id)) > 1
 
     socket =
@@ -100,6 +120,7 @@ defmodule MetadataAppWeb.UsuarioLive.Settings do
       |> assign(:current_email, usuario.email)
       |> assign(:email_form, to_form(email_changeset))
       |> assign(:password_form, to_form(password_changeset))
+      |> assign(:alias_form, to_form(alias_changeset))
       |> assign(:trigger_submit, false)
       |> assign(:multiples_empresas?, multiples_empresas?)
 
@@ -107,6 +128,30 @@ defmodule MetadataAppWeb.UsuarioLive.Settings do
   end
 
   @impl true
+  def handle_event("validate_alias", %{"usuario" => usuario_params}, socket) do
+    alias_form =
+      socket.assigns.current_scope.usuario
+      |> Autenticacion.change_usuario_alias(usuario_params)
+      |> Map.put(:action, :validate)
+      |> to_form()
+
+    {:noreply, assign(socket, alias_form: alias_form)}
+  end
+
+  def handle_event("update_alias", %{"usuario" => usuario_params}, socket) do
+    case Autenticacion.update_usuario_alias(socket.assigns.current_scope.usuario, usuario_params) do
+      {:ok, usuario} ->
+        {:noreply,
+         socket
+         |> assign(:current_scope, %{socket.assigns.current_scope | usuario: usuario})
+         |> assign(:alias_form, to_form(Autenticacion.change_usuario_alias(usuario)))
+         |> put_flash(:info, "Alias actualizado.")}
+
+      {:error, changeset} ->
+        {:noreply, assign(socket, :alias_form, to_form(changeset, action: :insert))}
+    end
+  end
+
   def handle_event("validate_email", params, socket) do
     %{"usuario" => usuario_params} = params
 

@@ -120,7 +120,7 @@ defmodule MetadataAppWeb.UsuarioAuthTest do
       refute get_session(conn, :usuario_token)
       refute conn.cookies[@remember_me_cookie]
       assert %{max_age: 0} = conn.resp_cookies[@remember_me_cookie]
-      assert redirected_to(conn) == ~p"/"
+      assert redirected_to(conn) == ~p"/meta_schema_usuario/log-in"
       refute Autenticacion.get_usuario_by_session_token(usuario_token)
     end
 
@@ -139,7 +139,7 @@ defmodule MetadataAppWeb.UsuarioAuthTest do
       conn = conn |> fetch_cookies() |> UsuarioAuth.log_out_usuario()
       refute get_session(conn, :usuario_token)
       assert %{max_age: 0} = conn.resp_cookies[@remember_me_cookie]
-      assert redirected_to(conn) == ~p"/"
+      assert redirected_to(conn) == ~p"/meta_schema_usuario/log-in"
     end
   end
 

@@ -4,12 +4,32 @@ defmodule MetadataApp.Autenticacion.Usuario do
 
   schema "meta_schema_usuario" do
     field :email, :string
+    field :alias, :string
     field :password, :string, virtual: true, redact: true
     field :hashed_password, :string, redact: true
     field :confirmed_at, :utc_datetime
     field :authenticated_at, :utc_datetime, virtual: true
 
     timestamps(type: :utc_datetime)
+  end
+
+  @doc "Changeset para que el usuario elija/cambie su alias — nunca requerido, a diferencia del email."
+  def alias_changeset(usuario, attrs) do
+    usuario
+    |> cast(attrs, [:alias])
+    |> validate_length(:alias, max: 40)
+  end
+
+  @doc """
+  Nombre para mostrar en la UI: el alias si lo tiene, si no la parte del
+  email antes de la @ — nunca nil ni vacío mientras haya un usuario real.
+  """
+  def nombre_mostrar(%__MODULE__{alias: alias_, email: email}) do
+    case alias_ do
+      nil -> email |> String.split("@") |> hd()
+      "" -> email |> String.split("@") |> hd()
+      valor -> valor
+    end
   end
 
   @doc """

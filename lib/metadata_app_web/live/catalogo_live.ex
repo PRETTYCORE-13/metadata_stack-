@@ -6,6 +6,8 @@ defmodule MetadataAppWeb.CatalogoLive do
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerico
   alias MetadataApp.MetaStateEngine
+  alias MetadataApp.Permissions
+  alias MetadataApp.Autenticacion.Scope
   alias MetadataAppWeb.AdminNav
 
   import MetadataAppWeb.CampoInputComponents, only: [campo_input: 1]
@@ -30,79 +32,101 @@ defmodule MetadataAppWeb.CatalogoLive do
          |> assign(:encontrado?, false)}
 
       header ->
-        modulo = MetaSchemaContext.modulo_por_nombre(header.schema_context_name)
-        es_detalle? = not is_nil(header.schema_encabezado_id)
+        if autorizado_para_leer?(socket.assigns[:current_scope], header.schema_context_name) do
+          montar_catalogo(socket, header)
+        else
+          {:ok,
+           socket
+           |> put_flash(:error, "No tenés permiso para acceder a esto.")
+           |> redirect(to: ~p"/")}
+        end
+    end
+  end
 
-        # Mismo criterio que ya usa el drawer de edición de FichaLive:
-        # campos_editables/2 de la transición "alta" — si el catálogo no
-        # adoptó el motor de estados, devuelve todos los campos (fail-open,
-        # retrocompatible); si adoptó pero no tiene "alta" configurada,
-        # devuelve [] y el botón de alta simplemente no aparece.
-        campos_alta =
-          if modulo && not es_detalle? do
-            MetaStateEngine.campos_editables(header.schema_context_name, MetaStateEngine.transicion_alta(header.schema_context_name))
-          else
-            []
-          end
+  # El árbol del sidebar ya se poda por "leer" (menu_layout.ex,
+  # podar_menu_por_permisos/1), pero eso solo oculta el link — no bloquea
+  # entrar directo por URL. `/*ruta` es un catch-all genérico sin
+  # `on_mount {Autorizacion, {recurso, accion}}` posible (el recurso es
+  # dinámico, recién se conoce acá adentro tras resolver el header por
+  # nav), así que el chequeo va a mano, mismo criterio deny-by-default que
+  # el resto de RBAC: sin scope resuelto (no autenticado / sin empresa
+  # activa), no autorizado.
+  defp autorizado_para_leer?(%Scope{} = scope, recurso), do: Permissions.can?(scope, "leer", recurso)
+  defp autorizado_para_leer?(_sin_scope, _recurso), do: false
 
-        columnas =
-          header.schema_context_name
+  defp montar_catalogo(socket, header) do
+    modulo = MetaSchemaContext.modulo_por_nombre(header.schema_context_name)
+    es_detalle? = not is_nil(header.schema_encabezado_id)
+
+    # Mismo criterio que ya usa el drawer de edición de FichaLive:
+    # campos_editables/2 de la transición "alta" — si el catálogo no
+    # adoptó el motor de estados, devuelve todos los campos (fail-open,
+    # retrocompatible); si adoptó pero no tiene "alta" configurada,
+    # devuelve [] y el botón de alta simplemente no aparece.
+    campos_alta =
+      if modulo && not es_detalle? do
+        MetaStateEngine.campos_editables(header.schema_context_name, MetaStateEngine.transicion_alta(header.schema_context_name))
+      else
+        []
+      end
+
+    columnas =
+      header.schema_context_name
+      |> MetaSchemaContext.listar_detalles()
+      |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
+      |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
+      |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
+
+    estados_por_id = MetaStateEngine.mapa_nombres_estados(header.schema_context_name)
+
+    # Catálogo Maestro-Detalle (Fase 5): catálogos detalle de ESTE
+    # header, con sus propios campos visibles/ordenados (mismo criterio
+    # que `columnas` arriba) — [] para la enorme mayoría de catálogos,
+    # que siguen sin ningún cambio de comportamiento.
+    catalogos_detalle =
+      header.id
+      |> MetaSchemaContext.listar_catalogos_detalle()
+      |> Enum.map(fn h ->
+        columnas_detalle =
+          h.schema_context_name
           |> MetaSchemaContext.listar_detalles()
           |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
           |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
           |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
 
-        estados_por_id = MetaStateEngine.mapa_nombres_estados(header.schema_context_name)
+        %{nombre: h.schema_context_name, etiqueta: h.schema_context_label, columnas: columnas_detalle}
+      end)
 
-        # Catálogo Maestro-Detalle (Fase 5): catálogos detalle de ESTE
-        # header, con sus propios campos visibles/ordenados (mismo criterio
-        # que `columnas` arriba) — [] para la enorme mayoría de catálogos,
-        # que siguen sin ningún cambio de comportamiento.
-        catalogos_detalle =
-          header.id
-          |> MetaSchemaContext.listar_catalogos_detalle()
-          |> Enum.map(fn h ->
-            columnas_detalle =
-              h.schema_context_name
-              |> MetaSchemaContext.listar_detalles()
-              |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
-              |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
-              |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
-
-            %{nombre: h.schema_context_name, etiqueta: h.schema_context_label, columnas: columnas_detalle}
-          end)
-
-        {:ok,
-         socket
-         |> assign(:current_page, header.schema_context_name)
-         |> assign(:encontrado?, true)
-         |> assign(:label, header.schema_context_label)
-         |> assign(:columnas, columnas)
-         |> assign(:mostrar_estado?, estados_por_id != %{})
-         |> assign(:mostrar_trn?, header.schema_es_transaccional)
-         |> assign(:modulo, modulo)
-         |> assign(:es_detalle?, es_detalle?)
-         |> assign(:campos_alta, campos_alta)
-         |> assign(:estados_por_id, estados_por_id)
-         |> assign(:pagina, 1)
-         |> assign(:filtros, %{})
-         |> assign(:filtros_activos, [])
-         |> assign(:selector_campo_abierto, false)
-         |> assign(:busqueda_campo_filtro, "")
-         |> assign(:busqueda_general, "")
-         |> assign(:mostrar_filtros, false)
-         |> assign(:catalogos_detalle, catalogos_detalle)
-         |> assign(:es_maestro?, catalogos_detalle != [])
-         |> assign(:detalle_modal, nil)
-         |> assign(:detalle_renglones, %{})
-         |> assign(:detalle_seleccion, %{})
-         |> assign(:detalle_nuevo_renglon_form, nil)
-         |> assign(:detalle_form_error, nil)
-         |> assign(:detalle_error, nil)
-         |> assign(:fila_editando, nil)
-         |> assign(:error_edicion, nil)
-         |> cargar_filas()}
-    end
+    {:ok,
+     socket
+     |> assign(:current_page, header.schema_context_name)
+     |> assign(:encontrado?, true)
+     |> assign(:label, header.schema_context_label)
+     |> assign(:columnas, columnas)
+     |> assign(:mostrar_estado?, estados_por_id != %{})
+     |> assign(:mostrar_trn?, header.schema_es_transaccional)
+     |> assign(:modulo, modulo)
+     |> assign(:es_detalle?, es_detalle?)
+     |> assign(:campos_alta, campos_alta)
+     |> assign(:estados_por_id, estados_por_id)
+     |> assign(:pagina, 1)
+     |> assign(:filtros, %{})
+     |> assign(:filtros_activos, [])
+     |> assign(:selector_campo_abierto, false)
+     |> assign(:busqueda_campo_filtro, "")
+     |> assign(:busqueda_general, "")
+     |> assign(:mostrar_filtros, false)
+     |> assign(:catalogos_detalle, catalogos_detalle)
+     |> assign(:es_maestro?, catalogos_detalle != [])
+     |> assign(:detalle_modal, nil)
+     |> assign(:detalle_renglones, %{})
+     |> assign(:detalle_seleccion, %{})
+     |> assign(:detalle_nuevo_renglon_form, nil)
+     |> assign(:detalle_form_error, nil)
+     |> assign(:detalle_error, nil)
+     |> assign(:fila_editando, nil)
+     |> assign(:error_edicion, nil)
+     |> cargar_filas()}
   end
 
   def handle_event("change_page", %{"id" => id}, socket) do

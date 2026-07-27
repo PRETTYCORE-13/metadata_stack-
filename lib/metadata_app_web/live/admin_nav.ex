@@ -15,6 +15,23 @@ defmodule MetadataAppWeb.AdminNav do
     "usuarios"  => "/"
   }
 
+  @ids_solo_bpb ["bc_list", "buscar_trn"]
+
+  @doc """
+  Quita del menú lateral las entradas que dependen del Business Process
+  Builder (no existe en producción, ver `bpb_habilitado`) cuando ese flag
+  está apagado. Las pantallas de RBAC comparten el mismo `@menu` hardcodeado
+  que las de BPB, así que sin este filtro sus sidebars mostrarían links a
+  rutas que en un release de producción no existen.
+  """
+  def filtrar_menu(menu) do
+    if Application.get_env(:metadata_app, :bpb_habilitado, false) do
+      menu
+    else
+      Enum.reject(menu, &(&1.id in @ids_solo_bpb))
+    end
+  end
+
   @doc """
   Maneja el evento change_page. `current_page` es el atom/string de la página actual
   para evitar navegar a la misma URL (causaría remount).

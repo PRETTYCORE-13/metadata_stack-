@@ -128,11 +128,17 @@ defmodule MetadataAppWeb.Router do
       live "/sysadmin/bc-list/:nombre/motor", Sysadmin.BcMotorLive
       live "/sysadmin/bc-list/:nombre/plantilla", Sysadmin.PlantillaConstructorLive
       live "/sysadmin/buscar-trn", Sysadmin.BuscadorTrnLive
-      live "/sysadmin/roles", Sysadmin.RolesLive
-      live "/sysadmin/roles/:id", Sysadmin.RolDetalleLive
-      live "/sysadmin/usuarios", Sysadmin.UsuariosEmpresaLive
-      live "/sysadmin/empresas", Sysadmin.EmpresasLive
     end
+
+    # Administración de RBAC: siempre disponible (a diferencia del BPB de
+    # arriba, esto no es una herramienta de desarrollador — administradores
+    # en producción también necesitan gestionar roles/permisos).
+    live "/sysadmin/roles", Sysadmin.RolesLive
+    live "/sysadmin/roles/:id", Sysadmin.RolesLive
+    live "/sysadmin/usuarios", Sysadmin.UsuariosEmpresaLive
+    live "/sysadmin/empresas", Sysadmin.EmpresasLive
+    live "/sysadmin/catalogos/permisos", Sysadmin.CatalogoPermisosLive
+    live "/sysadmin/catalogos/:recurso/permisos", Sysadmin.CatalogoPermisosLive
 
     # Alta de un registro nuevo — mismo LiveView que la Ficha 360°, en modo
     # "sin registro todavía" (ver FichaLive.mount/3, clausula de un solo

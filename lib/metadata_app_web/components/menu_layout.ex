@@ -11,8 +11,6 @@ defmodule MetadataAppWeb.MenuLayout do
   attr :sidebar_open, :boolean, default: false
   attr :current_user_email, :string, default: nil
   attr :current_user_name, :string, default: nil
-  attr :user_role, :string, default: nil
-  attr :user_permissions, :list, default: nil
   attr :current_user_id, :any, default: nil
   attr :notif_refresh, :integer, default: 0
   # Si se pasa, se usa tal cual (menú hardcodeado, ej. sysadmin). Si no, se
@@ -39,9 +37,82 @@ defmodule MetadataAppWeb.MenuLayout do
       |> assign(:nombre_empresa, Application.get_env(:metadata_app, :nombre_empresa, "Prettycore"))
       |> assign(:anio_actual, Date.utc_today().year)
       |> assign(:bpb_habilitado, Application.get_env(:metadata_app, :bpb_habilitado, false))
+      |> asignar_datos_usuario()
 
     ~H"""
     <div class="pc-platform">
+      <!-- Mobile overlay -->
+      <div
+        class="pc-sidebar-overlay"
+        phx-click={mobile_toggle_js()}
+      />
+      <!-- Sidebar: hermano de pc-platform-content (ya no metida adentro de
+           una fila junto al topbar) — así el riel del menú ocupa todo el
+           lado izquierdo desde arriba, y el logo queda en la topbar de la
+           derecha sin competirle espacio. -->
+      <aside class={"pc-platform-sidebar" <> if @sidebar_open, do: " pc-platform-sidebar-open", else: ""}>
+        <div
+          class="pc-sidebar-resize-handle"
+          id="sidebar-resize-handle"
+          phx-hook="RedimensionarSidebar"
+          phx-update="ignore"
+          title="Arrastra para ajustar el ancho del menú"
+        >
+        </div>
+        <!-- HEADER: toggle (el branding ya vive en la topbar, a la
+             derecha). -->
+        <div class="pc-sidebar-header">
+          <!-- Cerrar sidebar: solo visible en móvil -->
+          <button type="button" class="pc-sidebar-close-mobile" phx-click={mobile_close_js()}>
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+          <!-- Toggle colapso: solo visible en desktop (oculto en móvil via CSS) -->
+          <button
+            type="button"
+            class="pc-sidebar-toggle"
+            phx-click={toggle_sidebar_js(@menu_event)}
+          >
+            <%= if @sidebar_open do %>
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="11 17 6 12 11 7" /><polyline points="18 17 13 12 18 7" />
+              </svg>
+            <% else %>
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="13 17 18 12 13 7" /><polyline points="6 17 11 12 6 7" />
+              </svg>
+            <% end %>
+          </button>
+        </div>
+
+        <!-- CUERPO DEL MENÚ -->
+        <div class="pc-sidebar-body">
+          <div>
+            <div class="px-3 pb-2 pt-3 pc-sidebar-search">
+              <input
+                type="text"
+                id="filtro-menu"
+                phx-hook="FiltroMenu"
+                phx-update="ignore"
+                placeholder="Buscar o pegar una ruta..."
+                class="w-full text-sm border border-gray-300 rounded-lg px-3 py-1.5 text-gray-900"
+              />
+            </div>
+
+            <nav class="pc-sidebar-nav">
+              <.menu_nodos
+                nodos={@menu_items}
+                current_page={@current_page}
+                sidebar_open={@sidebar_open}
+                menu_event={@menu_event}
+              />
+            </nav>
+          </div>
+        </div>
+      </aside>
+      <!-- Columna derecha: topbar + contenido + footer -->
+      <div class="pc-platform-content">
       <!-- Topbar: logo + nombre de empresa (configurable, ver
            config/runtime.exs NOMBRE_EMPRESA — pensado para blanqueo de
            marca a futuro) + campana/login. -->
@@ -111,34 +182,27 @@ defmodule MetadataAppWeb.MenuLayout do
               class="pc-user-menu-dropdown"
               phx-click-away={JS.hide(to: "#user-menu-dropdown")}
             >
-              <.link :if={@bpb_habilitado} navigate="/sysadmin/bc-list" class="pc-user-menu-item">
-                Business Process Builder
-              </.link>
-              <.link :if={@bpb_habilitado} navigate="/sysadmin/roles" class="pc-user-menu-item">
-                Roles y Permisos
-              </.link>
-              <.link :if={@bpb_habilitado} navigate="/sysadmin/usuarios" class="pc-user-menu-item">
-                Usuarios de la empresa
-              </.link>
-              <.link :if={@bpb_habilitado} navigate="/sysadmin/empresas" class="pc-user-menu-item">
-                Empresas
-              </.link>
+              <details class="pc-user-menu-submenu">
+                <summary class="pc-user-menu-item pc-user-menu-item-submenu">Sysadmin</summary>
+                <.link :if={@bpb_habilitado} navigate="/sysadmin/bc-list" class="pc-user-menu-item pc-user-menu-subitem">
+                  Business Process Builder
+                </.link>
+                <.link navigate="/sysadmin/empresas" class="pc-user-menu-item pc-user-menu-subitem">
+                  Empresas
+                </.link>
+                <.link navigate="/sysadmin/usuarios" class="pc-user-menu-item pc-user-menu-subitem">
+                  Usuarios de la empresa
+                </.link>
+                <.link navigate="/sysadmin/roles" class="pc-user-menu-item pc-user-menu-subitem">
+                  Roles y Usuarios
+                </.link>
+                <.link navigate="/sysadmin/catalogos/permisos" class="pc-user-menu-item pc-user-menu-subitem">
+                  Permission Sets
+                </.link>
+              </details>
               <.link navigate="/meta_schema_usuario/settings" class="pc-user-menu-item">
                 Configuración de cuenta
               </.link>
-              <button
-                type="button"
-                class="pc-user-menu-item"
-                phx-click={
-                  JS.hide(to: "#user-menu-dropdown")
-                  |> JS.show(
-                    to: "#perfil-modal",
-                    transition: {"ease-out duration-200", "opacity-0 scale-95", "opacity-100 scale-100"}
-                  )
-                }
-              >
-                Datos del usuario
-              </button>
               <.link
                 href="/meta_schema_usuario/log-out"
                 method="delete"
@@ -151,72 +215,8 @@ defmodule MetadataAppWeb.MenuLayout do
           </div>
         </div>
       </div>
-      <!-- Fila: Sidebar + Contenido -->
-      <div class="pc-platform-row">
-        <!-- Mobile overlay -->
-        <div
-          class="pc-sidebar-overlay"
-          phx-click={mobile_toggle_js()}
-        />
-        <!-- Sidebar -->
-        <aside class={"pc-platform-sidebar" <> if @sidebar_open, do: " pc-platform-sidebar-open", else: ""}>
-          <div
-            class="pc-sidebar-resize-handle"
-            id="sidebar-resize-handle"
-            phx-hook="RedimensionarSidebar"
-            phx-update="ignore"
-            title="Arrastra para ajustar el ancho del menú"
-          >
-          </div>
-          <!-- HEADER: toggle (el branding ya vive en la topbar, arriba —
-               repetirlo acá era redundante). -->
-          <div class="pc-sidebar-header">
-            <!-- Cerrar sidebar: solo visible en móvil -->
-            <button type="button" class="pc-sidebar-close-mobile" phx-click={mobile_close_js()}>
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-              </svg>
-            </button>
-            <!-- Toggle colapso: solo visible en desktop (oculto en móvil via CSS) -->
-            <button
-              type="button"
-              class="pc-sidebar-toggle"
-              phx-click={toggle_sidebar_js(@menu_event)}
-            >
-              <%= if @sidebar_open do %>
-                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="11 17 6 12 11 7" /><polyline points="18 17 13 12 18 7" />
-                </svg>
-              <% else %>
-                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="13 17 18 12 13 7" /><polyline points="6 17 11 12 6 7" />
-                </svg>
-              <% end %>
-            </button>
-          </div>
-
-        <!-- CUERPO DEL MENÚ -->
-        <div class="pc-sidebar-body">
-          <div>
-            <div class="px-3 pb-2 pt-3 pc-sidebar-search">
-              <input
-                type="text"
-                id="filtro-menu"
-                phx-hook="FiltroMenu"
-                phx-update="ignore"
-                placeholder="Buscar o pegar una ruta..."
-                class="w-full text-sm border border-gray-300 rounded-lg px-3 py-1.5 text-gray-900"
-              />
-            </div>
-
-            <nav class="pc-sidebar-nav">
-              <.menu_nodos nodos={@menu_items} current_page={@current_page} />
-            </nav>
-          </div>
-        </div>
-        </aside>
-        <!-- CONTENIDO -->
-        <main class="pc-platform-main">
+      <!-- CONTENIDO -->
+      <main class="pc-platform-main">
           <%!-- Banda de publicidad (valores por defecto, sin backend todavía)
             banda_texto = "¿Tienes alguna idea de app web y no sabes cómo hacerla realidad? CONTÁCTANOS"
             banda_color = "#4f46e5"
@@ -233,7 +233,6 @@ defmodule MetadataAppWeb.MenuLayout do
           --%>
           {render_slot(@inner_block)}
         </main>
-      </div>
 
       <!-- Footer: copyright de la plataforma + ruta completa de la página
            activa con botón de copiar (copia la URL completa, ver
@@ -263,93 +262,6 @@ defmodule MetadataAppWeb.MenuLayout do
           </button>
         <% end %>
       </div>
-
-      <!-- ── Modal de perfil ── -->
-      <div
-        id="perfil-modal"
-        class="hidden fixed inset-0 z-[999] flex items-center justify-center p-4"
-        phx-click={JS.hide(to: "#perfil-modal", transition: {"ease-in duration-150", "opacity-100 scale-100", "opacity-0 scale-95"})}
-      >
-        <!-- Overlay -->
-        <div class="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
-        <!-- Tarjeta: detiene burbujeo para que no cierre el modal al hacer clic adentro -->
-        <div
-          class="relative bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden"
-          onclick="event.stopPropagation()"
-        >
-          <!-- Header con avatar grande -->
-          <div class="bg-gray-900 px-6 pt-8 pb-6 flex flex-col items-center gap-3">
-            <div class="w-20 h-20 rounded-full bg-purple-600 flex items-center justify-center text-white text-3xl font-black select-none shadow-lg">
-              {((@current_user_name && String.first(@current_user_name)) || "?") |> String.upcase()}
-            </div>
-            <div class="text-center">
-              <p class="text-white text-lg font-bold leading-tight">{@current_user_name || "Usuario"}</p>
-              <%= if @user_role do %>
-                <span class="inline-flex mt-1 items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-500/30 text-purple-200 border border-purple-500/40">
-                  {String.capitalize(@user_role)}
-                </span>
-              <% end %>
-            </div>
-          </div>
-          <!-- Datos -->
-          <div class="px-6 py-5 space-y-3">
-            <%= if @current_user_email && @current_user_email != "" do %>
-              <div class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
-                  <svg class="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
-                  </svg>
-                </div>
-                <div class="min-w-0">
-                  <p class="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Correo</p>
-                  <p class="text-sm text-gray-800 font-medium truncate">{@current_user_email}</p>
-                </div>
-              </div>
-            <% end %>
-            <%= if @user_role do %>
-              <div class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
-                  <svg class="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
-                  </svg>
-                </div>
-                <div>
-                  <p class="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Rol</p>
-                  <p class="text-sm text-gray-800 font-medium">{String.capitalize(@user_role)}</p>
-                </div>
-              </div>
-            <% end %>
-            <%= if @user_permissions && @user_permissions != [] do %>
-              <div class="flex items-start gap-3">
-                <div class="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <svg class="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
-                  </svg>
-                </div>
-                <div class="min-w-0">
-                  <p class="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Permisos</p>
-                  <div class="flex flex-wrap gap-1 mt-1">
-                    <%= for p <- @user_permissions do %>
-                      <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-indigo-50 text-indigo-600 border border-indigo-100">
-                        {String.capitalize(p)}
-                      </span>
-                    <% end %>
-                  </div>
-                </div>
-              </div>
-            <% end %>
-          </div>
-          <!-- Botón cerrar -->
-          <div class="px-6 pb-5">
-            <button
-              type="button"
-              class="w-full py-2.5 rounded-xl bg-gray-900 text-white text-sm font-semibold hover:bg-gray-700 transition-colors"
-              phx-click={JS.hide(to: "#perfil-modal")}
-            >
-              Cerrar
-            </button>
-          </div>
-        </div>
       </div>
     </div>
     """
@@ -361,13 +273,23 @@ defmodule MetadataAppWeb.MenuLayout do
   attr :nodos, :list, required: true
   attr :current_page, :string, required: true
   attr :nivel, :integer, default: 0
+  # Colapsado (rail de solo íconos), un click en una carpeta expande primero
+  # todo el sidebar — si no, el <details> se abre igual pero sus hijos
+  # quedan ocultos por CSS (ver comentario sobre íconos superpuestos más
+  # abajo en menu.css) y visualmente no pasa nada.
+  attr :sidebar_open, :boolean, default: true
+  attr :menu_event, :string, default: "change_page"
 
   def menu_nodos(assigns) do
     ~H"""
     <%= for nodo <- @nodos do %>
       <%= if nodo.tipo == :carpeta do %>
         <details class="pc-menu-carpeta" open={contiene_activo?(nodo, @current_page)}>
-          <summary class="pc-menu-carpeta-summary" style={"padding-left: #{12 + @nivel * 16}px"}>
+          <summary
+            class="pc-menu-carpeta-summary"
+            style={"padding-left: #{12 + @nivel * 16}px"}
+            phx-click={if(!@sidebar_open, do: toggle_sidebar_js(@menu_event))}
+          >
             <svg class="pc-menu-carpeta-icono-flecha w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="9 18 15 12 9 6" />
             </svg>
@@ -382,7 +304,13 @@ defmodule MetadataAppWeb.MenuLayout do
             </span>
             <span class="truncate">{nodo.nombre}</span>
           </summary>
-          <.menu_nodos nodos={nodo.hijos} current_page={@current_page} nivel={@nivel + 1} />
+          <.menu_nodos
+            nodos={nodo.hijos}
+            current_page={@current_page}
+            nivel={@nivel + 1}
+            sidebar_open={@sidebar_open}
+            menu_event={@menu_event}
+          />
         </details>
       <% else %>
         <.link
@@ -456,6 +384,23 @@ defmodule MetadataAppWeb.MenuLayout do
       <% end %>
     <% end %>
     """
+  end
+
+  # Nombre/correo del usuario para la topbar + modal de perfil — ningún
+  # LiveView los pasa a mano (los attrs current_user_name/current_user_email
+  # quedaban siempre nil), se derivan acá directo del Scope. Alias si lo
+  # eligió, si no la parte del email antes de la @ (nunca "Usuario" a secas
+  # mientras haya sesión real).
+  defp asignar_datos_usuario(assigns) do
+    case assigns[:current_scope] do
+      %MetadataApp.Autenticacion.Scope{usuario: %MetadataApp.Autenticacion.Usuario{} = usuario} ->
+        assigns
+        |> assign(:current_user_name, MetadataApp.Autenticacion.Usuario.nombre_mostrar(usuario))
+        |> assign(:current_user_email, usuario.email)
+
+      _ ->
+        assigns
+    end
   end
 
   ## RBAC — poda del árbol por permisos (Fase 2, ver attr :current_scope)

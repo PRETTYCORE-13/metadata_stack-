@@ -18,7 +18,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
   @menu [
     %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
     %{tipo: :pagina, id: "buscar_trn", label: "Buscar TRN", nav: "/sysadmin/buscar-trn"},
-    %{tipo: :pagina, id: "roles", label: "Roles y Permisos", nav: "/sysadmin/roles"},
+    %{tipo: :pagina, id: "roles", label: "Roles y Usuarios", nav: "/sysadmin/roles"},
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
     %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"}
   ]
@@ -27,7 +27,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     {:ok,
      socket
      |> assign(:current_page, "usuarios_empresa")
-     |> assign(:menu_items, @menu)
+     |> assign(:menu_items, AdminNav.filtrar_menu(@menu))
      |> assign(:sidebar_open, false)
      |> assign(:show_programacion_children, false)
      |> assign(:show_clientes_children, false)
@@ -71,7 +71,13 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
   def render(assigns) do
     ~H"""
     <div class="max-w-3xl mx-auto p-8">
-      <h1 class="text-2xl font-bold mb-1">Usuarios de la empresa</h1>
+      <div class="flex items-center gap-2 mb-1">
+        <.link navigate={~p"/"} title="Volver al inicio"
+          class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors shrink-0">
+          <span class="material-symbols-outlined" style="font-size: 18px">arrow_back</span>
+        </.link>
+        <h1 class="text-2xl font-bold">Usuarios de la empresa</h1>
+      </div>
       <p class="text-sm text-gray-500 mb-6">
         {@current_scope.empresa_activa.nombre}
       </p>

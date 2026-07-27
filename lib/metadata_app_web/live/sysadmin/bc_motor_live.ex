@@ -20,7 +20,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   @menu [
     %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
     %{tipo: :pagina, id: "buscar_trn", label: "Buscar TRN", nav: "/sysadmin/buscar-trn"},
-    %{tipo: :pagina, id: "roles", label: "Roles y Permisos", nav: "/sysadmin/roles"},
+    %{tipo: :pagina, id: "roles", label: "Roles y Usuarios", nav: "/sysadmin/roles"},
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
     %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"}
   ]
@@ -454,6 +454,33 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       {:error, changeset} ->
         {:noreply, update(socket, :relacion_form, &Map.put(&1, "error", resumen_errores(changeset)))}
+    end
+  end
+
+  # --- Get View: qué campos ve el usuario final en la tabla del catálogo ------
+
+  def handle_event("guardar_get_view", params, socket) do
+    visibles = params |> Map.get("visibles", []) |> List.wrap() |> MapSet.new()
+
+    resultado =
+      Enum.reduce_while(socket.assigns.campos, :ok, fn detalle, :ok ->
+        props = Map.put(detalle.schema_context_properties, "visible", detalle.schema_context_field in visibles)
+
+        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+          {:ok, _detalle} -> {:cont, :ok}
+          {:error, changeset} -> {:halt, {:error, detalle.schema_context_field, changeset}}
+        end
+      end)
+
+    case resultado do
+      :ok ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Get View actualizado.")
+         |> cargar_motor()}
+
+      {:error, campo, changeset} ->
+        {:noreply, put_flash(socket, :error, "No se pudo actualizar \"#{campo}\": #{resumen_errores(changeset)}")}
     end
   end
 
@@ -991,14 +1018,17 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       <.panel_problemas :if={@validacion.problemas != []} problemas={@validacion.problemas} />
 
       <.tabs_motor id="motor" tabs={
-        [%{key: "config", label: "Configuración"}, %{key: "reglas", label: "Reglas"}] ++
-          if(@es_detalle?, do: [], else: [%{key: "diagrama", label: "Diagrama"}, %{key: "api", label: "Contrato"}])
+        [
+          %{key: "config", label: "Configuración"},
+          %{key: "reglas", label: "Reglas"},
+          %{key: "getview", label: "Get View"},
+          %{key: "get", label: "Get"}
+        ] ++ if(@es_detalle?, do: [], else: [%{key: "diagrama", label: "Diagrama"}, %{key: "api", label: "Contrato"}])
       } />
 
       <div id="motor-panel-config" class="space-y-4">
         <.panel_encabezado header_form={@header_form} iconos_sugeridos={@iconos_sugeridos} carpetas={@carpetas} />
         <.panel_campos campos={@campos} />
-        <.panel_relaciones campos={@campos} />
         <%= if @es_detalle? do %>
           <div class="border border-gray-200 rounded-lg p-3 text-gray-500">
             Sin estados/transiciones propias — este catálogo se mueve junto con <strong>{@maestro.schema_context_label}</strong>.
@@ -1013,6 +1043,14 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       <div id="motor-panel-reglas" class="hidden">
         <.panel_reglas header={@header} reglas={@reglas} reglas_mensajes={@reglas_mensajes}
           compilar_disponible={@compilar_disponible} />
+      </div>
+
+      <div id="motor-panel-getview" class="hidden">
+        <.panel_get_view campos={@campos} />
+      </div>
+
+      <div id="motor-panel-get" class="hidden">
+        <.panel_relaciones campos={@campos} />
       </div>
 
       <%= unless @es_detalle? do %>
@@ -1371,6 +1409,73 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
               <% end %>
             </tbody>
           </table>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  attr :campos, :list, required: true
+
+  # "Get View": qué campos ve el usuario final al consultar este catálogo
+  # (tabla de CatalogoLive) — expone TODOS los campos reales, marcados
+  # según su propiedad "visible" actual en el contrato, para que se puedan
+  # prender/apagar de un vistazo sin tener que editar campo por campo.
+  defp panel_get_view(assigns) do
+    ~H"""
+    <div class="border border-gray-200 rounded-lg">
+      <div class="px-1.5 ml-2 -mb-2 relative">
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Get View</span>
+      </div>
+      <div class="p-3 pt-4 overflow-x-auto">
+        <p class="text-gray-500 mb-2">
+          Qué campos ve el usuario final en la tabla de este catálogo. Desmarcar un campo no lo borra ni afecta la API — solo lo oculta de la vista.
+        </p>
+        <%= if @campos == [] do %>
+          <p class="text-gray-400">Este catálogo todavía no tiene campos.</p>
+        <% else %>
+          <form id="get-view-form" phx-submit="guardar_get_view">
+            <div class="flex gap-2 mb-2">
+              <button type="button"
+                onclick="this.closest('form').querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true)"
+                class="text-purple-700 hover:text-purple-900 text-[11px] font-semibold">
+                Seleccionar todos
+              </button>
+              <span class="text-gray-300">|</span>
+              <button type="button"
+                onclick="this.closest('form').querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false)"
+                class="text-purple-700 hover:text-purple-900 text-[11px] font-semibold">
+                Deseleccionar todos
+              </button>
+            </div>
+            <table class="min-w-full mb-2">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Nombre</th>
+                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Etiqueta</th>
+                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
+                  <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Visible al usuario</th>
+                </tr>
+              </thead>
+              <tbody>
+                <%= for c <- @campos do %>
+                  <% props = c.schema_context_properties || %{} %>
+                  <tr class="border-b border-gray-100 hover:bg-gray-50">
+                    <td class="px-1.5 py-1 text-gray-900 font-mono">{c.schema_context_field}</td>
+                    <td class="px-1.5 py-1 text-gray-700">{Map.get(props, "etiqueta")}</td>
+                    <td class="px-1.5 py-1 text-gray-600">{Map.get(props, "tipo")}</td>
+                    <td class="px-1.5 py-1 text-center">
+                      <input type="checkbox" name="visibles[]" value={c.schema_context_field}
+                        checked={Map.get(props, "visible") == true} class="accent-purple-600" />
+                    </td>
+                  </tr>
+                <% end %>
+              </tbody>
+            </table>
+            <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
+              Guardar Get View
+            </button>
+          </form>
         <% end %>
       </div>
     </div>
@@ -1775,36 +1880,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
     ~H"""
     <div class="space-y-4">
-      <div class="bg-blue-50 border border-blue-200 text-blue-800 rounded-lg px-3 py-2">
-        <p>
-          Mismo endpoint genérico para cualquier catálogo — lo único que cambia entre uno y otro es la tabla y sus
-          campos. El body de POST acepta los campos sueltos (como abajo) o envueltos bajo la clave del catálogo,
-          <span class="font-mono">{@ejemplo_wrap}</span> — las dos formas funcionan.
-        </p>
-        <p class="mt-1">
-          <span class="font-mono">POST /api/{@tabla}</span> también acepta un <strong>lote</strong>: si el body es
-          una lista en vez de un objeto (envuelta bajo la clave del catálogo, como en el ejemplo de abajo), crea
-          todos los registros en un solo request — pensado para cargas de más de un registro, el caso más común en
-          la práctica.
-        </p>
-        <p :if={@tiene_estados} class="mt-1">
-          <span class="font-mono">estado_id</span> nunca se manda en el body de POST — el estado solo cambia con
-          <span class="font-mono">POST /api/{@tabla}/:id/transiciones/:accion</span>. Si esa transición tiene campos
-          editables configurados, van en el mismo body y se aplican junto con el cambio de estado.
-        </p>
-        <p :if={@tiene_detalles} class="mt-1">
-          Este catálogo es maestro de {length(@catalogos_detalle)}
-          {if length(@catalogos_detalle) == 1, do: "catálogo detalle", else: "catálogos detalle"}
-          (<span :for={{c, i} <- Enum.with_index(@catalogos_detalle)} class="font-mono">{if i > 0, do: ", "}{c.schema_context_name}</span>).
-          Sus renglones viajan bajo la clave <span class="font-mono">"renglones"</span>, tanto al <strong>crear</strong>
-          (<span class="font-mono">POST /api/{@tabla}</span>, alta atómica — encabezado + renglones iniciales en un
-          solo request, sin `renglon_id` porque son altas nuevas) como al <strong>transicionar</strong>
-          (<span class="font-mono">POST .../transiciones/:accion</span>, con <span class="font-mono">renglon_id</span>
-          porque ahí seleccionás renglones que ya existen — pelado para solo mover estado, o con más campos si esa
-          transición los permite editar).
-        </p>
-      </div>
-
       <.tarjeta_endpoint metodo="GET" url={"/api/#{@tabla}?pagina=1&por_pagina=25"} descripcion="Listado paginado."
         respuesta_status="200 OK" respuesta={@respuesta_lista} />
 
