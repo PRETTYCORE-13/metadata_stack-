@@ -27,7 +27,7 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
     {:ok,
      socket
      |> assign(:current_page, "empresas")
-     |> assign(:menu_items, @menu)
+     |> assign(:menu_items, AdminNav.filtrar_menu(@menu))
      |> assign(:sidebar_open, false)
      |> assign(:show_programacion_children, false)
      |> assign(:show_clientes_children, false)

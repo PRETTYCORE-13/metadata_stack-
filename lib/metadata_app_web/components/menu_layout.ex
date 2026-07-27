@@ -42,6 +42,78 @@ defmodule MetadataAppWeb.MenuLayout do
 
     ~H"""
     <div class="pc-platform">
+      <!-- Mobile overlay -->
+      <div
+        class="pc-sidebar-overlay"
+        phx-click={mobile_toggle_js()}
+      />
+      <!-- Sidebar: hermano de pc-platform-content (ya no metida adentro de
+           una fila junto al topbar) — así el riel del menú ocupa todo el
+           lado izquierdo desde arriba, y el logo queda en la topbar de la
+           derecha sin competirle espacio. -->
+      <aside class={"pc-platform-sidebar" <> if @sidebar_open, do: " pc-platform-sidebar-open", else: ""}>
+        <div
+          class="pc-sidebar-resize-handle"
+          id="sidebar-resize-handle"
+          phx-hook="RedimensionarSidebar"
+          phx-update="ignore"
+          title="Arrastra para ajustar el ancho del menú"
+        >
+        </div>
+        <!-- HEADER: toggle (el branding ya vive en la topbar, a la
+             derecha). -->
+        <div class="pc-sidebar-header">
+          <!-- Cerrar sidebar: solo visible en móvil -->
+          <button type="button" class="pc-sidebar-close-mobile" phx-click={mobile_close_js()}>
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+          <!-- Toggle colapso: solo visible en desktop (oculto en móvil via CSS) -->
+          <button
+            type="button"
+            class="pc-sidebar-toggle"
+            phx-click={toggle_sidebar_js(@menu_event)}
+          >
+            <%= if @sidebar_open do %>
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="11 17 6 12 11 7" /><polyline points="18 17 13 12 18 7" />
+              </svg>
+            <% else %>
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="13 17 18 12 13 7" /><polyline points="6 17 11 12 6 7" />
+              </svg>
+            <% end %>
+          </button>
+        </div>
+
+        <!-- CUERPO DEL MENÚ -->
+        <div class="pc-sidebar-body">
+          <div>
+            <div class="px-3 pb-2 pt-3 pc-sidebar-search">
+              <input
+                type="text"
+                id="filtro-menu"
+                phx-hook="FiltroMenu"
+                phx-update="ignore"
+                placeholder="Buscar o pegar una ruta..."
+                class="w-full text-sm border border-gray-300 rounded-lg px-3 py-1.5 text-gray-900"
+              />
+            </div>
+
+            <nav class="pc-sidebar-nav">
+              <.menu_nodos
+                nodos={@menu_items}
+                current_page={@current_page}
+                sidebar_open={@sidebar_open}
+                menu_event={@menu_event}
+              />
+            </nav>
+          </div>
+        </div>
+      </aside>
+      <!-- Columna derecha: topbar + contenido + footer -->
+      <div class="pc-platform-content">
       <!-- Topbar: logo + nombre de empresa (configurable, ver
            config/runtime.exs NOMBRE_EMPRESA — pensado para blanqueo de
            marca a futuro) + campana/login. -->
@@ -111,18 +183,24 @@ defmodule MetadataAppWeb.MenuLayout do
               class="pc-user-menu-dropdown"
               phx-click-away={JS.hide(to: "#user-menu-dropdown")}
             >
-              <.link :if={@bpb_habilitado} navigate="/sysadmin/bc-list" class="pc-user-menu-item">
-                Business Process Builder
-              </.link>
-              <.link :if={@bpb_habilitado} navigate="/sysadmin/roles" class="pc-user-menu-item">
-                Roles y Permisos
-              </.link>
-              <.link :if={@bpb_habilitado} navigate="/sysadmin/usuarios" class="pc-user-menu-item">
-                Usuarios de la empresa
-              </.link>
-              <.link :if={@bpb_habilitado} navigate="/sysadmin/empresas" class="pc-user-menu-item">
-                Empresas
-              </.link>
+              <details class="pc-user-menu-submenu">
+                <summary class="pc-user-menu-item pc-user-menu-item-submenu">Sysadmin</summary>
+                <.link :if={@bpb_habilitado} navigate="/sysadmin/bc-list" class="pc-user-menu-item pc-user-menu-subitem">
+                  Business Process Builder
+                </.link>
+                <.link navigate="/sysadmin/catalogos/permisos" class="pc-user-menu-item pc-user-menu-subitem">
+                  Permission Sets
+                </.link>
+                <.link navigate="/sysadmin/roles" class="pc-user-menu-item pc-user-menu-subitem">
+                  Roles y Permisos
+                </.link>
+                <.link navigate="/sysadmin/usuarios" class="pc-user-menu-item pc-user-menu-subitem">
+                  Usuarios de la empresa
+                </.link>
+                <.link navigate="/sysadmin/empresas" class="pc-user-menu-item pc-user-menu-subitem">
+                  Empresas
+                </.link>
+              </details>
               <.link navigate="/meta_schema_usuario/settings" class="pc-user-menu-item">
                 Configuración de cuenta
               </.link>
@@ -151,72 +229,8 @@ defmodule MetadataAppWeb.MenuLayout do
           </div>
         </div>
       </div>
-      <!-- Fila: Sidebar + Contenido -->
-      <div class="pc-platform-row">
-        <!-- Mobile overlay -->
-        <div
-          class="pc-sidebar-overlay"
-          phx-click={mobile_toggle_js()}
-        />
-        <!-- Sidebar -->
-        <aside class={"pc-platform-sidebar" <> if @sidebar_open, do: " pc-platform-sidebar-open", else: ""}>
-          <div
-            class="pc-sidebar-resize-handle"
-            id="sidebar-resize-handle"
-            phx-hook="RedimensionarSidebar"
-            phx-update="ignore"
-            title="Arrastra para ajustar el ancho del menú"
-          >
-          </div>
-          <!-- HEADER: toggle (el branding ya vive en la topbar, arriba —
-               repetirlo acá era redundante). -->
-          <div class="pc-sidebar-header">
-            <!-- Cerrar sidebar: solo visible en móvil -->
-            <button type="button" class="pc-sidebar-close-mobile" phx-click={mobile_close_js()}>
-              <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-              </svg>
-            </button>
-            <!-- Toggle colapso: solo visible en desktop (oculto en móvil via CSS) -->
-            <button
-              type="button"
-              class="pc-sidebar-toggle"
-              phx-click={toggle_sidebar_js(@menu_event)}
-            >
-              <%= if @sidebar_open do %>
-                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="11 17 6 12 11 7" /><polyline points="18 17 13 12 18 7" />
-                </svg>
-              <% else %>
-                <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="13 17 18 12 13 7" /><polyline points="6 17 11 12 6 7" />
-                </svg>
-              <% end %>
-            </button>
-          </div>
-
-        <!-- CUERPO DEL MENÚ -->
-        <div class="pc-sidebar-body">
-          <div>
-            <div class="px-3 pb-2 pt-3 pc-sidebar-search">
-              <input
-                type="text"
-                id="filtro-menu"
-                phx-hook="FiltroMenu"
-                phx-update="ignore"
-                placeholder="Buscar o pegar una ruta..."
-                class="w-full text-sm border border-gray-300 rounded-lg px-3 py-1.5 text-gray-900"
-              />
-            </div>
-
-            <nav class="pc-sidebar-nav">
-              <.menu_nodos nodos={@menu_items} current_page={@current_page} />
-            </nav>
-          </div>
-        </div>
-        </aside>
-        <!-- CONTENIDO -->
-        <main class="pc-platform-main">
+      <!-- CONTENIDO -->
+      <main class="pc-platform-main">
           <%!-- Banda de publicidad (valores por defecto, sin backend todavía)
             banda_texto = "¿Tienes alguna idea de app web y no sabes cómo hacerla realidad? CONTÁCTANOS"
             banda_color = "#4f46e5"
@@ -233,7 +247,6 @@ defmodule MetadataAppWeb.MenuLayout do
           --%>
           {render_slot(@inner_block)}
         </main>
-      </div>
 
       <!-- Footer: copyright de la plataforma + ruta completa de la página
            activa con botón de copiar (copia la URL completa, ver
@@ -262,6 +275,7 @@ defmodule MetadataAppWeb.MenuLayout do
             </svg>
           </button>
         <% end %>
+      </div>
       </div>
 
       <!-- ── Modal de perfil ── -->
@@ -361,13 +375,23 @@ defmodule MetadataAppWeb.MenuLayout do
   attr :nodos, :list, required: true
   attr :current_page, :string, required: true
   attr :nivel, :integer, default: 0
+  # Colapsado (rail de solo íconos), un click en una carpeta expande primero
+  # todo el sidebar — si no, el <details> se abre igual pero sus hijos
+  # quedan ocultos por CSS (ver comentario sobre íconos superpuestos más
+  # abajo en menu.css) y visualmente no pasa nada.
+  attr :sidebar_open, :boolean, default: true
+  attr :menu_event, :string, default: "change_page"
 
   def menu_nodos(assigns) do
     ~H"""
     <%= for nodo <- @nodos do %>
       <%= if nodo.tipo == :carpeta do %>
         <details class="pc-menu-carpeta" open={contiene_activo?(nodo, @current_page)}>
-          <summary class="pc-menu-carpeta-summary" style={"padding-left: #{12 + @nivel * 16}px"}>
+          <summary
+            class="pc-menu-carpeta-summary"
+            style={"padding-left: #{12 + @nivel * 16}px"}
+            phx-click={if(!@sidebar_open, do: toggle_sidebar_js(@menu_event))}
+          >
             <svg class="pc-menu-carpeta-icono-flecha w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="9 18 15 12 9 6" />
             </svg>
@@ -382,7 +406,13 @@ defmodule MetadataAppWeb.MenuLayout do
             </span>
             <span class="truncate">{nodo.nombre}</span>
           </summary>
-          <.menu_nodos nodos={nodo.hijos} current_page={@current_page} nivel={@nivel + 1} />
+          <.menu_nodos
+            nodos={nodo.hijos}
+            current_page={@current_page}
+            nivel={@nivel + 1}
+            sidebar_open={@sidebar_open}
+            menu_event={@menu_event}
+          />
         </details>
       <% else %>
         <.link

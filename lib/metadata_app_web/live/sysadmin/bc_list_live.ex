@@ -9,6 +9,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.MetaPublicador
   alias MetadataApp.BorradoresMotor
+  alias MetadataApp.Permissions
   alias MetadataAppWeb.AdminNav
   alias Phoenix.LiveView.JS
 
@@ -546,10 +547,17 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     total_paginas = max(ceil(total_items / @por_pagina), 1)
     pagina = socket.assigns.pagina |> max(1) |> min(total_paginas)
 
+    pagina_actual = Enum.slice(filtrados, (pagina - 1) * @por_pagina, @por_pagina)
+
+    con_permisos =
+      Permissions.catalogos_con_permisos_habilitados(
+        for item <- pagina_actual, !item.es_carpeta, do: item.id
+      )
+
     arbol =
-      filtrados
-      |> Enum.slice((pagina - 1) * @por_pagina, @por_pagina)
+      pagina_actual
       |> Enum.map(&adjuntar_puede_desplegar/1)
+      |> Enum.map(&adjuntar_permisos_habilitados(&1, con_permisos))
       |> MetaSchemaContext.construir_arbol()
 
     socket
@@ -575,6 +583,16 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   defp adjuntar_puede_desplegar(item),
     do: Map.put(item, :puede_desplegar, MetaEstadosAdmin.puede_desplegar?(item.id))
+
+  # El link "Permisos" (RBAC, ver Sysadmin.CatalogoPermisosLive) solo
+  # aplica a catálogos reales con motor de estados propio — un detalle no
+  # tiene permisos aparte (los de la fila los da su maestro) y un
+  # catálogo recién graduado sin transiciones todavía no tiene nada que
+  # conceder. Mismo criterio que Permissions.buscar_catalogos/2.
+  defp adjuntar_permisos_habilitados(%{es_carpeta: true} = item, _con_permisos), do: item
+
+  defp adjuntar_permisos_habilitados(item, con_permisos),
+    do: Map.put(item, :permisos_habilitados, MapSet.member?(con_permisos, item.id))
 
   # Orquesta el paquete completo desde la UI, sin pasar por ningún
   # Mix.Task (a diferencia de "mix motor.publicar", que sí puede) — esto
@@ -1420,6 +1438,13 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             <div class="flex gap-2">
               <.link navigate={~p"/sysadmin/bc-list/#{nodo.id}/motor"} class="text-blue-600 hover:text-blue-800 text-xs font-semibold">
                 Editar
+              </.link>
+              <.link
+                :if={Map.get(nodo, :permisos_habilitados, false)}
+                navigate={~p"/sysadmin/catalogos/#{nodo.id}/permisos"}
+                class="text-purple-600 hover:text-purple-800 text-xs font-semibold"
+              >
+                Permisos
               </.link>
               <button
                 type="button"

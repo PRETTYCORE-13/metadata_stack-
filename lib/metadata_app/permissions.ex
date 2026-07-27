@@ -254,7 +254,18 @@ defmodule MetadataApp.Permissions do
   ## nunca se carga el universo completo a memoria, todo pasa por
   ## ilike + limit contra la base.
 
-  @doc "Catálogos reales (meta_schema_header) que matchean la búsqueda, tope 20 — nunca la lista completa."
+  @doc """
+  Catálogos reales (meta_schema_header) que matchean la búsqueda, tope 20
+  — nunca la lista completa. Quedan afuera a propósito:
+
+  - Catálogos detalle (`schema_encabezado_id` no nulo) — se administran
+    desde el maestro, no tienen permisos propios.
+  - Catálogos sin ningún estado/transición configurado todavía (recién
+    graduados del wizard, sin motor de estados armado) — no hay nada que
+    conceder ahí hasta que tengan al menos una transición real. Cuando
+    existan reportes/consultas de solo lectura (sin motor de estados) que
+    también necesiten RBAC, este filtro se revisa — por ahora queda así.
+  """
   def buscar_catalogos(query, limite \\ 20)
 
   def buscar_catalogos("", _limite), do: []
@@ -264,9 +275,15 @@ defmodule MetadataApp.Permissions do
 
     Repo.all(
       from h in Header,
+        as: :header,
         where:
-          is_nil(h.delete_guid) and h.schema_context_type != 2 and
-            (ilike(h.schema_context_name, ^texto) or ilike(h.schema_context_label, ^texto)),
+          is_nil(h.delete_guid) and h.schema_context_type != 2 and is_nil(h.schema_encabezado_id) and
+            (ilike(h.schema_context_name, ^texto) or ilike(h.schema_context_label, ^texto)) and
+            exists(
+              from t in "meta_schema_transiciones",
+                where: t.meta_schema_header_id == parent_as(:header).id and is_nil(t.delete_guid),
+                select: 1
+            ),
         order_by: h.schema_context_label,
         limit: ^limite,
         select: %{recurso: h.schema_context_name, label: h.schema_context_label}
@@ -409,6 +426,108 @@ defmodule MetadataApp.Permissions do
         where: ur.rol_id == ^rol_id and ur.empresa_id == ^empresa_id,
         order_by: u.email
     )
+  end
+
+  @doc "Roles que tiene asignados un usuario puntual en una empresa (inverso de usuarios_del_rol/2)."
+  def roles_de_usuario(usuario_id, empresa_id) do
+    Repo.all(
+      from r in Rol,
+        join: ur in UsuarioRol,
+        on: ur.rol_id == r.id and is_nil(ur.delete_guid),
+        where: ur.usuario_id == ^usuario_id and ur.empresa_id == ^empresa_id and is_nil(r.delete_guid),
+        order_by: r.nombre
+    )
+  end
+
+  @doc """
+  De una lista de recursos, cuáles califican para tener permisos propios:
+  no son catálogo detalle (`schema_encabezado_id` nulo) y tienen al menos
+  una transición configurada — misma regla que `buscar_catalogos/2`, acá
+  en forma de `MapSet` para anotar filas ya cargadas (ej. `BcListLive`)
+  sin una query por fila.
+  """
+  def catalogos_con_permisos_habilitados(recursos) when is_list(recursos) do
+    Repo.all(
+      from h in Header,
+        as: :header,
+        where:
+          h.schema_context_name in ^recursos and is_nil(h.delete_guid) and is_nil(h.schema_encabezado_id) and
+            exists(
+              from t in "meta_schema_transiciones",
+                where: t.meta_schema_header_id == parent_as(:header).id and is_nil(t.delete_guid),
+                select: 1
+            ),
+        select: h.schema_context_name
+    )
+    |> MapSet.new()
+  end
+
+  @doc "Un catálogo puntual por recurso, para encabezados (nil si no existe o está borrado)."
+  def obtener_catalogo(recurso) do
+    Repo.one(
+      from h in Header,
+        where: h.schema_context_name == ^recurso and is_nil(h.delete_guid),
+        select: %{recurso: h.schema_context_name, label: h.schema_context_label}
+    )
+  end
+
+  @doc """
+  Vista invertida de `estado_permisos_para_pares/2`: un catálogo fijo, el
+  estado de cada acción contra una lista de roles — para la pantalla "veo
+  todos los roles de este catálogo" (Fase A del roadmap). Dos queries
+  batch, nunca una por rol. `administrador` se marca concedido en
+  cualquier acción que YA exista como permiso registrado, sin necesitar
+  `rol_permiso` — mismo criterio que en todo el resto de RBAC.
+  """
+  def estado_permisos_para_roles(_recurso, [], _acciones), do: %{}
+  def estado_permisos_para_roles(_recurso, _rol_ids, []), do: %{}
+
+  def estado_permisos_para_roles(recurso, rol_ids, acciones) do
+    permisos =
+      Repo.all(
+        from p in Permiso,
+          where: p.recurso == ^recurso and p.accion in ^acciones and is_nil(p.delete_guid)
+      )
+
+    permiso_ids = Enum.map(permisos, & &1.id)
+    acciones_registradas = MapSet.new(permisos, & &1.accion)
+
+    concedidos =
+      if permiso_ids == [] do
+        MapSet.new()
+      else
+        from(rp in RolPermiso,
+          where: rp.rol_id in ^rol_ids and rp.permiso_id in ^permiso_ids and is_nil(rp.delete_guid),
+          select: {rp.rol_id, rp.permiso_id}
+        )
+        |> Repo.all()
+        |> MapSet.new()
+      end
+
+    roles_administradores =
+      rol_ids
+      |> Enum.filter(fn rol_id -> administrador_es_sistema?(rol_id) end)
+      |> MapSet.new()
+
+    permisos_por_accion = Map.new(permisos, &{&1.accion, &1})
+
+    for rol_id <- rol_ids, accion <- acciones, into: %{} do
+      case Map.get(permisos_por_accion, accion) do
+        nil ->
+          {{rol_id, accion}, %{permiso_id: nil, concedido: false}}
+
+        permiso ->
+          concedido =
+            MapSet.member?(concedidos, {rol_id, permiso.id}) or
+              (MapSet.member?(roles_administradores, rol_id) and MapSet.member?(acciones_registradas, accion))
+
+          {{rol_id, accion}, %{permiso_id: permiso.id, concedido: concedido}}
+      end
+    end
+  end
+
+  defp administrador_es_sistema?(rol_id) do
+    Repo.exists?(from r in Rol, where: r.id == ^rol_id and r.es_sistema == true and r.nombre == "administrador")
   end
 
   defp generar_guid do

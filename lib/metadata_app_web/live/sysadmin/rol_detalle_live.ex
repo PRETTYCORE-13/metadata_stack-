@@ -32,7 +32,7 @@ defmodule MetadataAppWeb.Sysadmin.RolDetalleLive do
         {:ok,
          socket
          |> assign(:current_page, "roles")
-         |> assign(:menu_items, @menu)
+         |> assign(:menu_items, AdminNav.filtrar_menu(@menu))
          |> assign(:sidebar_open, false)
          |> assign(:show_programacion_children, false)
          |> assign(:show_clientes_children, false)
@@ -43,6 +43,8 @@ defmodule MetadataAppWeb.Sysadmin.RolDetalleLive do
          |> assign(:resultados_catalogo, [])
          |> assign(:busqueda_usuario, "")
          |> assign(:resultados_usuario, [])
+         |> assign(:editando_rol, false)
+         |> assign(:error_editar_rol, nil)
          |> cargar_usuarios_del_rol()}
 
       {:error, :no_encontrado} ->
@@ -55,6 +57,28 @@ defmodule MetadataAppWeb.Sysadmin.RolDetalleLive do
 
   def handle_event("change_page", %{"id" => id}, socket) do
     AdminNav.handle_nav(id, socket, "roles")
+  end
+
+  def handle_event("abrir_editar_rol", _params, socket) do
+    {:noreply, assign(socket, editando_rol: true, error_editar_rol: nil)}
+  end
+
+  def handle_event("cerrar_editar_rol", _params, socket) do
+    {:noreply, assign(socket, editando_rol: false, error_editar_rol: nil)}
+  end
+
+  def handle_event("guardar_rol", %{"rol" => attrs}, socket) do
+    case Permissions.actualizar_rol(socket.assigns.rol, attrs) do
+      {:ok, rol} ->
+        {:noreply, assign(socket, rol: rol, editando_rol: false, error_editar_rol: nil)}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        mensaje = changeset.errors |> Enum.map_join(", ", fn {campo, {msg, _}} -> "#{campo} #{msg}" end)
+        {:noreply, assign(socket, :error_editar_rol, mensaje)}
+
+      {:error, :rol_de_sistema} ->
+        {:noreply, assign(socket, :error_editar_rol, "Los roles de sistema no se editan.")}
+    end
   end
 
   def handle_event("buscar_catalogo", %{"value" => texto}, socket) do
@@ -157,15 +181,61 @@ defmodule MetadataAppWeb.Sysadmin.RolDetalleLive do
         </.link>
       </div>
 
-      <div class="flex items-center gap-3 mb-6">
+      <div class="flex items-center gap-3 mb-1">
         <h1 class="text-2xl font-bold">{@rol.nombre}</h1>
         <span :if={@rol.es_sistema} class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 border border-gray-200">
           Sistema
         </span>
+        <button
+          :if={!@rol.es_sistema}
+          type="button"
+          phx-click="abrir_editar_rol"
+          class="text-xs text-purple-700 hover:underline"
+        >
+          Editar
+        </button>
       </div>
+      <p :if={@rol.descripcion} class="text-sm text-gray-500 mb-6">{@rol.descripcion}</p>
+      <div :if={!@rol.descripcion} class="mb-6"></div>
 
       <div :if={@rol.nombre == "administrador"} class="mb-6 rounded-lg bg-purple-50 border border-purple-100 px-4 py-3 text-sm text-purple-800">
-        Este rol ve todos los permisos que existan automáticamente — tocar los toggles de abajo no cambia su acceso real, pero podés usarlos igual para ver qué transiciones tiene cada catálogo.
+        Este rol ve todos los permisos que existan automáticamente — tocar los toggles de abajo no cambia su acceso real, pero puedes usarlos igual para ver qué transiciones tiene cada catálogo.
+      </div>
+
+      <div :if={@editando_rol} class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+        <div class="bg-white rounded-xl shadow-lg max-w-sm w-full p-6">
+          <h2 class="text-lg font-bold mb-4">Editar rol</h2>
+          <form phx-submit="guardar_rol">
+            <div class="mb-3">
+              <label class="text-xs font-semibold text-gray-500">Nombre</label>
+              <input
+                type="text"
+                name="rol[nombre]"
+                value={@rol.nombre}
+                required
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900"
+              />
+            </div>
+            <div class="mb-4">
+              <label class="text-xs font-semibold text-gray-500">Descripción</label>
+              <input
+                type="text"
+                name="rol[descripcion]"
+                value={@rol.descripcion}
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900"
+              />
+            </div>
+            <p :if={@error_editar_rol} class="text-xs text-red-600 mb-3">{@error_editar_rol}</p>
+            <div class="flex justify-end gap-2">
+              <button type="button" phx-click="cerrar_editar_rol" class="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50">
+                Cancelar
+              </button>
+              <button type="submit" class="px-4 py-2 rounded bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700">
+                Guardar
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
 
       <div class="mb-8">
@@ -191,7 +261,12 @@ defmodule MetadataAppWeb.Sysadmin.RolDetalleLive do
           <div class="flex items-center justify-between">
             <div class="min-w-0">
               <p class="text-sm font-medium text-gray-900 truncate">{catalogo.label}</p>
-              <p class="text-xs text-gray-400 font-mono truncate">{catalogo.recurso}</p>
+              <p class="text-xs text-gray-400 font-mono truncate">
+                {catalogo.recurso}
+                <.link navigate={~p"/sysadmin/catalogos/#{catalogo.recurso}/permisos"} class="ml-2 text-purple-600 hover:underline">
+                  ver todos los roles
+                </.link>
+              </p>
             </div>
             <div class="flex gap-1 flex-shrink-0">
               <button
