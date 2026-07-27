@@ -261,6 +261,18 @@ defmodule MetadataApp.Autenticacion do
     end)
   end
 
+  @doc "Returns an `%Ecto.Changeset{}` for changing the usuario alias."
+  def change_usuario_alias(usuario, attrs \\ %{}) do
+    Usuario.alias_changeset(usuario, attrs)
+  end
+
+  @doc "Actualiza el alias del usuario — sin sudo mode ni confirmación, no es un dato sensible."
+  def update_usuario_alias(usuario, attrs) do
+    usuario
+    |> Usuario.alias_changeset(attrs)
+    |> Repo.update()
+  end
+
   @doc """
   Returns an `%Ecto.Changeset{}` for changing the usuario password.
 

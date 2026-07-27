@@ -37,6 +37,36 @@ defmodule MetadataAppWeb.UsuarioLive.SettingsTest do
     end
   end
 
+  describe "update alias form" do
+    setup %{conn: conn} do
+      usuario = usuario_fixture()
+      %{conn: log_in_usuario(conn, usuario), usuario: usuario}
+    end
+
+    test "updates the usuario alias", %{conn: conn, usuario: usuario} do
+      {:ok, lv, _html} = live(conn, ~p"/meta_schema_usuario/settings")
+
+      result =
+        lv
+        |> form("#alias_form", %{"usuario" => %{"alias" => "Uriel"}})
+        |> render_submit()
+
+      assert result =~ "Alias actualizado."
+      assert Autenticacion.get_usuario!(usuario.id).alias == "Uriel"
+    end
+
+    test "renders errors with an alias too long (phx-change)", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/meta_schema_usuario/settings")
+
+      result =
+        lv
+        |> element("#alias_form")
+        |> render_change(%{"usuario" => %{"alias" => String.duplicate("a", 41)}})
+
+      assert result =~ "should be at most 40 character"
+    end
+  end
+
   describe "update email form" do
     setup %{conn: conn} do
       usuario = usuario_fixture()

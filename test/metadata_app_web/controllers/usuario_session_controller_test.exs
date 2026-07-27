@@ -132,14 +132,14 @@ defmodule MetadataAppWeb.UsuarioSessionControllerTest do
   describe "DELETE /meta_schema_usuario/log-out" do
     test "logs the usuario out", %{conn: conn, usuario: usuario} do
       conn = conn |> log_in_usuario(usuario) |> delete(~p"/meta_schema_usuario/log-out")
-      assert redirected_to(conn) == ~p"/"
+      assert redirected_to(conn) == ~p"/meta_schema_usuario/log-in"
       refute get_session(conn, :usuario_token)
       assert Phoenix.Flash.get(conn.assigns.flash, :info) =~ "Logged out successfully"
     end
 
     test "succeeds even if the usuario is not logged in", %{conn: conn} do
       conn = delete(conn, ~p"/meta_schema_usuario/log-out")
-      assert redirected_to(conn) == ~p"/"
+      assert redirected_to(conn) == ~p"/meta_schema_usuario/log-in"
       refute get_session(conn, :usuario_token)
       assert Phoenix.Flash.get(conn.assigns.flash, :info) =~ "Logged out successfully"
     end

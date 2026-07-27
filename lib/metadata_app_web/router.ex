@@ -133,7 +133,7 @@ defmodule MetadataAppWeb.Router do
     # arriba, esto no es una herramienta de desarrollador — administradores
     # en producción también necesitan gestionar roles/permisos).
     live "/sysadmin/roles", Sysadmin.RolesLive
-    live "/sysadmin/roles/:id", Sysadmin.RolDetalleLive
+    live "/sysadmin/roles/:id", Sysadmin.RolesLive
     live "/sysadmin/usuarios", Sysadmin.UsuariosEmpresaLive
     live "/sysadmin/empresas", Sysadmin.EmpresasLive
     live "/sysadmin/catalogos/permisos", Sysadmin.CatalogoPermisosLive

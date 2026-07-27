@@ -71,7 +71,7 @@ defmodule MetadataAppWeb.UsuarioAuth do
     conn
     |> renew_session(nil)
     |> delete_resp_cookie(@remember_me_cookie, @remember_me_options)
-    |> redirect(to: ~p"/")
+    |> redirect(to: ~p"/meta_schema_usuario/log-in")
   end
 
   @doc """

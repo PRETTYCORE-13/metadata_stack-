@@ -14,7 +14,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   alias Phoenix.LiveView.JS
 
   @topic "bc_contextos"
-  @por_pagina 50
+  @por_pagina 30
 
   # Mismo subconjunto curado de Material Symbols de siempre — los modales
   # "Nueva carpeta" y "Editar carpeta" viven acá adentro (ver
@@ -39,7 +39,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   @menu [
     %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
     %{tipo: :pagina, id: "buscar_trn", label: "Buscar TRN", nav: "/sysadmin/buscar-trn"},
-    %{tipo: :pagina, id: "roles", label: "Roles y Permisos", nav: "/sysadmin/roles"},
+    %{tipo: :pagina, id: "roles", label: "Roles y Usuarios", nav: "/sysadmin/roles"},
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"}
   ]
 
@@ -546,8 +546,9 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     total_items = length(filtrados)
     total_paginas = max(ceil(total_items / @por_pagina), 1)
     pagina = socket.assigns.pagina |> max(1) |> min(total_paginas)
+    offset = (pagina - 1) * @por_pagina
 
-    pagina_actual = Enum.slice(filtrados, (pagina - 1) * @por_pagina, @por_pagina)
+    pagina_actual = Enum.slice(filtrados, offset, @por_pagina)
 
     con_permisos =
       Permissions.catalogos_con_permisos_habilitados(
@@ -565,6 +566,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     |> assign(:pagina, pagina)
     |> assign(:total_paginas, total_paginas)
     |> assign(:total_items, total_items)
+    |> assign(:inicio, if(total_items == 0, do: 0, else: offset + 1))
+    |> assign(:fin, min(offset + @por_pagina, total_items))
   end
 
   # Se calcula solo sobre la página visible (no sobre @total_items), mismo
@@ -807,20 +810,57 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     ~H"""
     <div class="max-w-5xl mx-auto p-8">
       <div class="flex items-center justify-between mb-4">
-        <h1 class="text-2xl font-bold">BC List</h1>
-        <div class="flex gap-2">
-          <button
-            type="button"
-            id="btn-nuevo-contexto"
-            phx-click="abrir_form_carpeta"
-            class="bg-white border border-purple-600 text-purple-700 hover:bg-purple-50 font-bold px-6 py-2 rounded"
-          >
-            + Nueva carpeta
-          </button>
-          <.link navigate={~p"/sysadmin/bc-list/nuevo-completo"}
-            class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-6 py-2 rounded">
-            + Nuevo catálogo
+        <div class="flex items-center gap-2">
+          <.link navigate={~p"/"} title="Volver al inicio"
+            class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors shrink-0">
+            <span class="material-symbols-outlined" style="font-size: 18px">arrow_back</span>
           </.link>
+          <h1 class="text-2xl font-bold">BC List</h1>
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-medium text-gray-500 bg-gray-100 rounded-full px-3 py-1">
+              {@inicio}-{@fin} de {@total_items}
+            </span>
+            <div class="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg p-0.5">
+              <button
+                type="button"
+                phx-click="pagina_anterior"
+                disabled={@pagina <= 1}
+                aria-label="Página anterior"
+                class="w-7 h-7 flex items-center justify-center rounded-md text-gray-600 hover:bg-white hover:shadow-sm disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:shadow-none transition"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                phx-click="pagina_siguiente"
+                disabled={@pagina >= @total_paginas}
+                aria-label="Página siguiente"
+                class="w-7 h-7 flex items-center justify-center rounded-md text-gray-600 hover:bg-white hover:shadow-sm disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:shadow-none transition"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="flex gap-2">
+            <button
+              type="button"
+              id="btn-nuevo-contexto"
+              phx-click="abrir_form_carpeta"
+              class="bg-white border border-purple-600 text-purple-700 hover:bg-purple-50 font-bold px-6 py-2 rounded"
+            >
+              + Nueva carpeta
+            </button>
+            <.link navigate={~p"/sysadmin/bc-list/nuevo-completo"}
+              class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-6 py-2 rounded">
+              + Nuevo catálogo
+            </.link>
+          </div>
         </div>
       </div>
 
@@ -870,31 +910,6 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         </table>
       </div>
 
-      <%= if @total_paginas > 1 do %>
-        <div class="flex items-center justify-between mt-4 text-sm text-gray-600">
-          <span>
-            Página {@pagina} de {@total_paginas} ({@total_items} en total)
-          </span>
-          <div class="flex gap-2">
-            <button
-              type="button"
-              phx-click="pagina_anterior"
-              disabled={@pagina <= 1}
-              class="px-3 py-1.5 rounded border border-gray-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50"
-            >
-              ← Anterior
-            </button>
-            <button
-              type="button"
-              phx-click="pagina_siguiente"
-              disabled={@pagina >= @total_paginas}
-              class="px-3 py-1.5 rounded border border-gray-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50"
-            >
-              Siguiente →
-            </button>
-          </div>
-        </div>
-      <% end %>
     </div>
 
     <.modal_eliminar accion={@accion_eliminar} />

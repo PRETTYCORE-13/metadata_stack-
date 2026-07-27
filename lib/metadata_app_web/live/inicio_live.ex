@@ -1,6 +1,8 @@
 defmodule MetadataAppWeb.InicioLive do
   use MetadataAppWeb, :live_view_admin
 
+  on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
+
   alias MetadataAppWeb.AdminNav
 
   def mount(_params, _session, socket) do
