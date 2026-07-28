@@ -77,6 +77,25 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
   def handle_event("importar_tepache", %{"tag" => tag}, socket) do
     tag = String.trim(tag)
 
+    if tag == "" do
+      {:noreply,
+       socket
+       |> assign(:tag_importar, tag)
+       |> assign(:resultado_import, {:error, "Ingresá un tag (ej. TEPACHE-000002)."})}
+    else
+      importar(socket, tag)
+    end
+  end
+
+  def handle_event("confirmar_import", _params, socket) do
+    aplicar_import(socket, socket.assigns.tag_importar, socket.assigns.pendiente_confirmacion)
+  end
+
+  def handle_event("cancelar_import", _params, socket) do
+    {:noreply, assign(socket, :pendiente_confirmacion, nil)}
+  end
+
+  defp importar(socket, tag) do
     case MetaTepache.preparar_import(tag) do
       {:error, mensaje} ->
         {:noreply, socket |> assign(:tag_importar, tag) |> assign(:resultado_import, {:error, mensaje})}
@@ -92,14 +111,6 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
            |> assign(:pendiente_confirmacion, info)}
         end
     end
-  end
-
-  def handle_event("confirmar_import", _params, socket) do
-    aplicar_import(socket, socket.assigns.tag_importar, socket.assigns.pendiente_confirmacion)
-  end
-
-  def handle_event("cancelar_import", _params, socket) do
-    {:noreply, assign(socket, :pendiente_confirmacion, nil)}
   end
 
   defp aplicar_import(socket, tag, info) do

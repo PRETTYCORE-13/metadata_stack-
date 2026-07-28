@@ -192,9 +192,10 @@ defmodule MetadataApp.MetaTepache do
     ruta_interna = "priv/repo/catalogos/#{nombre_catalogo}.meta.json"
 
     con_ruta_relativa(bundle_path, fn ruta ->
-      case System.cmd("tar", ["-xzOf", ruta, ruta_interna], stderr_to_stdout: true) do
-        {salida, 0} -> Jason.decode(salida)
-        {salida, status} -> {:error, "tar -xzOf falló (status #{status}):\n#{salida}"}
+      case ejecutar("tar", ["-xzOf", ruta, ruta_interna]) do
+        {:ok, {salida, 0}} -> Jason.decode(salida)
+        {:ok, {salida, status}} -> {:error, "tar -xzOf falló (status #{status}):\n#{salida}"}
+        {:error, _} = error -> error
       end
     end)
   end
@@ -205,8 +206,8 @@ defmodule MetadataApp.MetaTepache do
   ninguno todavía). {:ok, tag} | {:error, mensaje}
   """
   def siguiente_tag do
-    case System.cmd("gh", ["release", "list", "--json", "tagName"], stderr_to_stdout: true) do
-      {salida, 0} ->
+    case ejecutar("gh", ["release", "list", "--json", "tagName"]) do
+      {:ok, {salida, 0}} ->
         numero =
           salida
           |> Jason.decode!()
@@ -221,8 +222,11 @@ defmodule MetadataApp.MetaTepache do
 
         {:ok, "TEPACHE-" <> String.pad_leading(Integer.to_string(numero), 6, "0")}
 
-      {salida, status} ->
+      {:ok, {salida, status}} ->
         {:error, "gh release list falló (status #{status}):\n#{salida}"}
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -284,15 +288,19 @@ defmodule MetadataApp.MetaTepache do
     File.cp!(bundle_path, destino_local)
 
     resultado =
-      case System.cmd("gh", ["release", "create", tag, "--title", tag, "--notes", notas], stderr_to_stdout: true) do
-        {_salida, 0} ->
-          case System.cmd("gh", ["release", "upload", tag, destino_local], stderr_to_stdout: true) do
-            {_salida, 0} -> {:ok, tag}
-            {salida, status} -> {:error, "gh release upload falló (status #{status}):\n#{salida}"}
+      case ejecutar("gh", ["release", "create", tag, "--title", tag, "--notes", notas]) do
+        {:ok, {_salida, 0}} ->
+          case ejecutar("gh", ["release", "upload", tag, destino_local]) do
+            {:ok, {_salida, 0}} -> {:ok, tag}
+            {:ok, {salida, status}} -> {:error, "gh release upload falló (status #{status}):\n#{salida}"}
+            {:error, _} = error -> error
           end
 
-        {salida, status} ->
+        {:ok, {salida, status}} ->
           {:error, "gh release create falló (status #{status}):\n#{salida}"}
+
+        {:error, _} = error ->
+          error
       end
 
     File.rm(destino_local)
@@ -309,9 +317,10 @@ defmodule MetadataApp.MetaTepache do
   def descargar(tag) do
     args = ["release", "download", tag, "-p", "*.tar.gz", "-O", "tepache.tar.gz", "--clobber"]
 
-    case System.cmd("gh", args, stderr_to_stdout: true) do
-      {_salida, 0} -> {:ok, "tepache.tar.gz"}
-      {salida, status} -> {:error, "gh release download #{tag} falló (status #{status}):\n#{salida}"}
+    case ejecutar("gh", args) do
+      {:ok, {_salida, 0}} -> {:ok, "tepache.tar.gz"}
+      {:ok, {salida, status}} -> {:error, "gh release download #{tag} falló (status #{status}):\n#{salida}"}
+      {:error, _} = error -> error
     end
   end
 
@@ -325,8 +334,8 @@ defmodule MetadataApp.MetaTepache do
   """
   def catalogos_en_bundle(bundle_path) do
     con_ruta_relativa(bundle_path, fn ruta ->
-      case System.cmd("tar", ["-tzf", ruta], stderr_to_stdout: true) do
-        {salida, 0} ->
+      case ejecutar("tar", ["-tzf", ruta]) do
+        {:ok, {salida, 0}} ->
           nombres =
             salida
             |> String.split("\n", trim: true)
@@ -335,8 +344,11 @@ defmodule MetadataApp.MetaTepache do
 
           {:ok, nombres}
 
-        {salida, status} ->
+        {:ok, {salida, status}} ->
           {:error, "tar -tzf falló (status #{status}):\n#{salida}"}
+
+        {:error, _} = error ->
+          error
       end
     end)
   end
@@ -349,9 +361,10 @@ defmodule MetadataApp.MetaTepache do
   """
   def extraer(bundle_path) do
     con_ruta_relativa(bundle_path, fn ruta ->
-      case System.cmd("tar", ["-xzf", ruta], stderr_to_stdout: true) do
-        {_salida, 0} -> :ok
-        {salida, status} -> {:error, "tar -xzf falló (status #{status}):\n#{salida}"}
+      case ejecutar("tar", ["-xzf", ruta]) do
+        {:ok, {_salida, 0}} -> :ok
+        {:ok, {salida, status}} -> {:error, "tar -xzf falló (status #{status}):\n#{salida}"}
+        {:error, _} = error -> error
       end
     end)
   end
@@ -366,6 +379,19 @@ defmodule MetadataApp.MetaTepache do
   # ruta absoluta) -- si hace falta, se copia a un nombre relativo
   # temporal en el cwd, se opera sobre ESE, y se borra la copia al final
   # (nunca el original, que es responsabilidad de quien llamó).
+  # System.cmd lanza ErlangError (:enoent) si el ejecutable no está en el
+  # PATH de quien corre el servidor -- sin esto, tirar un tepache import
+  # con "gh" no instalado/no en PATH mataba todo el proceso LiveView
+  # (visto real: reporte de Lizbeth, GenServer terminating con :enoent).
+  # Envuelve el resultado en {:ok, {salida, status}} | {:error, mensaje}
+  # para que cada call site siga decidiendo con el mismo patrón de antes.
+  defp ejecutar(programa, args) do
+    {:ok, System.cmd(programa, args, stderr_to_stdout: true)}
+  rescue
+    e in ErlangError ->
+      {:error, "No se pudo ejecutar \"#{programa}\" -- ¿está instalado y en el PATH de este proceso? (#{Exception.message(e)})"}
+  end
+
   defp con_ruta_relativa(bundle_path, fun) do
     if Path.type(bundle_path) == :absolute do
       temporal = "tepache-tmp-#{System.unique_integer([:positive])}.tar.gz"
