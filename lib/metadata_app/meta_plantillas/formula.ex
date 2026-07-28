@@ -3,8 +3,8 @@ defmodule MetadataApp.MetaPlantillas.Formula do
   Evaluador seguro de fórmulas para el nodo "campo_calculado" del
   Constructor — nunca ejecuta código Elixir arbitrario (nada de
   `Code.eval_string/1`, `Code.eval_quoted/1`, etc.): tokeniza y evalúa a
-  mano un mini-lenguaje aritmético con `+ - * /`, paréntesis, y tres formas
-  de referencia:
+  mano un mini-lenguaje con `+ - * /`, paréntesis, condicionales, y tres
+  formas de referencia:
 
   - `{campo}` — un campo del registro actual.
   - `{catalogo#id.campo}` — un campo de UN registro puntual de otro
@@ -13,6 +13,26 @@ defmodule MetadataApp.MetaPlantillas.Formula do
   - `SUM(catalogo.campo)` / `COUNT(catalogo)` / `AVG(catalogo.campo)` /
     `MIN(catalogo.campo)` / `MAX(catalogo.campo)` — agregado sobre TODOS
     los registros vivos de otro catálogo, tampoco requiere relación.
+
+  `IF <comparación> THEN <valor> ELSE <valor>` — a diferencia de "Mostrar
+  solo si" (condición de VISIBILIDAD de un nodo entero, ver
+  `FichaLive.condicion_cumplida?/3`), esto es una condición que decide el
+  VALOR calculado, ej. `IF {stock_actual} > {stock_minimo} THEN "Disponible" ELSE "Agotado"`.
+  Solo al nivel superior de la fórmula (no anidado dentro de una cuenta
+  aritmética) — la comparación siempre es entre dos expresiones numéricas
+  (`> < >= <= == !=`), cada rama puede ser un texto entre comillas o una
+  expresión numérica. Por eso `evaluar/2` puede devolver un string además
+  de un número.
+
+  Contexto (`{hoy}`, `{usuario_actual}`, `{empresa_activa}`) no es nada
+  especial acá adentro — `FichaLive` los mete como pseudo-campos más
+  dentro del mismo mapa `valores` que ya recibe `evaluar/2` (ver
+  `contexto_actual/1`), así que se usan con la misma sintaxis `{campo}`
+  de siempre. `{hoy}` es una fecha real (no un string), así que
+  `{fecha_vencimiento} - {hoy}` da directamente la diferencia en días.
+  Una fórmula que es UN SOLO campo (ej. `{usuario_actual}` a secas)
+  devuelve ese valor tal cual sea texto, fecha o número, sin forzarlo a
+  número como sí hace cualquier fórmula con operadores.
 
   Fail-open a propósito, mismo criterio que `FichaLive.condicion_cumplida?/3`:
   una fórmula mal escrita, un catálogo/campo que no existe, un registro que
@@ -35,10 +55,26 @@ defmodule MetadataApp.MetaPlantillas.Formula do
   registro actual — valor_crudo puede ser string, Decimal, integer o
   float, se castea solo).
   """
-  @spec evaluar(String.t(), map()) :: {:ok, float()} | {:error, term()}
+  @spec evaluar(String.t(), map()) :: {:ok, float() | String.t()} | {:error, term()}
   def evaluar(formula, valores) when is_binary(formula) and is_map(valores) do
-    with {:ok, tokens} <- tokenizar(formula),
-         {:ok, {valor, resto}} <- expr(tokens, valores) do
+    with {:ok, tokens} <- tokenizar(formula) do
+      evaluar_tokens(tokens, valores)
+    end
+  end
+
+  def evaluar(_formula, _valores), do: {:error, :formula_invalida}
+
+  defp evaluar_tokens([{:kw, :if} | resto], valores), do: evaluar_condicion(resto, valores)
+
+  # Fórmula que es UN SOLO campo (ej. "{usuario_actual}" o "{hoy}", los
+  # pseudo-campos de Contexto) devuelve el valor tal cual, sea texto,
+  # fecha o número — no lo fuerza por a_numero/1 como hace la rama
+  # aritmética de abajo. Así "un campo calculado que solo muestra un dato"
+  # (de contexto o de un campo real) no exige que ese dato sea numérico.
+  defp evaluar_tokens([{:campo, nombre}], valores), do: resolver_campo_crudo(nombre, valores)
+
+  defp evaluar_tokens(tokens, valores) do
+    with {:ok, {valor, resto}} <- expr(tokens, valores) do
       case resto do
         [] -> {:ok, valor}
         _ -> {:error, :tokens_sobrantes}
@@ -46,7 +82,48 @@ defmodule MetadataApp.MetaPlantillas.Formula do
     end
   end
 
-  def evaluar(_formula, _valores), do: {:error, :formula_invalida}
+  # IF <expr> <cmp> <expr> THEN <rama> ELSE <rama> — solo al nivel superior
+  # de la fórmula, ver moduledoc. Cualquier pieza faltante o fuera de orden
+  # (THEN sin ELSE, comparador ausente, tokens de más al final) cae en el
+  # `else` de abajo — fail-open, no hay forma de que esto crashee la ficha.
+  defp evaluar_condicion(tokens, valores) do
+    with {:ok, {izq, [{:cmp, op} | resto2]}} <- expr(tokens, valores),
+         {:ok, {der, resto3}} <- expr(resto2, valores),
+         [{:kw, :then} | resto4] <- resto3,
+         {:ok, {rama_then, [{:kw, :else} | resto5]}} <- rama_condicion(resto4, valores),
+         {:ok, {rama_else, []}} <- rama_condicion(resto5, valores) do
+      {:ok, if(comparar(op, izq, der), do: rama_then, else: rama_else)}
+    else
+      _ -> {:error, :condicion_mal_formada}
+    end
+  end
+
+  defp rama_condicion([{:str, s} | resto], _valores), do: {:ok, {s, resto}}
+  defp rama_condicion(tokens, valores), do: expr(tokens, valores)
+
+  defp comparar(:gt, a, b), do: a > b
+  defp comparar(:lt, a, b), do: a < b
+  defp comparar(:gte, a, b), do: a >= b
+  defp comparar(:lte, a, b), do: a <= b
+  defp comparar(:eq, a, b), do: a == b
+  defp comparar(:neq, a, b), do: a != b
+
+  @doc """
+  Tokeniza `formula` para el Constructor de chips — literalmente el mismo
+  tokenizer que usa `evaluar/2`, expuesto de solo lectura para que la
+  representación visual (cada chip) nunca se pueda desincronizar de lo que
+  realmente se va a evaluar. Fail-open: una fórmula a medio armar o
+  inválida no rompe la pantalla, devuelve `[]` en vez de levantar.
+  """
+  @spec tokens_para_mostrar(String.t()) :: list()
+  def tokens_para_mostrar(formula) when is_binary(formula) do
+    case tokenizar(formula) do
+      {:ok, tokens} -> tokens
+      {:error, _motivo} -> []
+    end
+  end
+
+  def tokens_para_mostrar(_formula), do: []
 
   # --- Tokenizer -----------------------------------------------------
 
@@ -60,6 +137,25 @@ defmodule MetadataApp.MetaPlantillas.Formula do
   defp tokenizar_lista([?- | resto], acc), do: tokenizar_lista(resto, [{:op, :-} | acc])
   defp tokenizar_lista([?* | resto], acc), do: tokenizar_lista(resto, [{:op, :*} | acc])
   defp tokenizar_lista([?/ | resto], acc), do: tokenizar_lista(resto, [{:op, :/} | acc])
+
+  # Comparadores de 2 caracteres ANTES que los de 1 — si no, ">=" se
+  # partiría en ">" seguido de un "=" suelto que el catch-all final
+  # rechaza como carácter inválido.
+  defp tokenizar_lista([?>, ?= | resto], acc), do: tokenizar_lista(resto, [{:cmp, :gte} | acc])
+  defp tokenizar_lista([?<, ?= | resto], acc), do: tokenizar_lista(resto, [{:cmp, :lte} | acc])
+  defp tokenizar_lista([?=, ?= | resto], acc), do: tokenizar_lista(resto, [{:cmp, :eq} | acc])
+  defp tokenizar_lista([?!, ?= | resto], acc), do: tokenizar_lista(resto, [{:cmp, :neq} | acc])
+  defp tokenizar_lista([?> | resto], acc), do: tokenizar_lista(resto, [{:cmp, :gt} | acc])
+  defp tokenizar_lista([?< | resto], acc), do: tokenizar_lista(resto, [{:cmp, :lt} | acc])
+
+  # Literal de texto entre comillas — solo lo usan las ramas THEN/ELSE de
+  # un condicional (ver rama_condicion/2), ej. IF ... THEN "Disponible" ELSE "Agotado".
+  defp tokenizar_lista([?" | resto], acc) do
+    case Enum.split_while(resto, &(&1 != ?")) do
+      {_texto, []} -> {:error, :comilla_sin_cerrar}
+      {texto, [?" | resto2]} -> tokenizar_lista(resto2, [{:str, List.to_string(texto)} | acc])
+    end
+  end
 
   defp tokenizar_lista([?{ | resto], acc) do
     case Enum.split_while(resto, &(&1 != ?})) do
@@ -89,19 +185,24 @@ defmodule MetadataApp.MetaPlantillas.Formula do
     {letras, resto} = Enum.split_while(lista, &(&1 in ?A..?Z))
     nombre = List.to_string(letras)
 
-    case resto do
-      [?( | resto2] ->
-        case Enum.split_while(resto2, &(&1 != ?))) do
-          {_arg, []} -> {:error, :parentesis_sin_cerrar}
-          {arg, [?) | resto3]} -> tokenizar_lista(resto3, [{:agregado, nombre, arg |> List.to_string() |> String.trim()} | acc])
-        end
-
-      _ ->
-        {:error, {:funcion_sin_parentesis, nombre}}
+    case nombre do
+      "IF" -> tokenizar_lista(resto, [{:kw, :if} | acc])
+      "THEN" -> tokenizar_lista(resto, [{:kw, :then} | acc])
+      "ELSE" -> tokenizar_lista(resto, [{:kw, :else} | acc])
+      _ -> tokenizar_agregado(nombre, resto, acc)
     end
   end
 
   defp tokenizar_lista([c | _], _acc), do: {:error, {:caracter_invalido, <<c::utf8>>}}
+
+  defp tokenizar_agregado(nombre, [?( | resto], acc) do
+    case Enum.split_while(resto, &(&1 != ?))) do
+      {_arg, []} -> {:error, :parentesis_sin_cerrar}
+      {arg, [?) | resto2]} -> tokenizar_lista(resto2, [{:agregado, nombre, arg |> List.to_string() |> String.trim()} | acc])
+    end
+  end
+
+  defp tokenizar_agregado(nombre, _resto, _acc), do: {:error, {:funcion_sin_parentesis, nombre}}
 
   # --- Parser + evaluador recursivo, en el mismo paso ------------------
   # Precedencia estándar: expr (+ -) por encima de term (* /) por encima
@@ -185,18 +286,28 @@ defmodule MetadataApp.MetaPlantillas.Formula do
 
   defp resolver_campo(nombre, valores) do
     case Regex.run(@regex_fijo, nombre) do
-      [_, catalogo, id_texto, campo] -> resolver_fijo(catalogo, String.to_integer(id_texto), campo)
+      [_, catalogo, id_texto, campo] -> resolver_fijo(catalogo, String.to_integer(id_texto), campo, &a_numero/1)
       nil -> a_numero(Map.get(valores, nombre))
     end
   end
 
-  defp resolver_fijo(catalogo, id, campo) do
+  # Mismo camino que resolver_campo/2 pero sin forzar numérico — usado por
+  # "una fórmula de un solo campo" (ver evaluar_tokens/2), donde el valor
+  # se muestra tal cual sea texto, fecha o número.
+  defp resolver_campo_crudo(nombre, valores) do
+    case Regex.run(@regex_fijo, nombre) do
+      [_, catalogo, id_texto, campo] -> resolver_fijo(catalogo, String.to_integer(id_texto), campo, &{:ok, a_valor_mostrable(&1)})
+      nil -> {:ok, a_valor_mostrable(Map.get(valores, nombre))}
+    end
+  end
+
+  defp resolver_fijo(catalogo, id, campo, caster) do
     with {:ok, modulo} <- resolver_modulo(catalogo) do
       try do
         registro = CatalogoGenerico.obtener!(modulo, id)
 
         case Map.fetch(registro, String.to_existing_atom(campo)) do
-          {:ok, valor} -> a_numero(valor)
+          {:ok, valor} -> caster.(valor)
           :error -> {:error, {:campo_inexistente, catalogo, campo}}
         end
       rescue
@@ -280,5 +391,21 @@ defmodule MetadataApp.MetaPlantillas.Formula do
     end
   end
 
+  # Para poder restar fechas dentro de una fórmula (ej. "{hoy} - {fecha_vencimiento}"
+  # → días de diferencia) — Date.to_gregorian_days/1 da un entero que crece
+  # 1 por día, así la resta entre dos fechas da directamente "cuántos días".
+  defp a_numero(%Date{} = d), do: {:ok, Date.to_gregorian_days(d) * 1.0}
+
   defp a_numero(_), do: :error
+
+  # A diferencia de a_numero/1 (que SIEMPRE fuerza un número o falla), esto
+  # nunca falla — usado solo para "fórmula de un solo campo" (ver
+  # evaluar_tokens/2), donde lo que sea que valga el campo se muestra tal
+  # cual, sin exigir que sea numérico.
+  defp a_valor_mostrable(nil), do: ""
+  defp a_valor_mostrable(%Decimal{} = d), do: Decimal.to_float(d)
+  defp a_valor_mostrable(%Date{} = d), do: Calendar.strftime(d, "%d/%m/%Y")
+  defp a_valor_mostrable(n) when is_number(n), do: n * 1.0
+  defp a_valor_mostrable(s) when is_binary(s), do: s
+  defp a_valor_mostrable(otro), do: to_string(otro)
 end

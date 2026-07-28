@@ -21,10 +21,13 @@ defmodule MetadataAppWeb.FichaLive do
 
   use MetadataAppWeb, :live_view_admin
 
+  on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
+
   import Ecto.Query
   import MetadataAppWeb.CampoInputComponents, only: [campo_input: 1]
 
   alias MetadataApp.Repo
+  alias MetadataApp.Autenticacion.Scope
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerico}
   alias MetadataApp.MetaStateEngine
   alias MetadataApp.MetaPlantillas
@@ -498,7 +501,7 @@ defmodule MetadataAppWeb.FichaLive do
 
       <.tab_datos :if={@tab == "datos"} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
         plantilla={@plantilla} relaciones={@relaciones} estados_por_id={@estados_por_id}
-        edicion={%{valores: @form_values, errores: @errores_campos}} />
+        edicion={%{valores: @form_values, errores: @errores_campos, contexto: contexto_actual(assigns[:current_scope])}} />
       <.tab_relaciones :if={@tab == "relaciones"} relaciones={@relaciones} />
       <.tab_historial :if={@tab == "historial"} historial={@historial} estados_por_id={@estados_por_id} />
     </div>
@@ -690,7 +693,7 @@ defmodule MetadataAppWeb.FichaLive do
   # viaja por el mismo phx-change="validar" que dispara cualquier otro
   # campo del formulario.
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "campo_calculado"}} = assigns) do
-    valores = valores_efectivos(assigns.columnas, assigns.registro, assigns.edicion.valores)
+    valores = valores_efectivos(assigns.columnas, assigns.registro, assigns.edicion.valores, assigns.edicion.contexto)
     formula = assigns.nodo["propiedades"]["formula"] || ""
     resultado = formula |> Formula.evaluar(valores) |> formatear_calculado(assigns.nodo["propiedades"])
     assigns = assign(assigns, :resultado, resultado)
@@ -719,7 +722,7 @@ defmodule MetadataAppWeb.FichaLive do
   # siempre.
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "autocompletar"}} = assigns) do
     props = assigns.nodo["propiedades"]
-    valores = valores_efectivos(assigns.columnas, assigns.registro, assigns.edicion.valores)
+    valores = valores_efectivos(assigns.columnas, assigns.registro, assigns.edicion.valores, assigns.edicion.contexto)
     id_texto = Map.get(valores, props["campo_referencia"] || "")
     # El checklist del Constructor manda "campos_destino[]" con un sentinel
     # vacío adelante (así un "ningún campo tildado" también llega como
@@ -834,19 +837,47 @@ defmodule MetadataAppWeb.FichaLive do
   defp padding_seccion(%{"propiedades" => %{"espaciado" => "amplio"}}), do: "px-5 py-4"
   defp padding_seccion(_nodo), do: "px-4 py-2.5"
 
+  # Los 3 pseudo-campos de "Contexto" — se usan igual que cualquier campo
+  # real, con la misma sintaxis "{hoy}"/"{usuario_actual}"/"{empresa_activa}"
+  # (ver Formula, que no sabe ni le importa de dónde salió cada valor del
+  # mapa que recibe). Sin sesión resuelta (nadie logueado, o en medio de
+  # elegir empresa) los dos últimos quedan vacíos en vez de romper nada.
+  defp contexto_actual(%Scope{usuario: usuario, empresa_activa: empresa}) do
+    %{
+      "hoy" => Date.utc_today(),
+      "usuario_actual" => (usuario && (usuario.alias || usuario.email)) || "",
+      "empresa_activa" => (empresa && empresa.nombre) || ""
+    }
+  end
+
+  defp contexto_actual(_sin_scope) do
+    %{"hoy" => Date.utc_today(), "usuario_actual" => "", "empresa_activa" => ""}
+  end
+
   # Mapa campo => valor "de verdad" para un "campo_calculado": lo que el
   # usuario ya tipeó en el form (sin guardar todavía) tiene prioridad sobre
   # lo persistido — mismo criterio que ya usa campo_row/1 para precargar
-  # cada input (valor_mostrado).
-  defp valores_efectivos(columnas, registro, valores_form) do
-    Enum.reduce(columnas, %{}, fn col, acc ->
-      campo = col.schema_context_field
-      valor = Map.get(valores_form, campo) || Map.get(registro, String.to_existing_atom(campo))
-      Map.put(acc, campo, valor)
-    end)
+  # cada input (valor_mostrado). Los pseudo-campos de Contexto (hoy,
+  # usuario_actual, empresa_activa) se mezclan atrás — un campo real con
+  # ese mismo nombre (rarísimo, pero por las dudas) siempre gana.
+  defp valores_efectivos(columnas, registro, valores_form, contexto) do
+    valores_reales =
+      Enum.reduce(columnas, %{}, fn col, acc ->
+        campo = col.schema_context_field
+        valor = Map.get(valores_form, campo) || Map.get(registro, String.to_existing_atom(campo))
+        Map.put(acc, campo, valor)
+      end)
+
+    Map.merge(contexto, valores_reales)
   end
 
-  defp formatear_calculado({:ok, numero}, propiedades) do
+  # Un "IF ... THEN ... ELSE ..." puede devolver texto (ej. "Disponible" /
+  # "Agotado") en vez de un número — Formula.evaluar/2 ahora puede dar
+  # cualquiera de los dos, así que este clause tiene que ir ANTES del
+  # numérico (que asume que puede multiplicar el resultado).
+  defp formatear_calculado({:ok, texto}, _propiedades) when is_binary(texto), do: texto
+
+  defp formatear_calculado({:ok, numero}, propiedades) when is_number(numero) do
     decimales =
       case Integer.parse(to_string(propiedades["decimales"] || "2")) do
         {n, _} when n in 0..10 -> n
