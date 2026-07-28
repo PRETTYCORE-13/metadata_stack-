@@ -7,6 +7,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerador
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaEstadosAdmin
+  alias MetadataApp.MetaConsultas
   alias MetadataApp.MetaPublicador
   alias MetadataApp.BorradoresMotor
   alias MetadataApp.Permissions
@@ -67,6 +68,9 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:carpetas_disponibles, [])
      |> assign(:carpeta_editar, nil)
      |> assign(:carpeta_editar_error, nil)
+     |> assign(:consulta_form, nil)
+     |> assign(:consulta_error, nil)
+     |> assign(:catalogos_base_disponibles, [])
      |> cargar_borradores()
      |> cargar_headers()}
   end
@@ -203,6 +207,50 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                |> assign(:accion_eliminar, nil)
                |> put_flash(:error, "No se pudo eliminar: #{inspect(motivo)}")}
           end
+        end
+    end
+  end
+
+  # Una Consulta (schema_context_type: 3) tampoco tiene tabla física propia
+  # (a diferencia de "pedir_eliminar", nunca se llama a
+  # CatalogoGenerador.impacto/1 acá — reventaría con "relation does not
+  # exist" contra un nombre que no es una tabla real) — mismo criterio de
+  # confirmación simple de una carpeta, no el de "escribe el nombre exacto"
+  # de un catálogo con datos reales que perder.
+  def handle_event("pedir_eliminar_consulta", %{"nombre" => nombre, "label" => label}, socket) do
+    case MetaSchemaContext.obtener_header_por_nombre(nombre) do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Esa consulta ya no existe.")}
+
+      _header ->
+        {:noreply, assign(socket, :accion_eliminar, %{tipo: :confirmar_consulta, nombre: nombre, label: label})}
+    end
+  end
+
+  def handle_event("confirmar_eliminar_consulta", _params, socket) do
+    %{nombre: nombre} = socket.assigns.accion_eliminar
+
+    case MetaSchemaContext.obtener_header_por_nombre(nombre) do
+      nil ->
+        {:noreply,
+         socket
+         |> assign(:accion_eliminar, nil)
+         |> put_flash(:error, "Esa consulta ya no existe.")}
+
+      header ->
+        case MetaSchemaContext.eliminar_header(header) do
+          :ok ->
+            {:noreply,
+             socket
+             |> assign(:accion_eliminar, nil)
+             |> put_flash(:info, "Consulta #{header.schema_context_label} eliminada.")
+             |> cargar_headers()}
+
+          {:error, motivo} ->
+            {:noreply,
+             socket
+             |> assign(:accion_eliminar, nil)
+             |> put_flash(:error, "No se pudo eliminar: #{inspect(motivo)}")}
         end
     end
   end
@@ -405,6 +453,83 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
          socket
          |> assign(:carpeta_form, contexto)
          |> assign(:carpeta_error, motivo)}
+    end
+  end
+
+  # "Nueva consulta" (BC tipo 3, "Consulta Ecto") — mismo patrón de modal
+  # interno que "Nueva carpeta", con un campo extra (catálogo base). Sin
+  # wizard de campos/estados: MetaConsultas.crear/2 auto-puebla `campos`
+  # con TODO el contrato del catálogo elegido, se recorta después desde
+  # el editor de la consulta.
+  def handle_event("abrir_form_consulta", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:carpetas_disponibles, MetaSchemaContext.listar_carpetas_existentes())
+     |> assign(:catalogos_base_disponibles, MetaSchemaContext.listar_catalogos_referenciables())
+     |> assign(:consulta_form, formulario_consulta_vacio())
+     |> assign(:consulta_error, nil)}
+  end
+
+  def handle_event("cerrar_form_consulta", _params, socket) do
+    {:noreply, socket |> assign(:consulta_form, nil) |> assign(:consulta_error, nil)}
+  end
+
+  def handle_event("validar_consulta", %{"contexto" => contexto}, socket) do
+    contexto = Map.put(contexto, "nav_final", normalizar_slug_carpeta(contexto["nav_final"]))
+    nav = componer_nav_carpeta(contexto["carpeta_padre"], contexto["nav_final"])
+
+    error =
+      if nav != "" and MetaSchemaContext.obtener_header_por_nav(nav) do
+        "Esa ruta ya la usa otro catálogo o carpeta."
+      end
+
+    {:noreply, socket |> assign(:consulta_form, contexto) |> assign(:consulta_error, error)}
+  end
+
+  def handle_event("guardar_consulta", %{"contexto" => contexto}, socket) do
+    nav = componer_nav_carpeta(contexto["carpeta_padre"], contexto["nav_final"])
+    nombre = nombre_desde_nav_consulta(nav)
+
+    cond do
+      contexto["catalogo_base"] in [nil, ""] ->
+        {:noreply,
+         socket |> assign(:consulta_form, contexto) |> assign(:consulta_error, "Elegí el catálogo base de la consulta.")}
+
+      nombre == "" or String.trim(contexto["etiqueta"] || "") == "" ->
+        {:noreply,
+         socket
+         |> assign(:consulta_form, contexto)
+         |> assign(:consulta_error, "Completá etiqueta y navegación antes de guardar.")}
+
+      MetaSchemaContext.obtener_header_por_nav(nav) ->
+        {:noreply,
+         socket |> assign(:consulta_form, contexto) |> assign(:consulta_error, "Esa ruta ya la usa otro catálogo o carpeta.")}
+
+      true ->
+        header_attrs = %{
+          "schema_context_name" => nombre,
+          "schema_context_label" => contexto["etiqueta"],
+          "schema_context_nav" => nav,
+          "schema_visible" => true,
+          "schema_context_type" => 3,
+          "detalles" => []
+        }
+
+        with {:ok, {header, _detalles}} <- MetaSchemaContext.crear_header_con_detalles(header_attrs),
+             {:ok, _consulta} <- MetaConsultas.crear(header, contexto["catalogo_base"]) do
+          Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:bc_creado, header})
+
+          {:noreply,
+           socket
+           |> assign(:consulta_form, nil)
+           |> assign(:consulta_error, nil)
+           |> put_flash(:info, "Consulta '#{header.schema_context_label}' creada.")
+           |> cargar_headers()}
+        else
+          {:error, %Ecto.Changeset{} = changeset} ->
+            {:noreply,
+             socket |> assign(:consulta_form, contexto) |> assign(:consulta_error, resumen_errores_carpeta(changeset))}
+        end
     end
   end
 
@@ -662,6 +787,26 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     }
   end
 
+  defp formulario_consulta_vacio do
+    %{"etiqueta" => "", "carpeta_padre" => "", "nav_final" => "", "catalogo_base" => ""}
+  end
+
+  # "consulta_" en vez de "pty_carpeta_" — no es un catálogo de negocio
+  # (nunca tiene tabla física propia), así que no lleva el prefijo pty_
+  # que .gitignore excluye a propósito: una Consulta SÍ debe quedar
+  # versionada en git como cualquier otra metadata.
+  defp nombre_desde_nav_consulta(nav) do
+    sufijo =
+      nav
+      |> String.trim_leading("/")
+      |> String.split("/", trim: true)
+      |> Enum.map(&normalizar_identificador_carpeta/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join("_")
+
+    if sufijo == "", do: "", else: String.slice("consulta_#{sufijo}", 0, 50)
+  end
+
   defp contexto_editar_desde_header(header) do
     %{
       "etiqueta" => header.schema_context_label,
@@ -860,6 +1005,14 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-6 py-2 rounded">
               + Nuevo catálogo
             </.link>
+            <button
+              type="button"
+              phx-click="abrir_form_consulta"
+              title="Consulta Ecto: reporte de solo lectura sobre uno o más catálogos, sin estados ni tabla propia"
+              class="bg-white border border-purple-600 text-purple-700 hover:bg-purple-50 font-bold px-6 py-2 rounded"
+            >
+              + Función Ecto
+            </button>
           </div>
         </div>
       </div>
@@ -916,6 +1069,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     <.modal_publicar wizard={@wizard_publicar} />
     <.modal_carpeta form={@carpeta_form} error={@carpeta_error} carpetas={@carpetas_disponibles} />
     <.modal_editar_carpeta editar={@carpeta_editar} error={@carpeta_editar_error} />
+    <.modal_consulta form={@consulta_form} error={@consulta_error} carpetas={@carpetas_disponibles} catalogos_base={@catalogos_base_disponibles} />
     """
   end
 
@@ -978,8 +1132,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     assigns = assign(assigns, :iconos_sugeridos, @iconos_sugeridos)
 
     ~H"""
-    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div class="bg-white rounded-xl shadow-lg max-w-lg w-full max-h-[90vh] overflow-y-auto">
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-lg w-full max-h-[90vh] overflow-y-auto overflow-x-hidden">
         <div class="flex items-center gap-1.5 bg-[#fafafa] border-b border-gray-200 px-4 py-2.5 rounded-t-xl">
           <span class="material-symbols-outlined text-gray-400" style="font-size: 18px">folder</span>
           <span class="text-sm font-semibold text-gray-900">Nueva carpeta</span>
@@ -994,17 +1148,17 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         <form phx-submit="guardar_carpeta" phx-change="validar_carpeta" class="p-4 space-y-3 text-xs">
           <fieldset class="border border-gray-200 rounded-lg">
             <legend class="px-1.5 ml-2 font-bold uppercase tracking-wide text-[11px] text-gray-500">Contexto</legend>
-            <div class="grid grid-cols-[110px_1fr] gap-y-1.5 gap-x-2 p-2.5 items-start">
+            <div class="grid grid-cols-1 sm:grid-cols-[110px_1fr] gap-y-1.5 gap-x-2 p-2.5 items-start">
               <label class="font-medium text-gray-900 pt-1">Etiqueta:</label>
               <input type="text" name="contexto[etiqueta]" value={@form["etiqueta"]} required maxlength="100"
                 class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="Catálogo de carros" />
 
               <label class="font-medium text-gray-900 pt-1">Navegación:</label>
-              <div>
-                <div class="flex items-center gap-1">
+              <div class="min-w-0">
+                <div class="flex items-center gap-1 flex-wrap">
                   <select name="contexto[carpeta_padre]"
                     title="Elige una carpeta que ya existe para anidar ahí adentro, o deja 'Sin carpeta' para que quede en la raíz del menú."
-                    class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors">
+                    class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 min-w-0 max-w-full focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors">
                     <option value="" selected={@form["carpeta_padre"] in [nil, ""]}>— Sin carpeta (raíz) —</option>
                     <%= for carpeta <- @carpetas do %>
                       <option value={carpeta.ruta} selected={@form["carpeta_padre"] == carpeta.ruta}>{carpeta.etiqueta}</option>
@@ -1013,11 +1167,11 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                   <span class="text-gray-400">/</span>
                   <input type="text" name="contexto[nav_final]" value={@form["nav_final"]} required maxlength="50"
                     title="Minúsculas, sin acentos ni espacios. Guiones sí permitidos."
-                    class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 flex-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="carros" />
+                    class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 flex-1 min-w-[8rem] focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="carros" />
                 </div>
-                <div class="mt-1 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg px-1.5 py-0.5 inline-flex items-center gap-1">
+                <div class="mt-1 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg px-1.5 py-0.5 flex flex-wrap items-center gap-1 max-w-full">
                   <span class="text-purple-400">Vista previa:</span>
-                  <span class="font-mono">{@nav_preview}</span>
+                  <span class="font-mono break-all">{@nav_preview}</span>
                 </div>
               </div>
 
@@ -1082,6 +1236,85 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     """
   end
 
+  # "Nueva consulta" (BC tipo 3) — mismo patrón que modal_carpeta, con un
+  # selector de catálogo base en vez de ícono/visible (una Consulta
+  # siempre nace visible, no tiene ícono propio todavía).
+  defp modal_consulta(%{form: nil} = assigns), do: ~H""
+
+  defp modal_consulta(%{form: form} = assigns) do
+    assigns = assign(assigns, :nav_preview, componer_nav_carpeta(form["carpeta_padre"], form["nav_final"]))
+
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-lg w-full max-h-[90vh] overflow-y-auto overflow-x-hidden">
+        <div class="flex items-center gap-1.5 bg-[#fafafa] border-b border-gray-200 px-4 py-2.5 rounded-t-xl">
+          <span class="material-symbols-outlined text-gray-400" style="font-size: 18px">function</span>
+          <span class="text-sm font-semibold text-gray-900">Nueva consulta (Función Ecto)</span>
+        </div>
+
+        <p class="px-4 pt-2 text-[11px] text-gray-500">
+          Reporte de solo lectura sobre un catálogo — sin estados, sin transiciones, sin tabla propia. Los campos a mostrar se eligen después, desde el editor de la consulta.
+        </p>
+
+        <%= if @error do %>
+          <div class="px-4 py-1.5 text-xs font-medium border-b border-gray-200 bg-red-50 text-red-700 mt-2">
+            {@error}
+          </div>
+        <% end %>
+
+        <form phx-submit="guardar_consulta" phx-change="validar_consulta" class="p-4 space-y-3 text-xs">
+          <fieldset class="border border-gray-200 rounded-lg">
+            <legend class="px-1.5 ml-2 font-bold uppercase tracking-wide text-[11px] text-gray-500">Contexto</legend>
+            <div class="grid grid-cols-1 sm:grid-cols-[110px_1fr] gap-y-1.5 gap-x-2 p-2.5 items-start">
+              <label class="font-medium text-gray-900 pt-1">Etiqueta:</label>
+              <input type="text" name="contexto[etiqueta]" value={@form["etiqueta"]} required maxlength="100"
+                class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="Ventas por producto" />
+
+              <label class="font-medium text-gray-900 pt-1">Navegación:</label>
+              <div class="min-w-0">
+                <div class="flex items-center gap-1 flex-wrap">
+                  <select name="contexto[carpeta_padre]"
+                    class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 min-w-0 max-w-full focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors">
+                    <option value="" selected={@form["carpeta_padre"] in [nil, ""]}>— Sin carpeta (raíz) —</option>
+                    <%= for carpeta <- @carpetas do %>
+                      <option value={carpeta.ruta} selected={@form["carpeta_padre"] == carpeta.ruta}>{carpeta.etiqueta}</option>
+                    <% end %>
+                  </select>
+                  <span class="text-gray-400">/</span>
+                  <input type="text" name="contexto[nav_final]" value={@form["nav_final"]} required maxlength="50"
+                    class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 flex-1 min-w-[8rem] focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="ventas-por-producto" />
+                </div>
+                <div class="mt-1 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg px-1.5 py-0.5 flex flex-wrap items-center gap-1 max-w-full">
+                  <span class="text-purple-400">Vista previa:</span>
+                  <span class="font-mono break-all">{@nav_preview}</span>
+                </div>
+              </div>
+
+              <label class="font-medium text-gray-900 pt-1">Catálogo base:</label>
+              <select name="contexto[catalogo_base]" required
+                class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 w-full min-w-0 max-w-full focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors">
+                <option value="">— Elegir —</option>
+                <%= for c <- @catalogos_base do %>
+                  <option value={c.nombre} selected={@form["catalogo_base"] == c.nombre}>{c.etiqueta}</option>
+                <% end %>
+              </select>
+            </div>
+          </fieldset>
+
+          <div class="flex justify-end gap-2 border-t border-gray-200 pt-3">
+            <button type="button" phx-click="cerrar_form_consulta" class="px-3.5 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50 transition-colors">
+              Cancelar
+            </button>
+            <button type="submit" class="px-3.5 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
+              Crear consulta
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+    """
+  end
+
   # "Editar carpeta" como modal interno — mismo patrón que modal_carpeta.
   # Solo etiqueta/ícono/visible son editables; nombre de sistema y
   # navegación se muestran de solo lectura (cambiarlos desconectaría
@@ -1098,8 +1331,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     assigns = assign(assigns, :iconos_sugeridos, @iconos_sugeridos)
 
     ~H"""
-    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div class="bg-white rounded-xl shadow-lg max-w-lg w-full max-h-[90vh] overflow-y-auto">
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-lg w-full max-h-[90vh] overflow-y-auto overflow-x-hidden">
         <div class="flex items-center gap-1.5 bg-[#fafafa] border-b border-gray-200 px-4 py-2.5 rounded-t-xl">
           <span class="material-symbols-outlined text-gray-400" style="font-size: 18px">folder</span>
           <span class="text-sm font-semibold text-gray-900">Editar carpeta</span>
@@ -1114,13 +1347,13 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         <form phx-submit="guardar_editar_carpeta" phx-change="validar_editar_carpeta" class="p-4 space-y-3 text-xs">
           <fieldset class="border border-gray-200 rounded-lg">
             <legend class="px-1.5 ml-2 font-bold uppercase tracking-wide text-[11px] text-gray-500">Contexto</legend>
-            <div class="grid grid-cols-[110px_1fr] gap-y-1.5 gap-x-2 p-2.5 items-start">
+            <div class="grid grid-cols-1 sm:grid-cols-[110px_1fr] gap-y-1.5 gap-x-2 p-2.5 items-start">
               <label class="font-medium text-gray-900 pt-1">Nombre de sistema:</label>
-              <span class="font-mono text-gray-500 pt-1">{@header.schema_context_name}</span>
+              <span class="font-mono text-gray-500 pt-1 break-all">{@header.schema_context_name}</span>
 
               <label class="font-medium text-gray-900 pt-1">Navegación:</label>
-              <div>
-                <span class="font-mono text-gray-500">{@header.schema_context_nav}</span>
+              <div class="min-w-0">
+                <span class="font-mono text-gray-500 break-all">{@header.schema_context_nav}</span>
                 <p class="mt-0.5 text-[11px] text-gray-500">
                   La ruta no se edita aquí — cambiarla desconectaría los catálogos que ya
                   están anidados adentro. Si hace falta moverla, bórrala y créala de
@@ -1203,7 +1436,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   defp modal_eliminar(%{accion: %{tipo: :confirmar}} = assigns) do
     ~H"""
-    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
         <h2 class="text-lg font-bold text-gray-900 mb-2">Eliminar catálogo</h2>
         <p class="text-sm text-gray-700 mb-4">
@@ -1247,7 +1480,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   defp modal_eliminar(%{accion: %{tipo: :confirmar_carpeta}} = assigns) do
     ~H"""
-    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
         <h2 class="text-lg font-bold text-gray-900 mb-2">Eliminar carpeta</h2>
         <p class="text-sm text-gray-700 mb-6">
@@ -1274,9 +1507,38 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     """
   end
 
+  defp modal_eliminar(%{accion: %{tipo: :confirmar_consulta}} = assigns) do
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+        <h2 class="text-lg font-bold text-gray-900 mb-2">Eliminar consulta</h2>
+        <p class="text-sm text-gray-700 mb-6">
+          Se eliminará la consulta <strong>"{@accion.label}"</strong>. Este proceso no es reversible.
+        </p>
+        <div class="flex justify-end gap-3">
+          <button
+            type="button"
+            phx-click="cancelar_eliminar"
+            class="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            phx-click="confirmar_eliminar_consulta"
+            class="px-4 py-2 rounded bg-red-600 text-white text-sm font-semibold hover:bg-red-700"
+          >
+            Eliminar
+          </button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
   defp modal_eliminar(%{accion: %{tipo: :bloqueado}} = assigns) do
     ~H"""
-    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
         <h2 class="text-lg font-bold text-gray-900 mb-2">No se puede eliminar</h2>
         <p class="text-sm text-gray-700 mb-6">
@@ -1313,7 +1575,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     assigns = assign(assigns, :automaticos, assigns.wizard.catalogos -- assigns.wizard.seleccionados)
 
     ~H"""
-    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div class="bg-white rounded-xl shadow-lg max-w-lg w-full max-h-[90vh] overflow-y-auto p-6">
         <h2 class="text-lg font-bold text-gray-900 mb-1">Publicar paquete</h2>
         <p class="text-sm text-gray-600 mb-4">
@@ -1446,15 +1708,33 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             />
           </td>
           <td class="px-4 py-2 text-gray-800" style={"padding-left: #{16 + @nivel * 20}px"}>{nodo.id}</td>
-          <td class="px-4 py-2 text-gray-800">{nodo.label}</td>
+          <td class="px-4 py-2 text-gray-800">
+            <span :if={Map.get(nodo, :es_consulta, false)} title="Consulta Ecto" class="mr-1">🔎</span>
+            {nodo.label}
+          </td>
           <td class="px-4 py-2 text-gray-800">{nodo.nav}</td>
           <td class="px-4 py-2 text-gray-800">{if nodo.visible, do: "Sí", else: "No"}</td>
           <td class="px-4 py-2">
             <div class="flex gap-2">
-              <.link navigate={~p"/sysadmin/bc-list/#{nodo.id}/motor"} class="text-blue-600 hover:text-blue-800 text-xs font-semibold">
+              <.link
+                :if={not Map.get(nodo, :es_consulta, false)}
+                navigate={~p"/sysadmin/bc-list/#{nodo.id}/motor"}
+                class="text-blue-600 hover:text-blue-800 text-xs font-semibold"
+              >
                 Editar
               </.link>
-              <.link navigate={~p"/sysadmin/bc-list/#{nodo.id}/plantilla"} class="text-purple-600 hover:text-purple-800 text-xs font-semibold">
+              <.link
+                :if={Map.get(nodo, :es_consulta, false)}
+                navigate={~p"/sysadmin/bc-list/#{nodo.id}/consulta"}
+                class="text-blue-600 hover:text-blue-800 text-xs font-semibold"
+              >
+                Editar
+              </.link>
+              <.link
+                :if={not Map.get(nodo, :es_consulta, false)}
+                navigate={~p"/sysadmin/bc-list/#{nodo.id}/plantilla"}
+                class="text-purple-600 hover:text-purple-800 text-xs font-semibold"
+              >
                 PostView
               </.link>
               <.link
@@ -1465,6 +1745,17 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                 Permisos
               </.link>
               <button
+                :if={Map.get(nodo, :es_consulta, false)}
+                type="button"
+                phx-click="pedir_eliminar_consulta"
+                phx-value-nombre={nodo.id}
+                phx-value-label={nodo.label}
+                class="text-red-600 hover:text-red-800 text-xs font-semibold"
+              >
+                Eliminar
+              </button>
+              <button
+                :if={not Map.get(nodo, :es_consulta, false)}
                 type="button"
                 phx-click="pedir_eliminar"
                 phx-value-tabla={nodo.id}

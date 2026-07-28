@@ -139,11 +139,17 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
         :por_usuario -> Permissions.roles_de_usuario(socket.assigns.usuario_seleccionado.id, empresa_id)
       end
 
+    # Una Consulta Ecto es de solo lectura (ver moduledoc de
+    # MetadataApp.MetaConsultas) — "crear"/"editar"/"eliminar" no tienen
+    # ningún código que los consulte para este recurso (ni siquiera existe
+    # un módulo Ecto real detrás, ver CatalogoController.resolver/1), así
+    # que ni se ofrecen acá para no sugerir una capacidad que no existe.
+    acciones_crud = if socket.assigns.catalogo.es_consulta, do: ~w(leer), else: @acciones_crud
     acciones_transiciones = Enum.map(socket.assigns.transiciones, & &1.accion)
     rol_ids = Enum.map(roles, & &1.id)
-    estado = Permissions.estado_permisos_para_roles(recurso, rol_ids, @acciones_crud ++ acciones_transiciones)
+    estado = Permissions.estado_permisos_para_roles(recurso, rol_ids, acciones_crud ++ acciones_transiciones)
 
-    socket |> assign(:roles, roles) |> assign(:estado, estado)
+    socket |> assign(:roles, roles) |> assign(:estado, estado) |> assign(:acciones_crud, acciones_crud)
   end
 
   def render(assigns) do

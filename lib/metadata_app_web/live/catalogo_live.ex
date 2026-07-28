@@ -6,6 +6,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerico
   alias MetadataApp.MetaStateEngine
+  alias MetadataApp.MetaConsultas
   alias MetadataApp.Permissions
   alias MetadataApp.Autenticacion.Scope
   alias MetadataAppWeb.AdminNav
@@ -33,7 +34,11 @@ defmodule MetadataAppWeb.CatalogoLive do
 
       header ->
         if autorizado_para_leer?(socket.assigns[:current_scope], header.schema_context_name) do
-          montar_catalogo(socket, header)
+          if header.schema_context_type == 3 do
+            montar_consulta(socket, header)
+          else
+            montar_catalogo(socket, header)
+          end
         else
           {:ok,
            socket
@@ -125,6 +130,48 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:detalle_form_error, nil)
      |> assign(:detalle_error, nil)
      |> cargar_filas()}
+  end
+
+  # Consulta Ecto (schema_context_type: 3): reporte de solo lectura, sin
+  # motor de estados/TRN/maestro-detalle/alta — reusa el mismo render de
+  # tabla + panel de filtros que un catálogo normal (columna_desde_campo/1
+  # traduce cada campo de la consulta al mismo shape %{schema_context_field:,
+  # schema_context_properties:} que ya entienden panel_filtros/1,
+  # filtro_columna/1 y construir_filtros_ecto/2, sin duplicar nada de eso).
+  defp montar_consulta(socket, header) do
+    consulta = MetaConsultas.obtener_por_header_id(header.id)
+
+    columnas =
+      consulta.campos
+      |> Enum.filter(&(Map.get(&1, "visible") == true))
+      |> Enum.sort_by(&Map.get(&1, "orden", 0))
+      |> Enum.map(&columna_desde_campo_consulta/1)
+
+    {:ok,
+     socket
+     |> assign(:current_page, header.schema_context_name)
+     |> assign(:encontrado?, true)
+     |> assign(:es_consulta?, true)
+     |> assign(:label, header.schema_context_label)
+     |> assign(:consulta, consulta)
+     |> assign(:columnas, columnas)
+     |> assign(:pagina, 1)
+     |> assign(:filtros, %{})
+     |> assign(:filtros_activos, [])
+     |> assign(:selector_campo_abierto, false)
+     |> assign(:busqueda_campo_filtro, "")
+     |> assign(:busqueda_general, "")
+     |> assign(:mostrar_filtros, false)
+     |> assign(:totales, %{})
+     |> cargar_filas()}
+  end
+
+  defp columna_desde_campo_consulta(campo) do
+    %{
+      schema_context_field: campo["campo"],
+      schema_context_properties: %{"etiqueta" => campo["etiqueta"], "tipo" => campo["tipo"] || "string"},
+      totalizar: campo["totalizar"] == true
+    }
   end
 
   def handle_event("change_page", %{"id" => id}, socket) do
@@ -287,7 +334,41 @@ defmodule MetadataAppWeb.CatalogoLive do
   # cortar en el LiveView) — a diferencia de BcListLive, que pagina en
   # memoria porque ahí son decenas de Business Contexts, no potencialmente
   # miles de filas de datos de un catálogo real.
-  defp cargar_filas(socket) do
+  defp cargar_filas(%{assigns: %{es_consulta?: true}} = socket), do: cargar_filas_consulta(socket)
+  defp cargar_filas(socket), do: cargar_filas_catalogo(socket)
+
+  # Mismo criterio de 2 pasos que un catálogo normal: primero contar/3 (sin
+  # paginar) para saber @total_paginas y calcular el offset correcto, recién
+  # después pedir la página con ese offset — MetaConsultas.ejecutar/4 también
+  # devuelve un total_filas propio (para @totales, calculado sobre TODAS las
+  # filas filtradas, no solo la página), pero ese no sirve para el offset
+  # porque en ese punto todavía no lo conocemos.
+  defp cargar_filas_consulta(socket) do
+    %{consulta: consulta, columnas: columnas, filtros: filtros, busqueda_general: busqueda_general} = socket.assigns
+
+    filtros_ecto = construir_filtros_ecto(filtros, columnas)
+    campos_busqueda = Enum.map(columnas, & &1.schema_context_field)
+    busqueda = {busqueda_general, campos_busqueda}
+
+    total_filas = MetaConsultas.contar(consulta, filtros_ecto, busqueda)
+    total_paginas = max(ceil(total_filas / @por_pagina), 1)
+    pagina = socket.assigns.pagina |> max(1) |> min(total_paginas)
+    offset = (pagina - 1) * @por_pagina
+
+    %{filas: filas, totales: totales} =
+      MetaConsultas.ejecutar(consulta, filtros_ecto, [limit: @por_pagina, offset: offset], busqueda)
+
+    socket
+    |> assign(:filas, filas)
+    |> assign(:totales, totales)
+    |> assign(:pagina, pagina)
+    |> assign(:total_paginas, total_paginas)
+    |> assign(:total_filas, total_filas)
+    |> assign(:inicio, if(total_filas == 0, do: 0, else: offset + 1))
+    |> assign(:fin, min(offset + @por_pagina, total_filas))
+  end
+
+  defp cargar_filas_catalogo(socket) do
     %{
       modulo: modulo,
       current_page: catalogo,
@@ -488,6 +569,120 @@ defmodule MetadataAppWeb.CatalogoLive do
     <div class="p-8">
       <h1 class="text-xl font-bold">Catálogo no encontrado</h1>
       <p class="text-gray-500 mt-2">No hay ningún catálogo registrado con esta ruta.</p>
+    </div>
+    """
+  end
+
+  def render(%{es_consulta?: true} = assigns) do
+    ~H"""
+    <div class="p-6">
+      <div class="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-2">
+            <span class="material-symbols-outlined text-purple-600" title="Consulta Ecto (solo lectura)">search</span>
+            <h1 class="text-xl font-bold text-gray-900">{@label}</h1>
+          </div>
+
+          <span class="text-xs font-medium text-gray-500 bg-gray-100 rounded-full px-3 py-1">
+            {@inicio}-{@fin} de {@total_filas}
+          </span>
+        </div>
+
+        <div class="flex items-center gap-2 mb-4">
+          <div class="relative flex-1">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+              <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              value={@busqueda_general}
+              phx-keyup="buscar_general"
+              phx-debounce="300"
+              placeholder="Buscar en cualquier columna..."
+              class="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500"
+            />
+          </div>
+          <div class="relative">
+            <button
+              type="button"
+              phx-click="abrir_filtros"
+              class={[
+                "flex items-center gap-1.5 border rounded-lg px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors",
+                if(contar_filtros_activos(@filtros) > 0,
+                  do: "border-purple-600 bg-purple-50 text-purple-700",
+                  else: "border-gray-300 text-gray-600 hover:bg-gray-50"
+                )
+              ]}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+              </svg>
+              Filtros
+              <%= if contar_filtros_activos(@filtros) > 0 do %>
+                <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-600 text-white text-[10px] font-bold">
+                  {contar_filtros_activos(@filtros)}
+                </span>
+              <% end %>
+            </button>
+
+            <.panel_filtros
+              mostrar={@mostrar_filtros}
+              columnas={@columnas}
+              filtros={@filtros}
+              filtros_activos={@filtros_activos}
+              selector_campo_abierto={@selector_campo_abierto}
+              busqueda_campo_filtro={@busqueda_campo_filtro}
+            />
+          </div>
+        </div>
+
+        <div class="overflow-x-auto rounded-xl border border-gray-200">
+          <table class="min-w-full divide-y divide-gray-200 text-xs">
+            <thead class="bg-gray-50">
+              <tr>
+                <%= for columna <- @columnas do %>
+                  <th class={["px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide", alineacion_columna(columna)]}>
+                    {columna.schema_context_properties["etiqueta"]}
+                  </th>
+                <% end %>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+              <%= for fila <- @filas do %>
+                <tr class="hover:bg-purple-50/60 transition-colors">
+                  <%= for columna <- @columnas do %>
+                    <% valor = Map.get(fila, String.to_existing_atom(columna.schema_context_field)) %>
+                    <td class={[
+                      "px-4 py-1.5 text-[10px] text-gray-700",
+                      alineacion_columna(columna)
+                    ]}>
+                      {formatear_celda(valor)}
+                    </td>
+                  <% end %>
+                </tr>
+              <% end %>
+              <%= if @filas == [] do %>
+                <tr>
+                  <td class="px-4 py-10 text-center text-gray-400 text-sm" colspan={max(length(@columnas), 1)}>
+                    Sin registros todavía
+                  </td>
+                </tr>
+              <% end %>
+            </tbody>
+            <tfoot :if={@totales != %{}} class="bg-purple-50 border-t-2 border-purple-200 font-bold">
+              <tr>
+                <%= for columna <- @columnas do %>
+                  <td class={["px-4 py-2 text-[10px] text-purple-900", alineacion_columna(columna)]}>
+                    <%= if Map.get(columna, :totalizar) do %>
+                      {formatear_celda(Map.get(@totales, String.to_existing_atom(columna.schema_context_field)))}
+                    <% end %>
+                  </td>
+                <% end %>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
     </div>
     """
   end

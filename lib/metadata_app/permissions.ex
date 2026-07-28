@@ -262,9 +262,10 @@ defmodule MetadataApp.Permissions do
     desde el maestro, no tienen permisos propios.
   - Catálogos sin ningún estado/transición configurado todavía (recién
     graduados del wizard, sin motor de estados armado) — no hay nada que
-    conceder ahí hasta que tengan al menos una transición real. Cuando
-    existan reportes/consultas de solo lectura (sin motor de estados) que
-    también necesiten RBAC, este filtro se revisa — por ahora queda así.
+    conceder ahí hasta que tengan al menos una transición real.
+  - Excepción: catálogos tipo 3 (Consulta Ecto, de solo lectura — ver
+    MetaConsultas) nunca tienen motor de estados por diseño, así que se
+    dejan pasar sin exigirles ninguna transición.
   """
   def buscar_catalogos(query, limite \\ 20)
 
@@ -279,14 +280,15 @@ defmodule MetadataApp.Permissions do
         where:
           is_nil(h.delete_guid) and h.schema_context_type != 2 and is_nil(h.schema_encabezado_id) and
             (ilike(h.schema_context_name, ^texto) or ilike(h.schema_context_label, ^texto)) and
-            exists(
-              from t in "meta_schema_transiciones",
-                where: t.meta_schema_header_id == parent_as(:header).id and is_nil(t.delete_guid),
-                select: 1
-            ),
+            (h.schema_context_type == 3 or
+               exists(
+                 from t in "meta_schema_transiciones",
+                   where: t.meta_schema_header_id == parent_as(:header).id and is_nil(t.delete_guid),
+                   select: 1
+               )),
         order_by: h.schema_context_label,
         limit: ^limite,
-        select: %{recurso: h.schema_context_name, label: h.schema_context_label}
+        select: %{recurso: h.schema_context_name, label: h.schema_context_label, es_consulta: h.schema_context_type == 3}
     )
   end
 
@@ -467,7 +469,7 @@ defmodule MetadataApp.Permissions do
     Repo.one(
       from h in Header,
         where: h.schema_context_name == ^recurso and is_nil(h.delete_guid),
-        select: %{recurso: h.schema_context_name, label: h.schema_context_label}
+        select: %{recurso: h.schema_context_name, label: h.schema_context_label, es_consulta: h.schema_context_type == 3}
     )
   end
 

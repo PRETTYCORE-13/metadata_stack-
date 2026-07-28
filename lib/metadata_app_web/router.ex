@@ -126,6 +126,7 @@ defmodule MetadataAppWeb.Router do
       live "/sysadmin/bc-list", Sysadmin.BcListLive
       live "/sysadmin/bc-list/nuevo-completo", Sysadmin.BcNuevoCompletoLive
       live "/sysadmin/bc-list/:nombre/motor", Sysadmin.BcMotorLive
+      live "/sysadmin/bc-list/:nombre/consulta", Sysadmin.ConsultaEditorLive
       live "/sysadmin/bc-list/:nombre/plantilla", Sysadmin.PlantillaConstructorLive
       live "/sysadmin/buscar-trn", Sysadmin.BuscadorTrnLive
     end

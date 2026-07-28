@@ -47,7 +47,10 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     |> Repo.aggregate(:count)
   end
 
-  defp aplicar_filtros(query, filtros) do
+  # Público (no defp) — MetaConsultas.ejecutar/3 reusa exactamente esta
+  # misma semántica de filtros para las Consultas Ecto (banda de filtros
+  # idéntica a la de cualquier catálogo, en vez de reinventarla).
+  def aplicar_filtros(query, filtros) do
     Enum.reduce(filtros, query, fn {campo, valor}, acc ->
       campo_atom = String.to_existing_atom(to_string(campo))
       aplicar_filtro(acc, campo_atom, valor)
@@ -79,10 +82,10 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     from(r in query, where: field(r, ^campo) == ^valor)
   end
 
-  defp aplicar_busqueda(query, nil), do: query
-  defp aplicar_busqueda(query, {texto, _campos}) when texto in [nil, ""], do: query
+  def aplicar_busqueda(query, nil), do: query
+  def aplicar_busqueda(query, {texto, _campos}) when texto in [nil, ""], do: query
 
-  defp aplicar_busqueda(query, {texto, campos}) do
+  def aplicar_busqueda(query, {texto, campos}) do
     patron = "%#{texto}%"
 
     condicion =
@@ -94,7 +97,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     from(r in query, where: ^condicion)
   end
 
-  defp aplicar_paginacion(query, opciones) do
+  def aplicar_paginacion(query, opciones) do
     query
     |> aplicar_limit(Keyword.get(opciones, :limit))
     |> aplicar_offset(Keyword.get(opciones, :offset))

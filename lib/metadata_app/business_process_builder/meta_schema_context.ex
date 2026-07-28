@@ -52,7 +52,8 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
       nav: h.schema_context_nav,
       visible: h.schema_visible,
       icono: h.schema_context_icono,
-      es_carpeta: h.schema_context_type == 2
+      es_carpeta: h.schema_context_type == 2,
+      es_consulta: h.schema_context_type == 3
     }
   end
 
