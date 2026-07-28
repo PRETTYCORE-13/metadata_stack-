@@ -129,6 +129,7 @@ defmodule MetadataAppWeb.Router do
       live "/sysadmin/bc-list/:nombre/consulta", Sysadmin.ConsultaEditorLive
       live "/sysadmin/bc-list/:nombre/plantilla", Sysadmin.PlantillaConstructorLive
       live "/sysadmin/buscar-trn", Sysadmin.BuscadorTrnLive
+      live "/sysadmin/tepache", Sysadmin.TepacheLive
     end
 
     # Administración de RBAC: siempre disponible (a diferencia del BPB de

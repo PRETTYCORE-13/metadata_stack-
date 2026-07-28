@@ -15,7 +15,7 @@ defmodule MetadataAppWeb.AdminNav do
     "usuarios"  => "/"
   }
 
-  @ids_solo_bpb ["bc_list", "buscar_trn"]
+  @ids_solo_bpb ["bc_list", "buscar_trn", "tepache"]
 
   @doc """
   Quita del menú lateral las entradas que dependen del Business Process
