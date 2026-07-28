@@ -124,8 +124,6 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:detalle_nuevo_renglon_form, nil)
      |> assign(:detalle_form_error, nil)
      |> assign(:detalle_error, nil)
-     |> assign(:fila_editando, nil)
-     |> assign(:error_edicion, nil)
      |> cargar_filas()}
   end
 
@@ -283,62 +281,6 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:filtros, quitar_valores_filtro(socket.assigns.filtros, campo))
      |> assign(:pagina, 1)
      |> cargar_filas()}
-  end
-
-  # Clic en una fila: se trae el registro FRESCO (no el ya serializado en
-  # @filas) porque lo que decide qué es editable ahora mismo es su
-  # estado_id actual — MetaStateEngine.campos_editables/2 es el mismo
-  # "contrato" que ya hace cumplir CatalogoGenerico.actualizar/2 al guardar,
-  # así que lo que se ve acá es exactamente lo que el servidor va a aceptar,
-  # ni más ni menos. Un campo aparece en el modal solo si pasa las DOS
-  # restricciones del contrato: su propiedad "editable" (fija, del schema del
-  # catálogo) Y, si el catálogo adoptó el motor de estados, estar en la
-  # lista campos_editables de la transición "guardar" resuelta para el
-  # estado actual del registro. Catálogos sin motor: la segunda restricción
-  # no aplica (campos_editables/2 devuelve todos los campos), así que manda
-  # solo la propiedad "editable" de cada campo. Catálogos CON motor pero sin
-  # transición "guardar" resuelta: nada es editable (ver el mensaje en el modal).
-  def handle_event("abrir_editar", %{"id" => id}, socket) do
-    modulo = socket.assigns.modulo
-    catalogo = socket.assigns.current_page
-    registro = CatalogoGenerico.obtener!(modulo, id)
-
-    transicion = MetaStateEngine.transicion_guardar(catalogo, registro.estado_id)
-    nombres_editables = MetaStateEngine.campos_editables(catalogo, transicion)
-
-    campos =
-      catalogo
-      |> MetaSchemaContext.listar_detalles()
-      |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
-      |> Enum.filter(&(&1.schema_context_field in nombres_editables))
-      |> Enum.filter(&(get_in(&1, [:schema_context_properties, "editable"]) == true))
-      |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
-
-    {:noreply,
-     socket
-     |> assign(:fila_editando, %{registro: registro, campos: campos})
-     |> assign(:error_edicion, nil)}
-  end
-
-  def handle_event("cerrar_editar", _params, socket) do
-    {:noreply, socket |> assign(:fila_editando, nil) |> assign(:error_edicion, nil)}
-  end
-
-  def handle_event("guardar_edicion", %{"registro" => attrs}, socket) do
-    %{registro: registro} = socket.assigns.fila_editando
-
-    case CatalogoGenerico.actualizar(registro, attrs) do
-      {:ok, _registro} ->
-        {:noreply,
-         socket
-         |> assign(:fila_editando, nil)
-         |> assign(:error_edicion, nil)
-         |> put_flash(:info, "Registro actualizado.")
-         |> cargar_filas()}
-
-      {:error, changeset} ->
-        {:noreply, assign(socket, :error_edicion, resumen_errores(changeset))}
-    end
   end
 
   # Paginación real por SQL (limit/offset en la query, no traer todo y
@@ -541,17 +483,6 @@ defmodule MetadataAppWeb.CatalogoLive do
     _ -> nil
   end
 
-  # Mismo idioma ya usado en otras pantallas de sysadmin para mostrar
-  # errores de changeset (ej. resumen_errores_carpeta/1 en BcListLive) —
-  # un solo string, no el más lindo, pero consistente con el resto de la app.
-  defp resumen_errores(changeset) do
-    changeset
-    |> Ecto.Changeset.traverse_errors(fn {msg, opts} ->
-      Enum.reduce(opts, msg, fn {k, v}, acc -> String.replace(acc, "%{#{k}}", to_string(v)) end)
-    end)
-    |> inspect()
-  end
-
   def render(%{encontrado?: false} = assigns) do
     ~H"""
     <div class="p-8">
@@ -683,11 +614,7 @@ defmodule MetadataAppWeb.CatalogoLive do
             </thead>
             <tbody class="divide-y divide-gray-100">
               <%= for fila <- @filas do %>
-                <tr
-                  class="hover:bg-purple-50/60 transition-colors cursor-pointer"
-                  phx-click="abrir_editar"
-                  phx-value-id={fila.id}
-                >
+                <tr class="hover:bg-purple-50/60 transition-colors">
                   <td class="px-4 py-1.5 text-[10px] text-gray-700">
                     <%= if @es_maestro? do %>
                       <button type="button" phx-click="abrir_detalle" phx-value-id={fila.id}
@@ -742,8 +669,6 @@ defmodule MetadataAppWeb.CatalogoLive do
         catalogos_detalle={@catalogos_detalle} seleccion={@detalle_seleccion}
         nuevo_renglon_form={@detalle_nuevo_renglon_form} form_error={@detalle_form_error} error={@detalle_error}
         header_columnas={@columnas} estados_por_id={@estados_por_id} label={@label} />
-
-      <.modal_editar_fila fila_editando={@fila_editando} error={@error_edicion} />
     </div>
     """
   end
@@ -771,146 +696,6 @@ defmodule MetadataAppWeb.CatalogoLive do
   end
 
   defp formatear_celda(valor), do: valor
-
-  # Modal de edición — se abre al clickear una fila (ver "abrir_editar").
-  # Muestra SOLO los campos que MetaStateEngine.campos_editables/2 permite
-  # ahora mismo para esta fila puntual (mismo contrato que ya hace cumplir
-  # CatalogoGenerico.actualizar/2 al guardar, no una lista aparte inventada
-  # acá). Si viene vacía (catálogo con motor de estados pero sin transición
-  # "guardar" resuelta para el estado actual), se avisa en vez de mostrar un
-  # formulario sin nada adentro.
-  attr :fila_editando, :map, default: nil
-  attr :error, :string, default: nil
-
-  defp modal_editar_fila(%{fila_editando: nil} = assigns), do: ~H""
-
-  defp modal_editar_fila(assigns) do
-    ~H"""
-    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div class="bg-white rounded-xl shadow-lg max-w-lg w-full max-h-[90vh] overflow-y-auto">
-        <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-          <h2 class="text-base font-bold text-gray-900">Editar registro {@fila_editando.registro.id}</h2>
-          <button
-            type="button"
-            phx-click="cerrar_editar"
-            aria-label="Cerrar"
-            class="w-7 h-7 flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
-
-        <%= if @error do %>
-          <div class="px-4 py-2 text-xs font-medium bg-red-50 text-red-700 border-b border-gray-200">
-            {@error}
-          </div>
-        <% end %>
-
-        <%= if @fila_editando.campos == [] do %>
-          <p class="p-4 text-sm text-gray-500">
-            Este registro no se puede editar en su estado actual.
-          </p>
-          <div class="flex justify-end px-4 py-3 border-t border-gray-200">
-            <button
-              type="button"
-              phx-click="cerrar_editar"
-              class="px-4 py-2 rounded bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700"
-            >
-              Cerrar
-            </button>
-          </div>
-        <% else %>
-          <form phx-submit="guardar_edicion" class="p-4 space-y-3">
-            <%= for columna <- @fila_editando.campos do %>
-              <.campo_editar columna={columna} registro={@fila_editando.registro} />
-            <% end %>
-
-            <div class="flex justify-end gap-2 pt-2 border-t border-gray-200">
-              <button
-                type="button"
-                phx-click="cerrar_editar"
-                class="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                class="px-4 py-2 rounded bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700"
-              >
-                Guardar
-              </button>
-            </div>
-          </form>
-        <% end %>
-      </div>
-    </div>
-    """
-  end
-
-  # Un input por campo editable, según su tipo (mismo dispatch que
-  # filtro_columna/1, pero acá es UN valor a editar, no un rango de
-  # filtro). Nombrado "registro[#{campo}]" — calza con lo que espera
-  # handle_event("guardar_edicion", %{"registro" => attrs}, ...).
-  attr :columna, :map, required: true
-  attr :registro, :map, required: true
-
-  defp campo_editar(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
-    campo = assigns.columna.schema_context_field
-    valor = Map.get(assigns.registro, String.to_existing_atom(campo))
-    assigns = assigns |> assign(:campo, campo) |> assign(:valor, valor)
-
-    ~H"""
-    <div class="flex flex-col gap-1">
-      <label class="text-xs font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
-      <label class="flex items-center gap-2 cursor-pointer select-none">
-        <input type="hidden" name={"registro[#{@campo}]"} value="false" />
-        <input type="checkbox" name={"registro[#{@campo}]"} value="true" checked={@valor == true} class="accent-purple-600" />
-        <span class="text-sm text-gray-700">{if @valor, do: "Sí", else: "No"}</span>
-      </label>
-    </div>
-    """
-  end
-
-  defp campo_editar(%{columna: %{schema_context_properties: %{"tipo" => tipo}}} = assigns)
-       when tipo in ["integer", "decimal", "date"] do
-    campo = assigns.columna.schema_context_field
-    valor = Map.get(assigns.registro, String.to_existing_atom(campo))
-    tipo_input = if tipo == "date", do: "date", else: "number"
-    assigns = assigns |> assign(:campo, campo) |> assign(:valor, valor) |> assign(:tipo_input, tipo_input)
-
-    ~H"""
-    <div class="flex flex-col gap-1">
-      <label class="text-xs font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
-      <input
-        type={@tipo_input}
-        name={"registro[#{@campo}]"}
-        value={@valor}
-        step={if @tipo_input == "number", do: "any"}
-        class="border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500"
-      />
-    </div>
-    """
-  end
-
-  defp campo_editar(assigns) do
-    campo = assigns.columna.schema_context_field
-    valor = Map.get(assigns.registro, String.to_existing_atom(campo))
-    assigns = assigns |> assign(:campo, campo) |> assign(:valor, valor)
-
-    ~H"""
-    <div class="flex flex-col gap-1">
-      <label class="text-xs font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
-      <input
-        type="text"
-        name={"registro[#{@campo}]"}
-        value={@valor}
-        class="border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500"
-      />
-    </div>
-    """
-  end
 
   # Popover compacto anclado al botón "Filtros" (en vez del drawer de
   # pantalla completa de antes, que se sentía como una ventana aparte para
