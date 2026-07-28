@@ -156,12 +156,46 @@ defmodule MetadataApp.MetaImportExport do
           nil ->
             crear_transicion(header, attrs, origen_id, destino_id, acc, mensajes)
 
-          _transicion ->
-            {acc, mensajes ++ ["= #{header.schema_context_name} transición \"#{attrs["accion"]}\": ya existía"]}
+          transicion ->
+            actualizar_transicion_si_cambio(header, transicion, attrs, destino_id, acc, mensajes)
         end
       end)
 
     mensajes
+  end
+
+  # A diferencia de importar_estados/2 (que deja el estado existente
+  # intacto), acá SÍ conviene actualizar si cambió: campos_editables/
+  # estado_destino son configuración (no hay pérdida de datos al
+  # pisarlos, a diferencia de borrar un campo de meta_schema_detail) --
+  # sin esto, "más validaciones en el autómata" sobre una transición que
+  # ya existe por nombre nunca se propagaba al reimportar (ver
+  # docs/roadmap.md #14).
+  defp actualizar_transicion_si_cambio(header, transicion, attrs, destino_id, acc, mensajes) do
+    campos_editables_nuevos = attrs["campos_editables"] || []
+
+    if transicion.estado_destino_id == destino_id and transicion.campos_editables == campos_editables_nuevos and
+         transicion.etiqueta == attrs["etiqueta"] do
+      {acc, mensajes ++ ["= #{header.schema_context_name} transición \"#{attrs["accion"]}\": ya existía, sin cambios"]}
+    else
+      cambios = %{
+        "etiqueta" => attrs["etiqueta"],
+        "estado_destino_id" => destino_id,
+        "campos_editables" => campos_editables_nuevos
+      }
+
+      case MetaEstadosAdmin.actualizar_transicion(transicion, cambios) do
+        {:ok, actualizada} ->
+          {reemplazar(acc, transicion, actualizada), mensajes ++ ["~ #{header.schema_context_name} transición \"#{attrs["accion"]}\": actualizada"]}
+
+        {:error, changeset} ->
+          raise "Error actualizando transición \"#{attrs["accion"]}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+      end
+    end
+  end
+
+  defp reemplazar(lista, viejo, nuevo) do
+    Enum.map(lista, fn t -> if t.id == viejo.id, do: nuevo, else: t end)
   end
 
   # Reglas PRE/POST (rediseño 2026-07-21) ya no viajan en el JSON de

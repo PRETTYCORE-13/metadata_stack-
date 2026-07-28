@@ -187,6 +187,9 @@ defmodule MetadataAppWeb.MenuLayout do
                 <.link :if={@bpb_habilitado} navigate="/sysadmin/bc-list" class="pc-user-menu-item pc-user-menu-subitem">
                   Business Process Builder
                 </.link>
+                <.link :if={@bpb_habilitado} navigate="/sysadmin/tepache" class="pc-user-menu-item pc-user-menu-subitem">
+                  Tepache Exp/Imp
+                </.link>
                 <.link navigate="/sysadmin/empresas" class="pc-user-menu-item pc-user-menu-subitem">
                   Empresas
                 </.link>

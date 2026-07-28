@@ -13,6 +13,34 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     |> Repo.all()
   end
 
+  @doc """
+  Buscador acotado de catálogos RAÍZ (no carpeta, no detalle) por nombre o
+  etiqueta — para el picker de exportar un tepache (ver
+  `MetadataApp.MetaTepache.exportar/1`). A diferencia de
+  `Permissions.buscar_catalogos/2` (pensado para Permission Sets), acá NO
+  se exige que tenga transiciones — un catálogo simple sin motor de
+  estados también se puede empaquetar. Mismo criterio de escala que el
+  resto del RBAC: nunca la lista completa, siempre acotado por texto +
+  límite.
+  """
+  def buscar_catalogos_raiz(query, limite \\ 20)
+
+  def buscar_catalogos_raiz("", _limite), do: []
+
+  def buscar_catalogos_raiz(query, limite) do
+    texto = "%#{query}%"
+
+    Repo.all(
+      from h in Header,
+        where:
+          is_nil(h.delete_guid) and h.schema_context_type != 2 and is_nil(h.schema_encabezado_id) and
+            (ilike(h.schema_context_name, ^texto) or ilike(h.schema_context_label, ^texto)),
+        order_by: h.schema_context_label,
+        limit: ^limite,
+        select: %{recurso: h.schema_context_name, label: h.schema_context_label}
+    )
+  end
+
   # Ítems del sidebar: un catálogo visible = una entrada de menú.
   def listar_menu do
     from(h in Header, where: is_nil(h.delete_guid) and h.schema_visible == true)

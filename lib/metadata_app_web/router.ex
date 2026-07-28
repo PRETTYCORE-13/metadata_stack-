@@ -127,6 +127,7 @@ defmodule MetadataAppWeb.Router do
       live "/sysadmin/bc-list/nuevo-completo", Sysadmin.BcNuevoCompletoLive
       live "/sysadmin/bc-list/:nombre/motor", Sysadmin.BcMotorLive
       live "/sysadmin/buscar-trn", Sysadmin.BuscadorTrnLive
+      live "/sysadmin/tepache", Sysadmin.TepacheLive
     end
 
     # Administración de RBAC: siempre disponible (a diferencia del BPB de

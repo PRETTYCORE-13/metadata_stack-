@@ -76,3 +76,24 @@ Sin diseñar todavía: si además de ocultarla del descubrimiento (`GET .../tran
 ## 13 — Log de quién crea/modifica/borra la DEFINICIÓN de cada motor (BC) hecho por ADN
 
 Distinto del ítem 6 (que es sobre **datos** — quién cambió un registro de negocio): esto es sobre la **definición** del catálogo mismo — campos, estados, transiciones, reglas. Por cada motor que arma ADN con el BPB, un log con: GUID, usuario que lo creó, usuario que lo actualizó (y cuándo), usuario que lo borró (y cuándo), fecha de cada cambio, y qué cambió puntualmente. Depende de [[#3]] — sin login no hay "usuario de ADN" que registrar, mismo motivo que el ítem 6.
+
+## 14 — "Tepache": compartir un BC entre desarrolladores sin publicarlo
+
+**Norte**: que Uriel arme un catálogo local (un "tepache" — nombre interno de equipo para lo que técnicamente es un *bundle*: schema + migraciones + metadata + reglas de un BC) y Jesus lo pueda importar en SU Postgres local para revisarlo/probarlo, **sin** que eso dispare ningún deploy a producción. Hoy `mix motor.publicar` junta "armar el paquete" con "publicarlo de verdad" (dispara `.github/workflows/bc-deploy.yml`) — hace falta separar esos dos pasos.
+
+**Ya existe, reutilizable tal cual** (no hay que reinventar nada de esto):
+- `MetaPublicador.armar_bundle/1` — arma el `.tar.gz` con schema `.ex`, migraciones, `.meta.json`, `.motor.json` y la carpeta `reglas/<catalogo>/` completa.
+- `MetaImportExport.importar_meta/1` + `importar_motor/1` — ya resuelven todo por NOMBRE (no por id) e idempotentes, pensados originalmente para reconstruir metadata en producción tras un deploy, pero sirven igual para importar en el Postgres de otro desarrollador.
+- El borrado ya existente (mismo mecanismo de "Eliminar" de BC List) sirve para que quien importó un tepache lo pueda descartar después de mirarlo.
+
+**Fases para armar el importador** (nada de esto empezado todavía):
+
+1. **Task de "publicar prolijo" (export)** — variante de `mix motor.publicar` que arma el bundle y lo sube a GitHub Releases, pero **sin** el paso de `disparar_deploy/2` (sin tocar producción). Nombre del release: consecutivo global **`TEPACHE-NNNNNN`** (entero de 6 posiciones, ceros a la izquierda — sin fecha: GitHub ya trackea fecha/autor del release solo, ponerla en el nombre sería redundante). El consecutivo se calcula listando los releases existentes con ese prefijo (`gh release list`) y sumando 1 al mayor encontrado. Notas del release generadas de lo que ya calcula el wizard: catálogos seleccionados, catálogos incluidos automático (detalles/referencias), advertencias del validador.
+
+2. **Task de import** — el espejo del lado receptor: baja el `.tar.gz` (`gh release download`), lo extrae desde la raíz del proyecto (las rutas dentro del tar ya son relativas a `lib/`/`priv/`, caen solas en su lugar), corre `mix ecto.migrate` (crea la tabla en el Postgres local de quien importa), y llama a `importar_meta/1` + `importar_motor/1` sobre el directorio extraído.
+
+3. **Registro automático de permisos, separado de RBAC** (definido en esta misma conversación, ver también [[#2]]): al importar, registrar en `meta_schema_permiso` las acciones del catálogo (leer/crear/editar/eliminar + el nombre de cada transición real que traiga el `.motor.json`) — **sin conceder nada a ningún rol**. Roles y concesiones (`meta_schema_rol`/`meta_schema_rol_permiso`) quedan **100% fuera del bundle**, son decisión de cada empresa/entorno, nunca algo que se hereda en silencio de la máquina de quien lo armó. Sin este registro, ni "administrador" (que ve todo lo YA registrado, no es un comodín ciego) podría probar una transición recién importada.
+
+4. **Manejo de conflictos** (a diseñar, no trivial): qué pasa si quien importa ya tiene un catálogo con ese mismo nombre; qué pasa al reimportar una versión actualizada del mismo tepache (la migración de `create table` chocaría porque la tabla ya existe — falta decidir si se borra y recrea, o si el bundle debería traer un diff/migración incremental).
+
+5. **Firma (integridad + autoría)** — pendiente, no urgente para uso interno del equipo (el repo ya es privado y el acceso lo controla GitHub). Si esto algún día sale del equipo/org, evaluar publicar un checksum SHA256 junto al release (patrón `SHA256SUMS`/`SHA256SUMS.sig` de HashiCorp) o firma real vía Sigstore/cosign — no vale la pena para compartir entre compañeros del mismo repo privado hoy.
