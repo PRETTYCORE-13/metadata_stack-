@@ -170,7 +170,15 @@ defmodule MetadataAppWeb.CatalogoLive do
     %{
       schema_context_field: campo["campo"],
       schema_context_properties: %{"etiqueta" => campo["etiqueta"], "tipo" => campo["tipo"] || "string"},
-      totalizar: campo["totalizar"] == true
+      totalizar: campo["totalizar"] == true,
+      catalogo: campo["catalogo"],
+      # `schema_context_field` (crudo) sigue siendo lo que arman los
+      # filtros/búsqueda (MetaConsultas.aplicar_filtros/4 lo resuelve
+      # contra consulta.campos) — `clave` es la clave namespaced bajo la
+      # que MetaConsultas.ejecutar/4 expone el VALOR en cada fila
+      # (necesaria desde que hay más de una tabla: dos campos del mismo
+      # nombre en tablas distintas no pueden compartir la misma clave).
+      clave: MetaConsultas.clave_campo(campo)
     }
   end
 
@@ -643,6 +651,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <%= for columna <- @columnas do %>
                   <th class={["px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide", alineacion_columna(columna)]}>
                     {columna.schema_context_properties["etiqueta"]}
+                    <span :if={@consulta.joins != []} class="block text-[9px] font-normal normal-case text-gray-400">{columna.catalogo}</span>
                   </th>
                 <% end %>
               </tr>
@@ -651,7 +660,7 @@ defmodule MetadataAppWeb.CatalogoLive do
               <%= for fila <- @filas do %>
                 <tr class="hover:bg-purple-50/60 transition-colors">
                   <%= for columna <- @columnas do %>
-                    <% valor = Map.get(fila, String.to_existing_atom(columna.schema_context_field)) %>
+                    <% valor = Map.get(fila, columna.clave) %>
                     <td class={[
                       "px-4 py-1.5 text-[10px] text-gray-700",
                       alineacion_columna(columna)
@@ -674,7 +683,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <%= for columna <- @columnas do %>
                   <td class={["px-4 py-2 text-[10px] text-purple-900", alineacion_columna(columna)]}>
                     <%= if Map.get(columna, :totalizar) do %>
-                      {formatear_celda(Map.get(@totales, String.to_existing_atom(columna.schema_context_field)))}
+                      {formatear_celda(Map.get(@totales, columna.clave))}
                     <% end %>
                   </td>
                 <% end %>

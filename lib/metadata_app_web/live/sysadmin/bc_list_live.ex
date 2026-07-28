@@ -72,6 +72,10 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:consulta_form, nil)
      |> assign(:consulta_error, nil)
      |> assign(:catalogos_base_disponibles, [])
+     |> assign(:tablas_relacionadas, [])
+     |> assign(:selector_tabla_relacionada_abierto, false)
+     |> assign(:catalogos_relacionables_disponibles, [])
+     |> assign(:union_manual, nil)
      |> cargar_borradores()
      |> cargar_headers()}
   end
@@ -468,11 +472,109 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:carpetas_disponibles, MetaSchemaContext.listar_carpetas_existentes())
      |> assign(:catalogos_base_disponibles, MetaSchemaContext.listar_catalogos_referenciables())
      |> assign(:consulta_form, formulario_consulta_vacio())
-     |> assign(:consulta_error, nil)}
+     |> assign(:consulta_error, nil)
+     |> assign(:tablas_relacionadas, [])
+     |> assign(:selector_tabla_relacionada_abierto, false)
+     |> assign(:union_manual, nil)}
   end
 
   def handle_event("cerrar_form_consulta", _params, socket) do
-    {:noreply, socket |> assign(:consulta_form, nil) |> assign(:consulta_error, nil)}
+    {:noreply,
+     socket
+     |> assign(:consulta_form, nil)
+     |> assign(:consulta_error, nil)
+     |> assign(:tablas_relacionadas, [])
+     |> assign(:selector_tabla_relacionada_abierto, false)
+     |> assign(:union_manual, nil)}
+  end
+
+  # --- Consulta Ecto: agregar tablas relacionadas (Fase 2, joins) --------------
+  # Todo esto vive en @tablas_relacionadas, un assign APARTE de
+  # @consulta_form a propósito: "validar_consulta" reemplaza @consulta_form
+  # entero con lo que manda el navegador en cada phx-change del formulario
+  # (etiqueta/nav/catálogo base), y esos campos nunca incluyen las tablas
+  # relacionadas (se arman con botones, no hay <input> para ellas) — si
+  # vivieran adentro de @consulta_form, cualquier tecla tipeada en
+  # "Etiqueta" las borraría sin que nadie lo pidiera.
+
+  def handle_event("abrir_selector_tabla_relacionada", _params, socket) do
+    ya_elegidos = [socket.assigns.consulta_form["catalogo_base"] | Enum.map(socket.assigns.tablas_relacionadas, & &1["catalogo"])]
+
+    disponibles =
+      MetaSchemaContext.listar_catalogos_referenciables()
+      |> Enum.reject(&(&1.nombre in ya_elegidos))
+
+    {:noreply,
+     socket
+     |> assign(:catalogos_relacionables_disponibles, disponibles)
+     |> assign(:selector_tabla_relacionada_abierto, true)}
+  end
+
+  def handle_event("cerrar_selector_tabla_relacionada", _params, socket) do
+    {:noreply, assign(socket, :selector_tabla_relacionada_abierto, false)}
+  end
+
+  def handle_event("agregar_tabla_relacionada", %{"catalogo" => catalogo}, socket) do
+    catalogos_actuales = [socket.assigns.consulta_form["catalogo_base"] | Enum.map(socket.assigns.tablas_relacionadas, & &1["catalogo"])]
+
+    fila =
+      case MetaConsultas.detectar_union(catalogos_actuales, catalogo) do
+        {:ok, union} -> Map.merge(union, %{"catalogo" => catalogo, "sin_union" => false})
+        :sin_union -> %{"catalogo" => catalogo, "sin_union" => true}
+      end
+
+    {:noreply,
+     socket
+     |> update(:tablas_relacionadas, &(&1 ++ [fila]))
+     |> assign(:selector_tabla_relacionada_abierto, false)}
+  end
+
+  # Solo se puede quitar la ÚLTIMA — si una tabla del medio ya se usó
+  # como destino de una unión posterior, quitarla dejaría esa unión
+  # apuntando a una tabla que ya no está. Mismo criterio que
+  # MetaConsultas.quitar_ultima_tabla/1 del lado persistido.
+  def handle_event("quitar_ultima_tabla_relacionada", _params, socket) do
+    {:noreply, update(socket, :tablas_relacionadas, &List.delete_at(&1, -1))}
+  end
+
+  def handle_event("abrir_union_manual", %{"indice" => indice}, socket) do
+    indice = String.to_integer(indice)
+    fila = Enum.at(socket.assigns.tablas_relacionadas, indice)
+    catalogos_previos = [socket.assigns.consulta_form["catalogo_base"] | Enum.map(Enum.take(socket.assigns.tablas_relacionadas, indice), & &1["catalogo"])]
+
+    opciones_destino =
+      for catalogo <- catalogos_previos, campo <- MetaConsultas.campos_disponibles_para_union(catalogo) do
+        {catalogo, campo}
+      end
+
+    {:noreply,
+     assign(socket, :union_manual, %{
+       indice: indice,
+       catalogo: fila["catalogo"],
+       campos_nuevo: MetaConsultas.campos_disponibles_para_union(fila["catalogo"]),
+       opciones_destino: opciones_destino
+     })}
+  end
+
+  def handle_event("cerrar_union_manual", _params, socket) do
+    {:noreply, assign(socket, :union_manual, nil)}
+  end
+
+  def handle_event("guardar_union_manual", %{"campo_en_nuevo" => campo_en_nuevo, "destino" => destino}, socket) do
+    %{indice: indice} = socket.assigns.union_manual
+    [catalogo_destino, campo_en_destino] = String.split(destino, ":", parts: 2)
+
+    tablas =
+      List.update_at(socket.assigns.tablas_relacionadas, indice, fn fila ->
+        Map.merge(fila, %{
+          "campo_en_nuevo" => campo_en_nuevo,
+          "catalogo_destino" => catalogo_destino,
+          "campo_en_destino" => campo_en_destino,
+          "sin_union" => false
+        })
+      end)
+
+    {:noreply, socket |> assign(:tablas_relacionadas, tablas) |> assign(:union_manual, nil)}
   end
 
   def handle_event("validar_consulta", %{"contexto" => contexto}, socket) do
@@ -506,6 +608,12 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         {:noreply,
          socket |> assign(:consulta_form, contexto) |> assign(:consulta_error, "Esa ruta ya la usa otro catálogo o carpeta.")}
 
+      Enum.any?(socket.assigns.tablas_relacionadas, & &1["sin_union"]) ->
+        {:noreply,
+         socket
+         |> assign(:consulta_form, contexto)
+         |> assign(:consulta_error, "Definí la unión de todas las tablas relacionadas antes de guardar.")}
+
       true ->
         header_attrs = %{
           "schema_context_name" => nombre,
@@ -517,13 +625,15 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         }
 
         with {:ok, {header, _detalles}} <- MetaSchemaContext.crear_header_con_detalles(header_attrs),
-             {:ok, _consulta} <- MetaConsultas.crear(header, contexto["catalogo_base"]) do
+             {:ok, consulta} <- MetaConsultas.crear(header, contexto["catalogo_base"]),
+             {:ok, _consulta} <- agregar_tablas_relacionadas(consulta, socket.assigns.tablas_relacionadas) do
           Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:bc_creado, header})
 
           {:noreply,
            socket
            |> assign(:consulta_form, nil)
            |> assign(:consulta_error, nil)
+           |> assign(:tablas_relacionadas, [])
            |> put_flash(:info, "Consulta '#{header.schema_context_label}' creada.")
            |> cargar_headers()}
         else
@@ -808,6 +918,28 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     if sufijo == "", do: "", else: String.slice("consulta_#{sufijo}", 0, 50)
   end
 
+  # Aplica, en orden, cada unión ya resuelta en @tablas_relacionadas —
+  # nunca vuelve a correr detectar_union/2 acá (eso ya pasó, en vivo,
+  # mientras se armaba el modal); esto solo persiste EXACTAMENTE lo que
+  # el admin vio en el panel "Tablas relacionadas".
+  defp agregar_tablas_relacionadas(consulta, tablas) do
+    Enum.reduce_while(tablas, {:ok, consulta}, fn tabla, {:ok, consulta_acc} ->
+      resultado =
+        MetaConsultas.agregar_tabla_manual(
+          consulta_acc,
+          tabla["catalogo"],
+          tabla["campo_en_nuevo"],
+          tabla["catalogo_destino"],
+          tabla["campo_en_destino"]
+        )
+
+      case resultado do
+        {:ok, _consulta} -> {:cont, resultado}
+        {:error, _motivo} -> {:halt, resultado}
+      end
+    end)
+  end
+
   defp contexto_editar_desde_header(header) do
     %{
       "etiqueta" => header.schema_context_label,
@@ -1070,7 +1202,16 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     <.modal_publicar wizard={@wizard_publicar} />
     <.modal_carpeta form={@carpeta_form} error={@carpeta_error} carpetas={@carpetas_disponibles} />
     <.modal_editar_carpeta editar={@carpeta_editar} error={@carpeta_editar_error} />
-    <.modal_consulta form={@consulta_form} error={@consulta_error} carpetas={@carpetas_disponibles} catalogos_base={@catalogos_base_disponibles} />
+    <.modal_consulta
+      form={@consulta_form}
+      error={@consulta_error}
+      carpetas={@carpetas_disponibles}
+      catalogos_base={@catalogos_base_disponibles}
+      tablas_relacionadas={@tablas_relacionadas}
+      selector_abierto={@selector_tabla_relacionada_abierto}
+      catalogos_relacionables={@catalogos_relacionables_disponibles}
+    />
+    <.modal_union_manual union_manual={@union_manual} />
     """
   end
 
@@ -1302,12 +1443,120 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             </div>
           </fieldset>
 
+          <fieldset :if={@form["catalogo_base"] not in [nil, ""]} class="border border-gray-200 rounded-lg">
+            <legend class="px-1.5 ml-2 font-bold uppercase tracking-wide text-[11px] text-gray-500">Tablas relacionadas (opcional)</legend>
+            <div class="p-2.5">
+              <p :if={@tablas_relacionadas == []} class="text-gray-400 mb-2">
+                Solo <strong>{@form["catalogo_base"]}</strong> por ahora — agregá más tablas si el reporte necesita combinar datos de varias.
+              </p>
+              <ul :if={@tablas_relacionadas != []} class="space-y-1 mb-2">
+                <li :for={{t, indice} <- Enum.with_index(@tablas_relacionadas)} class="flex items-center justify-between gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5">
+                  <span class="min-w-0">
+                    <strong class="text-gray-900">{t["catalogo"]}</strong>
+                    <%= if t["sin_union"] do %>
+                      <span class="text-red-600"> — sin unión definida</span>
+                    <% else %>
+                      <span class="text-gray-500 font-mono break-all"> — {t["catalogo"]}.{t["campo_en_nuevo"]} = {t["catalogo_destino"]}.{t["campo_en_destino"]}</span>
+                    <% end %>
+                  </span>
+                  <div class="flex items-center gap-2 flex-shrink-0">
+                    <button type="button" phx-click="abrir_union_manual" phx-value-indice={indice} class="text-purple-700 hover:text-purple-900 font-semibold">
+                      {if t["sin_union"], do: "Definir", else: "Cambiar"}
+                    </button>
+                    <button :if={indice == length(@tablas_relacionadas) - 1} type="button" phx-click="quitar_ultima_tabla_relacionada" class="text-red-600 hover:text-red-800 font-semibold">
+                      Quitar
+                    </button>
+                  </div>
+                </li>
+              </ul>
+
+              <div class="relative inline-block">
+                <button type="button" phx-click="abrir_selector_tabla_relacionada" class="text-purple-700 hover:text-purple-900 font-semibold">
+                  + Agregar tabla relacionada
+                </button>
+                <%= if @selector_abierto do %>
+                  <div class="fixed inset-0 z-40" phx-click="cerrar_selector_tabla_relacionada"></div>
+                  <div class="absolute left-0 top-full mt-1 w-56 max-h-48 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-1">
+                    <button
+                      :for={c <- @catalogos_relacionables}
+                      type="button"
+                      phx-click="agregar_tabla_relacionada"
+                      phx-value-catalogo={c.nombre}
+                      class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-purple-50 hover:text-purple-700"
+                    >
+                      {c.etiqueta}
+                    </button>
+                    <p :if={@catalogos_relacionables == []} class="px-3 py-2 text-gray-400">No hay más catálogos disponibles.</p>
+                  </div>
+                <% end %>
+              </div>
+            </div>
+          </fieldset>
+
           <div class="flex justify-end gap-2 border-t border-gray-200 pt-3">
             <button type="button" phx-click="cerrar_form_consulta" class="px-3.5 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50 transition-colors">
               Cancelar
             </button>
             <button type="submit" class="px-3.5 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
               Crear consulta
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+    """
+  end
+
+  # Editor manual de unión — modal apilado sobre "Nueva consulta" (mismo
+  # patrón que "abrir_form_campo" en BcNuevoCompletoLive: un sub-form
+  # aparte, nunca un <form> anidado dentro del form grande de arriba, que
+  # sería HTML inválido). Aparece automático cuando "Agregar tabla
+  # relacionada" no encuentra ninguna "Relación" ya configurada entre esa
+  # tabla y las que ya están en la consulta, o cuando el admin quiere
+  # cambiar la unión que sí se autodetectó.
+  defp modal_union_manual(%{union_manual: nil} = assigns), do: ~H""
+
+  defp modal_union_manual(%{union_manual: um} = assigns) do
+    assigns = assign(assigns, :um, um)
+
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-md w-full max-h-[90vh] overflow-y-auto">
+        <div class="flex items-center gap-1.5 bg-[#fafafa] border-b border-gray-200 px-4 py-2.5 rounded-t-xl">
+          <span class="material-symbols-outlined text-gray-400" style="font-size: 18px">link</span>
+          <span class="text-sm font-semibold text-gray-900">Unión con "{@um.catalogo}"</span>
+        </div>
+
+        <form phx-submit="guardar_union_manual" class="p-4 space-y-3 text-xs">
+          <p class="text-gray-500">
+            No hay ninguna "Relación" configurada entre <strong>{@um.catalogo}</strong> y las tablas que ya están en la
+            consulta — elegí a mano qué campo de cada lado conecta.
+          </p>
+
+          <div>
+            <label class="block font-medium text-gray-900 mb-1">Campo en "{@um.catalogo}":</label>
+            <select name="campo_en_nuevo" required class="w-full border border-gray-300 rounded-lg text-gray-900 px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500">
+              <%= for campo <- @um.campos_nuevo do %>
+                <option value={campo}>{campo}</option>
+              <% end %>
+            </select>
+          </div>
+
+          <div>
+            <label class="block font-medium text-gray-900 mb-1">Se une con:</label>
+            <select name="destino" required class="w-full border border-gray-300 rounded-lg text-gray-900 px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500">
+              <%= for {catalogo, campo} <- @um.opciones_destino do %>
+                <option value={"#{catalogo}:#{campo}"}>{catalogo}.{campo}</option>
+              <% end %>
+            </select>
+          </div>
+
+          <div class="flex justify-end gap-2 border-t border-gray-200 pt-3">
+            <button type="button" phx-click="cerrar_union_manual" class="px-3.5 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50 transition-colors">
+              Cancelar
+            </button>
+            <button type="submit" class="px-3.5 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
+              Guardar unión
             </button>
           </div>
         </form>

@@ -59,9 +59,9 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
     html_guardado =
       view
       |> form("form[phx-submit=guardar_campos]", %{
-        "etiquetas" => %{"meta_fixture_cliente_edad" => "Edad del cliente"},
-        "visibles" => ["meta_fixture_cliente_nombre"],
-        "totalizar" => ["meta_fixture_cliente_edad"]
+        "etiquetas" => %{"meta_fixture_cliente::meta_fixture_cliente_edad" => "Edad del cliente"},
+        "visibles" => ["meta_fixture_cliente::meta_fixture_cliente_nombre"],
+        "totalizar" => ["meta_fixture_cliente::meta_fixture_cliente_edad"]
       })
       |> render_submit()
 
@@ -84,7 +84,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
     {:ok, _view, html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
 
     assert html =~
-             ~r/name="totalizar\[\]" value="meta_fixture_cliente_nombre"\s+disabled/
+             ~r/name="totalizar\[\]" value="meta_fixture_cliente::meta_fixture_cliente_nombre"\s+disabled/
   end
 
   # Defensa en profundidad: aunque el checkbox venga disabled en el HTML
@@ -98,7 +98,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
 
     {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
 
-    render_submit(view, "guardar_campos", %{"totalizar" => ["meta_fixture_cliente_nombre"]})
+    render_submit(view, "guardar_campos", %{"totalizar" => ["meta_fixture_cliente::meta_fixture_cliente_nombre"]})
 
     consulta_actualizada = MetaConsultas.obtener_por_header_id(header.id)
     campo_nombre = Enum.find(consulta_actualizada.campos, &(&1["campo"] == "meta_fixture_cliente_nombre"))

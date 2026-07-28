@@ -59,6 +59,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     |> assign(:header, header)
     |> assign(:consulta, consulta)
     |> assign(:campos, campos)
+    |> assign(:multi_tabla?, consulta.joins != [])
   end
 
   def handle_event("change_page", %{"id" => id}, socket) do
@@ -68,8 +69,8 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
   # Reordena por intercambio simple con el vecino — sin drag-and-drop, se
   # persiste al toque (no forma parte del form de "Guardar" de abajo) para
   # que el orden de la lista no dependa de acordarse de guardar aparte.
-  def handle_event("mover_campo", %{"campo" => campo, "direccion" => direccion}, socket) do
-    indice = Enum.find_index(socket.assigns.campos, &(&1["campo"] == campo))
+  def handle_event("mover_campo", %{"campo" => id, "direccion" => direccion}, socket) do
+    indice = Enum.find_index(socket.assigns.campos, &(identificador(&1) == id))
     vecino = if direccion == "arriba", do: indice - 1, else: indice + 1
 
     if indice && vecino >= 0 && vecino < length(socket.assigns.campos) do
@@ -94,19 +95,19 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
 
     campos =
       Enum.map(socket.assigns.campos, fn campo ->
-        nombre = campo["campo"]
+        id = identificador(campo)
         tipo = campo["tipo"]
 
         etiqueta =
-          case Map.get(etiquetas, nombre) do
+          case Map.get(etiquetas, id) do
             texto when is_binary(texto) and texto != "" -> texto
             _ -> campo["etiqueta"]
           end
 
         campo
         |> Map.put("etiqueta", etiqueta)
-        |> Map.put("visible", nombre in visibles)
-        |> Map.put("totalizar", tipo in @tipos_totalizables and nombre in totalizar)
+        |> Map.put("visible", id in visibles)
+        |> Map.put("totalizar", tipo in @tipos_totalizables and id in totalizar)
       end)
 
     case MetaConsultas.actualizar_campos(socket.assigns.consulta, campos) do
@@ -121,6 +122,13 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
         {:noreply, put_flash(socket, :error, "No se pudo guardar: #{inspect(changeset.errors)}")}
     end
   end
+
+  # Identificador único de una fila — dos tablas distintas de la misma
+  # consulta pueden tener un campo con el mismo nombre crudo (ej. ambas
+  # con "nombre"), así que ni los eventos (mover_campo) ni los <input>
+  # del form de abajo pueden usar campo["campo"] solo: "::" no es válido
+  # en un nombre de catálogo o de campo, así que nunca puede colisionar.
+  defp identificador(campo), do: "#{campo["catalogo"]}::#{campo["campo"]}"
 
   defp intercambiar_orden(campos, i, j) do
     a = Enum.at(campos, i)
@@ -141,7 +149,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
             {@header.schema_context_label}
           </h1>
           <p class="text-xs text-gray-500 mt-1">
-            Consulta Ecto de solo lectura sobre <strong>{@consulta.catalogo_base}</strong> — {@header.schema_context_nav}
+            Consulta Ecto de solo lectura sobre <strong>{Enum.join(MetaConsultas.catalogos_presentes(@consulta), " + ")}</strong> — {@header.schema_context_nav}
           </p>
         </div>
         <.link navigate={@header.schema_context_nav} class="text-xs font-semibold text-purple-700 hover:underline">
@@ -155,6 +163,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
             <thead class="bg-gray-50">
               <tr>
                 <th class="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">Orden</th>
+                <th :if={@multi_tabla?} class="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">Tabla</th>
                 <th class="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">Campo</th>
                 <th class="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">Etiqueta</th>
                 <th class="px-3 py-2 text-center font-semibold text-gray-500 uppercase tracking-wide">Visible</th>
@@ -165,29 +174,30 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
               <tr :for={{campo, indice} <- Enum.with_index(@campos)}>
                 <td class="px-3 py-2">
                   <div class="flex flex-col">
-                    <button type="button" disabled={indice == 0} phx-click="mover_campo" phx-value-campo={campo["campo"]} phx-value-direccion="arriba"
+                    <button type="button" disabled={indice == 0} phx-click="mover_campo" phx-value-campo={identificador(campo)} phx-value-direccion="arriba"
                       class="text-gray-400 hover:text-purple-700 disabled:opacity-20 disabled:cursor-not-allowed leading-none">▲</button>
-                    <button type="button" disabled={indice == length(@campos) - 1} phx-click="mover_campo" phx-value-campo={campo["campo"]} phx-value-direccion="abajo"
+                    <button type="button" disabled={indice == length(@campos) - 1} phx-click="mover_campo" phx-value-campo={identificador(campo)} phx-value-direccion="abajo"
                       class="text-gray-400 hover:text-purple-700 disabled:opacity-20 disabled:cursor-not-allowed leading-none">▼</button>
                   </div>
                 </td>
+                <td :if={@multi_tabla?} class="px-3 py-2 text-gray-500 font-mono">{campo["catalogo"]}</td>
                 <td class="px-3 py-2 text-gray-500 font-mono">{campo["campo"]}</td>
                 <td class="px-3 py-2">
-                  <input type="text" name={"etiquetas[#{campo["campo"]}]"} value={campo["etiqueta"]}
+                  <input type="text" name={"etiquetas[#{identificador(campo)}]"} value={campo["etiqueta"]}
                     class="w-full border border-gray-300 rounded px-2 py-1 text-gray-900" />
                 </td>
                 <td class="px-3 py-2 text-center">
-                  <input type="checkbox" name="visibles[]" value={campo["campo"]} checked={campo["visible"]} class="accent-purple-600" />
+                  <input type="checkbox" name="visibles[]" value={identificador(campo)} checked={campo["visible"]} class="accent-purple-600" />
                 </td>
                 <td class="px-3 py-2 text-center">
-                  <input type="checkbox" name="totalizar[]" value={campo["campo"]} checked={campo["totalizar"]}
+                  <input type="checkbox" name="totalizar[]" value={identificador(campo)} checked={campo["totalizar"]}
                     disabled={campo["tipo"] not in @tipos_totalizables}
                     title={if campo["tipo"] not in @tipos_totalizables, do: "Solo campos numéricos se pueden totalizar"}
                     class="accent-purple-600 disabled:opacity-20" />
                 </td>
               </tr>
               <tr :if={@campos == []}>
-                <td colspan="5" class="px-3 py-6 text-center text-gray-400">Esta consulta no tiene campos.</td>
+                <td colspan={if @multi_tabla?, do: 6, else: 5} class="px-3 py-6 text-center text-gray-400">Esta consulta no tiene campos.</td>
               </tr>
             </tbody>
           </table>
