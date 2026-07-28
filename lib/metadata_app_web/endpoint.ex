@@ -11,9 +11,12 @@ defmodule MetadataAppWeb.Endpoint do
     same_site: "Lax"
   ]
 
+  # :peer_data/:user_agent -- para poder auditar "desde dónde" (roadmap
+  # #6, ver MetadataAppWeb.AuditoriaContexto.desde_socket/1) sin esto
+  # get_connect_info/2 no tiene nada que devolver dentro de una LiveView.
   socket "/live", Phoenix.LiveView.Socket,
-    websocket: [connect_info: [session: @session_options]],
-    longpoll: [connect_info: [session: @session_options]]
+    websocket: [connect_info: [:peer_data, :user_agent, session: @session_options]],
+    longpoll: [connect_info: [:peer_data, :user_agent, session: @session_options]]
 
   # Serve at "/" the static files from "priv/static" directory.
   #

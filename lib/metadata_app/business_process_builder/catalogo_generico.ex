@@ -129,6 +129,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   def crear(schema_mod, attrs, opciones \\ []) do
     catalogo = schema_mod.__schema__(:source)
     renglones_spec = Keyword.get(opciones, :renglones, %{})
+    contexto = Keyword.get(opciones, :contexto, %{})
 
     resultado =
       case MetadataApp.MetaStateEngine.transicion_alta(catalogo) do
@@ -142,8 +143,31 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     # agnóstico del catálogo— a este concepto de negocio. Sin ventana
     # observable desde afuera: crear/2 no devuelve el registro hasta que
     # esto termina. No hace nada si el catálogo no es transaccional.
-    MetadataApp.TRN.asignar_si_transaccional(resultado)
+    resultado
+    |> MetadataApp.TRN.asignar_si_transaccional()
+    |> auditar_alta(catalogo, contexto)
   end
+
+  # Auditoría de DATOS (roadmap #6) — mismo criterio de "corre DESPUÉS,
+  # como paso separado" que TRN.asignar_si_transaccional/1 de arriba: no
+  # queda anidado en la misma transacción SQL que crear_simple/3 (ni la
+  # de dar_de_alta/5, que vive en MetaStateEngine) — aceptable porque ya
+  # es exactamente el mismo nivel de no-atomicidad que TRN acepta hoy
+  # para el mismo insert, no una garantía nueva que se está bajando.
+  defp auditar_alta({:ok, registro} = resultado, catalogo, contexto) do
+    MetadataApp.MetaAuditoria.registrar(
+      catalogo,
+      "alta",
+      registro.insert_guid,
+      registro,
+      %{"despues" => serializar(registro)},
+      contexto
+    )
+
+    resultado
+  end
+
+  defp auditar_alta(error, _catalogo, _contexto), do: error
 
   # Envuelto en Repo.transaction/1 (aunque un solo Repo.insert/1 ya sería
   # atómico por sí mismo) porque MetadataApp.Renglones.preparar/3 puede
@@ -195,12 +219,12 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # Si alguno falla, se revierten todos (todo o nada). Cada item puede
   # traer su propia "renglones" (R6) — un lote de maestros, cada uno con
   # sus propios renglones iniciales.
-  def crear_muchos(schema_mod, lista_attrs) when is_list(lista_attrs) do
+  def crear_muchos(schema_mod, lista_attrs, contexto \\ %{}) when is_list(lista_attrs) do
     Repo.transaction(fn ->
       Enum.map(lista_attrs, fn item ->
         {renglones, attrs} = Map.pop(item, "renglones", %{})
 
-        case crear(schema_mod, attrs, renglones: renglones) do
+        case crear(schema_mod, attrs, renglones: renglones, contexto: contexto) do
           {:ok, registro} -> registro
           {:error, changeset} -> Repo.rollback(changeset)
         end
@@ -226,7 +250,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # forma de tocar un campo de un renglón es una transición del maestro
   # con "renglones" (R4) — mismo criterio que ya usa eliminar/1 para
   # bloquear el DELETE de un renglón (R12).
-  def actualizar(registro, attrs) do
+  def actualizar(registro, attrs, contexto \\ %{}) do
     schema_mod = registro.__struct__
     catalogo = schema_mod.__schema__(:source)
     header = MetadataApp.BusinessProcessBuilder.MetaSchemaContext.obtener_header_por_nombre(catalogo)
@@ -235,9 +259,38 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
       {:error,
        "los campos de un renglón de un catálogo detalle no se editan por PUT/PATCH directo — use una transición del maestro con \"renglones\""}
     else
-      actualizar_directo(registro, attrs, schema_mod, catalogo)
+      antes = serializar(registro)
+
+      # Mismo lookup que actualizar_directo/4 hace por su cuenta para
+      # decidir el ciclo de reglas — repetirlo acá (barato, un SELECT) es
+      # más simple que cambiar el contrato de retorno de esa función solo
+      # para poder etiquetar la auditoría con el nombre de la transición.
+      operacion =
+        case MetadataApp.MetaStateEngine.transicion_guardar(catalogo, registro.estado_id) do
+          nil -> "edicion"
+          transicion -> "transicion:#{transicion.accion}"
+        end
+
+      registro
+      |> actualizar_directo(attrs, schema_mod, catalogo)
+      |> auditar_edicion(catalogo, operacion, antes, contexto)
     end
   end
+
+  defp auditar_edicion({:ok, registro} = resultado, catalogo, operacion, antes, contexto) do
+    MetadataApp.MetaAuditoria.registrar(
+      catalogo,
+      operacion,
+      registro.update_guid,
+      registro,
+      %{"antes" => antes, "despues" => serializar(registro)},
+      contexto
+    )
+
+    resultado
+  end
+
+  defp auditar_edicion(error, _catalogo, _operacion, _antes, _contexto), do: error
 
   defp actualizar_directo(registro, attrs, schema_mod, catalogo) do
     transicion = MetadataApp.MetaStateEngine.transicion_guardar(catalogo, registro.estado_id)
@@ -305,7 +358,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # resuelve por nombre de tabla (mismo patrón que MetadataApp.TRN), no
   # por una función exportada por el schema — evita otro mecanismo de
   # "preguntarle al módulo" aparte del que ya existe.
-  def eliminar(registro) do
+  def eliminar(registro, contexto \\ %{}) do
     catalogo = registro.__struct__.__schema__(:source)
     header = MetadataApp.BusinessProcessBuilder.MetaSchemaContext.obtener_header_por_nombre(catalogo)
 
@@ -313,11 +366,21 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
       {:error,
        "los renglones de un catálogo detalle no se borran — use una transición del autómata para pasarlo a un estado tipo \"Cancelado\""}
     else
+      antes = serializar(registro)
+
       registro
       |> Ecto.Changeset.change(%{delete_guid: generar_guid()})
       |> Repo.update()
+      |> auditar_baja(catalogo, antes, contexto)
     end
   end
+
+  defp auditar_baja({:ok, registro} = resultado, catalogo, antes, contexto) do
+    MetadataApp.MetaAuditoria.registrar(catalogo, "baja", registro.delete_guid, registro, %{"antes" => antes}, contexto)
+    resultado
+  end
+
+  defp auditar_baja(error, _catalogo, _antes, _contexto), do: error
 
   # estados_por_id: %{estado_id => nombre} (ver MetaStateEngine.mapa_nombres_estados/1)
   # — opcional para no romper otros llamadores; sin él, o si el registro no

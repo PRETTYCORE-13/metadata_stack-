@@ -24,6 +24,10 @@ defmodule MetadataAppWeb.CatalogoLive do
       |> assign(:show_programacion_children, false)
       |> assign(:show_clientes_children, false)
       |> assign(:show_prettycore_children, false)
+      # get_connect_info/2 solo existe durante mount/3 (ver roadmap #6) --
+      # se calcula UNA vez acá y se guarda en assigns para que cualquier
+      # handle_event que dispare un crear/actualizar/eliminar lo reuse.
+      |> assign(:contexto_auditoria, MetadataAppWeb.AuditoriaContexto.desde_socket(socket))
 
     case MetaSchemaContext.obtener_header_por_nav(nav) do
       nil ->
@@ -231,7 +235,7 @@ defmodule MetadataAppWeb.CatalogoLive do
     encabezado_id = socket.assigns.detalle_modal.registro.id
     attrs = Map.put(campos_attrs, "encabezado_id", encabezado_id)
 
-    case CatalogoGenerico.crear(detalle_modulo, attrs) do
+    case CatalogoGenerico.crear(detalle_modulo, attrs, contexto: socket.assigns.contexto_auditoria) do
       {:ok, _renglon} ->
         {:noreply,
          socket

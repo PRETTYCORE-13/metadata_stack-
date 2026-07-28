@@ -163,7 +163,9 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
       estados_por_id = MetaStateEngine.mapa_nombres_estados(tabla)
 
       if is_list(attrs_bruto) do
-        with {:ok, items} <- CatalogoGenerico.crear_muchos(schema_mod, attrs_bruto) do
+        contexto = MetadataAppWeb.AuditoriaContexto.desde_conn(conn)
+
+        with {:ok, items} <- CatalogoGenerico.crear_muchos(schema_mod, attrs_bruto, contexto) do
           acompanamiento = CatalogoGenerico.mapa_acompanamiento(tabla, items)
 
           conn
@@ -172,8 +174,9 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
         end
       else
         {renglones, attrs} = Map.pop(attrs_bruto, "renglones", %{})
+        contexto = MetadataAppWeb.AuditoriaContexto.desde_conn(conn)
 
-        with {:ok, item} <- CatalogoGenerico.crear(schema_mod, attrs, renglones: renglones) do
+        with {:ok, item} <- CatalogoGenerico.crear(schema_mod, attrs, renglones: renglones, contexto: contexto) do
           acompanamiento = CatalogoGenerico.mapa_acompanamiento(tabla, [item])
 
           conn
@@ -188,8 +191,9 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
     with {:ok, schema_mod} <- resolver(tabla) do
       attrs = Map.get(params, tabla, Map.drop(params, ["tabla", "id"]))
       item = CatalogoGenerico.obtener!(schema_mod, id)
+      contexto = MetadataAppWeb.AuditoriaContexto.desde_conn(conn)
 
-      with {:ok, item} <- CatalogoGenerico.actualizar(item, attrs) do
+      with {:ok, item} <- CatalogoGenerico.actualizar(item, attrs, contexto) do
         estados_por_id = MetaStateEngine.mapa_nombres_estados(tabla)
         acompanamiento = CatalogoGenerico.mapa_acompanamiento(tabla, [item])
         json(conn, %{data: serializar_json(item, estados_por_id, acompanamiento)})
@@ -200,8 +204,9 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
   def delete(conn, %{"tabla" => tabla, "id" => id}) do
     with {:ok, schema_mod} <- resolver(tabla) do
       item = CatalogoGenerico.obtener!(schema_mod, id)
+      contexto = MetadataAppWeb.AuditoriaContexto.desde_conn(conn)
 
-      with {:ok, _item} <- CatalogoGenerico.eliminar(item) do
+      with {:ok, _item} <- CatalogoGenerico.eliminar(item, contexto) do
         send_resp(conn, :no_content, "")
       end
     end

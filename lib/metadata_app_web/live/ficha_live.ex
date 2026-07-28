@@ -36,7 +36,13 @@ defmodule MetadataAppWeb.FichaLive do
   alias MetadataAppWeb.AdminNav
 
   def mount(%{"tabla" => tabla, "id" => id} = params, _session, socket) do
-    socket = assign(socket, :sidebar_open, false)
+    socket =
+      socket
+      |> assign(:sidebar_open, false)
+      # get_connect_info/2 solo existe durante mount/3 (roadmap #6) -- se
+      # calcula acá y se guarda en assigns para reusarlo en guardar_alta/
+      # guardar_cambios (que corren desde handle_event).
+      |> assign(:contexto_auditoria, MetadataAppWeb.AuditoriaContexto.desde_socket(socket))
 
     case MetaSchemaContext.modulo_por_nombre(tabla) do
       nil ->
@@ -77,7 +83,10 @@ defmodule MetadataAppWeb.FichaLive do
   # transición "alta" (no "guardar") — mismo criterio que ya usa
   # CatalogoLive.campos_alta para el botón "+ Nuevo registro" de siempre.
   def mount(%{"tabla" => tabla}, _session, socket) do
-    socket = assign(socket, :sidebar_open, false)
+    socket =
+      socket
+      |> assign(:sidebar_open, false)
+      |> assign(:contexto_auditoria, MetadataAppWeb.AuditoriaContexto.desde_socket(socket))
 
     case MetaSchemaContext.modulo_por_nombre(tabla) do
       nil ->
@@ -214,7 +223,7 @@ defmodule MetadataAppWeb.FichaLive do
     %{schema_mod: schema_mod, tabla: tabla, campos_editables: campos_editables} = socket.assigns
     attrs = Map.take(campos_params, campos_editables)
 
-    case CatalogoGenerico.crear(schema_mod, attrs) do
+    case CatalogoGenerico.crear(schema_mod, attrs, contexto: socket.assigns.contexto_auditoria) do
       {:ok, nuevo} ->
         {:noreply, push_navigate(socket, to: "/registro/#{tabla}/#{nuevo.id}")}
 
@@ -227,7 +236,7 @@ defmodule MetadataAppWeb.FichaLive do
   end
 
   defp guardar_cambios(socket, registro_actual, attrs) do
-    case CatalogoGenerico.actualizar(registro_actual, attrs) do
+    case CatalogoGenerico.actualizar(registro_actual, attrs, socket.assigns.contexto_auditoria) do
       {:ok, actualizado} ->
         {:noreply,
          socket
