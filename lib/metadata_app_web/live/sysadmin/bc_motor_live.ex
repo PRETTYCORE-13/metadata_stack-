@@ -1435,17 +1435,22 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           <p class="text-gray-400">Este catálogo todavía no tiene campos.</p>
         <% else %>
           <form id="get-view-form" phx-submit="guardar_get_view">
-            <div class="flex gap-2 mb-2">
-              <button type="button"
-                onclick="this.closest('form').querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true)"
-                class="text-purple-700 hover:text-purple-900 text-[11px] font-semibold">
-                Seleccionar todos
-              </button>
-              <span class="text-gray-300">|</span>
-              <button type="button"
-                onclick="this.closest('form').querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false)"
-                class="text-purple-700 hover:text-purple-900 text-[11px] font-semibold">
-                Deseleccionar todos
+            <div class="flex items-center justify-between gap-2 mb-2">
+              <div class="flex gap-2">
+                <button type="button"
+                  onclick="this.closest('form').querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true)"
+                  class="text-purple-700 hover:text-purple-900 text-[11px] font-semibold">
+                  Seleccionar todos
+                </button>
+                <span class="text-gray-300">|</span>
+                <button type="button"
+                  onclick="this.closest('form').querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false)"
+                  class="text-purple-700 hover:text-purple-900 text-[11px] font-semibold">
+                  Deseleccionar todos
+                </button>
+              </div>
+              <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
+                Guardar Get View
               </button>
             </div>
             <table class="min-w-full mb-2">

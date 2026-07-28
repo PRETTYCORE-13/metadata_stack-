@@ -701,7 +701,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                     <td class={[
                       "px-4 py-1.5 text-[10px]",
                       alineacion_columna(columna),
-                      if(is_map(valor), do: "text-blue-700 font-medium", else: "text-gray-700")
+                      if(is_map(valor) and not is_struct(valor), do: "text-blue-700 font-medium", else: "text-gray-700")
                     ]}>
                       {formatear_celda(valor)}
                     </td>
@@ -759,7 +759,11 @@ defmodule MetadataAppWeb.CatalogoLive do
   # Un campo tipo "referencia" con campos de acompañamiento configurados
   # llega acá como objeto anidado (%{id: 1, razon_social: "..."}), no como
   # escalar — se muestra el resumen legible (sin el id), no el mapa crudo.
-  defp formatear_celda(%{} = mapa) do
+  # `when not is_struct(mapa)` es necesario: un valor tipo Decimal/Date/
+  # DateTime también hace match contra `%{}` (son structs = mapas), y sin
+  # excluirlos acá se les destripaban los campos internos en vez de
+  # mostrarse como el escalar que son.
+  defp formatear_celda(%{} = mapa) when not is_struct(mapa) do
     mapa
     |> Map.delete(:id)
     |> Map.values()

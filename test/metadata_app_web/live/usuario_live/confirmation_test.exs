@@ -64,7 +64,7 @@ defmodule MetadataAppWeb.UsuarioLive.ConfirmationTest do
       assert Autenticacion.get_usuario!(usuario.id).confirmed_at
       # we are logged in now
       assert get_session(conn, :usuario_token)
-      assert redirected_to(conn) == ~p"/"
+      assert redirected_to(conn) == ~p"/sysadmin/bc-list"
 
       # log out, new conn
       conn = build_conn()

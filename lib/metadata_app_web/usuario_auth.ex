@@ -36,18 +36,30 @@ defmodule MetadataAppWeb.UsuarioAuth do
     usuario_return_to = get_session(conn, :usuario_return_to)
     conn = create_or_extend_session(conn, usuario, params)
 
+    # usuario_return_to se lee una sola vez y se borra explícito acá — si no,
+    # queda pegado para siempre en sesiones donde el usuario que se
+    # re-loguea es el MISMO que ya estaba (renew_session/2 se salta el
+    # clear_session completo a propósito en ese caso, para no romper otras
+    # pestañas abiertas), y cada login futuro de esa sesión vuelve a caer
+    # en la última ruta protegida que se haya visitado alguna vez, en vez
+    # de ir a signed_in_path/1 como corresponde.
     case Autenticacion.empresas_de_usuario(usuario.id) do
       # Ninguna empresa asignada todavía — nada que elegir, sigue como antes.
       [] ->
-        redirect(conn, to: usuario_return_to || signed_in_path(conn))
+        conn
+        |> delete_session(:usuario_return_to)
+        |> redirect(to: usuario_return_to || signed_in_path(conn))
 
       # Una sola empresa: se activa sola, sin pedirle que elija algo obvio.
       [%Autenticacion.Empresa{id: empresa_id}] ->
         conn
         |> put_session(:empresa_activa_id, empresa_id)
+        |> delete_session(:usuario_return_to)
         |> redirect(to: usuario_return_to || signed_in_path(conn))
 
-      # Más de una: al selector. Se resuelve el return_to recién ahí.
+      # Más de una: al selector. Se resuelve el return_to recién ahí (se
+      # re-escribe a propósito, no se borra, porque todavía hace falta un
+      # hop más).
       _varias ->
         conn
         |> put_session(:usuario_return_to, usuario_return_to)
@@ -287,13 +299,16 @@ defmodule MetadataAppWeb.UsuarioAuth do
     end)
   end
 
+  # Antes esto distinguía "ya estaba logueado" (-> settings) de "recién se
+  # logueó" (-> "/") por patrón sobre conn.assigns.current_scope.usuario —
+  # pero en el call site real (log_in_usuario/3, justo después de
+  # autenticar) ese assign todavía refleja el estado DE ANTES del login
+  # (fetch_current_scope_for_usuario corre al principio del pipeline, la
+  # sesión nueva recién se crea después), así que esa rama nunca se
+  # cumplía ahí — solo en registration.ex (usuario YA autenticado visita
+  # /register). Una sola ruta evita la distinción rota.
   @doc "Returns the path to redirect to after log in."
-  # the usuario was already logged in, redirect to settings
-  def signed_in_path(%Plug.Conn{assigns: %{current_scope: %Scope{usuario: %Autenticacion.Usuario{}}}}) do
-    ~p"/meta_schema_usuario/settings"
-  end
-
-  def signed_in_path(_), do: ~p"/"
+  def signed_in_path(_conn), do: ~p"/sysadmin/bc-list"
 
   @doc """
   Plug for routes that require the usuario to be authenticated.

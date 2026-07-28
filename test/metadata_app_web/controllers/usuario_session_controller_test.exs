@@ -18,7 +18,7 @@ defmodule MetadataAppWeb.UsuarioSessionControllerTest do
         })
 
       assert get_session(conn, :usuario_token)
-      assert redirected_to(conn) == ~p"/"
+      assert redirected_to(conn) == ~p"/sysadmin/bc-list"
 
       # Now do a logged in request and assert on the menu (dropdown propio de
       # la app, no la barra genérica del scaffold — esa se sacó a propósito)
@@ -41,7 +41,7 @@ defmodule MetadataAppWeb.UsuarioSessionControllerTest do
         })
 
       assert conn.resp_cookies["_metadata_app_web_usuario_remember_me"]
-      assert redirected_to(conn) == ~p"/"
+      assert redirected_to(conn) == ~p"/sysadmin/bc-list"
     end
 
     test "logs the usuario in with return to", %{conn: conn, usuario: usuario} do
@@ -82,7 +82,7 @@ defmodule MetadataAppWeb.UsuarioSessionControllerTest do
         })
 
       assert get_session(conn, :usuario_token)
-      assert redirected_to(conn) == ~p"/"
+      assert redirected_to(conn) == ~p"/sysadmin/bc-list"
 
       # Now do a logged in request and assert on the menu (dropdown propio de
       # la app, no la barra genérica del scaffold — esa se sacó a propósito)
@@ -103,7 +103,7 @@ defmodule MetadataAppWeb.UsuarioSessionControllerTest do
         })
 
       assert get_session(conn, :usuario_token)
-      assert redirected_to(conn) == ~p"/"
+      assert redirected_to(conn) == ~p"/sysadmin/bc-list"
       assert Phoenix.Flash.get(conn.assigns.flash, :info) =~ "Usuario confirmed successfully."
 
       assert Autenticacion.get_usuario!(usuario.id).confirmed_at

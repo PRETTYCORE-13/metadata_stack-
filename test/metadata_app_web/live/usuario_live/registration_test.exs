@@ -17,7 +17,7 @@ defmodule MetadataAppWeb.UsuarioLive.RegistrationTest do
         conn
         |> log_in_usuario(usuario_fixture())
         |> live(~p"/meta_schema_usuario/register")
-        |> follow_redirect(conn, ~p"/")
+        |> follow_redirect(conn, ~p"/sysadmin/bc-list")
 
       assert {:ok, _conn} = result
     end
