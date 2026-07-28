@@ -25,7 +25,7 @@ defmodule MetadataAppWeb.UsuarioAuthTest do
       conn = UsuarioAuth.log_in_usuario(conn, usuario)
       assert token = get_session(conn, :usuario_token)
       assert get_session(conn, :live_socket_id) == "meta_schema_usuario_sessions:#{Base.url_encode64(token)}"
-      assert redirected_to(conn) == ~p"/"
+      assert redirected_to(conn) == ~p"/sysadmin/bc-list"
       assert Autenticacion.get_usuario_by_session_token(token)
     end
 
@@ -74,13 +74,13 @@ defmodule MetadataAppWeb.UsuarioAuthTest do
       assert max_age == @remember_me_cookie_max_age
     end
 
-    test "redirects to settings when usuario is already logged in", %{conn: conn, usuario: usuario} do
+    test "redirects to bc-list when usuario is already logged in", %{conn: conn, usuario: usuario} do
       conn =
         conn
         |> assign(:current_scope, Scope.for_usuario(usuario))
         |> UsuarioAuth.log_in_usuario(usuario)
 
-      assert redirected_to(conn) == ~p"/meta_schema_usuario/settings"
+      assert redirected_to(conn) == ~p"/sysadmin/bc-list"
     end
 
     test "writes a cookie if remember_me was set in previous session", %{conn: conn, usuario: usuario} do

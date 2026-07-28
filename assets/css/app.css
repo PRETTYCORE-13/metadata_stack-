@@ -118,3 +118,11 @@ body {
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
 /* This file is for your main application CSS */
+
+/* Constructor de plantillas (ListaOrdenable, ver assets/js/app.js) — clase
+   pasada como ghostClass a Sortable.js, tiene que existir como CSS real
+   (no una utilidad de Tailwind) porque Sortable la inyecta desde JS, algo
+   que el escaneo de clases de Tailwind no ve en ningún template. */
+.jal-fantasma {
+  opacity: 0.35;
+}

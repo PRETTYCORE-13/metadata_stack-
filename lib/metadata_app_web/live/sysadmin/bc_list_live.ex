@@ -1455,6 +1455,9 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               <.link navigate={~p"/sysadmin/bc-list/#{nodo.id}/motor"} class="text-blue-600 hover:text-blue-800 text-xs font-semibold">
                 Editar
               </.link>
+              <.link navigate={~p"/sysadmin/bc-list/#{nodo.id}/plantilla"} class="text-purple-600 hover:text-purple-800 text-xs font-semibold">
+                PostView
+              </.link>
               <.link
                 :if={Map.get(nodo, :permisos_habilitados, false)}
                 navigate={~p"/sysadmin/catalogos/#{nodo.id}/permisos"}
