@@ -80,6 +80,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
       nav: h.schema_context_nav,
       visible: h.schema_visible,
       icono: h.schema_context_icono,
+      orden: h.orden,
       es_carpeta: h.schema_context_type == 2,
       es_consulta: h.schema_context_type == 3
     }
@@ -94,7 +95,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     items
     |> Enum.reduce(%{}, fn item, arbol ->
       if item.es_carpeta do
-        insertar_carpeta_explicita(arbol, segmentos(item.nav), item.label, item[:icono], item.id)
+        insertar_carpeta_explicita(arbol, segmentos(item.nav), item.label, item[:icono], item.id, item[:orden])
       else
         insertar_en_arbol(arbol, segmentos_con_carpeta(item), item)
       end
@@ -143,30 +144,32 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   # viaja también, para que la UI de administración sepa qué carpeta tiene
   # un Header real detrás (editable/eliminable) y cuál es solo un segmento
   # de ruta inferido de sus hijos (no hay nada que editar/eliminar ahí).
-  defp insertar_carpeta_explicita(mapa, [], _label, _icono, _id), do: mapa
+  defp insertar_carpeta_explicita(mapa, [], _label, _icono, _id, _orden), do: mapa
 
-  defp insertar_carpeta_explicita(mapa, [ultimo], label, icono, id) do
+  defp insertar_carpeta_explicita(mapa, [ultimo], label, icono, id, orden) do
     # Map.merge en vez de %{nodo | ...}: si esta carpeta ya existía en el
     # mapa como nodo "inferido" (creado por insertar_en_arbol/3 al procesar
     # una página hija que se coló primero en el Enum.reduce — el orden
     # depende del orden alfabético de schema_context_name, no del nav), ese
-    # nodo no tiene las claves :icono/:id todavía. %{nodo | ...} exige que
-    # ya existan (KeyError si no) — Map.merge las agrega sin problema.
-    Map.update(mapa, {:carpeta, ultimo}, %{nombre: label, icono: icono, id: id, hijos: %{}}, fn nodo ->
-      Map.merge(nodo, %{nombre: label, icono: icono, id: id})
+    # nodo no tiene las claves :icono/:id/:orden todavía. %{nodo | ...}
+    # exige que ya existan (KeyError si no) — Map.merge las agrega sin
+    # problema.
+    Map.update(mapa, {:carpeta, ultimo}, %{nombre: label, icono: icono, id: id, orden: orden, hijos: %{}}, fn nodo ->
+      Map.merge(nodo, %{nombre: label, icono: icono, id: id, orden: orden})
     end)
   end
 
-  defp insertar_carpeta_explicita(mapa, [seg | resto], label, icono, id) do
+  defp insertar_carpeta_explicita(mapa, [seg | resto], label, icono, id, orden) do
     nodo_default = %{
       nombre: nil,
       icono: nil,
       id: nil,
-      hijos: insertar_carpeta_explicita(%{}, resto, label, icono, id)
+      orden: nil,
+      hijos: insertar_carpeta_explicita(%{}, resto, label, icono, id, orden)
     }
 
     Map.update(mapa, {:carpeta, seg}, nodo_default, fn nodo ->
-      %{nodo | hijos: insertar_carpeta_explicita(nodo.hijos, resto, label, icono, id)}
+      %{nodo | hijos: insertar_carpeta_explicita(nodo.hijos, resto, label, icono, id, orden)}
     end)
   end
 
@@ -183,12 +186,17 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
           nombre: nodo.nombre || segmento,
           icono: Map.get(nodo, :icono),
           id: Map.get(nodo, :id),
+          orden: Map.get(nodo, :orden),
           hijos: mapa_a_lista_ordenada(nodo.hijos)
         }
     end)
     |> Enum.sort_by(fn
-      %{tipo: :carpeta, nombre: nombre} -> {0, nombre}
-      %{tipo: :pagina, label: label} -> {1, label}
+      # Carpeta con orden manual asignado (drag-and-drop, "Editar vista")
+      # va primero, por ese orden — sin orden asignado, cae al alfabético
+      # de siempre, después de cualquiera que sí lo tenga.
+      %{tipo: :carpeta, orden: orden, nombre: nombre} when not is_nil(orden) -> {0, orden, nombre}
+      %{tipo: :carpeta, nombre: nombre} -> {1, 0, nombre}
+      %{tipo: :pagina, label: label} -> {2, 0, label}
     end)
     |> reordenar_detalles_bajo_maestro()
   end
@@ -621,6 +629,34 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     |> Header.changeset(attrs)
     |> Ecto.Changeset.change(%{update_guid: generar_guid()})
     |> Repo.update()
+  end
+
+  @doc """
+  Persiste el orden manual (drag-and-drop, "Editar vista" en BcListLive)
+  de una lista de `schema_context_name` — el índice de cada uno en
+  `nombres` se guarda tal cual en su columna `orden`. `Repo.update_all/2`
+  en vez de un changeset por fila: es un solo campo sin validaciones que
+  respetar, y son pocas filas (carpetas raíz), no vale la pena el
+  round-trip de traer cada Header primero.
+
+  Descarta cualquier `nil` en `nombres` a propósito — una carpeta raíz
+  "implícita" (un catálogo suelto sin Header de tipo carpeta propio,
+  envuelto automáticamente por `construir_arbol/1`) aparece con `id: nil`
+  en el árbol, y no hay ninguna fila donde persistirle un orden. El
+  caller (BcListLive) ya filtra esto antes de llamar, pero se repite acá
+  para que esta función sea segura de usar sola, sin depender de que
+  quien la llame se acuerde de filtrar primero.
+  """
+  def reordenar_raices(nombres) do
+    nombres
+    |> Enum.reject(&is_nil/1)
+    |> Enum.with_index()
+    |> Enum.each(fn {nombre, indice} ->
+      from(h in Header, where: h.schema_context_name == ^nombre)
+      |> Repo.update_all(set: [orden: indice])
+    end)
+
+    :ok
   end
 
   # Borrado total (no soft-delete): al ser el Header dueño de la definición

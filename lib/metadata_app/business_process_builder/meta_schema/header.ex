@@ -25,6 +25,13 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # por el mismo criterio que separó schema_es_transaccional de ese campo.
     field :schema_encabezado_id, :id
 
+    # Orden manual (drag-and-drop) entre hermanos del mismo nivel del árbol
+    # — hoy solo se edita para carpetas raíz (ver "Editar vista" en
+    # BcListLive), pero MetaSchemaContext.mapa_a_lista_ordenada/1 lo respeta
+    # en cualquier nivel. nil = sin ordenar a mano, cae al alfabético de
+    # siempre.
+    field :orden, :integer
+
     field :insert_guid, :string
     field :update_guid, :string
     field :delete_guid, :string
@@ -44,7 +51,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
 
   def changeset(header, attrs) do
     header
-    |> cast(attrs, @requeridos ++ [:schema_context_icono, :schema_set_permissions, :schema_profiles, :schema_es_transaccional, :codigo_trn, :schema_encabezado_id])
+    |> cast(attrs, @requeridos ++ [:schema_context_icono, :schema_set_permissions, :schema_profiles, :schema_es_transaccional, :codigo_trn, :schema_encabezado_id, :orden])
     |> validate_required(@requeridos)
     |> update_change(:codigo_trn, &nil_si_vacio_o_mayusculas/1)
     |> validar_codigo_trn()
