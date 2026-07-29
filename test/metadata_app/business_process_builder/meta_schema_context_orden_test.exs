@@ -109,6 +109,29 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContextOrdenTest do
     assert nombres == ["Zeta #{sufijo}", "Alfa #{sufijo}"]
   end
 
+  test "reordenar_hermanos/1 con clave \"ruta:...\" ordena carpetas AUTOMÁTICAS (implícitas) entre sí" do
+    sufijo = unique()
+    padre = crear_carpeta_raiz("tienda_#{sufijo}", "Tienda #{sufijo}")
+
+    # Nadie creó "electronica" ni "ropa" a mano — existen solo porque estos
+    # catálogos comparten esas rutas bajo la carpeta explícita "padre".
+    crear_catalogo("cel_#{sufijo}", "Celulares #{sufijo}", "/#{padre.schema_context_name}/electronica/cel")
+    crear_catalogo("cam_#{sufijo}", "Camisas #{sufijo}", "/#{padre.schema_context_name}/ropa/cam")
+
+    # "ropa" ganaría después alfabéticamente frente a "electronica" — se
+    # fuerza lo contrario con la clave sintética "ruta:...".
+    ruta_ropa = "ruta:#{padre.schema_context_name}/ropa"
+    :ok = MetaSchemaContext.reordenar_hermanos([ruta_ropa])
+
+    hijos =
+      MetaSchemaContext.listar_headers_arbol()
+      |> Enum.find(&(&1.tipo == :carpeta and &1.id == padre.schema_context_name))
+      |> Map.fetch!(:hijos)
+      |> Enum.map(& &1.segmento)
+
+    assert hijos == ["ropa", "electronica"]
+  end
+
   test "reordenar_hermanos/1 mezcla carpetas y catálogos dentro de una misma carpeta padre" do
     sufijo = unique()
     padre = crear_carpeta_raiz("padre_orden_#{sufijo}", "Padre #{sufijo}")

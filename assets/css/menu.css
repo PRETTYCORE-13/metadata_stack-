@@ -22,6 +22,132 @@
   font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
 }
 
+/* ---- FONDO/TEXTO PRINCIPAL DE LA APP (fuera del sidebar) ----
+   Dos variables nomás: "primario" (pc-platform-main, donde vive el
+   contenido de cada página) y "secundario" (topbar/footer, un tono
+   distinto para separarlos visualmente). Con esto SOLO se maneja fondo y
+   texto genérico/heredado — bordes, acentos morados y el estilo propio
+   de cada tarjeta/tabla/botón (hardcoded en cada LiveView, ej. las cajas
+   blancas de "Editar vista" en BcListLive) NO se tocan acá, quedan
+   iguales en los dos temas.
+
+   A PROPÓSITO usan el contraste CONTRARIO al del sidebar, no el mismo:
+   sidebar oscuro (default/"dark") + contenido CLARO, o sidebar claro
+   ("light") + contenido OSCURO — nunca los dos oscuros ni los dos claros
+   a la vez. Por eso el bloque que oscurece el contenido está bajo
+   `[data-theme="light"]` (el mismo que aclara el sidebar), no bajo
+   `[data-theme="dark"]`. */
+:root {
+  --pc-bg-primario: #ffffff;
+  --pc-bg-secundario: #fafafa;
+  --pc-texto: #000000;
+}
+
+:root[data-theme="light"] {
+  --pc-bg-primario: #171717;
+  --pc-bg-secundario: #0a0a0a;
+  --pc-texto: #e5e7eb;
+}
+
+/* Botones de acción "secundarios" del header de cada página (ej. "+
+   Carpeta"/"+ Ecto"/"Vista" en BcListLive — fondo blanco por defecto,
+   pensado para el contenido claro). Sobre el contenido oscuro (ver
+   arriba) un botón blanco sólido desentona — acá se invierten a negro
+   con blanco, igual que el resto del contenido. El acento (el botón
+   morado sólido "+ Catálogo") no lleva esta clase a propósito, se queda
+   igual en los dos temas. !important porque estas utilidades de
+   Tailwind (bg-white, border-purple-600, etc.) viven directo en el
+   HEEx — mismo criterio que .pc-sidebar-search input más abajo. */
+:root[data-theme="light"] .pc-btn-secundario {
+  background: #000000 !important;
+  color: #ffffff !important;
+  border-color: #ffffff !important;
+}
+
+:root[data-theme="light"] .pc-btn-secundario:hover {
+  background: #262626 !important;
+}
+
+/* El botón de acento ("+ Catálogo", morado sólido) también se invierte
+   sobre contenido oscuro: blanco con letras negras en vez de morado. */
+:root[data-theme="light"] .pc-btn-acento {
+  background: #ffffff !important;
+  color: #000000 !important;
+}
+
+:root[data-theme="light"] .pc-btn-acento:hover {
+  background: #e5e7eb !important;
+}
+
+/* ---- TABLAS: fondo/borde/texto invertidos sobre contenido oscuro ----
+   Mismo patrón repetido en ~13 LiveViews (wrapper
+   div.rounded-xl.border.border-gray-200 > table.min-w-full...) — en vez
+   de agregar una clase en cada archivo, se apunta directo a cualquier
+   <table> y su contenido, así que aplica a TODAS sin tocar el HEEx. Los
+   links de acción (Editar/Eliminar/Permisos) llevan su propio color
+   (text-blue-600, etc.) puesto DIRECTO en el elemento — esta regla solo
+   colorea th/td, así que no les gana: se quedan con su color normal, no
+   todo se vuelve blanco parejo. */
+:root[data-theme="light"] table thead,
+:root[data-theme="light"] table .bg-gray-50 {
+  background: #000000 !important;
+}
+
+/* Contenedor de las Acciones (Editar/Permisos/Eliminar) — un chip propio
+   con borde, para que se distinga de la fila (sea negra, blanca o gris
+   claro de carpeta) en vez de quedar el texto flotando suelto. Blanco
+   sobre contenido claro; en el invertido, gris oscuro (no negro puro,
+   para no fundirse con .bg-gray-50/thead de arriba — sigue leyéndose
+   como una tarjeta elevada). */
+.pc-acciones-chip {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+}
+
+:root[data-theme="light"] .pc-acciones-chip {
+  background: #1a1a1a;
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+:root[data-theme="light"] table tr:hover {
+  background: #1a1a1a !important;
+}
+
+:root[data-theme="light"] table th,
+:root[data-theme="light"] table td {
+  color: #ffffff !important;
+}
+
+/* Líneas divisorias entre filas (divide-y, las pinta Tailwind en el
+   <tr> — no en el td/th) y el borde exterior de la tabla: en gris claro
+   de fábrica (pensado para fondo blanco), contra el fondo negro se ven
+   como una franja blanca gruesa. Acá bajan a un blanco bien translúcido
+   — más delgadas/discretas sin tocar el grosor real (1px), solo el
+   contraste. */
+:root[data-theme="light"] table tr {
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Texto NEUTRO (gris) anidado adentro de una celda — el nombre de una
+   carpeta, el id de un catálogo, la ruta de navegación — vive en un
+   <span>/<button> con su propio text-gray-*, así que no le llega el
+   color forzado de arriba (que solo pinta el td/th, no sus hijos con
+   clase propia). Los colores CON significado (badges verdes/morados/
+   azules, links de acción) no son ".text-gray-*", así que esta regla no
+   los toca — se quedan como están. */
+:root[data-theme="light"] table .text-gray-400,
+:root[data-theme="light"] table .text-gray-500,
+:root[data-theme="light"] table .text-gray-600,
+:root[data-theme="light"] table .text-gray-700,
+:root[data-theme="light"] table .text-gray-800,
+:root[data-theme="light"] table .text-gray-900 {
+  color: #e5e7eb !important;
+}
+
+:root[data-theme="light"] div:has(> table.min-w-full) {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
 /* Layout: fila completa — el sidebar es hermano de pc-platform-content, no
    queda metido debajo de una topbar de ancho completo, así ocupa todo el
    lado izquierdo desde arriba (stretch por defecto en el eje cruzado). */
@@ -29,7 +155,7 @@
   display: flex;
   height: 100vh;       /* fallback */
   height: 100dvh;      /* Safari iOS: excluye barra del browser */
-  background: #f5f5f5;
+  background: var(--pc-bg-secundario);
 }
 
 /* Columna derecha: topbar + contenido + footer, al lado del sidebar. */
@@ -79,7 +205,7 @@
 .pc-user-menu-label {
   font-size: 12px;
   font-weight: 600;
-  color: #111827;
+  color: var(--pc-texto);
   white-space: nowrap;
 }
 
@@ -170,7 +296,7 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  background: #fafafa;
+  background: var(--pc-bg-secundario);
   border-bottom: 1px solid #e5e7eb;
   padding: 8px 24px;
   flex-shrink: 0;
@@ -192,7 +318,7 @@
 .pc-topbar-empresa {
   font-size: 15px;
   font-weight: 600;
-  color: #111827;
+  color: var(--pc-texto);
 }
 
 /* Campana + login: empujados al extremo derecho de la topbar. */
@@ -262,7 +388,7 @@
   gap: 6px;
   width: 100%;
   min-height: 22px;
-  background: #fafafa;
+  background: var(--pc-bg-secundario);
   border-top: 1px solid #e5e7eb;
   padding: 2px 12px;
   flex-shrink: 0;
@@ -336,8 +462,8 @@
 
 .pc-platform-main {
   flex: 1;
-  background: #ffffff;
-  color: #000000;
+  background: var(--pc-bg-primario);
+  color: var(--pc-texto);
   overflow: auto;
 }
 

@@ -2,6 +2,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   alias MetadataApp.Repo
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Detail
+  alias MetadataApp.BusinessProcessBuilder.MetaSchema.CarpetaOrden
   import Ecto.Query
 
   # order_by explícito a propósito: sin esto Postgres no garantiza el orden
@@ -92,15 +93,26 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   # resultante. Un item con es_carpeta: true no genera página — solo declara
   # (o le pone nombre bonito a) la carpeta en esa ruta.
   def construir_arbol(items) do
+    ordenes_implicitas = cargar_ordenes_implicitas()
+
     items
     |> Enum.reduce(%{}, fn item, arbol ->
       if item.es_carpeta do
-        insertar_carpeta_explicita(arbol, segmentos(item.nav), item.label, item[:icono], item.id, item[:orden])
+        insertar_carpeta_explicita(arbol, segmentos(item.nav), item.label, item[:icono], item.id, item[:orden], "", ordenes_implicitas)
       else
-        insertar_en_arbol(arbol, segmentos_con_carpeta(item), item)
+        insertar_en_arbol(arbol, segmentos_con_carpeta(item), item, "", ordenes_implicitas)
       end
     end)
     |> mapa_a_lista_ordenada()
+  end
+
+  # Orden manual de carpetas IMPLÍCITAS (ver moduledoc de CarpetaOrden),
+  # indexado por ruta acumulada — se carga una sola vez por árbol en vez
+  # de una consulta por carpeta.
+  defp cargar_ordenes_implicitas do
+    from(c in CarpetaOrden, select: {c.ruta, c.orden})
+    |> Repo.all()
+    |> Map.new()
   end
 
   defp segmentos(nav), do: nav |> String.trim_leading("/") |> String.split("/", trim: true)
@@ -118,21 +130,29 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     end
   end
 
-  defp insertar_en_arbol(mapa, [ultimo], item) do
+  defp insertar_en_arbol(mapa, [ultimo], item, _ruta_padre, _ordenes_implicitas) do
     Map.put(mapa, {:pagina, ultimo}, item)
   end
 
-  defp insertar_en_arbol(mapa, [], item) do
+  defp insertar_en_arbol(mapa, [], item, _ruta_padre, _ordenes_implicitas) do
     # nav sin segmentos (ej. "/") — no debería pasar con la validación
     # actual, pero por si acaso no se pierde el ítem.
     Map.put(mapa, {:pagina, item.id}, item)
   end
 
-  defp insertar_en_arbol(mapa, [carpeta | resto], item) do
-    nodo_default = %{nombre: nil, icono: nil, id: nil, hijos: insertar_en_arbol(%{}, resto, item)}
+  defp insertar_en_arbol(mapa, [carpeta | resto], item, ruta_padre, ordenes_implicitas) do
+    ruta = ruta_con(ruta_padre, carpeta)
+
+    nodo_default = %{
+      nombre: nil,
+      icono: nil,
+      id: nil,
+      orden: Map.get(ordenes_implicitas, ruta),
+      hijos: insertar_en_arbol(%{}, resto, item, ruta, ordenes_implicitas)
+    }
 
     Map.update(mapa, {:carpeta, carpeta}, nodo_default, fn nodo ->
-      %{nodo | hijos: insertar_en_arbol(nodo.hijos, resto, item)}
+      %{nodo | hijos: insertar_en_arbol(nodo.hijos, resto, item, ruta, ordenes_implicitas)}
     end)
   end
 
@@ -144,9 +164,9 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   # viaja también, para que la UI de administración sepa qué carpeta tiene
   # un Header real detrás (editable/eliminable) y cuál es solo un segmento
   # de ruta inferido de sus hijos (no hay nada que editar/eliminar ahí).
-  defp insertar_carpeta_explicita(mapa, [], _label, _icono, _id, _orden), do: mapa
+  defp insertar_carpeta_explicita(mapa, [], _label, _icono, _id, _orden, _ruta_padre, _ordenes_implicitas), do: mapa
 
-  defp insertar_carpeta_explicita(mapa, [ultimo], label, icono, id, orden) do
+  defp insertar_carpeta_explicita(mapa, [ultimo], label, icono, id, orden, _ruta_padre, _ordenes_implicitas) do
     # Map.merge en vez de %{nodo | ...}: si esta carpeta ya existía en el
     # mapa como nodo "inferido" (creado por insertar_en_arbol/3 al procesar
     # una página hija que se coló primero en el Enum.reduce — el orden
@@ -159,19 +179,24 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     end)
   end
 
-  defp insertar_carpeta_explicita(mapa, [seg | resto], label, icono, id, orden) do
+  defp insertar_carpeta_explicita(mapa, [seg | resto], label, icono, id, orden, ruta_padre, ordenes_implicitas) do
+    ruta = ruta_con(ruta_padre, seg)
+
     nodo_default = %{
       nombre: nil,
       icono: nil,
       id: nil,
-      orden: nil,
-      hijos: insertar_carpeta_explicita(%{}, resto, label, icono, id, orden)
+      orden: Map.get(ordenes_implicitas, ruta),
+      hijos: insertar_carpeta_explicita(%{}, resto, label, icono, id, orden, ruta, ordenes_implicitas)
     }
 
     Map.update(mapa, {:carpeta, seg}, nodo_default, fn nodo ->
-      %{nodo | hijos: insertar_carpeta_explicita(nodo.hijos, resto, label, icono, id, orden)}
+      %{nodo | hijos: insertar_carpeta_explicita(nodo.hijos, resto, label, icono, id, orden, ruta, ordenes_implicitas)}
     end)
   end
+
+  defp ruta_con("", segmento), do: segmento
+  defp ruta_con(ruta_padre, segmento), do: ruta_padre <> "/" <> segmento
 
   defp mapa_a_lista_ordenada(mapa) do
     mapa
@@ -647,36 +672,47 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
 
   @doc """
   Persiste el orden manual (drag-and-drop, "Editar vista" en BcListLive)
-  de una lista de `schema_context_name` que son HERMANOS entre sí — el
-  índice de cada uno en `nombres` se guarda tal cual en su columna
-  `orden`. Sirve tanto para las carpetas raíz como para los hijos de
-  CUALQUIER carpeta (carpetas y catálogos mezclados) — el "orden" de un
-  header solo se compara contra sus hermanos del mismo nivel del árbol
-  (ver `clave_orden/1`), así que da lo mismo si distintos grupos de
-  hermanos reusan los mismos números 0..N-1 entre sí.
+  de una lista de CLAVES que son HERMANAS entre sí — el índice de cada
+  una en `claves` se guarda como su `orden`. Sirve tanto para las
+  carpetas raíz como para los hijos de CUALQUIER carpeta (carpetas y
+  catálogos mezclados) — el "orden" solo se compara contra hermanos del
+  mismo nivel del árbol (ver `clave_orden/1`), así que da lo mismo si
+  distintos grupos de hermanos reusan los mismos números 0..N-1 entre sí.
+
+  Cada clave es una de dos cosas (ver `clave_de_carpeta/2` en
+  BcListLive, mismo criterio en los dos lados):
+    - un `schema_context_name` real (catálogo, o carpeta con Header
+      propio) — se persiste en la columna `orden` de `meta_schema_header`.
+    - `"ruta:" <> ruta_acumulada` — una carpeta IMPLÍCITA (sin Header
+      propio, inferida solo de la ruta de lo que tiene adentro), donde no
+      hay fila de Header en la que guardar nada — se persiste por ruta en
+      `meta_schema_carpeta_orden` (ver `MetaSchema.CarpetaOrden`).
 
   `Repo.update_all/2` en vez de un changeset por fila: es un solo campo
   sin validaciones que respetar, y son pocas filas a la vez, no vale la
   pena el round-trip de traer cada Header primero.
 
-  Descarta cualquier `nil` en `nombres` a propósito — una carpeta
-  "implícita" (un catálogo suelto sin Header de tipo carpeta propio,
-  envuelto automáticamente por `construir_arbol/1`) aparece con `id: nil`
-  en el árbol, y no hay ninguna fila donde persistirle un orden. El
-  caller (BcListLive) ya filtra esto antes de llamar, pero se repite acá
-  para que esta función sea segura de usar sola, sin depender de que
-  quien la llame se acuerde de filtrar primero.
+  Descarta cualquier `nil` en `claves` a propósito, para que esta función
+  sea segura de usar sola sin depender de que el caller filtre primero.
   """
-  def reordenar_hermanos(nombres) do
-    nombres
+  def reordenar_hermanos(claves) do
+    claves
     |> Enum.reject(&is_nil/1)
     |> Enum.with_index()
-    |> Enum.each(fn {nombre, indice} ->
-      from(h in Header, where: h.schema_context_name == ^nombre)
-      |> Repo.update_all(set: [orden: indice])
-    end)
+    |> Enum.each(fn {clave, indice} -> persistir_orden(clave, indice) end)
 
     :ok
+  end
+
+  defp persistir_orden("ruta:" <> ruta, indice) do
+    %CarpetaOrden{}
+    |> CarpetaOrden.changeset(%{ruta: ruta, orden: indice})
+    |> Repo.insert(on_conflict: [set: [orden: indice]], conflict_target: :ruta)
+  end
+
+  defp persistir_orden(nombre, indice) do
+    from(h in Header, where: h.schema_context_name == ^nombre)
+    |> Repo.update_all(set: [orden: indice])
   end
 
   # Borrado total (no soft-delete): al ser el Header dueño de la definición

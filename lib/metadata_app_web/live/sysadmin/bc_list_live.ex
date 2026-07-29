@@ -132,18 +132,20 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     {:noreply, assign(socket, :editando_orden, false)}
   end
 
-  # Recalcula el orden completo de las carpetas raíz visibles en esta
-  # página (no solo la que se movió) a partir de su posición ANTERIOR +
-  # la nueva posición que ya calculó Sortable.js del lado del cliente —
+  # Recalcula el orden completo de los hermanos visibles en este
+  # contenedor (no solo el que se movió) a partir de su posición ANTERIOR
+  # + la nueva posición que ya calculó Sortable.js del lado del cliente —
   # así después de cada suelte queda una secuencia 0..N-1 totalmente
-  # definida, sin mezclar "algunas con orden manual, otras sin" que
-  # complicaría el criterio de desempate. Ignora cualquier carpeta raíz
-  # sin Header real detrás (id nil — carpeta inferida de un catálogo
-  # suelto sin "Relación" propia): no hay dónde persistirle un orden.
+  # definida, sin mezclar "algunos con orden manual, otros sin" que
+  # complicaría el criterio de desempate. Cada hermano se identifica por
+  # su CLAVE (clave_de_carpeta/2 — id real, o "ruta:..." si es una
+  # carpeta implícita sin Header propio), nunca por `.id` a secas: una
+  # carpeta implícita también tiene que poder reordenarse entre sus
+  # hermanas, y reordenar_hermanos/1 ya sabe persistir ambos tipos.
   def handle_event("mover_a", %{"id" => id, "contenedor_id" => contenedor_id, "index" => index}, socket) do
-    hijos_actuales = hijos_de(socket.assigns.arbol, contenedor_id) || []
-    ids_actuales = hijos_actuales |> Enum.map(& &1.id) |> Enum.reject(&is_nil/1)
-    nuevo_orden = ids_actuales |> List.delete(id) |> List.insert_at(index, id)
+    {hijos_actuales, ruta_hijos} = hijos_de(socket.assigns.arbol, contenedor_id) || {[], ""}
+    claves_actuales = Enum.map(hijos_actuales, &clave_de_carpeta(&1, ruta_hijos))
+    nuevo_orden = claves_actuales |> List.delete(id) |> List.insert_at(index, id)
 
     :ok = MetaSchemaContext.reordenar_hermanos(nuevo_orden)
 
@@ -822,23 +824,30 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # Busca, dentro del árbol de ESTA página, la lista de hijos que
   # corresponde a un `data-contenedor-id` (evento "mover_a" del hook
   # ListaOrdenable) — "" es la raíz (@arbol tal cual), cualquier otro
-  # valor es el `id` (schema_context_name) de una carpeta en algún nivel.
+  # valor es la CLAVE (clave_de_carpeta/2) de una carpeta en algún nivel.
   # Recursivo: la carpeta puede estar a cualquier profundidad, no solo raíz.
   # El "id" de una carpeta SIN Header propio (implícita) es nil, así que
   # el contenedor_id que llega del cliente para ESA carpeta en realidad es
   # la clave sintética "ruta:..." armada por clave_de_carpeta/2 (mismo
   # criterio en los dos lados, ver arbol_editable/1) — hay que reconstruir
   # la misma ruta acumulada acá para poder encontrarla.
-  defp hijos_de(nodos, ""), do: nodos
+  #
+  # Devuelve `{hijos, ruta_hijos}`: además de la lista, la ruta acumulada
+  # DESDE la raíz hasta este contenedor — es la que hace falta para poder
+  # calcular, a su vez, la clave de cada hijo que sea carpeta (ver
+  # handle_event("mover_a", ...) arriba).
+  defp hijos_de(nodos, ""), do: {nodos, ""}
   defp hijos_de(nodos, contenedor_id), do: buscar_hijos(nodos, "", contenedor_id)
 
   defp buscar_hijos(nodos, ruta_padre, contenedor_id) do
     Enum.find_value(nodos, fn
       %{tipo: :carpeta, hijos: hijos} = nodo ->
+        ruta_nodo = ruta_con(ruta_padre, nodo.segmento)
+
         if clave_de_carpeta(nodo, ruta_padre) == contenedor_id do
-          hijos
+          {hijos, ruta_nodo}
         else
-          buscar_hijos(hijos, ruta_con(ruta_padre, nodo.segmento), contenedor_id)
+          buscar_hijos(hijos, ruta_nodo, contenedor_id)
         end
 
       _pagina ->
@@ -1229,19 +1238,19 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               type="button"
               id="btn-nuevo-contexto"
               phx-click="abrir_form_carpeta"
-              class="bg-white border border-purple-600 text-purple-700 hover:bg-purple-50 font-bold px-6 py-2 rounded"
+              class="pc-btn-secundario bg-white border border-purple-600 text-purple-700 hover:bg-purple-50 font-bold px-6 py-2 rounded"
             >
               + Carpeta
             </button>
             <.link navigate={~p"/sysadmin/bc-list/nuevo-completo"}
-              class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-6 py-2 rounded">
+              class="pc-btn-acento bg-purple-600 hover:bg-purple-700 text-white font-bold px-6 py-2 rounded">
               + Catálogo
             </.link>
             <button
               type="button"
               phx-click="abrir_form_consulta"
               title="Consulta Ecto: reporte de solo lectura sobre uno o más catálogos, sin estados ni tabla propia"
-              class="bg-white border border-purple-600 text-purple-700 hover:bg-purple-50 font-bold px-6 py-2 rounded"
+              class="pc-btn-secundario bg-white border border-purple-600 text-purple-700 hover:bg-purple-50 font-bold px-6 py-2 rounded"
             >
               + Ecto
             </button>
@@ -1249,7 +1258,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               type="button"
               phx-click="abrir_editar_orden"
               title="Arrastrar las carpetas raíz para cambiar el orden en que aparecen acá y en el menú"
-              class="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-bold px-6 py-2 rounded"
+              class="pc-btn-secundario bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-bold px-6 py-2 rounded"
             >
               Vista
             </button>
@@ -1283,15 +1292,15 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         </div>
 
         <div class="overflow-x-auto rounded-xl border border-gray-200">
-          <table class="min-w-full divide-y divide-gray-200 text-sm">
-            <thead class="bg-gray-50">
-              <tr>
-                <th class="px-4 py-2 w-8"></th>
-                <th class="px-4 py-2 text-left font-semibold text-gray-600">Nombre de sistema</th>
-                <th class="px-4 py-2 text-left font-semibold text-gray-600">Etiqueta</th>
-                <th class="px-4 py-2 text-left font-semibold text-gray-600">Navegación</th>
-                <th class="px-4 py-2 text-left font-semibold text-gray-600">Es visible</th>
-                <th class="px-4 py-2 text-left font-semibold text-gray-600">Acciones</th>
+          <table class="min-w-full divide-y divide-gray-100 text-sm">
+            <thead>
+              <tr class="border-b-2 border-gray-200">
+                <th class="px-4 py-3 w-8"></th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Nombre de sistema</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Etiqueta</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Navegación</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Estado</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Acciones</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
@@ -1341,12 +1350,10 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # carpeta a otra (eso le cambiaría la ruta de navegación de golpe, sin
   # ninguna confirmación — ver ListaOrdenable en assets/js/app.js).
   #
-  # Un ítem sin `id` real (Header detrás) — una carpeta implícita, un
-  # catálogo suelto envuelto automáticamente por
-  # MetaSchemaContext.construir_arbol/1 — no tiene dónde persistirle un
-  # orden: se muestra igual (para que el árbol se vea completo) pero sin
-  # manija de arrastre, y si es carpeta, sin lista editable adentro (no
-  # hay `id` con el que identificar ESE contenedor al guardar).
+  # Una carpeta sin `id` real (Header detrás) — implícita, inferida solo
+  # de la ruta de lo que tiene adentro — también se puede arrastrar: su
+  # orden se guarda por ruta (ver clave_de_carpeta/2 y
+  # MetaSchemaContext.reordenar_hermanos/1), no por `schema_context_name`.
   attr :arbol, :list, required: true
 
   defp panel_editar_orden(assigns) do
@@ -1375,12 +1382,11 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # arriba) no puede ser su `id` (nil) — se arma una clave sintética a
   # partir de la ruta acumulada desde la raíz ("ruta:ecc/ventas"), con un
   # prefijo que nunca puede chocar contra un `schema_context_name` real.
-  # Esto es lo que permite reordenar el CONTENIDO de una carpeta implícita
-  # aunque a ELLA MISMA no se la pueda arrastrar (no hay dónde
-  # persistirle un orden propio) — antes esto no pasaba: la recursión se
-  # cortaba de raíz en cualquier carpeta sin id, dejando afuera del
-  # editor TODO lo que hubiera adentro (el caso típico: un catálogo cuyo
-  # nav trae una carpeta que nunca se creó a mano con "+ Nueva carpeta").
+  # Esta misma clave (id real, o "ruta:...") es la que se usa como
+  # `data-id` de CADA ítem arrastrable — carpeta implícita incluida — así
+  # que también sirve para identificar/persistir su propio orden entre
+  # hermanas (ver MetaSchemaContext.reordenar_hermanos/1). Para un nodo
+  # :pagina, que siempre tiene `id`, la primera cláusula ya alcanza.
   defp clave_de_carpeta(%{id: id}, _ruta_padre) when not is_nil(id), do: id
   defp clave_de_carpeta(%{segmento: segmento}, ruta_padre), do: "ruta:" <> ruta_con(ruta_padre, segmento)
 
@@ -1397,12 +1403,11 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
     ~H"""
     <div id={"orden-lista-" <> @grupo} phx-hook="ListaOrdenable" data-contenedor-id={@contenedor_id} data-grupo={@grupo} class="space-y-1.5">
-      <div :for={nodo <- @nodos} id={"orden-nodo-" <> (nodo.id || clave_de_carpeta(nodo, @ruta_padre))}>
-        <div data-id={nodo.id} class="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm">
-          <svg :if={nodo.id} class="jal-manija text-gray-300 hover:text-gray-500 cursor-grab flex-shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" title="Arrastrar para reordenar">
+      <div :for={nodo <- @nodos} id={"orden-nodo-" <> clave_de_carpeta(nodo, @ruta_padre)}>
+        <div data-id={clave_de_carpeta(nodo, @ruta_padre)} class="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm">
+          <svg class="jal-manija text-gray-300 hover:text-gray-500 cursor-grab flex-shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" title="Arrastrar para reordenar">
             <circle cx="8" cy="6" r="1.6" /><circle cx="16" cy="6" r="1.6" /><circle cx="8" cy="12" r="1.6" /><circle cx="16" cy="12" r="1.6" /><circle cx="16" cy="18" r="1.6" /><circle cx="8" cy="18" r="1.6" />
           </svg>
-          <span :if={!nodo.id} class="w-[14px] flex-shrink-0" title="Esta carpeta no tiene un registro propio (se infiere sola de la ruta de lo que tiene adentro) — no se puede mover ELLA, pero sí lo que hay adentro."></span>
           <span class="material-symbols-outlined text-gray-400" style="font-size: 18px">
             {if nodo.tipo == :carpeta, do: "folder", else: "description"}
           </span>
@@ -1410,7 +1415,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           <span
             :if={!nodo.id}
             class="text-[10px] text-gray-400 italic whitespace-nowrap"
-            title="Carpeta automática (sin '+ Nueva carpeta' propia) — no se puede reordenar ella misma, pero su contenido sí."
+            title="Carpeta automática (sin '+ Nueva carpeta' propia) — no tiene un registro propio, pero su orden y el de su contenido se guardan igual."
           >
             carpeta automática
           </span>
@@ -2102,10 +2107,10 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       <%= if nodo.tipo == :carpeta do %>
         <% ruta = if @ruta_padre == "", do: nodo.segmento, else: @ruta_padre <> "/" <> nodo.segmento %>
         <% expandida? = MapSet.member?(@carpetas_expandidas, ruta) %>
-        <tr class="bg-gray-50 hover:bg-gray-100">
+        <tr class="bg-gray-50 hover:bg-gray-100 transition-colors">
           <td
             colspan="6"
-            class="px-4 py-1.5 text-xs select-none"
+            class="px-4 py-2 text-xs select-none"
             style={"padding-left: #{16 + @nivel * 20}px"}
           >
             <div class="flex items-center justify-between gap-2">
@@ -2113,13 +2118,16 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                 type="button"
                 phx-click="toggle_carpeta"
                 phx-value-ruta={ruta}
-                class="flex items-center gap-1 font-semibold text-gray-500 uppercase tracking-wide cursor-pointer flex-1 text-left"
+                class="pc-carpeta-fila flex items-center gap-2 font-semibold text-gray-600 uppercase tracking-wide cursor-pointer flex-1 text-left"
               >
-                <span class="inline-block w-3">{if expandida?, do: "▾", else: "▸"}</span>
-                📁 {nodo.nombre}
+                <span class="pc-carpeta-chevron inline-block w-3 text-gray-400">{if expandida?, do: "▾", else: "▸"}</span>
+                <span class="w-6 h-6 rounded-md bg-gray-400/30 text-(--pc-texto) flex items-center justify-center flex-shrink-0">
+                  <span class="material-symbols-outlined" style="font-size: 15px">folder</span>
+                </span>
+                {nodo.nombre}
               </button>
               <%= if nodo.id do %>
-                <div class="flex gap-2 normal-case tracking-normal flex-shrink-0">
+                <div class="flex items-center gap-2 normal-case tracking-normal flex-shrink-0 pc-acciones-chip rounded-lg px-2.5 py-1">
                   <button
                     type="button"
                     id={"btn-editar-carpeta-#{nodo.id}"}
@@ -2149,8 +2157,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           <.filas_arbol nodos={nodo.hijos} nivel={@nivel + 1} carpetas_expandidas={@carpetas_expandidas} ruta_padre={ruta} seleccionados={@seleccionados} />
         <% end %>
       <% else %>
-        <tr>
-          <td class="px-4 py-2">
+        <tr class="hover:bg-gray-50 transition-colors">
+          <td class="px-4 py-2.5">
             <input
               :if={nodo.puede_desplegar == true}
               type="checkbox"
@@ -2160,12 +2168,26 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               class="accent-purple-600"
             />
           </td>
-          <td class="px-4 py-2 text-gray-800" style={"padding-left: #{16 + @nivel * 20}px"}>{nodo.id}</td>
-          <td class="px-4 py-2 text-gray-800">
-            <span :if={Map.get(nodo, :es_consulta, false)} title="Consulta Ecto" class="mr-1">🔎</span>
+          <td class="px-4 py-2.5" style={"padding-left: #{16 + @nivel * 20}px"}>
+            <div class="flex items-center gap-2">
+              <span class="w-6 h-6 rounded-md bg-gray-400/30 text-(--pc-texto) flex items-center justify-center flex-shrink-0">
+                <span class="material-symbols-outlined" style="font-size: 15px">
+                  {if Map.get(nodo, :es_consulta, false), do: "search", else: "description"}
+                </span>
+              </span>
+              <span class="font-semibold text-gray-800">{nodo.id}</span>
+            </div>
+          </td>
+          <td class="px-4 py-2.5 text-gray-600">
+            <span
+              :if={Map.get(nodo, :es_consulta, false)}
+              class="inline-block mr-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-purple-100 text-purple-700"
+            >
+              Consulta
+            </span>
             {nodo.label}
           </td>
-          <td class="px-4 py-2 text-gray-800 max-w-[260px]">
+          <td class="px-4 py-2.5 text-gray-600 max-w-[260px]">
             <div class="flex items-center gap-1 min-w-0">
               <span class="truncate" title={nodo.nav}>{nodo.nav}</span>
               <button
@@ -2186,9 +2208,16 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               </button>
             </div>
           </td>
-          <td class="px-4 py-2 text-gray-800">{if nodo.visible, do: "Sí", else: "No"}</td>
-          <td class="px-4 py-2">
-            <div class="flex flex-wrap gap-2">
+          <td class="px-4 py-2.5">
+            <span class={[
+              "inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide",
+              if(nodo.visible, do: "bg-green-100 text-green-700", else: "bg-gray-100 text-gray-500")
+            ]}>
+              {if nodo.visible, do: "Visible", else: "Oculto"}
+            </span>
+          </td>
+          <td class="px-4 py-2.5">
+            <div class="inline-flex flex-wrap items-center gap-2 pc-acciones-chip rounded-lg px-2.5 py-1">
               <.link
                 :if={not Map.get(nodo, :es_consulta, false)}
                 navigate={~p"/sysadmin/bc-list/#{nodo.id}/motor"}

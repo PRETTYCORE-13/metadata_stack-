@@ -170,6 +170,47 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveEditarOrdenTest do
     assert hijos == [cat_b.schema_context_name, cat_a.schema_context_name]
   end
 
+  test "reordenar carpetas AUTOMÁTICAS entre sí, dentro de la misma carpeta madre", %{conn: conn} do
+    sufijo = unique()
+    # "DEMO - Tienda" es explícita (Header propio) — "electronica" y "ropa"
+    # son implícitas, inferidas solo de la ruta de los catálogos de abajo
+    # (mismo caso reportado: ninguna trae manija de arrastre ni se puede
+    # reordenar entre sí antes de este fix).
+    padre = crear_carpeta_raiz("tienda_#{sufijo}", "DEMO - Tienda #{sufijo}")
+    crear_catalogo("cel_#{sufijo}", "DEMO - Celulares #{sufijo}", "/#{padre.schema_context_name}/electronica/cel")
+    crear_catalogo("cam_#{sufijo}", "DEMO - Camisas #{sufijo}", "/#{padre.schema_context_name}/ropa/cam")
+
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
+    html = view |> element("button", "Vista") |> render_click()
+
+    ruta_electronica = "ruta:#{padre.schema_context_name}/electronica"
+    ruta_ropa = "ruta:#{padre.schema_context_name}/ropa"
+
+    # Ambas carpetas automáticas ahora traen manija (data-id con su clave
+    # sintética) — antes no se les renderizaba ninguna.
+    assert html =~ "data-id=\"#{ruta_electronica}\""
+    assert html =~ "data-id=\"#{ruta_ropa}\""
+
+    # "ropa" perdería siempre alfabéticamente frente a "electronica" — se
+    # fuerza lo contrario arrastrándola a la posición 0, dentro del
+    # contenedor de la carpeta madre explícita.
+    render_hook(view, "mover_a", %{"id" => ruta_ropa, "contenedor_id" => padre.schema_context_name, "index" => 0})
+
+    hijos =
+      MetaSchemaContext.listar_headers_arbol()
+      |> Enum.find(&(&1.tipo == :carpeta and &1.id == padre.schema_context_name))
+      |> Map.fetch!(:hijos)
+      |> Enum.map(& &1.segmento)
+
+    assert hijos == ["ropa", "electronica"]
+
+    # Persiste de verdad (no solo en el socket) — nuevo mount confirma.
+    {:ok, _view2, html2} = live(conn, ~p"/sysadmin/bc-list")
+    pos_ropa = :binary.match(html2, "DEMO - Camisas #{sufijo}") |> elem(0)
+    pos_electronica = :binary.match(html2, "DEMO - Celulares #{sufijo}") |> elem(0)
+    assert pos_ropa < pos_electronica
+  end
+
   test "cerrar 'Editar vista' con 'Listo' vuelve a la tabla normal", %{conn: conn} do
     sufijo = unique()
     crear_carpeta_raiz("orden_a_#{sufijo}", "Carpeta A #{sufijo}")
