@@ -60,7 +60,12 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:show_prettycore_children, false)
      |> assign(:busqueda, "")
      |> assign(:pagina, 1)
-     |> assign(:carpetas_colapsadas, MapSet.new())
+     # Set de rutas EXPANDIDAS (opt-in), no colapsadas — así el estado por
+     # default (MapSet vacío, sin nada marcado) significa "todo cerrado",
+     # tanto al entrar por primera vez como después de reiniciar el
+     # navegador (esto es puro estado de socket, nunca se persiste).
+     |> assign(:carpetas_expandidas, MapSet.new())
+     |> assign(:editando_orden, false)
      |> assign(:accion_eliminar, nil)
      |> assign(:seleccionados, MapSet.new())
      |> assign(:wizard_publicar, nil)
@@ -101,16 +106,47 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # Colapsar/expandir un grupo de la tabla — estado solo de esta pantalla
   # (no se guarda en el servidor entre sesiones, se resetea al recargar).
   def handle_event("toggle_carpeta", %{"ruta" => ruta}, socket) do
-    colapsadas = socket.assigns.carpetas_colapsadas
+    expandidas = socket.assigns.carpetas_expandidas
 
-    colapsadas =
-      if MapSet.member?(colapsadas, ruta) do
-        MapSet.delete(colapsadas, ruta)
+    expandidas =
+      if MapSet.member?(expandidas, ruta) do
+        MapSet.delete(expandidas, ruta)
       else
-        MapSet.put(colapsadas, ruta)
+        MapSet.put(expandidas, ruta)
       end
 
-    {:noreply, assign(socket, :carpetas_colapsadas, colapsadas)}
+    {:noreply, assign(socket, :carpetas_expandidas, expandidas)}
+  end
+
+  # --- Editar vista: reordenar carpetas raíz por drag-and-drop -----------------
+  # Mismo hook ListaOrdenable que ya usa PlantillaConstructorLive (Sortable.js
+  # por debajo) — acá no hace falta el "group" compartido que usa ese otro
+  # editor para arrastrar ENTRE contenedores anidados, porque acá hay un
+  # único contenedor plano (las carpetas raíz de esta página), así que se
+  # reusa tal cual sin tocar el JS.
+  def handle_event("abrir_editar_orden", _params, socket) do
+    {:noreply, assign(socket, :editando_orden, true)}
+  end
+
+  def handle_event("cerrar_editar_orden", _params, socket) do
+    {:noreply, assign(socket, :editando_orden, false)}
+  end
+
+  # Recalcula el orden completo de las carpetas raíz visibles en esta
+  # página (no solo la que se movió) a partir de su posición ANTERIOR +
+  # la nueva posición que ya calculó Sortable.js del lado del cliente —
+  # así después de cada suelte queda una secuencia 0..N-1 totalmente
+  # definida, sin mezclar "algunas con orden manual, otras sin" que
+  # complicaría el criterio de desempate. Ignora cualquier carpeta raíz
+  # sin Header real detrás (id nil — carpeta inferida de un catálogo
+  # suelto sin "Relación" propia): no hay dónde persistirle un orden.
+  def handle_event("mover_a", %{"id" => id, "index" => index}, socket) do
+    ids_actuales = socket.assigns.arbol |> Enum.map(& &1.id) |> Enum.reject(&is_nil/1)
+    nuevo_orden = ids_actuales |> List.delete(id) |> List.insert_at(index, id)
+
+    :ok = MetaSchemaContext.reordenar_raices(nuevo_orden)
+
+    {:noreply, cargar_headers(socket)}
   end
 
   # Paso 1 del borrado: consulta el impacto antes de mostrar cualquier
@@ -769,33 +805,41 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     Calendar.strftime(fecha, "%d/%m/%Y %H:%M")
   end
 
-  # Se pagina la lista PLANA (antes de armar el árbol) — por eso una carpeta
-  # puede aparecer "incompleta" en una página y seguir en la siguiente, es el
-  # trade-off normal de paginar algo que se agrupa después. Con @por_pagina
-  # bastante alto (50) esto casi no se nota en la práctica.
+  # Pagina por CARPETA RAÍZ, no por fila plana — construir_arbol/1 siempre
+  # agrupa el nivel superior en carpetas (hasta un catálogo suelto en la
+  # raíz, ej. "/refacciones", se envuelve en una implícita con su propio
+  # label — ver el comentario de segmentos_con_carpeta/1 en
+  # MetaSchemaContext), así que el árbol completo YA arranca siendo una
+  # lista de puras carpetas: "1-30 de N" es "N carpetas madre", no "N
+  # filas en toda la base". Antes se paginaba la lista plana ANTES de
+  # armar el árbol — eso hacía que una carpeta pudiera aparecer
+  # "incompleta" en una página, con el resto de sus hijos recién en la
+  # siguiente. Acá se arma el árbol completo primero (en memoria, sin
+  # costo de DB extra) y se pagina la lista de raíces resultante, así
+  # cada carpeta que aparece en una página siempre trae TODO su
+  # subárbol completo, sin importar cuántos niveles tenga.
   defp cargar_headers(socket) do
     filtrados =
       MetaSchemaContext.listar_headers()
       |> Enum.map(&MetaSchemaContext.item_de_header/1)
       |> Enum.filter(&coincide_busqueda?(&1, socket.assigns.busqueda))
 
-    total_items = length(filtrados)
+    arbol_completo = MetaSchemaContext.construir_arbol(filtrados)
+
+    total_items = length(arbol_completo)
     total_paginas = max(ceil(total_items / @por_pagina), 1)
     pagina = socket.assigns.pagina |> max(1) |> min(total_paginas)
     offset = (pagina - 1) * @por_pagina
 
-    pagina_actual = Enum.slice(filtrados, offset, @por_pagina)
+    raices_pagina = Enum.slice(arbol_completo, offset, @por_pagina)
 
-    con_permisos =
-      Permissions.catalogos_con_permisos_habilitados(
-        for item <- pagina_actual, !item.es_carpeta, do: item.id
-      )
-
-    arbol =
-      pagina_actual
-      |> Enum.map(&adjuntar_puede_desplegar/1)
-      |> Enum.map(&adjuntar_permisos_habilitados(&1, con_permisos))
-      |> MetaSchemaContext.construir_arbol()
+    # con_permisos/puede_desplegar siguen calculándose solo sobre lo que
+    # esta página realmente va a mostrar (nunca sobre @total_items) —
+    # mismo espíritu que antes, adaptado a que ahora "lo que se muestra"
+    # es el subárbol completo de cada carpeta raíz de esta página, no un
+    # slice plano de tamaño fijo.
+    con_permisos = Permissions.catalogos_con_permisos_habilitados(ids_no_carpeta(raices_pagina))
+    arbol = Enum.map(raices_pagina, &anotar_nodo(&1, con_permisos))
 
     socket
     |> assign(:arbol, arbol)
@@ -806,15 +850,41 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     |> assign(:fin, min(offset + @por_pagina, total_items))
   end
 
-  # Se calcula solo sobre la página visible (no sobre @total_items), mismo
-  # trade-off de paginar-antes-de-armar-el-árbol de cargar_headers/1 — una
-  # carpeta no tiene autómata propio, no le aplica.
-  #
+  # Recolecta, recursivamente, los ids de todos los nodos :pagina (no
+  # carpeta) dentro de un subárbol — sin importar la profundidad. Es el
+  # equivalente, post-árbol, del viejo `for item <- pagina_actual, !item.es_carpeta`
+  # que operaba sobre la lista plana.
+  defp ids_no_carpeta(nodos) do
+    Enum.flat_map(nodos, fn
+      %{tipo: :carpeta, hijos: hijos} -> ids_no_carpeta(hijos)
+      %{tipo: :pagina} = item -> [item.id]
+    end)
+  end
+
+  # Camina el subárbol de una carpeta raíz de esta página, anotando cada
+  # nodo :pagina con puede_desplegar/permisos_habilitados — las carpetas
+  # en sí nunca se anotan (no tienen autómata propio), solo se recorren.
+  defp anotar_nodo(%{tipo: :carpeta, hijos: hijos} = nodo, con_permisos) do
+    %{nodo | hijos: Enum.map(hijos, &anotar_nodo(&1, con_permisos))}
+  end
+
+  defp anotar_nodo(%{tipo: :pagina} = nodo, con_permisos) do
+    nodo
+    |> adjuntar_puede_desplegar()
+    |> adjuntar_permisos_habilitados(con_permisos)
+  end
+
   # Catálogo Maestro-Detalle: un detalle nunca se publica por separado
   # (comparte el ciclo del maestro, mismo criterio que ya rige sus
   # estados/transiciones/contrato) — acá directamente NO se le calcula
   # puede_desplegar?/1 real, se marca :no_aplica para que el checkbox del
-  # wizard no se pinte para un detalle (ver filas_arbol/1).
+  # wizard no se pinte para un detalle (ver filas_arbol/1). Estas dos
+  # funciones reciben nodos :pagina (ver anotar_nodo/2 arriba), que
+  # conservan todas las llaves del item plano original de
+  # MetaSchemaContext.item_de_header/1 (es_carpeta: false siempre acá, por
+  # eso la primera cláusula de cada una nunca matchea en este punto — se
+  # deja igual para que ninguna de las dos reviente si alguna vez se les
+  # pasa por error un nodo :carpeta).
   defp adjuntar_puede_desplegar(%{es_carpeta: true} = item), do: item
 
   defp adjuntar_puede_desplegar(%{schema_encabezado_id: id} = item) when not is_nil(id),
@@ -1086,8 +1156,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   def render(assigns) do
     ~H"""
-    <div class="max-w-5xl mx-auto p-8">
-      <div class="flex items-center justify-between mb-4">
+    <div class="w-full p-4 sm:p-6 lg:p-8">
+      <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div class="flex items-center gap-2">
           <.link navigate={~p"/"} title="Volver al inicio"
             class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors shrink-0">
@@ -1095,7 +1165,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           </.link>
           <h1 class="text-2xl font-bold">BC List</h1>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-3 flex-wrap">
           <div class="flex items-center gap-2">
             <span class="text-xs font-medium text-gray-500 bg-gray-100 rounded-full px-3 py-1">
               {@inicio}-{@fin} de {@total_items}
@@ -1125,7 +1195,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               </button>
             </div>
           </div>
-          <div class="flex gap-2">
+          <div class="flex gap-2 flex-wrap">
             <button
               type="button"
               id="btn-nuevo-contexto"
@@ -1146,54 +1216,66 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             >
               + Función Ecto
             </button>
+            <button
+              type="button"
+              phx-click="abrir_editar_orden"
+              title="Arrastrar las carpetas raíz para cambiar el orden en que aparecen acá y en el menú"
+              class="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-bold px-6 py-2 rounded"
+            >
+              Editar vista
+            </button>
           </div>
         </div>
       </div>
 
       <.seccion_borradores :if={@borradores != []} borradores={@borradores} />
 
-      <div class="mb-4 flex items-center gap-3">
-        <input
-          type="text"
-          value={@busqueda}
-          phx-keyup="buscar"
-          phx-debounce="200"
-          placeholder="Buscar por nombre o etiqueta..."
-          class="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm text-gray-900"
-        />
-        <button
-          :if={MapSet.size(@seleccionados) > 0}
-          type="button"
-          phx-click="abrir_wizard_publicar"
-          class="flex-shrink-0 bg-purple-600 hover:bg-purple-700 text-white font-bold px-4 py-2 rounded text-sm whitespace-nowrap"
-        >
-          Publicar paquete ({MapSet.size(@seleccionados)})
-        </button>
-      </div>
+      <.panel_editar_orden :if={@editando_orden} arbol={@arbol} />
 
-      <div class="overflow-x-auto rounded-xl border border-gray-200">
-        <table class="min-w-full divide-y divide-gray-200 text-sm">
-          <thead class="bg-gray-50">
-            <tr>
-              <th class="px-4 py-2 w-8"></th>
-              <th class="px-4 py-2 text-left font-semibold text-gray-600">Nombre de sistema</th>
-              <th class="px-4 py-2 text-left font-semibold text-gray-600">Etiqueta</th>
-              <th class="px-4 py-2 text-left font-semibold text-gray-600">Navegación</th>
-              <th class="px-4 py-2 text-left font-semibold text-gray-600">Es visible</th>
-              <th class="px-4 py-2 text-left font-semibold text-gray-600">Acciones</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-100">
-            <.filas_arbol nodos={@arbol} carpetas_colapsadas={@carpetas_colapsadas} seleccionados={@seleccionados} />
-            <%= if @arbol == [] do %>
+      <div :if={!@editando_orden}>
+        <div class="mb-4 flex items-center gap-3">
+          <input
+            type="text"
+            value={@busqueda}
+            phx-keyup="buscar"
+            phx-debounce="200"
+            placeholder="Buscar por nombre o etiqueta..."
+            class="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm text-gray-900"
+          />
+          <button
+            :if={MapSet.size(@seleccionados) > 0}
+            type="button"
+            phx-click="abrir_wizard_publicar"
+            class="flex-shrink-0 bg-purple-600 hover:bg-purple-700 text-white font-bold px-4 py-2 rounded text-sm whitespace-nowrap"
+          >
+            Publicar paquete ({MapSet.size(@seleccionados)})
+          </button>
+        </div>
+
+        <div class="overflow-x-auto rounded-xl border border-gray-200">
+          <table class="min-w-full divide-y divide-gray-200 text-sm">
+            <thead class="bg-gray-50">
               <tr>
-                <td class="px-4 py-6 text-center text-gray-400" colspan="6">
-                  {if @busqueda == "", do: "Todavía no hay contextos creados", else: "Sin resultados para \"#{@busqueda}\""}
-                </td>
+                <th class="px-4 py-2 w-8"></th>
+                <th class="px-4 py-2 text-left font-semibold text-gray-600">Nombre de sistema</th>
+                <th class="px-4 py-2 text-left font-semibold text-gray-600">Etiqueta</th>
+                <th class="px-4 py-2 text-left font-semibold text-gray-600">Navegación</th>
+                <th class="px-4 py-2 text-left font-semibold text-gray-600">Es visible</th>
+                <th class="px-4 py-2 text-left font-semibold text-gray-600">Acciones</th>
               </tr>
-            <% end %>
-          </tbody>
-        </table>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+              <.filas_arbol nodos={@arbol} carpetas_expandidas={@carpetas_expandidas} seleccionados={@seleccionados} />
+              <%= if @arbol == [] do %>
+                <tr>
+                  <td class="px-4 py-6 text-center text-gray-400" colspan="6">
+                    {if @busqueda == "", do: "Todavía no hay contextos creados", else: "Sin resultados para \"#{@busqueda}\""}
+                  </td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        </div>
       </div>
 
     </div>
@@ -1220,6 +1302,43 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # con ?borrador=<id> (ver cargar_estado_inicial/2 ahí), que recarga todo
   # en memoria tal cual quedó. Solo se muestra si hay al menos uno (ver
   # :if en render/1) para no sumar ruido cuando no hace falta.
+  # "Editar vista": arrastrar las carpetas RAÍZ de esta página para
+  # cambiar su orden — mismo hook (ListaOrdenable/Sortable.js) que ya usa
+  # PlantillaConstructorLive. Solo se muestran nodos :carpeta (las
+  # "carpetas madre" del árbol, ver cargar_headers/1) con id real (Header
+  # detrás) — una carpeta implícita (un catálogo suelto sin carpeta
+  # propia, envuelto automáticamente por MetaSchemaContext.construir_arbol/1)
+  # no tiene dónde persistirle un orden, así que ni se lista acá.
+  attr :arbol, :list, required: true
+
+  defp panel_editar_orden(assigns) do
+    assigns = assign(assigns, :raices, Enum.filter(assigns.arbol, &(&1.tipo == :carpeta and not is_nil(&1.id))))
+
+    ~H"""
+    <div class="mb-4 rounded-xl border border-purple-200 bg-purple-50/40 overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-2.5 bg-purple-50 border-b border-purple-200">
+        <div>
+          <h2 class="text-sm font-bold text-purple-900">Editar vista</h2>
+          <p class="text-xs text-purple-600">Arrastrá las carpetas para cambiar el orden — se guarda solo al soltar, y se refleja acá y en el menú.</p>
+        </div>
+        <button type="button" phx-click="cerrar_editar_orden" class="px-3.5 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 transition-colors">
+          Listo
+        </button>
+      </div>
+      <div id="orden-carpetas-raiz" phx-hook="ListaOrdenable" data-contenedor-id="" class="p-3 space-y-1.5">
+        <div :for={nodo <- @raices} id={"orden-carpeta-" <> nodo.id} data-id={nodo.id} class="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm">
+          <svg class="jal-manija text-gray-300 hover:text-gray-500 cursor-grab flex-shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" title="Arrastrar para reordenar">
+            <circle cx="8" cy="6" r="1.6" /><circle cx="16" cy="6" r="1.6" /><circle cx="8" cy="12" r="1.6" /><circle cx="16" cy="12" r="1.6" /><circle cx="8" cy="18" r="1.6" /><circle cx="16" cy="18" r="1.6" />
+          </svg>
+          <span class="material-symbols-outlined text-yellow-500" style="font-size: 18px">folder</span>
+          <span class="font-semibold text-gray-800">{nodo.nombre}</span>
+        </div>
+      </div>
+      <p :if={@raices == []} class="px-4 py-6 text-center text-gray-400 text-sm">No hay carpetas raíz en esta página para reordenar.</p>
+    </div>
+    """
+  end
+
   attr :borradores, :list, required: true
 
   defp seccion_borradores(assigns) do
@@ -1889,7 +2008,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   attr :nodos, :list, required: true
   attr :nivel, :integer, default: 0
 
-  attr :carpetas_colapsadas, :any, default: MapSet.new()
+  attr :carpetas_expandidas, :any, default: MapSet.new()
   attr :ruta_padre, :string, default: ""
   attr :seleccionados, :any, default: MapSet.new()
 
@@ -1898,7 +2017,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     <%= for nodo <- @nodos do %>
       <%= if nodo.tipo == :carpeta do %>
         <% ruta = if @ruta_padre == "", do: nodo.segmento, else: @ruta_padre <> "/" <> nodo.segmento %>
-        <% colapsada? = MapSet.member?(@carpetas_colapsadas, ruta) %>
+        <% expandida? = MapSet.member?(@carpetas_expandidas, ruta) %>
         <tr class="bg-gray-50 hover:bg-gray-100">
           <td
             colspan="6"
@@ -1912,7 +2031,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                 phx-value-ruta={ruta}
                 class="flex items-center gap-1 font-semibold text-gray-500 uppercase tracking-wide cursor-pointer flex-1 text-left"
               >
-                <span class="inline-block w-3">{if colapsada?, do: "▸", else: "▾"}</span>
+                <span class="inline-block w-3">{if expandida?, do: "▾", else: "▸"}</span>
                 📁 {nodo.nombre}
               </button>
               <%= if nodo.id do %>
@@ -1942,8 +2061,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             </div>
           </td>
         </tr>
-        <%= if !colapsada? do %>
-          <.filas_arbol nodos={nodo.hijos} nivel={@nivel + 1} carpetas_colapsadas={@carpetas_colapsadas} ruta_padre={ruta} seleccionados={@seleccionados} />
+        <%= if expandida? do %>
+          <.filas_arbol nodos={nodo.hijos} nivel={@nivel + 1} carpetas_expandidas={@carpetas_expandidas} ruta_padre={ruta} seleccionados={@seleccionados} />
         <% end %>
       <% else %>
         <tr>
@@ -1962,10 +2081,30 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             <span :if={Map.get(nodo, :es_consulta, false)} title="Consulta Ecto" class="mr-1">🔎</span>
             {nodo.label}
           </td>
-          <td class="px-4 py-2 text-gray-800">{nodo.nav}</td>
+          <td class="px-4 py-2 text-gray-800 max-w-[260px]">
+            <div class="flex items-center gap-1 min-w-0">
+              <span class="truncate" title={nodo.nav}>{nodo.nav}</span>
+              <button
+                type="button"
+                id={"copiar-nav-#{nodo.id}"}
+                phx-hook="CopiarRuta"
+                data-nav={nodo.nav}
+                title="Copiar la ruta"
+                class="pc-breadcrumb-copiar"
+              >
+                <svg class="pc-breadcrumb-copiar-icono-copiar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="9" width="12" height="12" rx="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+                <svg class="pc-breadcrumb-copiar-icono-listo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </button>
+            </div>
+          </td>
           <td class="px-4 py-2 text-gray-800">{if nodo.visible, do: "Sí", else: "No"}</td>
           <td class="px-4 py-2">
-            <div class="flex gap-2">
+            <div class="flex flex-wrap gap-2">
               <.link
                 :if={not Map.get(nodo, :es_consulta, false)}
                 navigate={~p"/sysadmin/bc-list/#{nodo.id}/motor"}
