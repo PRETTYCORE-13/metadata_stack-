@@ -1024,10 +1024,14 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       <.tabs_motor id="motor" tabs={
         [
           %{key: "config", label: "Configuración"},
-          %{key: "reglas", label: "Reglas"},
-          %{key: "getview", label: "Get View"},
-          %{key: "get", label: "Get"}
-        ] ++ if(@es_detalle?, do: [], else: [%{key: "diagrama", label: "Diagrama"}, %{key: "api", label: "Contrato"}])
+          %{key: "reglas", label: "Reglas"}
+        ] ++
+          if(@es_detalle?, do: [], else: [%{key: "diagrama", label: "Diagrama"}, %{key: "api", label: "Contrato"}]) ++
+          [
+            %{key: "get", label: "Relaciones"},
+            %{key: "getview", label: "Get View"},
+            %{key: "postview", label: "PostView"}
+          ]
       } />
 
       <div id="motor-panel-config" class="space-y-4">
@@ -1066,6 +1070,23 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           <.panel_api header={@header} campos={@campos} estados={@estados} transiciones={@transiciones} />
         </div>
       <% end %>
+
+      <!-- Embebido como LiveView hijo (live_render/3, sin merge de código
+           con PlantillaConstructorLive) en vez de navegar a
+           /sysadmin/bc-list/:nombre/plantilla como antes — así "PostView"
+           se ve dentro de este mismo tablero, como cualquier otro tab, sin
+           saltar de página. La sesión del proceso hijo se identifica por
+           `schema_context_name`: cambiar de catálogo (otra página de
+           BcMotorLive) monta una instancia nueva, nunca reusa estado
+           viejo. Vive fuera del div "hidden"/"visible" de los demás tabs
+           a propósito (con id propio ya alcanza para que tabs_motor lo
+           muestre/oculte igual que a los demás). -->
+      <div id="motor-panel-postview" class="hidden">
+        {live_render(@socket, MetadataAppWeb.Sysadmin.PlantillaConstructorLive,
+          id: "plantilla-embebido-#{@header.schema_context_name}",
+          session: %{"nombre" => @header.schema_context_name}
+        )}
+      </div>
     </div>
 
     <.modal_campo :if={@campo_form} form={@campo_form} catalogos={@catalogos_referenciables} nombre_base={@header.schema_context_name} />

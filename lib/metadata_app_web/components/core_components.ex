@@ -91,12 +91,21 @@ defmodule MetadataAppWeb.CoreComponents do
   id `<id>-panel-<key>` (todos menos el primero arrancan con
   `class="hidden"`).
 
+  Un tab puede traer `:navigate` en vez de tener panel propio (ej.
+  "PostView", que en realidad es otro LiveView aparte,
+  `PlantillaConstructorLive`) — ese se pinta como `<.link navigate={...}>`
+  con el mismo estilo "inactivo" de siempre (nunca puede estar "activo",
+  ya que un clic saca de esta página) en vez de un botón que
+  muestra/oculta un panel local. No puede ser el primer tab de la lista
+  (ver `primera_key` — asume que el primero siempre tiene panel propio).
+
   ## Ejemplo
 
       <.tabs_motor id="motor" tabs={[
         %{key: "config", label: "Configuración"},
         %{key: "diagrama", label: "Diagrama"},
-        %{key: "api", label: "API"}
+        %{key: "api", label: "API"},
+        %{key: "postview", label: "PostView", navigate: ~p"/otra/ruta"}
       ]} />
       <div id="motor-panel-config">...</div>
       <div id="motor-panel-diagrama" class="hidden">...</div>
@@ -112,13 +121,24 @@ defmodule MetadataAppWeb.CoreComponents do
     ~H"""
     <div class="flex gap-1 border-b border-gray-200 mb-4">
       <%= for tab <- @tabs do %>
-        <button type="button" id={"#{@id}-tab-#{tab.key}"}
+        <.link
+          :if={Map.has_key?(tab, :navigate)}
+          navigate={tab.navigate}
+          class="px-3 py-2 -mb-px text-sm font-semibold border-b-2 transition-colors border-transparent text-gray-500 hover:text-gray-700"
+        >
+          {tab.label}
+        </.link>
+        <button
+          :if={!Map.has_key?(tab, :navigate)}
+          type="button"
+          id={"#{@id}-tab-#{tab.key}"}
           phx-click={js_activar_tab(@id, @tabs, tab.key)}
           class={[
             "px-3 py-2 -mb-px text-sm font-semibold border-b-2 transition-colors",
             tab.key == @primera_key && "border-purple-600 text-purple-700",
             tab.key != @primera_key && "border-transparent text-gray-500 hover:text-gray-700"
-          ]}>
+          ]}
+        >
           {tab.label}
         </button>
       <% end %>
@@ -127,7 +147,9 @@ defmodule MetadataAppWeb.CoreComponents do
   end
 
   defp js_activar_tab(id, tabs, tab_activo_key) do
-    Enum.reduce(tabs, %JS{}, fn tab, js ->
+    tabs
+    |> Enum.reject(&Map.has_key?(&1, :navigate))
+    |> Enum.reduce(%JS{}, fn tab, js ->
       if tab.key == tab_activo_key do
         js
         |> JS.show(to: "##{id}-panel-#{tab.key}")

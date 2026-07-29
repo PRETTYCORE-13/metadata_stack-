@@ -84,6 +84,26 @@ defmodule MetadataAppWeb.MenuLayout do
               </svg>
             <% end %>
           </button>
+          <!-- Tema claro/oscuro — reusa "phx:set-theme" (ya escuchado en
+               root.html.heex desde que existe la app, generado por
+               mix phx.new; acá recién se agrega el botón que lo dispara).
+               Sin `detail:` en JS.dispatch a propósito: el listener lee
+               `e.target.dataset.phxTheme` del botón, no un detail del
+               evento — mismo contrato que Layouts.theme_toggle/1 (que
+               vive sin uso real en el layout de demo). -->
+          <div class="pc-theme-toggle">
+            <button type="button" class="pc-theme-btn" phx-click={JS.dispatch("phx:set-theme")} data-phx-theme="light" title="Tema claro" aria-label="Cambiar a tema claro">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+              </svg>
+            </button>
+            <button type="button" class="pc-theme-btn" phx-click={JS.dispatch("phx:set-theme")} data-phx-theme="dark" title="Tema oscuro" aria-label="Cambiar a tema oscuro">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <!-- CUERPO DEL MENÚ -->

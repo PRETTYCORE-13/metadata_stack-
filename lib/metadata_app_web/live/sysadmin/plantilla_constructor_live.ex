@@ -18,6 +18,9 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
 
   use MetadataAppWeb, :live_view_admin
 
+  on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
+  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "editar"}}
+
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerico}
   alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaPlantillas.Formula
@@ -50,8 +53,29 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     {"referencia", "Catálogo"}
   ]
 
+  # Ruta propia (/sysadmin/bc-list/:nombre/plantilla) — sigue existiendo
+  # además del tab embebido de BcMotorLive (ver clausula de abajo), por si
+  # algo todavía enlaza directo para acá.
   def mount(%{"nombre" => nombre}, _session, socket) do
-    socket = assign(socket, :sidebar_open, false) |> assign(:current_page, "sysadmin")
+    montar(socket, nombre, embebido?: false)
+  end
+
+  # Embebido dentro del tab "PostView" de BcMotorLive vía live_render/3 —
+  # un LiveView montado como hijo (no por el router) SIEMPRE recibe
+  # `params` fijo en el átomo `:not_mounted_at_router` (nunca un mapa con
+  # "nombre"), así que acá el dato viaja por `session` en vez de `params`
+  # (es la única forma real de pasarle algo dinámico a un hijo — ver
+  # `live_render(@socket, __MODULE__, id:, session:)` en bc_motor_live.ex).
+  def mount(_params, %{"nombre" => nombre}, socket) do
+    montar(socket, nombre, embebido?: true)
+  end
+
+  defp montar(socket, nombre, embebido?: embebido?) do
+    socket =
+      socket
+      |> assign(:sidebar_open, false)
+      |> assign(:current_page, "sysadmin")
+      |> assign(:embebido?, embebido?)
 
     case MetaSchemaContext.obtener_header_por_nombre(nombre) do
       nil ->
@@ -483,12 +507,13 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     assigns = assigns |> assign(:tipos_estructura, @tipos_estructura) |> assign(:tipos_campo, @tipos_campo)
 
     ~H"""
-    <div class="p-6">
+    <div class={if @embebido?, do: "", else: "p-6"}>
       <div class="flex items-center justify-between mb-4">
-        <div>
+        <div :if={!@embebido?}>
           <h1 class="text-xl font-bold text-gray-900">PostView — {@header.schema_context_label}</h1>
           <p class="text-xs text-gray-500 mt-0.5">Diseña el tab "Datos" de la Ficha 360° de este catálogo.</p>
         </div>
+        <div :if={@embebido?}></div>
         <div class="flex items-center gap-2">
           <select :if={@plantillas != []} phx-change="seleccionar_plantilla" name="id"
             class="border border-gray-300 rounded-lg text-sm px-2 py-1.5 text-gray-700">

@@ -80,7 +80,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveTest do
 
     {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
 
-    view |> element("button", "+ Función Ecto") |> render_click()
+    view |> element("button", "+ Ecto") |> render_click()
 
     html =
       view
@@ -118,7 +118,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveTest do
     {nombre_a, _nombre_b, nombre_c} = catalogos_de_prueba()
 
     {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
-    view |> element("button", "+ Función Ecto") |> render_click()
+    view |> element("button", "+ Ecto") |> render_click()
 
     view
     |> element("form[phx-change=validar_consulta]")
@@ -159,7 +159,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveTest do
     {nombre_a, nombre_b, _nombre_c} = catalogos_de_prueba()
 
     {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
-    view |> element("button", "+ Función Ecto") |> render_click()
+    view |> element("button", "+ Ecto") |> render_click()
 
     view
     |> element("form[phx-change=validar_consulta]")

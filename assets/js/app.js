@@ -314,20 +314,29 @@ const DiagramaMotor = {
   },
 }
 
-// Arrastrar y soltar real en el Constructor de plantillas (PlantillaConstructorLive)
-// — un hook por cada lista de hijos (el lienzo raíz y adentro de cada
-// Sección), todas con el mismo `group` para poder arrastrar un componente
-// de una lista a otra (ej. sacarlo de una Sección y dejarlo suelto en la
-// raíz). Sortable muta el DOM al soltar (optimista); el servidor recién
-// después reordena `definicion` de verdad y LiveView repinta — por eso
-// `animation` bajo y sin esperar nada del servidor para que se sienta
-// instantáneo, aunque el estado real siempre termina siendo el que decide
-// el servidor (si el push falla o tarda, el próximo repintado corrige
-// cualquier diferencia).
+// Arrastrar y soltar real — usado tanto en el Constructor de plantillas
+// (PlantillaConstructorLive) como en "Editar vista" de BcListLive.
+//
+// `group` viene de `data-grupo` si el contenedor lo trae, si no cae al
+// hardcodeado de siempre ("plantilla-componentes") — así el Constructor de
+// plantillas sigue exactamente igual (todas sus listas comparten ese mismo
+// group a propósito, para poder arrastrar un componente de una lista a
+// otra, ej. sacarlo de una Sección y dejarlo suelto en la raíz).
+// "Editar vista", en cambio, SÍ le pasa un `data-grupo` propio y ÚNICO por
+// cada carpeta — ahí cada contenedor tiene que quedar aislado (reordenar
+// DENTRO de una carpeta, nunca arrastrar accidentalmente un catálogo a
+// otra carpeta distinta sin querer, que le cambiaría la ruta de navegación
+// de golpe sin ninguna confirmación).
+//
+// Sortable muta el DOM al soltar (optimista); el servidor recién después
+// reordena de verdad y LiveView repinta — por eso `animation` bajo y sin
+// esperar nada del servidor para que se sienta instantáneo, aunque el
+// estado real siempre termina siendo el que decide el servidor (si el push
+// falla o tarda, el próximo repintado corrige cualquier diferencia).
 const ListaOrdenable = {
   mounted() {
     this.sortable = new Sortable(this.el, {
-      group: "plantilla-componentes",
+      group: this.el.dataset.grupo || "plantilla-componentes",
       animation: 120,
       handle: ".jal-manija",
       ghostClass: "jal-fantasma",

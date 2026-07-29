@@ -347,8 +347,8 @@
   flex-direction: column;
   width: 68px;
   padding: 16px 12px;
-  background: #ffffff;
-  border-right: 1px solid #e5e7eb;
+  background: #0a0a0a;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
   transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
   position: relative;
@@ -394,7 +394,7 @@
   align-items: center;
   justify-content: space-between;
   padding-bottom: 8px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   margin-bottom: 6px;
   min-height: 31px;
 }
@@ -415,15 +415,15 @@
   border-radius: 8px;
   border: none;
   background: transparent;
-  color: #6b7280;
+  color: #ffffff;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
   flex-shrink: 0;
 }
 
 .pc-sidebar-toggle:hover {
-  background: #f3f4f6;
-  color: #111827;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
 }
 
 /* Sidebar cerrado: centrar toggle */
@@ -460,7 +460,7 @@
   border-top: none;
   border-bottom: none;
   background: transparent;
-  color: #4b5563;
+  color: #d1d5db;
   cursor: pointer;
   text-decoration: none;
   font-size: 14px;
@@ -469,17 +469,17 @@
 }
 
 .pc-nav-item:hover {
-  background: #f3f4f6;
-  color: #111827;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
 }
 
 /* Activo: borde de acento a la izquierda + fondo tenue, como el ítem
    seleccionado en la nav de CloudWatch (ahí es azul; acá usamos el morado
    de marca de la app en vez de recolorear todo a la paleta de AWS). */
 .pc-nav-item-active {
-  background: #f5f3ff;
-  color: #6d28d9;
-  border-left-color: #7c3aed;
+  background: rgba(124, 58, 237, 0.25);
+  color: #ffffff;
+  border-left-color: #a78bfa;
   font-weight: 600;
 }
 
@@ -496,7 +496,7 @@
   padding: 8px 12px;
   border-radius: 6px;
   cursor: pointer;
-  color: #111827;
+  color: #ffffff;
   font-weight: 700;
   font-size: 13px;
   list-style: none;
@@ -508,13 +508,13 @@
 }
 
 .pc-menu-carpeta-summary:hover {
-  background: #f3f4f6;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .pc-menu-carpeta-icono-flecha {
   transition: transform 0.15s ease;
   flex-shrink: 0;
-  color: #6b7280;
+  color: #9ca3af;
 }
 
 .pc-menu-carpeta[open] > .pc-menu-carpeta-summary .pc-menu-carpeta-icono-flecha {
@@ -660,7 +660,7 @@
   border-radius: 8px;
   border: none;
   background: transparent;
-  color: #4b5563;
+  color: #d1d5db;
   cursor: pointer;
   font-size: 13px;
   transition: background 0.15s ease, color 0.15s ease;
@@ -670,7 +670,7 @@
   width: 6px;
   height: 6px;
   border-radius: 999px;
-  background: #7c3aed;
+  background: #a78bfa;
   flex-shrink: 0;
 }
 
@@ -681,27 +681,27 @@
   width: 18px;
   height: 18px;
   flex-shrink: 0;
-  color: #7c3aed;
+  color: #a78bfa;
 }
 .pc-submenu-icon svg {
   width: 16px;
   height: 16px;
 }
 .pc-submenu-item-active .pc-submenu-icon {
-  color: #6d28d9;
+  color: #ffffff;
 }
 .pc-submenu-item:hover .pc-submenu-icon {
-  color: #5b21b6;
+  color: #c4b5fd;
 }
 
 .pc-submenu-item:hover {
-  background: #f3f4f6;
-  color: #111827;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
 }
 
 .pc-submenu-item-active {
-  background: #ede9fe;
-  color: #6d28d9;
+  background: rgba(124, 58, 237, 0.3);
+  color: #ffffff;
 }
 
 .pc-subsubmenu {
@@ -720,7 +720,7 @@
   border-radius: 7px;
   border: none;
   background: transparent;
-  color: #6b7280;
+  color: #9ca3af;
   cursor: pointer;
   font-size: 12px;
   transition: background 0.15s ease, color 0.15s ease;
@@ -730,18 +730,18 @@
   width: 4px;
   height: 4px;
   border-radius: 999px;
-  background: #7c3aed;
+  background: #a78bfa;
   flex-shrink: 0;
 }
 
 .pc-subsubmenu-item:hover {
-  background: #f3f4f6;
-  color: #111827;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
 }
 
 .pc-subsubmenu-item-active {
-  background: #ede9fe;
-  color: #6d28d9;
+  background: rgba(124, 58, 237, 0.3);
+  color: #ffffff;
 }
 
 /* ---- SCROLLBAR ---- */
@@ -754,12 +754,222 @@
 }
 
 .pc-sidebar-body::-webkit-scrollbar-thumb {
-  background: #d1d5db;
+  background: rgba(255, 255, 255, 0.15);
   border-radius: 999px;
 }
 
 .pc-sidebar-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* ---- SIDEBAR SEARCH — el <input> viene con utilidades Tailwind
+   claras directo en el HEEx (menu_layout.ex), pensadas para un fondo
+   blanco — se pisan acá para que se lea bien sobre el sidebar negro. */
+.pc-sidebar-search input {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  color: #ffffff !important;
+}
+
+.pc-sidebar-search input::placeholder {
+  color: #9ca3af;
+}
+
+/* ---- TEMA CLARO DEL SIDEBAR ----
+   Todo lo de arriba es el default (sin `data-theme`, o `data-theme="dark"`
+   explícito) — negro. Esto revierte a los colores originales cuando el
+   botón de tema (pc-sidebar-header) pone `data-theme="light"` en <html>
+   (ver root.html.heex — el script que escucha "phx:set-theme" ya existía
+   de antes, acá solo se agrega el botón + estos estilos). Un solo bloque
+   con TODOS los selectores del sidebar en vez de intercalar cada uno
+   junto a su versión oscura — más fácil de mantener sincronizado si se
+   agrega un color nuevo más arriba.
+   `:root[data-theme="light"] .clase` gana por especificidad sobre
+   `.clase` sola sin importar el orden en el archivo (y sin importar si
+   la regla oscura está dentro de un @media, como la del sidebar móvil
+   de más abajo) — no hace falta repetir nada adentro del @media. */
+:root[data-theme="light"] .pc-platform-sidebar {
+  background: #ffffff;
+  border-right: 1px solid #e5e7eb;
+}
+
+:root[data-theme="light"] .pc-sidebar-header {
+  border-bottom: 1px solid #e5e7eb;
+}
+
+:root[data-theme="light"] .pc-sidebar-toggle,
+:root[data-theme="light"] .pc-theme-btn {
+  color: #6b7280;
+}
+
+:root[data-theme="light"] .pc-sidebar-toggle:hover,
+:root[data-theme="light"] .pc-theme-btn:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+:root[data-theme="light"] .pc-nav-item {
+  color: #4b5563;
+}
+
+:root[data-theme="light"] .pc-nav-item:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+:root[data-theme="light"] .pc-nav-item-active {
+  background: #f5f3ff;
+  color: #6d28d9;
+  border-left-color: #7c3aed;
+}
+
+:root[data-theme="light"] .pc-menu-carpeta-summary {
+  color: #111827;
+}
+
+:root[data-theme="light"] .pc-menu-carpeta-summary:hover {
+  background: #f3f4f6;
+}
+
+:root[data-theme="light"] .pc-menu-carpeta-icono-flecha {
+  color: #6b7280;
+}
+
+:root[data-theme="light"] .pc-submenu-item {
+  color: #4b5563;
+}
+
+:root[data-theme="light"] .pc-submenu-dot {
+  background: #7c3aed;
+}
+
+:root[data-theme="light"] .pc-submenu-icon {
+  color: #7c3aed;
+}
+
+:root[data-theme="light"] .pc-submenu-item-active .pc-submenu-icon {
+  color: #6d28d9;
+}
+
+:root[data-theme="light"] .pc-submenu-item:hover .pc-submenu-icon {
+  color: #5b21b6;
+}
+
+:root[data-theme="light"] .pc-submenu-item:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+:root[data-theme="light"] .pc-submenu-item-active {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+:root[data-theme="light"] .pc-subsubmenu-item {
+  color: #6b7280;
+}
+
+:root[data-theme="light"] .pc-subsubmenu-dot {
+  background: #7c3aed;
+}
+
+:root[data-theme="light"] .pc-subsubmenu-item:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+:root[data-theme="light"] .pc-subsubmenu-item-active {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+:root[data-theme="light"] .pc-sidebar-body::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+}
+
+:root[data-theme="light"] .pc-sidebar-body::-webkit-scrollbar-thumb:hover {
   background: #9ca3af;
+}
+
+:root[data-theme="light"] .pc-sidebar-search input {
+  background: #ffffff !important;
+  border-color: #d1d5db !important;
+  color: #111827 !important;
+}
+
+:root[data-theme="light"] .pc-sidebar-search input::placeholder {
+  color: #9ca3af;
+}
+
+:root[data-theme="light"] .pc-sidebar-close-mobile {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+:root[data-theme="light"] .pc-sidebar-close-mobile:hover {
+  background: #e5e7eb;
+  color: #111827;
+}
+
+/* ---- BOTÓN DE TEMA (claro/oscuro) — vive en pc-sidebar-header, al lado
+   del toggle de colapsar/expandir. Reusa el mismo mecanismo que ya
+   generó "mix phx.new" en root.html.heex (evento "phx:set-theme" +
+   data-phx-theme leído del botón clickeado) — antes solo lo usaba el
+   layout de demo sin uso real (Layouts.theme_toggle/1), acá se
+   implementa un botón propio con el mismo look que el resto del
+   sidebar en vez de reusar ese (que trae clases de daisyUI que este
+   sidebar no usa en ningún otro lado). */
+.pc-theme-toggle {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.pc-theme-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #ffffff;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pc-theme-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.pc-theme-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* El sol resalta en tema claro, la luna en tema oscuro — sin JS extra,
+   solo dos selectores CSS mirando `data-theme` en <html>. Sin ningún
+   `data-theme` puesto todavía (recién entrando, sin elección previa)
+   ninguno de los dos se resalta — antes de elegir, no hay nada que
+   marcar como "el actual". */
+:root[data-theme="light"] .pc-theme-btn[data-phx-theme="light"],
+:root[data-theme="dark"] .pc-theme-btn[data-phx-theme="dark"] {
+  background: rgba(124, 58, 237, 0.3);
+  color: #a78bfa;
+}
+
+:root[data-theme="light"] .pc-theme-btn[data-phx-theme="light"] {
+  color: #7c3aed;
+}
+
+/* Colapsado (68px, sin sidebar-open): el header ya pasa a columna
+   (pc-sidebar-header de más arriba) — acá el toggle de tema hace lo
+   mismo (sol arriba de luna) para seguir cabiendo sin desbordar el
+   riel angosto, en vez de ocultarse — a diferencia del buscador, sí
+   tiene sentido que quede alcanzable con el sidebar colapsado. */
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-theme-toggle {
+  flex-direction: column;
 }
 
 /* ---- MOBILE HAMBURGER BUTTON ---- */
@@ -786,15 +996,15 @@
   height: 36px;
   border-radius: 8px;
   border: none;
-  background: #f3f4f6;
-  color: #6b7280;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
   cursor: pointer;
   flex-shrink: 0;
   transition: background 0.15s ease, color 0.15s ease;
 }
 .pc-sidebar-close-mobile:hover {
-  background: #e5e7eb;
-  color: #111827;
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
 }
 .pc-sidebar-close-mobile svg {
   width: 18px;
@@ -839,8 +1049,8 @@
     z-index: 50;
     transform: translateX(-100%);
     transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-    background: #ffffff;
-    border-right: 1px solid #e5e7eb;
+    background: #0a0a0a;
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
     padding: 12px 14px;
   }
 

@@ -190,16 +190,30 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
           hijos: mapa_a_lista_ordenada(nodo.hijos)
         }
     end)
-    |> Enum.sort_by(fn
-      # Carpeta con orden manual asignado (drag-and-drop, "Editar vista")
-      # va primero, por ese orden — sin orden asignado, cae al alfabético
-      # de siempre, después de cualquiera que sí lo tenga.
-      %{tipo: :carpeta, orden: orden, nombre: nombre} when not is_nil(orden) -> {0, orden, nombre}
-      %{tipo: :carpeta, nombre: nombre} -> {1, 0, nombre}
-      %{tipo: :pagina, label: label} -> {2, 0, label}
-    end)
+    |> Enum.sort_by(&clave_orden/1)
     |> reordenar_detalles_bajo_maestro()
   end
+
+  # Con orden manual asignado (drag-and-drop, "Editar vista" en
+  # BcListLive) — carpeta O página compiten en el MISMO pool numérico, así
+  # se pueden intercalar libremente entre sí (una carpeta antes que un
+  # catálogo, o al revés, lo que el admin haya arrastrado). Sin orden
+  # asignado, cae al criterio de siempre: carpetas alfabéticas primero,
+  # páginas alfabéticas después — y eso siempre queda DESPUÉS de cualquier
+  # ítem con orden manual, mezclado o no.
+  #
+  # Las tuplas de las tres cláusulas tienen que tener la MISMA aridad a
+  # propósito: Erlang/Elixir ordena tuplas por tamaño ANTES que por
+  # contenido, así que una de 2 elementos y otra de 3 nunca se comparan
+  # por el primer elemento como uno esperaría — quedan siempre agrupadas
+  # por tamaño primero, rompiendo el criterio "va antes/después" que se
+  # busca acá.
+  defp clave_orden(%{orden: orden} = nodo) when not is_nil(orden), do: {0, orden, texto_nodo(nodo)}
+  defp clave_orden(%{tipo: :carpeta, nombre: nombre}), do: {1, 0, nombre}
+  defp clave_orden(%{tipo: :pagina, label: label}), do: {1, 1, label}
+
+  defp texto_nodo(%{tipo: :carpeta, nombre: nombre}), do: nombre
+  defp texto_nodo(%{tipo: :pagina, label: label}), do: label
 
   # Catálogo Maestro-Detalle: el orden alfabético por label (de arriba) no
   # tiene por qué dejar a un detalle cerca de su maestro (ej. "ECC Det"
@@ -633,13 +647,19 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
 
   @doc """
   Persiste el orden manual (drag-and-drop, "Editar vista" en BcListLive)
-  de una lista de `schema_context_name` — el índice de cada uno en
-  `nombres` se guarda tal cual en su columna `orden`. `Repo.update_all/2`
-  en vez de un changeset por fila: es un solo campo sin validaciones que
-  respetar, y son pocas filas (carpetas raíz), no vale la pena el
-  round-trip de traer cada Header primero.
+  de una lista de `schema_context_name` que son HERMANOS entre sí — el
+  índice de cada uno en `nombres` se guarda tal cual en su columna
+  `orden`. Sirve tanto para las carpetas raíz como para los hijos de
+  CUALQUIER carpeta (carpetas y catálogos mezclados) — el "orden" de un
+  header solo se compara contra sus hermanos del mismo nivel del árbol
+  (ver `clave_orden/1`), así que da lo mismo si distintos grupos de
+  hermanos reusan los mismos números 0..N-1 entre sí.
 
-  Descarta cualquier `nil` en `nombres` a propósito — una carpeta raíz
+  `Repo.update_all/2` en vez de un changeset por fila: es un solo campo
+  sin validaciones que respetar, y son pocas filas a la vez, no vale la
+  pena el round-trip de traer cada Header primero.
+
+  Descarta cualquier `nil` en `nombres` a propósito — una carpeta
   "implícita" (un catálogo suelto sin Header de tipo carpeta propio,
   envuelto automáticamente por `construir_arbol/1`) aparece con `id: nil`
   en el árbol, y no hay ninguna fila donde persistirle un orden. El
@@ -647,7 +667,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   para que esta función sea segura de usar sola, sin depender de que
   quien la llame se acuerde de filtrar primero.
   """
-  def reordenar_raices(nombres) do
+  def reordenar_hermanos(nombres) do
     nombres
     |> Enum.reject(&is_nil/1)
     |> Enum.with_index()

@@ -140,11 +140,12 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # complicaría el criterio de desempate. Ignora cualquier carpeta raíz
   # sin Header real detrás (id nil — carpeta inferida de un catálogo
   # suelto sin "Relación" propia): no hay dónde persistirle un orden.
-  def handle_event("mover_a", %{"id" => id, "index" => index}, socket) do
-    ids_actuales = socket.assigns.arbol |> Enum.map(& &1.id) |> Enum.reject(&is_nil/1)
+  def handle_event("mover_a", %{"id" => id, "contenedor_id" => contenedor_id, "index" => index}, socket) do
+    hijos_actuales = hijos_de(socket.assigns.arbol, contenedor_id) || []
+    ids_actuales = hijos_actuales |> Enum.map(& &1.id) |> Enum.reject(&is_nil/1)
     nuevo_orden = ids_actuales |> List.delete(id) |> List.insert_at(index, id)
 
-    :ok = MetaSchemaContext.reordenar_raices(nuevo_orden)
+    :ok = MetaSchemaContext.reordenar_hermanos(nuevo_orden)
 
     {:noreply, cargar_headers(socket)}
   end
@@ -818,6 +819,33 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # costo de DB extra) y se pagina la lista de raíces resultante, así
   # cada carpeta que aparece en una página siempre trae TODO su
   # subárbol completo, sin importar cuántos niveles tenga.
+  # Busca, dentro del árbol de ESTA página, la lista de hijos que
+  # corresponde a un `data-contenedor-id` (evento "mover_a" del hook
+  # ListaOrdenable) — "" es la raíz (@arbol tal cual), cualquier otro
+  # valor es el `id` (schema_context_name) de una carpeta en algún nivel.
+  # Recursivo: la carpeta puede estar a cualquier profundidad, no solo raíz.
+  # El "id" de una carpeta SIN Header propio (implícita) es nil, así que
+  # el contenedor_id que llega del cliente para ESA carpeta en realidad es
+  # la clave sintética "ruta:..." armada por clave_de_carpeta/2 (mismo
+  # criterio en los dos lados, ver arbol_editable/1) — hay que reconstruir
+  # la misma ruta acumulada acá para poder encontrarla.
+  defp hijos_de(nodos, ""), do: nodos
+  defp hijos_de(nodos, contenedor_id), do: buscar_hijos(nodos, "", contenedor_id)
+
+  defp buscar_hijos(nodos, ruta_padre, contenedor_id) do
+    Enum.find_value(nodos, fn
+      %{tipo: :carpeta, hijos: hijos} = nodo ->
+        if clave_de_carpeta(nodo, ruta_padre) == contenedor_id do
+          hijos
+        else
+          buscar_hijos(hijos, ruta_con(ruta_padre, nodo.segmento), contenedor_id)
+        end
+
+      _pagina ->
+        nil
+    end)
+  end
+
   defp cargar_headers(socket) do
     filtrados =
       MetaSchemaContext.listar_headers()
@@ -1197,16 +1225,17 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           </div>
           <div class="flex gap-2 flex-wrap">
             <button
+
               type="button"
               id="btn-nuevo-contexto"
               phx-click="abrir_form_carpeta"
               class="bg-white border border-purple-600 text-purple-700 hover:bg-purple-50 font-bold px-6 py-2 rounded"
             >
-              + Nueva carpeta
+              + Carpeta
             </button>
             <.link navigate={~p"/sysadmin/bc-list/nuevo-completo"}
               class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-6 py-2 rounded">
-              + Nuevo catálogo
+              + Catálogo
             </.link>
             <button
               type="button"
@@ -1214,7 +1243,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               title="Consulta Ecto: reporte de solo lectura sobre uno o más catálogos, sin estados ni tabla propia"
               class="bg-white border border-purple-600 text-purple-700 hover:bg-purple-50 font-bold px-6 py-2 rounded"
             >
-              + Función Ecto
+              + Ecto
             </button>
             <button
               type="button"
@@ -1222,8 +1251,9 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               title="Arrastrar las carpetas raíz para cambiar el orden en que aparecen acá y en el menú"
               class="bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-bold px-6 py-2 rounded"
             >
-              Editar vista
+              Vista
             </button>
+
           </div>
         </div>
       </div>
@@ -1302,39 +1332,93 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # con ?borrador=<id> (ver cargar_estado_inicial/2 ahí), que recarga todo
   # en memoria tal cual quedó. Solo se muestra si hay al menos uno (ver
   # :if en render/1) para no sumar ruido cuando no hace falta.
-  # "Editar vista": arrastrar las carpetas RAÍZ de esta página para
-  # cambiar su orden — mismo hook (ListaOrdenable/Sortable.js) que ya usa
-  # PlantillaConstructorLive. Solo se muestran nodos :carpeta (las
-  # "carpetas madre" del árbol, ver cargar_headers/1) con id real (Header
-  # detrás) — una carpeta implícita (un catálogo suelto sin carpeta
-  # propia, envuelto automáticamente por MetaSchemaContext.construir_arbol/1)
-  # no tiene dónde persistirle un orden, así que ni se lista acá.
+  # "Editar vista": arrastrar carpetas Y archivos para cambiar su orden, a
+  # cualquier profundidad — no solo las carpetas raíz. Cada nivel del
+  # árbol (la raíz de esta página, y adentro de cada carpeta) es su
+  # propio contenedor ListaOrdenable/Sortable.js, con un `data-grupo`
+  # ÚNICO por contenedor — a propósito, para que solo se pueda reordenar
+  # DENTRO de un mismo nivel, nunca arrastrar sin querer un ítem de una
+  # carpeta a otra (eso le cambiaría la ruta de navegación de golpe, sin
+  # ninguna confirmación — ver ListaOrdenable en assets/js/app.js).
+  #
+  # Un ítem sin `id` real (Header detrás) — una carpeta implícita, un
+  # catálogo suelto envuelto automáticamente por
+  # MetaSchemaContext.construir_arbol/1 — no tiene dónde persistirle un
+  # orden: se muestra igual (para que el árbol se vea completo) pero sin
+  # manija de arrastre, y si es carpeta, sin lista editable adentro (no
+  # hay `id` con el que identificar ESE contenedor al guardar).
   attr :arbol, :list, required: true
 
   defp panel_editar_orden(assigns) do
-    assigns = assign(assigns, :raices, Enum.filter(assigns.arbol, &(&1.tipo == :carpeta and not is_nil(&1.id))))
-
     ~H"""
     <div class="mb-4 rounded-xl border border-purple-200 bg-purple-50/40 overflow-hidden">
       <div class="flex items-center justify-between px-4 py-2.5 bg-purple-50 border-b border-purple-200">
         <div>
           <h2 class="text-sm font-bold text-purple-900">Editar vista</h2>
-          <p class="text-xs text-purple-600">Arrastrá las carpetas para cambiar el orden — se guarda solo al soltar, y se refleja acá y en el menú.</p>
+          <p class="text-xs text-purple-600">
+            Arrastrá para cambiar el orden — carpetas y archivos, a cualquier nivel. Se guarda solo al soltar, y se refleja acá y en el menú.
+          </p>
         </div>
         <button type="button" phx-click="cerrar_editar_orden" class="px-3.5 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 transition-colors">
           Listo
         </button>
       </div>
-      <div id="orden-carpetas-raiz" phx-hook="ListaOrdenable" data-contenedor-id="" class="p-3 space-y-1.5">
-        <div :for={nodo <- @raices} id={"orden-carpeta-" <> nodo.id} data-id={nodo.id} class="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm">
-          <svg class="jal-manija text-gray-300 hover:text-gray-500 cursor-grab flex-shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" title="Arrastrar para reordenar">
-            <circle cx="8" cy="6" r="1.6" /><circle cx="16" cy="6" r="1.6" /><circle cx="8" cy="12" r="1.6" /><circle cx="16" cy="12" r="1.6" /><circle cx="8" cy="18" r="1.6" /><circle cx="16" cy="18" r="1.6" />
+      <div class="p-3">
+        <.arbol_editable :if={@arbol != []} nodos={@arbol} />
+        <p :if={@arbol == []} class="px-4 py-6 text-center text-gray-400 text-sm">No hay nada en esta página para reordenar.</p>
+      </div>
+    </div>
+    """
+  end
+
+  # `contenedor_id` de una carpeta SIN Header propio (implícita, ver
+  # arriba) no puede ser su `id` (nil) — se arma una clave sintética a
+  # partir de la ruta acumulada desde la raíz ("ruta:ecc/ventas"), con un
+  # prefijo que nunca puede chocar contra un `schema_context_name` real.
+  # Esto es lo que permite reordenar el CONTENIDO de una carpeta implícita
+  # aunque a ELLA MISMA no se la pueda arrastrar (no hay dónde
+  # persistirle un orden propio) — antes esto no pasaba: la recursión se
+  # cortaba de raíz en cualquier carpeta sin id, dejando afuera del
+  # editor TODO lo que hubiera adentro (el caso típico: un catálogo cuyo
+  # nav trae una carpeta que nunca se creó a mano con "+ Nueva carpeta").
+  defp clave_de_carpeta(%{id: id}, _ruta_padre) when not is_nil(id), do: id
+  defp clave_de_carpeta(%{segmento: segmento}, ruta_padre), do: "ruta:" <> ruta_con(ruta_padre, segmento)
+
+  defp ruta_con("", segmento), do: segmento
+  defp ruta_con(ruta_padre, segmento), do: ruta_padre <> "/" <> segmento
+
+  attr :nodos, :list, required: true
+  attr :contenedor_id, :string, default: ""
+  attr :ruta_padre, :string, default: ""
+
+  defp arbol_editable(assigns) do
+    grupo = "orden-" <> (if assigns.contenedor_id == "", do: "raiz", else: assigns.contenedor_id)
+    assigns = assign(assigns, :grupo, grupo)
+
+    ~H"""
+    <div id={"orden-lista-" <> @grupo} phx-hook="ListaOrdenable" data-contenedor-id={@contenedor_id} data-grupo={@grupo} class="space-y-1.5">
+      <div :for={nodo <- @nodos} id={"orden-nodo-" <> (nodo.id || clave_de_carpeta(nodo, @ruta_padre))}>
+        <div data-id={nodo.id} class="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm">
+          <svg :if={nodo.id} class="jal-manija text-gray-300 hover:text-gray-500 cursor-grab flex-shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" title="Arrastrar para reordenar">
+            <circle cx="8" cy="6" r="1.6" /><circle cx="16" cy="6" r="1.6" /><circle cx="8" cy="12" r="1.6" /><circle cx="16" cy="12" r="1.6" /><circle cx="16" cy="18" r="1.6" /><circle cx="8" cy="18" r="1.6" />
           </svg>
-          <span class="material-symbols-outlined text-yellow-500" style="font-size: 18px">folder</span>
-          <span class="font-semibold text-gray-800">{nodo.nombre}</span>
+          <span :if={!nodo.id} class="w-[14px] flex-shrink-0" title="Esta carpeta no tiene un registro propio (se infiere sola de la ruta de lo que tiene adentro) — no se puede mover ELLA, pero sí lo que hay adentro."></span>
+          <span class="material-symbols-outlined text-gray-400" style="font-size: 18px">
+            {if nodo.tipo == :carpeta, do: "folder", else: "description"}
+          </span>
+          <span class="font-semibold text-gray-800 flex-1">{if nodo.tipo == :carpeta, do: nodo.nombre, else: nodo.label}</span>
+          <span
+            :if={!nodo.id}
+            class="text-[10px] text-gray-400 italic whitespace-nowrap"
+            title="Carpeta automática (sin '+ Nueva carpeta' propia) — no se puede reordenar ella misma, pero su contenido sí."
+          >
+            carpeta automática
+          </span>
+        </div>
+        <div :if={nodo.tipo == :carpeta and nodo.hijos != []} class="pl-6 mt-1.5">
+          <.arbol_editable nodos={nodo.hijos} contenedor_id={clave_de_carpeta(nodo, @ruta_padre)} ruta_padre={ruta_con(@ruta_padre, nodo.segmento)} />
         </div>
       </div>
-      <p :if={@raices == []} class="px-4 py-6 text-center text-gray-400 text-sm">No hay carpetas raíz en esta página para reordenar.</p>
     </div>
     """
   end
@@ -2118,13 +2202,6 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                 class="text-blue-600 hover:text-blue-800 text-xs font-semibold"
               >
                 Editar
-              </.link>
-              <.link
-                :if={not Map.get(nodo, :es_consulta, false)}
-                navigate={~p"/sysadmin/bc-list/#{nodo.id}/plantilla"}
-                class="text-purple-600 hover:text-purple-800 text-xs font-semibold"
-              >
-                PostView
               </.link>
               <.link
                 :if={Map.get(nodo, :permisos_habilitados, false)}

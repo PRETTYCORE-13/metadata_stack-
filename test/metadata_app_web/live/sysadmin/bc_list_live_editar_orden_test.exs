@@ -41,6 +41,20 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveEditarOrdenTest do
     header
   end
 
+  defp crear_catalogo(nombre, etiqueta, nav) do
+    {:ok, {header, _}} =
+      MetaSchemaContext.crear_header_con_detalles(%{
+        "schema_context_name" => nombre,
+        "schema_context_label" => etiqueta,
+        "schema_context_nav" => nav,
+        "schema_visible" => true,
+        "schema_context_type" => 1,
+        "detalles" => []
+      })
+
+    header
+  end
+
   test "botón 'Editar vista' abre el panel arrastrable con las carpetas raíz", %{conn: conn} do
     sufijo = unique()
     crear_carpeta_raiz("orden_a_#{sufijo}", "Carpeta A #{sufijo}")
@@ -49,12 +63,12 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveEditarOrdenTest do
     {:ok, view, html} = live(conn, ~p"/sysadmin/bc-list")
     refute html =~ "Editar vista</h2>"
 
-    html = view |> element("button", "Editar vista") |> render_click()
+    html = view |> element("button", "Vista") |> render_click()
 
-    assert html =~ "Arrastrá las carpetas"
+    assert html =~ "Arrastrá para cambiar el orden"
     assert html =~ "Carpeta A #{sufijo}"
     assert html =~ "Carpeta B #{sufijo}"
-    assert html =~ "id=\"orden-carpeta-orden_a_#{sufijo}\""
+    assert html =~ "id=\"orden-nodo-orden_a_#{sufijo}\""
   end
 
   test "soltar una carpeta en nueva posición persiste el orden y se ve reflejado al reabrir la página", %{conn: conn} do
@@ -65,7 +79,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveEditarOrdenTest do
     crear_carpeta_raiz(nombre_b, "Carpeta B #{sufijo}")
 
     {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
-    view |> element("button", "Editar vista") |> render_click()
+    view |> element("button", "Vista") |> render_click()
 
     # Simula lo que manda el hook ListaOrdenable al soltar (Sortable.js
     # onEnd) — arrastrar "B" a la posición 0, adelante de "A".
@@ -86,12 +100,82 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveEditarOrdenTest do
     assert pos_b < pos_a
   end
 
+  test "reordenar DENTRO de una carpeta (subcarpeta + archivo) persiste y no toca la raíz", %{conn: conn} do
+    sufijo = unique()
+    padre = crear_carpeta_raiz("padre_#{sufijo}", "Padre #{sufijo}")
+    sub = crear_carpeta_raiz("padre_#{sufijo}_sub", "Sub #{sufijo}")
+    {:ok, sub} = MetaSchemaContext.actualizar_header(sub, %{"schema_context_nav" => "/#{padre.schema_context_name}/sub"})
+    cat = crear_catalogo("cat_#{sufijo}", "Catalogo Zzz #{sufijo}", "/#{padre.schema_context_name}/zzz")
+
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
+    html = view |> element("button", "Vista") |> render_click()
+
+    # Cada contenedor (raíz, y cada carpeta) trae su propio data-grupo
+    # único — así arrastrar dentro de "padre" nunca puede soltar sin
+    # querer un ítem en la lista raíz ni en otra carpeta.
+    assert html =~ "data-contenedor-id=\"#{padre.schema_context_name}\""
+    assert html =~ "data-grupo=\"orden-#{padre.schema_context_name}\""
+
+    # El catálogo ("Zzz...") quedaría último alfabéticamente frente a la
+    # subcarpeta — se fuerza lo contrario arrastrándolo a la posición 0.
+    render_hook(view, "mover_a", %{"id" => cat.schema_context_name, "contenedor_id" => padre.schema_context_name, "index" => 0})
+
+    hijos =
+      MetaSchemaContext.listar_headers_arbol()
+      |> Enum.find(&(&1.tipo == :carpeta and &1.id == padre.schema_context_name))
+      |> Map.fetch!(:hijos)
+      |> Enum.map(& &1.id)
+
+    assert hijos == [cat.schema_context_name, sub.schema_context_name]
+
+    # La raíz (otro contenedor) no se tocó.
+    raiz_sin_orden =
+      MetaSchemaContext.listar_headers_arbol()
+      |> Enum.filter(&(&1.tipo == :carpeta and &1.id == padre.schema_context_name))
+      |> Enum.map(& &1.orden)
+
+    assert raiz_sin_orden == [nil]
+  end
+
+  test "reordenar DENTRO de una carpeta implícita (sin '+ Nueva carpeta' propia)", %{conn: conn} do
+    sufijo = unique()
+    # Nadie creó la carpeta "implicita_#{sufijo}" a mano — existe solo
+    # porque estos dos catálogos comparten esa ruta. Antes de este fix la
+    # recursión se cortaba acá (una carpeta sin Header propio nunca
+    # mostraba su contenido en "Editar vista").
+    cat_a = crear_catalogo("cat_a_#{sufijo}", "Catalogo A #{sufijo}", "/implicita_#{sufijo}/a")
+    cat_b = crear_catalogo("cat_b_#{sufijo}", "Catalogo B #{sufijo}", "/implicita_#{sufijo}/b")
+
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
+    html = view |> element("button", "Vista") |> render_click()
+
+    assert html =~ "Catalogo A #{sufijo}"
+    assert html =~ "Catalogo B #{sufijo}"
+    assert html =~ "carpeta automática"
+
+    clave = "ruta:implicita_#{sufijo}"
+    assert html =~ "data-contenedor-id=\"#{clave}\""
+
+    # "B" quedaría después de "A" alfabéticamente — se fuerza lo
+    # contrario arrastrándolo a la posición 0 dentro de la carpeta
+    # implícita.
+    render_hook(view, "mover_a", %{"id" => cat_b.schema_context_name, "contenedor_id" => clave, "index" => 0})
+
+    hijos =
+      MetaSchemaContext.listar_headers_arbol()
+      |> Enum.find(&(&1.tipo == :carpeta and is_nil(&1.id) and &1.segmento == "implicita_#{sufijo}"))
+      |> Map.fetch!(:hijos)
+      |> Enum.map(& &1.id)
+
+    assert hijos == [cat_b.schema_context_name, cat_a.schema_context_name]
+  end
+
   test "cerrar 'Editar vista' con 'Listo' vuelve a la tabla normal", %{conn: conn} do
     sufijo = unique()
     crear_carpeta_raiz("orden_a_#{sufijo}", "Carpeta A #{sufijo}")
 
     {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
-    view |> element("button", "Editar vista") |> render_click()
+    view |> element("button", "Vista") |> render_click()
     html = view |> element("button", "Listo") |> render_click()
 
     refute html =~ "Editar vista</h2>"
