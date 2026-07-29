@@ -33,9 +33,13 @@ Falta decidir si cada uno es un modo nuevo del mismo generador o un generador ap
 
 Procesamiento en background — falta decidir la herramienta "lo más nativo que convenga para Elixir" (candidato natural dado que el stack ya corre sobre Postgres: algo tipo Oban, respaldado en la misma base, sin infraestructura nueva que mantener — pero es una decisión a evaluar, no tomada todavía).
 
-## 6 — Log detallado de auditoría (quién/cuándo/desde dónde)
+## 6 — Log detallado de auditoría (quién/cuándo/desde dónde) ✅ captura implementada (2026-07-28), falta visor
 
 Hoy cada catálogo generado graba `insert_guid`/`update_guid`/`delete_guid` (un GUID por operación, ver `docs/arquitectura-bpb.md`), pero **no** quién la hizo. Se pide una tabla de auditoría (`record` o similar) que capture, por cada GUID: usuario, hora, IP, MAC, nombre de la PC, sesión. Depende de [[#3]] — sin login no hay "usuario" que registrar.
+
+**Implementado**: `meta_schema_auditoria` (particionada por rango de fecha, una sola partición `DEFAULT` hoy — archivar más adelante es agregar particiones reales, sin tocar código) + hook en `CatalogoGenerico.crear/actualizar/eliminar` que registra automáticamente cada alta/edición/baja (las transiciones del autómata quedan etiquetadas con su nombre específico, ej. `"transicion:aprobar"`, no un genérico `"edicion"`). `MetadataAppWeb.AuditoriaContexto` arma usuario/empresa/ip/user-agent real desde `CatalogoController` (API) y `CatalogoLive`/`FichaLive` (LiveView). MAC/nombre de PC quedaron descartados a propósito — no son capturables desde un request HTTP/LiveView, ningún browser los expone.
+
+**Pendiente**: no existe ninguna pantalla para *ver* la auditoría todavía — hoy solo se consulta por SQL directo o `mix run`. Falta una LiveView tipo "Bitácora"/historial en el admin.
 
 ## 7 — Deploy de BC hechos por ADN ✅ implementado (2026-07-23)
 

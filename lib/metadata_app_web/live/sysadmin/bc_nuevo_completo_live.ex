@@ -329,6 +329,57 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     end
   end
 
+  # Atajo "Crea BC Base": arma en memoria (nada se guarda hasta "Crear
+  # Business Process") el ~70% de los casos — Activo/Baja + Nuevo/
+  # Guardar/Baja/Reactivar — en vez de armarlos a mano paso a paso. El
+  # botón ya viene disabled sin campos y desaparece si ya hay algo
+  # cargado (ver render) — esto es la revalidación de segunda línea.
+  def handle_event("crear_bc_base", _params, socket) do
+    if socket.assigns.campos == [] or socket.assigns.estados != [] or socket.assigns.transiciones != [] do
+      {:noreply, socket}
+    else
+      campos_editables = Enum.map(socket.assigns.campos, & &1["nombre"])
+
+      estados = [
+        %{"nombre" => "Activo", "orden" => "1", "es_inicial" => true, "color" => "#40edb3"},
+        %{"nombre" => "Baja", "orden" => "2", "es_inicial" => false, "color" => "#ed4051"}
+      ]
+
+      transiciones = [
+        %{
+          "accion" => "alta",
+          "etiqueta" => "Nuevo",
+          "estado_origen" => nil,
+          "estado_destino" => "Activo",
+          "campos_editables" => campos_editables
+        },
+        %{
+          "accion" => "guardar",
+          "etiqueta" => "Guardar",
+          "estado_origen" => "Activo",
+          "estado_destino" => "Activo",
+          "campos_editables" => campos_editables
+        },
+        %{
+          "accion" => "baja",
+          "etiqueta" => "Baja",
+          "estado_origen" => "Activo",
+          "estado_destino" => "Baja",
+          "campos_editables" => []
+        },
+        %{
+          "accion" => "reactivar",
+          "etiqueta" => "Reactivar",
+          "estado_origen" => "Baja",
+          "estado_destino" => "Activo",
+          "campos_editables" => []
+        }
+      ]
+
+      {:noreply, socket |> assign(:estados, estados) |> assign(:transiciones, transiciones)}
+    end
+  end
+
   def handle_event("quitar_estado", %{"idx" => idx}, socket) do
     idx = String.to_integer(idx)
     nombre = Enum.at(socket.assigns.estados, idx)["nombre"]
@@ -727,6 +778,19 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
           catalogos_maestro_candidatos={@catalogos_maestro_candidatos}
           nombre_sistema_preview={@nombre_sistema_preview} nav_preview={@nav_preview} nav_error={@contexto_nav_error} />
         <.panel_campos campos={@campos} />
+
+        <div :if={@estados == [] and @transiciones == []} class="border border-dashed border-purple-300 bg-purple-50/40 rounded-lg p-3 flex items-center justify-between gap-3">
+          <p class="text-purple-900">
+            <strong>Crea BC Base</strong>: arma de una vez los estados <strong>Activo/Baja</strong> y las transiciones
+            <strong>Nuevo/Guardar/Baja/Reactivar</strong> — el punto de partida del ~70% de los catálogos.
+          </p>
+          <button type="button" phx-click="crear_bc_base" disabled={@campos == []}
+            title={if @campos == [], do: "Agregá al menos un campo primero"}
+            class="shrink-0 px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors">
+            Crea BC Base
+          </button>
+        </div>
+
         <.panel_estados estados={@estados} puede_agregar={@campos != []} />
         <.panel_transiciones transiciones={@transiciones} estados={@estados}
           puede_agregar={@estados != [] and tiene_alta_o_inicial?(@estados, @transiciones)} />

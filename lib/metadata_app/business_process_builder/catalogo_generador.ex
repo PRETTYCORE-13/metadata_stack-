@@ -622,7 +622,23 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
       end
       |> Enum.join("\n")
 
-    nombres_campos = Enum.map(campos, fn {campo, _, _} -> ":#{campo}" end) |> Enum.join(", ")
+    # Catálogo Maestro-Detalle (R3): un catálogo detalle SIEMPRE incluye
+    # :encabezado_id en su índice único de negocio — sin esto, la misma
+    # combinación de valores quedaba prohibida para SIEMPRE en TODA la
+    # tabla, aunque fuera de dos encabezados (maestros) distintos, que es
+    # exactamente el caso normal (bug real: dos empleados no podían tener
+    # el mismo rol+fecha, dos comandos no podían repetir contacto/teléfono/
+    # email/owner, etc.). El nombre del índice/constraint NO cambia — el
+    # unique_constraint/3 del changeset generado solo matchea por nombre,
+    # no por columnas, así que sigue funcionando sin tocar nada ahí.
+    nombres_campos_negocio = Enum.map(campos, fn {campo, _, _} -> ":#{campo}" end)
+
+    nombres_campos =
+      case header do
+        %{schema_encabezado_id: id} when not is_nil(id) -> Enum.join([":encabezado_id" | nombres_campos_negocio], ", ")
+        _ -> Enum.join(nombres_campos_negocio, ", ")
+      end
+
     nombre_indice = nombre_indice_unico(schema_context_name)
     {columnas_trn, indices_trn} = columnas_trn(schema_context_name, header)
     {columnas_encab, indices_encab} = columnas_encabezado_detalle(schema_context_name, header)

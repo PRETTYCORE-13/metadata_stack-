@@ -99,10 +99,34 @@ defmodule MetadataApp.Permissions do
   ## Administración de roles y permisos
 
   def crear_permiso(attrs) do
-    %Permiso{}
-    |> Permiso.changeset(attrs)
-    |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
-    |> Repo.insert()
+    resultado =
+      %Permiso{}
+      |> Permiso.changeset(attrs)
+      |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+      |> Repo.insert()
+
+    # Un administrador ve TODO permiso vivo sin depender de una concesión
+    # por rol (cargar_permisos_de_db/2, bypass total) — así que su caché
+    # queda stale apenas aparece un permiso nuevo, sin que ninguna
+    # concesión a otro rol lo toque. Bug real: un catálogo recién creado
+    # (sin permisos concedidos todavía a NINGÚN rol del administrador)
+    # quedaba invisible en el menú hasta que el TTL de 5 min expiraba solo.
+    case resultado do
+      {:ok, _permiso} -> invalidar_cache_de_administradores()
+      _error -> :ok
+    end
+
+    resultado
+  end
+
+  defp invalidar_cache_de_administradores do
+    from(ur in UsuarioRol,
+      join: r in Rol, on: r.id == ur.rol_id and is_nil(r.delete_guid),
+      where: is_nil(ur.delete_guid) and r.es_sistema == true and r.nombre == "administrador",
+      select: {ur.usuario_id, ur.empresa_id}
+    )
+    |> Repo.all()
+    |> Enum.each(fn {usuario_id, empresa_id} -> invalidar_cache(usuario_id, empresa_id) end)
   end
 
   def crear_rol(attrs) do

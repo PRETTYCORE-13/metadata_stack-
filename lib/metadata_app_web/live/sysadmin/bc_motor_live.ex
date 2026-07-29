@@ -75,6 +75,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       "carpeta_padre" => carpeta_padre,
       "segmento" => segmento,
       "icono" => header.schema_context_icono || "",
+      "visible" => header.schema_visible,
       "error" => nil
     }
   end
@@ -199,6 +200,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       "carpeta_padre" => carpeta_padre,
       "segmento" => segmento,
       "icono" => normalizar_icono(params["icono"]),
+      "visible" => params["visible"] == "true",
       "error" => error
     }
 
@@ -231,7 +233,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         attrs = %{
           "schema_context_label" => etiqueta,
           "schema_context_nav" => nav,
-          "schema_context_icono" => nil_si_vacio(normalizar_icono(params["icono"]))
+          "schema_context_icono" => nil_si_vacio(normalizar_icono(params["icono"])),
+          "schema_visible" => params["visible"] == "true"
         }
 
         case MetaSchemaContext.actualizar_header(header, attrs) do
@@ -1287,6 +1290,13 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
               </div>
             </div>
           </div>
+
+          <div></div>
+          <label class="flex items-center gap-1.5 font-medium text-gray-900 cursor-pointer select-none">
+            <input type="hidden" name="header[visible]" value="false" />
+            <input type="checkbox" name="header[visible]" value="true" checked={@header_form["visible"] == true} class="accent-purple-600" />
+            Es visible
+          </label>
 
           <div></div>
           <div>
