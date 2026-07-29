@@ -336,9 +336,17 @@ defmodule MetadataApp.MetaTepache do
     con_ruta_relativa(bundle_path, fn ruta ->
       case ejecutar("tar", ["-tzf", ruta]) do
         {:ok, {salida, 0}} ->
+          # El tar.exe nativo de Windows termina cada línea de "-tzf" en
+          # "\r\n" -- separar solo por "\n" deja un "\r" colgando al final
+          # de cada entrada, así que "String.ends_with?(&1, ".meta.json")"
+          # nunca matchea nada (visto real: nombres volvía [] y
+          # aplicar_import/1 corría sin registrar_permisos ni detectar
+          # campos removidos). String.trim/1 por línea lo resuelve sin
+          # importar el line ending del tar que se esté usando.
           nombres =
             salida
             |> String.split("\n", trim: true)
+            |> Enum.map(&String.trim/1)
             |> Enum.filter(&String.ends_with?(&1, ".meta.json"))
             |> Enum.map(&(&1 |> Path.basename() |> String.replace_suffix(".meta.json", "")))
 

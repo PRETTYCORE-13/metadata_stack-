@@ -71,15 +71,18 @@ defmodule MetadataApp.MetaPublicador do
       # el problema de raíz: nunca pasarle a tar una ruta con ":".
       # File.rename!/2 después es una operación normal de Elixir, no de
       # tar, así que mueve el archivo al temp dir sin ningún problema.
-      case System.cmd("tar", ["-czf", nombre_archivo | rutas], stderr_to_stdout: true) do
-        {_salida, 0} ->
+      case ejecutar("tar", ["-czf", nombre_archivo | rutas]) do
+        {:ok, {_salida, 0}} ->
           destino = Path.join(System.tmp_dir!(), nombre_archivo)
           File.rename!(nombre_archivo, destino)
           {:ok, destino}
 
-        {salida, status} ->
+        {:ok, {salida, status}} ->
           File.rm(nombre_archivo)
           {:error, "tar falló (status #{status}):\n#{salida}"}
+
+        {:error, _} = error ->
+          error
       end
     end
   end
@@ -128,9 +131,10 @@ defmodule MetadataApp.MetaPublicador do
       # write more than one asset" en cuanto hubo una segunda publicación).
       # Con un nombre remoto fijo, "--clobber" reemplaza siempre el mismo
       # asset -- el release nunca acumula más de uno.
-      case System.cmd("gh", ["release", "upload", tag, "#{bundle_path}#bundle.tar.gz", "--clobber"], stderr_to_stdout: true) do
-        {_salida, 0} -> {:cont, {:ok, [tag | acc]}}
-        {salida, status} -> {:halt, {:error, "gh release upload #{tag} falló (status #{status}):\n#{salida}"}}
+      case ejecutar("gh", ["release", "upload", tag, "#{bundle_path}#bundle.tar.gz", "--clobber"]) do
+        {:ok, {_salida, 0}} -> {:cont, {:ok, [tag | acc]}}
+        {:ok, {salida, status}} -> {:halt, {:error, "gh release upload #{tag} falló (status #{status}):\n#{salida}"}}
+        {:error, mensaje} -> {:halt, {:error, mensaje}}
       end
     end)
     |> case do
@@ -140,15 +144,14 @@ defmodule MetadataApp.MetaPublicador do
   end
 
   defp asegurar_release(tag, nombre) do
-    case System.cmd("gh", ["release", "view", tag], stderr_to_stdout: true) do
-      {_salida, 0} ->
+    case ejecutar("gh", ["release", "view", tag]) do
+      {:ok, {_salida, 0}} ->
         :ok
 
-      {_salida, _status} ->
-        System.cmd(
+      _otro ->
+        ejecutar(
           "gh",
-          ["release", "create", tag, "--title", nombre, "--notes", "Bundle de #{nombre}, publicado por motor.publicar / el wizard de BC List."],
-          stderr_to_stdout: true
+          ["release", "create", tag, "--title", nombre, "--notes", "Bundle de #{nombre}, publicado por motor.publicar / el wizard de BC List."]
         )
 
         :ok
@@ -187,13 +190,26 @@ defmodule MetadataApp.MetaPublicador do
       "bundle_b64=@#{b64_path}"
     ]
 
-    resultado = System.cmd("gh", args, stderr_to_stdout: true)
+    resultado = ejecutar("gh", args)
     File.rm(bundle_path)
     File.rm(b64_path)
 
     case resultado do
-      {salida, 0} -> {:ok, salida}
-      {salida, status} -> {:error, "gh workflow run falló (status #{status}):\n#{salida}"}
+      {:ok, {salida, 0}} -> {:ok, salida}
+      {:ok, {salida, status}} -> {:error, "gh workflow run falló (status #{status}):\n#{salida}"}
+      {:error, _} = error -> error
     end
+  end
+
+  # System.cmd lanza ErlangError (:enoent) si el ejecutable no está en el
+  # PATH de quien corre el server -- mismo bug (y misma solución) que
+  # MetaTepache.ejecutar/2: sin esto, publicar/deployar con "gh"/"tar" no
+  # instalado/no en PATH tumbaba todo el proceso LiveView en vez de mostrar
+  # un error legible.
+  defp ejecutar(programa, args) do
+    {:ok, System.cmd(programa, args, stderr_to_stdout: true)}
+  rescue
+    e in ErlangError ->
+      {:error, "No se pudo ejecutar \"#{programa}\" -- ¿está instalado y en el PATH de este proceso? (#{Exception.message(e)})"}
   end
 end
