@@ -104,7 +104,11 @@ defmodule MetadataAppWeb.FichaLive do
           |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
 
         transicion_alta = if es_detalle?, do: nil, else: MetaStateEngine.transicion_alta(tabla)
-        campos_editables = if es_detalle?, do: [], else: MetaStateEngine.campos_editables(tabla, transicion_alta)
+
+        campos_editables =
+          if es_detalle?,
+            do: [],
+            else: tabla |> MetaStateEngine.campos_editables(transicion_alta) |> campos_editables_propios(columnas)
 
         {:ok,
          socket
@@ -265,6 +269,18 @@ defmodule MetadataAppWeb.FichaLive do
     actual.estado_id != registro_cargado.estado_id
   end
 
+  # Una transición de un catálogo Maestro-Detalle puede legítimamente
+  # incluir en campos_editables campos de un catálogo DETALLE (para el
+  # editor de "renglones" de BcMotorLive/la API con "renglones": ...) —
+  # pero el form de esta Ficha 360° solo edita los campos PROPIOS del
+  # maestro. Sin este filtro, campos_modificados/3 explotaba con
+  # `String.to_existing_atom/1` al recibir un campo que nunca fue field
+  # de ESTE schema (bug real, reportado en producción).
+  defp campos_editables_propios(campos_editables, columnas) do
+    propios = MapSet.new(columnas, & &1.schema_context_field)
+    Enum.filter(campos_editables, &MapSet.member?(propios, &1))
+  end
+
   defp campos_modificados(registro, campos_params, campos_editables) do
     Enum.reduce(campos_editables, %{}, fn campo, acc ->
       nuevo = Map.get(campos_params, campo)
@@ -307,7 +323,9 @@ defmodule MetadataAppWeb.FichaLive do
       if es_detalle?, do: nil, else: MetaStateEngine.transicion_guardar(tabla, registro.estado_id)
 
     campos_editables =
-      if es_detalle?, do: [], else: MetaStateEngine.campos_editables(tabla, transicion_edicion)
+      if es_detalle?,
+        do: [],
+        else: tabla |> MetaStateEngine.campos_editables(transicion_edicion) |> campos_editables_propios(columnas)
 
     # MetaStateEngine.transiciones_disponibles/2 asume estado_id no-nil
     # (transiciones_desde/2 hace `t.estado_origen_id == ^estado_id`, que Ecto
