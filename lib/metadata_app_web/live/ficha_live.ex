@@ -249,14 +249,24 @@ defmodule MetadataAppWeb.FichaLive do
   #   fila puntual, identificada por client_id (nunca se persiste acá, solo
   #   se arma el changeset para leer sus errores). Sin renglon_id: fila
   #   nueva, changeset "en blanco". Con renglon_id: fila existente, contra
-  #   el registro real.
+  #   el registro real — "renglon_id" es el contador por maestro (R14), NO
+  #   el id físico (bug real: `CatalogoGenerico.obtener!/2` busca por id y
+  #   tronaba con NoResultsError apenas los números no coincidían por
+  #   casualidad) — el lookup correcto es por encabezado_id + renglon_id
+  #   juntos, mismo criterio que ya usa MetaStateEngine.buscar_renglones/5.
   def handle_event("grid_validar_fila", %{"catalogo" => catalogo, "client_id" => client_id, "campos" => campos} = params, socket) do
     detalle_modulo = MetaSchemaContext.modulo_por_nombre(catalogo)
 
     changeset =
       case Map.get(params, "renglon_id") do
-        nil -> detalle_modulo.changeset(struct(detalle_modulo), campos)
-        renglon_id -> detalle_modulo.changeset(CatalogoGenerico.obtener!(detalle_modulo, renglon_id), campos)
+        nil ->
+          detalle_modulo.changeset(struct(detalle_modulo), campos)
+
+        renglon_id ->
+          case Repo.get_by(detalle_modulo, encabezado_id: socket.assigns.registro.id, renglon_id: renglon_id) do
+            nil -> detalle_modulo.changeset(struct(detalle_modulo), campos)
+            renglon -> detalle_modulo.changeset(renglon, campos)
+          end
       end
 
     errores =
@@ -592,7 +602,7 @@ defmodule MetadataAppWeb.FichaLive do
     |> assign(:otras_transiciones, otras_transiciones)
     |> assign(:relaciones, relaciones)
     |> assign(:relaciones_total, Enum.sum(Enum.map(relaciones, & &1.total)))
-    |> assign(:historial, cargar_historial(header.id, registro.id))
+    |> assign(:historial, cargar_historial(header.id, registro.id, catalogos_detalle, detalle_renglones))
     |> assign(:catalogos_detalle, catalogos_detalle)
     |> assign(:detalle_renglones, detalle_renglones)
     |> assign(:detalle_renglones_nuevos, %{})
@@ -667,11 +677,62 @@ defmodule MetadataAppWeb.FichaLive do
 
   # No existía ninguna consulta de "eventos de este registro" — se agrega
   # acá, de solo lectura, sin tocar cómo `MetaStateEngine` los escribe.
-  defp cargar_historial(header_id, registro_id) do
-    from(e in TransicionEvento,
-      where: e.meta_schema_header_id == ^header_id and e.registro_id == ^registro_id,
-      order_by: [desc: e.inserted_at]
-    )
+  #
+  # Dos fuentes distintas, normalizadas a un mapa común (:origen, :inserted_at,
+  # ...) para poder mezclarlas y ordenarlas juntas por fecha:
+  # - TransicionEvento: transiciones del ENCABEZADO (alta/guardar/baja/...).
+  # - meta_schema_auditoria (roadmap #6): altas/ediciones de los RENGLONES —
+  #   crear_muchos/3 y dar_de_alta/5 nunca corren una transición propia por
+  #   renglón (R3, los renglones no tienen autómata propio), así que agregar
+  #   un renglón nuevo sin tocar ningún campo del encabezado no generaba
+  #   ningún TransicionEvento — el Historial se veía vacío aunque sí había
+  #   pasado algo. No se suma la auditoría del catálogo del ENCABEZADO acá
+  #   (bc == tabla) a propósito: esa ya la cubre TransicionEvento cuando el
+  #   catálogo adoptó el motor, sumar las dos duplicaría cada edición.
+  defp cargar_historial(header_id, registro_id, catalogos_detalle, detalle_renglones) do
+    transiciones =
+      from(e in TransicionEvento,
+        where: e.meta_schema_header_id == ^header_id and e.registro_id == ^registro_id
+      )
+      |> Repo.all()
+      |> Enum.map(fn e ->
+        %{
+          origen: :transicion,
+          inserted_at: e.inserted_at,
+          accion: e.accion,
+          estado_origen_id: e.estado_origen_id,
+          estado_destino_id: e.estado_destino_id,
+          contexto: e.contexto
+        }
+      end)
+
+    auditorias =
+      Enum.flat_map(catalogos_detalle, fn %{nombre: nombre, etiqueta: etiqueta} ->
+        filas = Map.get(detalle_renglones, nombre, [])
+        renglon_id_por_id = Map.new(filas, &{&1.id, &1.renglon_id})
+
+        filas
+        |> Enum.map(& &1.id)
+        |> auditoria_de_renglones(nombre)
+        |> Enum.map(fn a ->
+          %{
+            origen: :auditoria,
+            inserted_at: a.inserted_at,
+            accion: a.operacion,
+            usuario: a.usuario_email,
+            catalogo_etiqueta: etiqueta,
+            renglon_id: Map.get(renglon_id_por_id, a.entidad_id)
+          }
+        end)
+      end)
+
+    (transiciones ++ auditorias) |> Enum.sort_by(& &1.inserted_at, {:desc, DateTime})
+  end
+
+  defp auditoria_de_renglones([], _catalogo), do: []
+
+  defp auditoria_de_renglones(ids, catalogo) do
+    from(a in MetadataApp.MetaSchema.Auditoria, where: a.bc == ^catalogo and a.entidad_id in ^ids)
     |> Repo.all()
   end
 
@@ -1337,19 +1398,30 @@ defmodule MetadataAppWeb.FichaLive do
   attr :historial, :list, required: true
   attr :estados_por_id, :map, required: true
 
+  # Dos tipos de fila mezcladas, ya ordenadas por fecha (ver
+  # cargar_historial/4) — :transicion es lo de siempre (encabezado);
+  # :auditoria son altas/ediciones de renglones, sin transición propia.
   defp tab_historial(assigns) do
     ~H"""
     <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
       <div :for={e <- @historial} class="px-4 py-2.5 border-b border-gray-100 last:border-b-0 text-sm">
-        <div class="flex items-center gap-2 flex-wrap">
+        <div :if={e.origen == :transicion} class="flex items-center gap-2 flex-wrap">
           <span class="font-mono text-[11px] text-gray-400">{Calendar.strftime(e.inserted_at, "%d/%m/%Y %H:%M")}</span>
           <span class="px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 text-[11px] font-semibold">{e.accion}</span>
           <span class="text-gray-400 text-[11px]">
             {Map.get(@estados_por_id, e.estado_origen_id) || "—"} → {Map.get(@estados_por_id, e.estado_destino_id) || "—"}
           </span>
         </div>
-        <div :if={map_size(e.contexto) > 0} class="text-xs text-gray-500 mt-1">
+        <div :if={e.origen == :transicion and map_size(e.contexto) > 0} class="text-xs text-gray-500 mt-1">
           Modificó: {Enum.join(Map.keys(e.contexto), ", ")}
+        </div>
+
+        <div :if={e.origen == :auditoria} class="flex items-center gap-2 flex-wrap">
+          <span class="font-mono text-[11px] text-gray-400">{Calendar.strftime(e.inserted_at, "%d/%m/%Y %H:%M")}</span>
+          <span class="px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 text-[11px] font-semibold">
+            {e.catalogo_etiqueta}{if e.renglon_id, do: " #{e.renglon_id}"} · {e.accion}
+          </span>
+          <span :if={e.usuario} class="text-gray-400 text-[11px]">{e.usuario}</span>
         </div>
       </div>
       <p :if={@historial == []} class="px-4 py-8 text-center text-gray-400 text-sm">Sin eventos todavía.</p>
