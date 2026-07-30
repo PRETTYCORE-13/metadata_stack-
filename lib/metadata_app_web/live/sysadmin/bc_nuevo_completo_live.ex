@@ -565,7 +565,15 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
 
   # campos_requeridos.campos: texto separado por coma -> lista, sin vacíos.
   defp formatear_error_creacion({:error, motivo}) when is_binary(motivo), do: motivo
-  defp formatear_error_creacion({:error, _paso, %Ecto.Changeset{} = changeset, _cambios}), do: resumen_errores(changeset)
+
+  defp formatear_error_creacion({:error, _paso, %Ecto.Changeset{} = changeset, _cambios}) do
+    if Keyword.has_key?(changeset.errors, :codigo_trn) do
+      "Código #{Ecto.Changeset.get_field(changeset, :codigo_trn)} (TRN) ya existe — elegí otro."
+    else
+      resumen_errores(changeset)
+    end
+  end
+
   defp formatear_error_creacion({:error, _paso, motivo, _cambios}) when is_binary(motivo), do: motivo
   defp formatear_error_creacion(_), do: "No se pudo crear el Business Process."
 
