@@ -162,7 +162,8 @@
   border-color: rgba(255, 255, 255, 0.15) !important;
 }
 
-:root[data-theme="light"] .bg-white.border-gray-200.rounded-2xl .bg-gray-100 {
+:root[data-theme="light"] .bg-white.border-gray-200.rounded-2xl .bg-gray-100,
+:root[data-theme="light"] .bg-white.border-gray-200.rounded-2xl .bg-gray-50 {
   background: #1a1a1a !important;
 }
 
