@@ -151,6 +151,10 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
          |> assign(:resumen_catalogo, nil)
          |> assign(:resumen_funcion, "SUM")
          |> assign(:resumen_campo, nil)
+         |> assign(:lookup_catalogo, nil)
+         |> assign(:lookup_id, nil)
+         |> assign(:lookup_campo, nil)
+         |> assign(:herramienta_calculado, nil)
          |> assign(:mensaje, nil)
          |> seleccionar(List.first(plantillas))}
     end
@@ -188,14 +192,14 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
 
     definicion = MetaPlantillas.insertar_nodo(socket.assigns.definicion, contenedor_seleccionado(socket), nodo)
 
-    {:noreply, socket |> assign(:definicion, definicion) |> assign(:nodo_seleccionado_id, nodo["id"]) |> reset_resumen()}
+    {:noreply, socket |> assign(:definicion, definicion) |> assign(:nodo_seleccionado_id, nodo["id"]) |> reset_resumen() |> reset_lookup() |> assign(:herramienta_calculado, nil)}
   end
 
   def handle_event("agregar_campo", %{"filtro" => filtro}, socket) do
     nodo = MetaPlantillas.nuevo_nodo_campo(filtro)
     definicion = MetaPlantillas.insertar_nodo(socket.assigns.definicion, contenedor_seleccionado(socket), nodo)
 
-    {:noreply, socket |> assign(:definicion, definicion) |> assign(:nodo_seleccionado_id, nodo["id"]) |> reset_resumen()}
+    {:noreply, socket |> assign(:definicion, definicion) |> assign(:nodo_seleccionado_id, nodo["id"]) |> reset_resumen() |> reset_lookup() |> assign(:herramienta_calculado, nil)}
   end
 
   # El selector de "Resumen" (catálogo/función/campo) es estado transitorio
@@ -203,7 +207,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   # nodo seleccionado para no arrastrar una elección de un campo_calculado
   # a otro sin querer.
   def handle_event("seleccionar_nodo", %{"id" => id}, socket) do
-    {:noreply, socket |> assign(:nodo_seleccionado_id, id) |> reset_resumen()}
+    {:noreply, socket |> assign(:nodo_seleccionado_id, id) |> reset_resumen() |> reset_lookup() |> assign(:herramienta_calculado, nil)}
   end
 
   def handle_event("quitar_nodo", %{"id" => id}, socket) do
@@ -339,6 +343,55 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     agregar_token_formula(socket, "#{funcion}(#{catalogo}.#{campo})")
   end
 
+  # "¿Qué querés agregar?" — tarjetas grandes que muestran/ocultan UN
+  # constructor secundario a la vez (Resumen / Condición / Otro registro),
+  # en vez de los 3 apilados y siempre visibles — el ruido visual real
+  # venía de mostrar todo junto, no de que faltara alguno. La tira de
+  # chips + campos/contexto/operadores de arriba (la fórmula en sí) sigue
+  # siempre visible: no es "un tipo" más, es lo que se está armando.
+  # Tocar la misma tarjeta ya activa la cierra (toggle).
+  def handle_event("seleccionar_herramienta_calculado", %{"herramienta" => herramienta}, socket) do
+    nueva = if socket.assigns.herramienta_calculado == herramienta, do: nil, else: herramienta
+    {:noreply, assign(socket, :herramienta_calculado, nueva)}
+  end
+
+  # --- Selector de "Lookup fijo" (registro puntual de otro catálogo) -------
+  # Mismo patrón que "Resumen" de arriba — 3 controles sueltos, estado
+  # transitorio del panel, y recién "Agregar a la fórmula" arma el token
+  # real "{catalogo#id.campo}" (mismo formato que Formula.evaluar/2 ya
+  # reconoce por su cuenta — acá solo se lo arma por clicks en vez de a
+  # mano en "Avanzado").
+  def handle_event("lookup_set_catalogo", %{"catalogo" => catalogo}, socket) do
+    {:noreply, socket |> assign(:lookup_catalogo, catalogo) |> assign(:lookup_campo, nil)}
+  end
+
+  def handle_event("lookup_set_id", %{"registro_id" => id}, socket) do
+    {:noreply, assign(socket, :lookup_id, id)}
+  end
+
+  def handle_event("lookup_set_campo", %{"campo" => campo}, socket) do
+    {:noreply, assign(socket, :lookup_campo, campo)}
+  end
+
+  def handle_event("formula_agregar_lookup", _params, %{assigns: %{lookup_catalogo: catalogo}} = socket)
+      when catalogo in [nil, ""] do
+    {:noreply, socket}
+  end
+
+  def handle_event("formula_agregar_lookup", _params, %{assigns: %{lookup_campo: campo}} = socket)
+      when campo in [nil, ""] do
+    {:noreply, socket}
+  end
+
+  def handle_event("formula_agregar_lookup", _params, %{assigns: %{lookup_id: id}} = socket) do
+    if id_valido?(id) do
+      %{lookup_catalogo: catalogo, lookup_campo: campo} = socket.assigns
+      agregar_token_formula(socket, "{#{catalogo}##{id}.#{campo}}")
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_event("guardar", _params, socket) do
     if plantilla_desactualizada?(socket) do
       {:noreply, assign(socket, :mensaje, {:conflicto, "Alguien más guardó cambios en este PostView mientras la tenías abierto."})}
@@ -440,6 +493,15 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   defp reset_resumen(socket) do
     socket |> assign(:resumen_catalogo, nil) |> assign(:resumen_funcion, "SUM") |> assign(:resumen_campo, nil)
   end
+
+  defp reset_lookup(socket) do
+    socket |> assign(:lookup_catalogo, nil) |> assign(:lookup_id, nil) |> assign(:lookup_campo, nil)
+  end
+
+  # Mismo patrón que reconoce Formula ("#(\d+)\." en el regex del lookup) —
+  # se valida acá también para no armar un token roto tipo "{cat#.campo}"
+  # con solo darle clic al botón sin completar el id.
+  defp id_valido?(id), do: is_binary(id) and Regex.match?(~r/^\d+$/, id)
 
   defp seleccionar(socket, nil) do
     socket |> assign(:plantilla, nil) |> assign(:definicion, nil) |> assign(:nodo_seleccionado_id, nil)
@@ -595,7 +657,10 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         <div class="bg-white border border-gray-200 rounded-xl p-3">
           <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">Propiedades</div>
           <.panel_propiedades :if={@nodo_seleccionado_id} nodo={MetaPlantillas.buscar_nodo(@definicion, @nodo_seleccionado_id)} campos={@campos} catalogos_relacionables={@catalogos_relacionables} catalogos_disponibles={@catalogos_disponibles}
-            resumen_catalogo={@resumen_catalogo} resumen_funcion={@resumen_funcion} resumen_campo={@resumen_campo} nombre={@nombre} registro_muestra_id={@registro_muestra_id} />
+            resumen_catalogo={@resumen_catalogo} resumen_funcion={@resumen_funcion} resumen_campo={@resumen_campo}
+            lookup_catalogo={@lookup_catalogo} lookup_id={@lookup_id} lookup_campo={@lookup_campo} definicion={@definicion}
+            herramienta_calculado={@herramienta_calculado}
+            nombre={@nombre} registro_muestra_id={@registro_muestra_id} />
           <p :if={!@nodo_seleccionado_id} class="text-xs text-gray-400">Seleccioná un componente del lienzo.</p>
           <.panel_condicion :if={@nodo_seleccionado_id} nodo={MetaPlantillas.buscar_nodo(@definicion, @nodo_seleccionado_id)} campos={@campos} estados={@estados} />
         </div>
@@ -670,6 +735,11 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   attr :resumen_catalogo, :string, default: nil
   attr :resumen_funcion, :string, default: "SUM"
   attr :resumen_campo, :string, default: nil
+  attr :lookup_catalogo, :string, default: nil
+  attr :lookup_id, :string, default: nil
+  attr :lookup_campo, :string, default: nil
+  attr :herramienta_calculado, :string, default: nil
+  attr :definicion, :map, default: %{}
   attr :nombre, :string, default: nil
   attr :registro_muestra_id, :any, default: nil
 
@@ -779,10 +849,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   # siempre (Formula.evaluar/2 no cambió), esto solo la arma por clicks en
   # vez de tipeándola. @formula_tokens sale del MISMO tokenizer que usa el
   # evaluador (Formula.tokens_para_mostrar/1), así que lo que se ve acá
-  # nunca se desincroniza de lo que realmente se va a evaluar — y una
-  # fórmula ya guardada con SUM/lookups (tipeada antes de que existiera
-  # este constructor, o desde "Avanzado" más abajo) se sigue viendo bien,
-  # solo que esos chips no se pueden armar por clicks todavía.
+  # nunca se desincroniza de lo que realmente se va a evaluar.
   defp panel_propiedades(%{nodo: %{"tipo" => "campo_calculado"}} = assigns) do
     formula_tokens = Formula.tokens_para_mostrar(assigns.nodo["propiedades"]["formula"] || "")
     assigns = assign(assigns, :formula_tokens, formula_tokens)
@@ -820,6 +887,14 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           </button>
         </div>
 
+        <div :if={otros_campos_calculados(@definicion, @nodo["id"]) != []} class="flex flex-wrap gap-1 mt-1.5">
+          <button :for={etiqueta <- otros_campos_calculados(@definicion, @nodo["id"])}
+            type="button" phx-click="formula_agregar_campo" phx-value-campo={etiqueta}
+            class="px-2 py-1 rounded-md border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 font-semibold">
+            ∑ {etiqueta}
+          </button>
+        </div>
+
         <div class="flex flex-wrap items-center gap-1 mt-1.5">
           <button :for={{simbolo, real} <- [{"+", "+"}, {"−", "-"}, {"×", "*"}, {"÷", "/"}, {"(", "("}, {")", ")"}]}
             type="button" phx-click="formula_agregar_operador" phx-value-op={real}
@@ -838,6 +913,22 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         </div>
 
         <div class="mt-2.5 pt-2.5 border-t border-gray-100">
+          <p class="text-gray-500 font-semibold mb-1.5">¿Qué querés agregar?</p>
+          <div class="grid grid-cols-3 gap-1.5">
+            <button :for={{herramienta, simbolo, etiqueta} <- herramientas_calculado(@catalogos_disponibles)}
+              type="button" phx-click="seleccionar_herramienta_calculado" phx-value-herramienta={herramienta}
+              class={[
+                "flex flex-col items-center gap-0.5 px-2 py-2.5 rounded-lg border text-center",
+                @herramienta_calculado == herramienta && "border-purple-400 bg-purple-50 text-purple-700",
+                @herramienta_calculado != herramienta && "border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50"
+              ]}>
+              <span class="text-base font-bold">{simbolo}</span>
+              <span class="text-[11px] font-semibold">{etiqueta}</span>
+            </button>
+          </div>
+        </div>
+
+        <div :if={@herramienta_calculado == "condicion"} class="mt-2.5 pt-2.5 border-t border-gray-100">
           <p class="text-gray-500 font-semibold mb-1">Condición — SI / ENTONCES / SI NO</p>
           <div class="flex flex-wrap items-center gap-1 mb-1.5">
             <button :for={{simbolo, real} <- [{"SI", "IF"}, {"ENTONCES", "THEN"}, {"SI NO", "ELSE"}]}
@@ -861,7 +952,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           </p>
         </div>
 
-        <div :if={@catalogos_disponibles != []} class="mt-2.5 pt-2.5 border-t border-gray-100">
+        <div :if={@herramienta_calculado == "resumen" and @catalogos_disponibles != []} class="mt-2.5 pt-2.5 border-t border-gray-100">
           <p class="text-gray-500 font-semibold mb-1">Resumen — agregado de otro catálogo</p>
           <div class="flex flex-col gap-1.5">
             <select phx-change="resumen_set_funcion" name="funcion" class="w-full border border-gray-300 rounded px-2 py-1.5">
@@ -894,21 +985,56 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           </div>
         </div>
 
+        <div :if={@herramienta_calculado == "lookup" and @catalogos_disponibles != []} class="mt-2.5 pt-2.5 border-t border-gray-100">
+          <p class="text-gray-500 font-semibold mb-1">Registro puntual de otro catálogo</p>
+          <div class="flex flex-col gap-1.5">
+            <select phx-change="lookup_set_catalogo" name="catalogo" class="w-full border border-gray-300 rounded px-2 py-1.5">
+              <option value="" selected={@lookup_catalogo in [nil, ""]}>Catálogo…</option>
+              <option :for={cat <- @catalogos_disponibles} value={cat.nombre} selected={@lookup_catalogo == cat.nombre}>
+                {cat.etiqueta}
+              </option>
+            </select>
+
+            <input type="number" min="1" step="1" phx-change="lookup_set_id" name="registro_id" value={@lookup_id}
+              placeholder="ID del registro" class="w-full border border-gray-300 rounded px-2 py-1.5" />
+
+            <select :if={@lookup_catalogo not in [nil, ""]} phx-change="lookup_set_campo" name="campo" class="w-full border border-gray-300 rounded px-2 py-1.5">
+              <option value="" selected={@lookup_campo in [nil, ""]}>Campo…</option>
+              <option :for={c <- campos_de(@catalogos_disponibles, @lookup_catalogo)} value={c.schema_context_field} selected={@lookup_campo == c.schema_context_field}>
+                {c.schema_context_properties["etiqueta"]}
+              </option>
+            </select>
+
+            <button type="button" phx-click="formula_agregar_lookup"
+              disabled={@lookup_catalogo in [nil, ""] or @lookup_campo in [nil, ""] or not id_valido?(@lookup_id)}
+              class="px-2 py-1.5 rounded-md bg-purple-600 text-white font-semibold hover:bg-purple-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
+              + Agregar a la fórmula
+            </button>
+          </div>
+        </div>
+
         <details :if={@catalogos_disponibles != []} class="mt-2">
           <summary class="cursor-pointer text-gray-400 hover:text-gray-600">Avanzado — escribir la fórmula como texto</summary>
           <div class="mt-1.5 pl-0.5">
-            <p class="text-gray-400">
-              Registro puntual de otro catálogo: <span class="font-mono">{"{catalogo#id.campo}"}</span>.
-            </p>
             <input type="text" value={@nodo["propiedades"]["formula"]} phx-change="formula_set_texto"
               placeholder="{catalogo#id.campo}" class="w-full border border-gray-300 rounded px-2 py-1.5 font-mono mt-1" />
           </div>
         </details>
       </div>
 
-      <form phx-change="actualizar_propiedad">
-        <label class="block text-gray-500 mb-0.5">Decimales</label>
-        <input type="number" name="decimales" min="0" max="10" value={@nodo["propiedades"]["decimales"]} class="w-24 border border-gray-300 rounded px-2 py-1.5" />
+      <form phx-change="actualizar_propiedad" class="flex items-end gap-2">
+        <div>
+          <label class="block text-gray-500 mb-0.5">Formato</label>
+          <select name="formato" class="border border-gray-300 rounded px-2 py-1.5">
+            <option value="numero" selected={(@nodo["propiedades"]["formato"] || "numero") == "numero"}>Número</option>
+            <option value="moneda" selected={@nodo["propiedades"]["formato"] == "moneda"}>Moneda</option>
+            <option value="porcentaje" selected={@nodo["propiedades"]["formato"] == "porcentaje"}>Porcentaje</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-gray-500 mb-0.5">Decimales</label>
+          <input type="number" name="decimales" min="0" max="10" value={@nodo["propiedades"]["decimales"]} class="w-24 border border-gray-300 rounded px-2 py-1.5" />
+        </div>
       </form>
     </div>
     """
@@ -1056,6 +1182,14 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   end
 
   defp panel_propiedades(%{nodo: %{"tipo" => "tabla"}} = assigns) do
+    campos_del_catalogo = campos_de_catalogo(assigns.catalogos_disponibles, assigns.nodo["propiedades"]["catalogo"])
+    campos_actuales = assigns.nodo["propiedades"]["campos"] || []
+
+    assigns =
+      assigns
+      |> assign(:campos_del_catalogo, campos_del_catalogo)
+      |> assign(:campos_actuales, campos_actuales)
+
     ~H"""
     <form phx-change="actualizar_propiedad" class="flex flex-col gap-2.5 text-xs">
       <div>
@@ -1072,8 +1206,31 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         <label class="block text-gray-500 mb-0.5">Título</label>
         <input type="text" name="titulo" value={@nodo["propiedades"]["titulo"]} class="w-full border border-gray-300 rounded px-2 py-1.5" />
       </div>
+      <div>
+        <label class="block text-gray-500 mb-1">Campos a mostrar</label>
+        <p :if={@campos_del_catalogo == []} class="text-gray-400">Elegí un catálogo relacionado arriba primero.</p>
+        <input type="hidden" name="campos[]" value="" />
+        <label :for={c <- @campos_del_catalogo} class="flex items-center gap-1.5 mb-1">
+          <input type="checkbox" name="campos[]" value={c.schema_context_field} checked={c.schema_context_field in @campos_actuales} class="accent-purple-600" />
+          {c.schema_context_properties["etiqueta"]}
+        </label>
+        <p :if={@campos_del_catalogo != [] and @campos_actuales == []} class="text-gray-400 mt-1">Sin nada tildado, se muestra la descripción de siempre + el id.</p>
+      </div>
     </form>
     """
+  end
+
+  # Campos VISIBLES del catálogo elegido en "Catálogo relacionado" — sale de
+  # @catalogos_disponibles (ya calculado en mount/2 para el panel de
+  # "Campo calculado", pero es la misma lista de TODOS los catálogos con sus
+  # campos, sirve igual acá sin duplicar la query).
+  defp campos_de_catalogo(_catalogos_disponibles, catalogo) when catalogo in [nil, ""], do: []
+
+  defp campos_de_catalogo(catalogos_disponibles, catalogo) do
+    case Enum.find(catalogos_disponibles, &(&1.nombre == catalogo)) do
+      nil -> []
+      c -> c.campos
+    end
   end
 
   defp chip_class({:campo, _}), do: "inline-flex items-center gap-1 font-mono px-2 py-1 rounded-md bg-purple-100 text-purple-700 font-semibold"
@@ -1146,6 +1303,31 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       nil -> []
       cat -> cat.campos
     end
+  end
+
+  # Etiquetas de los DEMÁS campo_calculado de la plantilla (nunca el que se
+  # está editando — insertar "{EsteMismoCampo}" en su propia fórmula sería
+  # una autorreferencia directa; FichaLive.resolver_calculado/4 la
+  # detectaría igual como ciclo, pero no tiene sentido ofrecerla como
+  # botón) — para citar el resultado de otro con "{Etiqueta}", igual que
+  # cualquier campo real (ver FichaLive.valores_con_calculados/5, que es
+  # quien realmente lo resuelve; acá solo se arma el chip).
+  defp otros_campos_calculados(definicion, nodo_id) do
+    definicion
+    |> MetaPlantillas.nodos_de_tipo("campo_calculado")
+    |> Enum.reject(&(&1["id"] == nodo_id))
+    |> Enum.map(& &1["propiedades"]["etiqueta"])
+    |> Enum.reject(&(&1 in [nil, ""]))
+  end
+
+  # Tarjetas de "¿Qué querés agregar?" — "Resumen" y "Otro registro" dependen
+  # de que exista al menos un catálogo relacionado (@catalogos_disponibles);
+  # sin eso sus paneles no muestran nada, así que ni se ofrecen como tarjeta.
+  # "Condición" no depende de catálogos relacionados y siempre se muestra.
+  defp herramientas_calculado([]), do: [{"condicion", "?", "Condición"}]
+
+  defp herramientas_calculado(_catalogos_disponibles) do
+    [{"condicion", "?", "Condición"}, {"resumen", "Σ", "Resumen"}, {"lookup", "🔗", "Otro registro"}]
   end
 
   # Contra el registro de muestra de ESTE catálogo (el mismo que usa el

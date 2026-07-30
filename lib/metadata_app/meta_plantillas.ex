@@ -321,6 +321,21 @@ defmodule MetadataApp.MetaPlantillas do
 
   def buscar_nodo(definicion, id), do: buscar_en_lista(definicion["hijos"] || [], id)
 
+  @doc """
+  Todos los nodos de `definicion` cuyo "tipo" sea `tipo`, sin importar cuán
+  anidados estén (adentro de Sección/Fila/Columna/Panel/Pestañas) — ej.
+  todos los `campo_calculado` de la plantilla, usado tanto por
+  `PlantillaConstructorLive` (listar para referenciar uno desde otro) como
+  por `FichaLive` (resolverlos todos antes de evaluar cualquier fórmula).
+  """
+  def nodos_de_tipo(nil, _tipo), do: []
+  def nodos_de_tipo(definicion, tipo), do: (definicion["hijos"] || []) |> Enum.flat_map(&nodo_y_descendientes_de_tipo(&1, tipo))
+
+  defp nodo_y_descendientes_de_tipo(nodo, tipo) do
+    descendientes = (nodo["hijos"] || []) |> Enum.flat_map(&nodo_y_descendientes_de_tipo(&1, tipo))
+    if nodo["tipo"] == tipo, do: [nodo | descendientes], else: descendientes
+  end
+
   defp buscar_en_lista(hijos, id) do
     Enum.find_value(hijos, fn n ->
       cond do

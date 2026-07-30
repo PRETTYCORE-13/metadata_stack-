@@ -49,11 +49,12 @@ Elegido sobre la alternativa de hot code loading (compilar en la laptop de ADN y
 
 **CD automático ✅ implementado, pendiente de validar (2026-07-24)**: un deploy normal del BPB (push a `main`) ya no "olvida" los BCs publicados — cada publicación guarda su bundle en un GitHub Release (`bc-<catalogo>`, ver `MetaPublicador.persistir_bundle/2`), y `ci.yml` los restaura automáticamente antes de armar cualquier imagen. Además, BC List ahora tiene un wizard ("Publicar paquete") para seleccionar varios catálogos a la vez — el orden y las dependencias (detalles + referencias transitivas) se calculan solos, nunca a mano, mismo criterio que `terraform plan`/resolución de dependencias de gestores de paquetes reales. Falta la prueba real de punta a punta.
 
-## 8 — Campos calculados y campos estéticos en formularios ABC
+## 8 — Campos calculados y campos estéticos en formularios ABC ✅ implementado
 
-Para las pantallas de alta/baja/cambio (Frontend, equipo de Liz): dos tipos de campo nuevos que hoy no existen en `schema_context_properties`:
-- **Calculados**: su valor se deriva de otros campos, no se captura directo (ej. total = cantidad × precio).
-- **Estéticos**: no son datos del catálogo — separadores, texto de ayuda, agrupadores visuales — solo ayudan a organizar el formulario.
+Para las pantallas de alta/baja/cambio (Frontend, equipo de Liz): dos tipos de campo nuevos que no existen como columna real en `schema_context_properties`, ambos resueltos vía el Constructor de Plantillas (`PlantillaConstructorLive`) + la Ficha 360° (`FichaLive`), no como propiedad de campo:
+
+- **Calculados** ✅ — nodo `campo_calculado`: su valor se deriva de otros campos, no se captura directo (ej. total = cantidad × precio). Motor de fórmulas propio y seguro (`MetadataApp.MetaPlantillas.Formula`, sin `Code.eval_string`): aritmética, referencias a campos reales `{campo}`, lookup fijo a otro registro `{catalogo#id.campo}` (con selector visual — catálogo/id/campo — además del fallback "Avanzado" de texto plano), agregados `SUM/COUNT/AVG/MIN/MAX(catalogo.campo)`, condicionales `IF...THEN...ELSE` con comparadores `> < >= <= == !=`, pseudo-campos de contexto `{hoy}`/`{usuario_actual}`/`{empresa_activa}`, y referencias a OTRO campo calculado de la misma plantilla por su etiqueta (`{OtroCalculado}` — resolución perezosa con memoria y detección de ciclos, `FichaLive.resolver_calculado/4`; `Formula.ex` no necesitó cambios, para el evaluador es un campo más). Constructor tipo "chips" (clicks, no texto libre) para cada una de esas piezas. Formato de salida configurable: Número/Moneda/Porcentaje + decimales.
+- **Estéticos** ✅ — 4 nodos ya disponibles en la paleta del Constructor, sin relación con ninguna columna real: `divisor` (separador), `etiqueta` (texto de ayuda/título), `alerta` (aviso info/advertencia/error), `tarjeta` (agrupador visual con título). Cualquiera puede además llevar una `condicion` (mostrar/ocultar según el valor de otro campo o el estado del registro).
 
 ## 9 — Campos estéticos o de acompañamiento en el GET
 
