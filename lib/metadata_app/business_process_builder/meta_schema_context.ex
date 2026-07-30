@@ -546,6 +546,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
 
           %Detail{}
           |> Detail.changeset(attrs)
+          |> validar_campos_acompanamiento()
           |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
           |> Repo.insert()
           |> case do
@@ -568,6 +569,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
 
     %Detail{}
     |> Detail.changeset(attrs)
+    |> validar_campos_acompanamiento()
     |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
     |> Repo.insert()
   end

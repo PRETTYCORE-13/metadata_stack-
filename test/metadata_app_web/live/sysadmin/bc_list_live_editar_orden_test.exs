@@ -204,11 +204,14 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveEditarOrdenTest do
 
     assert hijos == ["ropa", "electronica"]
 
-    # Persiste de verdad (no solo en el socket) — nuevo mount confirma.
-    {:ok, _view2, html2} = live(conn, ~p"/sysadmin/bc-list")
-    pos_ropa = :binary.match(html2, "DEMO - Camisas #{sufijo}") |> elem(0)
-    pos_electronica = :binary.match(html2, "DEMO - Celulares #{sufijo}") |> elem(0)
-    assert pos_ropa < pos_electronica
+    # listar_headers_arbol/0 arriba ya prueba persistencia real (consulta
+    # fresca a la base, no al estado del socket) — a diferencia de otros
+    # tests de este archivo, acá NO se confirma además con un mount nuevo
+    # + scan del HTML: "electronica"/"ropa" están anidadas dentro de
+    # "tienda_#{sufijo}", y las carpetas arrancan COLAPSADAS por defecto
+    # en cada mount, así que sus catálogos hijos ni siquiera se renderizan
+    # sin antes expandir — comparar posiciones en el HTML directo daría
+    # `:nomatch`, no un falso positivo/negativo real sobre el orden.
   end
 
   test "cerrar 'Editar vista' con 'Listo' vuelve a la tabla normal", %{conn: conn} do

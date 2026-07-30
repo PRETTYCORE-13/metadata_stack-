@@ -59,24 +59,14 @@
    Tailwind (bg-white, border-purple-600, etc.) viven directo en el
    HEEx — mismo criterio que .pc-sidebar-search input más abajo. */
 :root[data-theme="light"] .pc-btn-secundario {
-  background: #000000 !important;
+  background: linear-gradient(to bottom, #2b2b2b, #141414) !important;
   color: #ffffff !important;
-  border-color: #ffffff !important;
+  border-color: #1a1a1a !important;
 }
 
 :root[data-theme="light"] .pc-btn-secundario:hover {
-  background: #262626 !important;
-}
-
-/* El botón de acento ("+ Catálogo", morado sólido) también se invierte
-   sobre contenido oscuro: blanco con letras negras en vez de morado. */
-:root[data-theme="light"] .pc-btn-acento {
-  background: #ffffff !important;
-  color: #000000 !important;
-}
-
-:root[data-theme="light"] .pc-btn-acento:hover {
-  background: #e5e7eb !important;
+  background: linear-gradient(to bottom, #363636, #1f1f1f) !important;
+  border-color: #262626 !important;
 }
 
 /* ---- TABLAS: fondo/borde/texto invertidos sobre contenido oscuro ----
@@ -107,6 +97,17 @@
 :root[data-theme="light"] .pc-acciones-chip {
   background: #1a1a1a;
   border-color: rgba(255, 255, 255, 0.15);
+}
+
+/* "Editar" (azul) se lee mal sobre el chip oscuro — pasa a blanco.
+   "Eliminar"/"Permisos" quedan con su color (rojo/morado tienen sentido
+   como advertencia, no hace falta tocarlos). */
+:root[data-theme="light"] .pc-acciones-chip .text-blue-600 {
+  color: #ffffff !important;
+}
+
+:root[data-theme="light"] .pc-acciones-chip .text-blue-600:hover {
+  color: #d1d5db !important;
 }
 
 :root[data-theme="light"] table tr:hover {
@@ -146,6 +147,50 @@
 
 :root[data-theme="light"] div:has(> table.min-w-full) {
   border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* ---- TARJETA "bg-white...rounded-2xl" (CatalogoLive, FichaLive,
+   ConsultaEditorLive — título + buscador + filtros + tabla, todo dentro
+   de una misma tarjeta blanca) ----
+   Mismo criterio que las tablas sueltas de arriba, apuntando al combo de
+   clases en vez de a cada LiveView: sin esto, la tarjeta se quedaba
+   blanca sólida mientras la tabla de adentro (ya cubierta por las reglas
+   de arriba) forzaba su texto a blanco — texto blanco sobre fondo
+   blanco, prácticamente invisible. */
+:root[data-theme="light"] .bg-white.border-gray-200.rounded-2xl {
+  background: #000000 !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+:root[data-theme="light"] .bg-white.border-gray-200.rounded-2xl .bg-gray-100 {
+  background: #1a1a1a !important;
+}
+
+:root[data-theme="light"] .bg-white.border-gray-200.rounded-2xl .border-gray-300,
+:root[data-theme="light"] .bg-white.border-gray-200.rounded-2xl .border-gray-200 {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+:root[data-theme="light"] .bg-white.border-gray-200.rounded-2xl .text-gray-400,
+:root[data-theme="light"] .bg-white.border-gray-200.rounded-2xl .text-gray-500,
+:root[data-theme="light"] .bg-white.border-gray-200.rounded-2xl .text-gray-600,
+:root[data-theme="light"] .bg-white.border-gray-200.rounded-2xl .text-gray-700,
+:root[data-theme="light"] .bg-white.border-gray-200.rounded-2xl .text-gray-800,
+:root[data-theme="light"] .bg-white.border-gray-200.rounded-2xl .text-gray-900 {
+  color: #e5e7eb !important;
+}
+
+/* Buscador arriba de la tabla (BC List) — igual criterio que el resto:
+   borde bien translúcido en vez del gris sólido de fábrica (pensado para
+   fondo blanco), y texto/placeholder claros para que se lean sobre el
+   contenido oscuro. */
+:root[data-theme="light"] .pc-input-busqueda {
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: #e5e7eb !important;
+}
+
+:root[data-theme="light"] .pc-input-busqueda::placeholder {
+  color: #6b7280 !important;
 }
 
 /* Layout: fila completa — el sidebar es hermano de pc-platform-content, no

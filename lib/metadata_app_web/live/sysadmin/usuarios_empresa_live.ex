@@ -100,7 +100,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
         </div>
         <button
           type="submit"
-          class="flex-shrink-0 bg-purple-600 hover:bg-purple-700 text-white font-bold px-4 py-2 rounded text-sm"
+          class="flex-shrink-0 pc-btn-secundario bg-linear-to-b from-white to-gray-100 hover:to-gray-200 border border-gray-100 text-gray-800 shadow-sm font-semibold text-xs px-4 py-1.5 rounded-full transition-colors"
         >
           Agregar
         </button>

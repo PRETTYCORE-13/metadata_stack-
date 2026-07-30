@@ -1238,19 +1238,19 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               type="button"
               id="btn-nuevo-contexto"
               phx-click="abrir_form_carpeta"
-              class="pc-btn-secundario bg-white border border-purple-600 text-purple-700 hover:bg-purple-50 font-bold px-6 py-2 rounded"
+              class="pc-btn-secundario bg-linear-to-b from-white to-gray-100 hover:to-gray-200 border border-gray-100 text-gray-800 shadow-sm font-semibold text-xs px-4 py-1.5 rounded-full transition-colors"
             >
               + Carpeta
             </button>
             <.link navigate={~p"/sysadmin/bc-list/nuevo-completo"}
-              class="pc-btn-acento bg-purple-600 hover:bg-purple-700 text-white font-bold px-6 py-2 rounded">
+              class="pc-btn-secundario bg-linear-to-b from-white to-gray-100 hover:to-gray-200 border border-gray-100 text-gray-800 shadow-sm font-semibold text-xs px-4 py-1.5 rounded-full transition-colors">
               + Catálogo
             </.link>
             <button
               type="button"
               phx-click="abrir_form_consulta"
               title="Consulta Ecto: reporte de solo lectura sobre uno o más catálogos, sin estados ni tabla propia"
-              class="pc-btn-secundario bg-white border border-purple-600 text-purple-700 hover:bg-purple-50 font-bold px-6 py-2 rounded"
+              class="pc-btn-secundario bg-linear-to-b from-white to-gray-100 hover:to-gray-200 border border-gray-100 text-gray-800 shadow-sm font-semibold text-xs px-4 py-1.5 rounded-full transition-colors"
             >
               + Ecto
             </button>
@@ -1258,7 +1258,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               type="button"
               phx-click="abrir_editar_orden"
               title="Arrastrar las carpetas raíz para cambiar el orden en que aparecen acá y en el menú"
-              class="pc-btn-secundario bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-bold px-6 py-2 rounded"
+              class="pc-btn-secundario bg-linear-to-b from-white to-gray-100 hover:to-gray-200 border border-gray-100 text-gray-800 shadow-sm font-semibold text-xs px-4 py-1.5 rounded-full transition-colors"
             >
               Vista
             </button>
@@ -1279,7 +1279,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             phx-keyup="buscar"
             phx-debounce="200"
             placeholder="Buscar por nombre o etiqueta..."
-            class="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm text-gray-900"
+            class="pc-input-busqueda flex-1 border border-gray-200 rounded-lg px-4 py-2 text-sm text-gray-900"
           />
           <button
             :if={MapSet.size(@seleccionados) > 0}
@@ -2118,7 +2118,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                 type="button"
                 phx-click="toggle_carpeta"
                 phx-value-ruta={ruta}
-                class="pc-carpeta-fila flex items-center gap-2 font-semibold text-gray-600 uppercase tracking-wide cursor-pointer flex-1 text-left"
+                class="pc-carpeta-fila flex items-center gap-2 font-normal text-gray-600 uppercase tracking-wide cursor-pointer flex-1 text-left"
               >
                 <span class="pc-carpeta-chevron inline-block w-3 text-gray-400">{if expandida?, do: "▾", else: "▸"}</span>
                 <span class="w-6 h-6 rounded-md bg-gray-400/30 text-(--pc-texto) flex items-center justify-center flex-shrink-0">
