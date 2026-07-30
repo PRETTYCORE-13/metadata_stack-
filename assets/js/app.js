@@ -89,6 +89,38 @@ const RedimensionarSidebar = {
   },
 }
 
+// El colapsado/expandido del sidebar (@sidebar_open) es un assign de
+// SERVIDOR, distinto de tema/ancho (que son 100% del cliente) — cada
+// ruta es un mount de LiveView nuevo que hardcodea sidebar_open: false,
+// así que sin esto el menú se cerraba solo al navegar a otra página. Acá
+// se guarda el estado real (después de cualquier toggle) en localStorage
+// y, en cada mount nuevo, si lo guardado no coincide con lo que el
+// servidor acaba de renderizar, se dispara el mismo evento "toggle_sidebar"
+// que ya usa el botón de colapsar — un viaje de ida y vuelta corto, no
+// hay forma de que el servidor sepa esto ANTES de renderizar la primera
+// vez (a diferencia del tema, que se aplica con un <script> en el <head>
+// antes de que exista ningún contenido del servidor).
+const LLAVE_SIDEBAR_ABIERTO = "pc-sidebar-open"
+
+const PersistirSidebarAbierto = {
+  mounted() {
+    const estaAbierto = () => this.el.classList.contains("pc-platform-sidebar-open")
+
+    const guardado = localStorage.getItem(LLAVE_SIDEBAR_ABIERTO)
+    if (guardado !== null && (guardado === "true") !== estaAbierto()) {
+      this.pushEvent("change_page", { id: "toggle_sidebar" })
+    }
+
+    this._observer = new MutationObserver(() => {
+      localStorage.setItem(LLAVE_SIDEBAR_ABIERTO, estaAbierto())
+    })
+    this._observer.observe(this.el, { attributes: true, attributeFilter: ["class"] })
+  },
+  destroyed() {
+    this._observer?.disconnect()
+  },
+}
+
 // Filtra el árbol del menú sin ir al servidor — el menú se pinta en varias
 // pantallas (InicioLive, CatalogoLive, BcListLive, BcMotorLive...), así que
 // resolverlo del lado del cliente evita cablear el mismo estado de búsqueda
@@ -386,7 +418,7 @@ const AbrirVistaPrevia = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, CopiarRuta, CopiarTextarea, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, PersistirSidebarAbierto, CopiarRuta, CopiarTextarea, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable},
 })
 
 // Show progress bar on live navigation and form submits

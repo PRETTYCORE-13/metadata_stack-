@@ -21,6 +21,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador}
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.BorradoresMotor
+  alias MetadataAppWeb.AdminNav
   alias Phoenix.LiveView.JS
 
   @topic "bc_contextos"
@@ -118,6 +119,10 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   # veces (nombre_p3 y nav_final), redundante en la enorme mayoría de los
   # casos donde ambos terminan siendo la misma palabra. La carpeta padre
   # sigue siendo un select aparte (elegir dónde, no escribir dónde).
+  def handle_event("change_page", %{"id" => id}, socket) do
+    AdminNav.handle_nav(id, socket, "bc_list")
+  end
+
   def handle_event("validar_contexto", %{"contexto" => contexto}, socket) do
     contexto =
       contexto
