@@ -12,6 +12,7 @@ defmodule MetadataAppWeb.Sysadmin.BuscadorTrnLive do
   on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "leer"}}
 
   import Ecto.Query
+  alias MetadataAppWeb.AdminNav
   alias MetadataApp.Repo
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
@@ -47,6 +48,10 @@ defmodule MetadataAppWeb.Sysadmin.BuscadorTrnLive do
   end
 
   def handle_params(_params, _uri, socket), do: {:noreply, socket}
+
+  def handle_event("change_page", %{"id" => id}, socket) do
+    AdminNav.handle_nav(id, socket, "buscar_trn")
+  end
 
   defp buscar(socket, query) do
     query = String.trim(query)

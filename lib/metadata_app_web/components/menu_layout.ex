@@ -50,7 +50,11 @@ defmodule MetadataAppWeb.MenuLayout do
            una fila junto al topbar) — así el riel del menú ocupa todo el
            lado izquierdo desde arriba, y el logo queda en la topbar de la
            derecha sin competirle espacio. -->
-      <aside class={"pc-platform-sidebar" <> if @sidebar_open, do: " pc-platform-sidebar-open", else: ""}>
+      <aside
+        id="pc-sidebar"
+        phx-hook="PersistirSidebarAbierto"
+        class={"pc-platform-sidebar" <> if @sidebar_open, do: " pc-platform-sidebar-open", else: ""}
+      >
         <div
           class="pc-sidebar-resize-handle"
           id="sidebar-resize-handle"
@@ -309,7 +313,7 @@ defmodule MetadataAppWeb.MenuLayout do
       <%= if nodo.tipo == :carpeta do %>
         <details class="pc-menu-carpeta" open={contiene_activo?(nodo, @current_page)}>
           <summary
-            class="pc-menu-carpeta-summary"
+            class={["pc-menu-carpeta-summary", @nivel == 0 && "pc-menu-carpeta-summary-raiz"]}
             style={"padding-left: #{12 + @nivel * 16}px"}
             phx-click={if(!@sidebar_open, do: toggle_sidebar_js(@menu_event))}
           >
@@ -325,7 +329,7 @@ defmodule MetadataAppWeb.MenuLayout do
                 </svg>
               <% end %>
             </span>
-            <span class="truncate">{nodo.nombre}</span>
+            <span class="pc-menu-carpeta-nombre">{nodo.nombre}</span>
           </summary>
           <.menu_nodos
             nodos={nodo.hijos}
