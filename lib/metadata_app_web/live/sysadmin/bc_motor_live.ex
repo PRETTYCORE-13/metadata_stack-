@@ -428,12 +428,19 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     props = detalle.schema_context_properties
     campos_destino = MetaSchemaContext.listar_detalles(props["catalogo"]) |> Enum.map(& &1.schema_context_field)
 
+    campos_propios =
+      socket.assigns.campos
+      |> Enum.filter(& &1.schema_context_properties["visible"])
+      |> Enum.map(& &1.schema_context_field)
+
     {:noreply,
      assign(socket, :relacion_form, %{
        "campo" => campo,
        "catalogo_destino" => props["catalogo"],
        "campos_destino" => campos_destino,
        "seleccionados" => props["campos_acompanamiento"] || [],
+       "campos_propios" => campos_propios,
+       "seleccionados_propios" => props["campos_relacion"] || [],
        "error" => nil
      })}
   end
@@ -445,8 +452,13 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   def handle_event("guardar_relacion", params, socket) do
     %{"campo" => campo} = socket.assigns.relacion_form
     campos_seleccionados = params |> Map.get("campos", []) |> List.wrap() |> Enum.reject(&(&1 == ""))
+    campos_relacion = params |> Map.get("campos_relacion", []) |> List.wrap() |> Enum.reject(&(&1 == ""))
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
-    props = Map.put(detalle.schema_context_properties, "campos_acompanamiento", campos_seleccionados)
+
+    props =
+      detalle.schema_context_properties
+      |> Map.put("campos_acompanamiento", campos_seleccionados)
+      |> Map.put("campos_relacion", campos_relacion)
 
     case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
       {:ok, _detalle} ->
@@ -1416,6 +1428,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campo local</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Catálogo destino</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campos que trae</th>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campos que muestra allá</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
             </thead>
@@ -1423,6 +1436,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
               <%= for c <- @referencias do %>
                 <% props = c.schema_context_properties %>
                 <% traidos = Map.get(props, "campos_acompanamiento", []) %>
+                <% mostrados = Map.get(props, "campos_relacion", []) %>
                 <tr class="border-b border-gray-100 hover:bg-gray-50">
                   <td class="px-1.5 py-1 text-gray-900 font-mono">{c.schema_context_field}</td>
                   <td class="px-1.5 py-1 text-gray-700 font-mono">{Map.get(props, "catalogo")}</td>
@@ -1431,6 +1445,13 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                       <span class="text-gray-400">sin configurar</span>
                     <% else %>
                       {Enum.join(traidos, ", ")}
+                    <% end %>
+                  </td>
+                  <td class="px-1.5 py-1 text-gray-600">
+                    <%= if mostrados == [] do %>
+                      <span class="text-gray-400">sin configurar</span>
+                    <% else %>
+                      {Enum.join(mostrados, ", ")}
                     <% end %>
                   </td>
                   <td class="px-1.5 py-1">
@@ -2300,6 +2321,27 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 </label>
               <% end %>
             </div>
+
+            <div class="border-t border-gray-200 pt-2.5 mt-1 mb-3">
+              <p class="text-gray-600 mb-1.5">
+                Campos propios (de este catálogo) que se muestran cuando aparece como relacionado en la ficha de
+                <strong class="font-mono">{@form["catalogo_destino"]}</strong> (tab "Relaciones").
+              </p>
+              <p :if={@form["campos_propios"] == []} class="text-gray-400">Este catálogo no tiene campos visibles todavía.</p>
+              <div class="flex flex-col gap-1.5">
+                <%= for campo <- @form["campos_propios"] do %>
+                  <label class="flex items-center gap-1.5">
+                    <input type="checkbox" name="campos_relacion[]" value={campo}
+                      checked={campo in @form["seleccionados_propios"]} class="accent-purple-600" />
+                    <span class="font-mono">{campo}</span>
+                  </label>
+                <% end %>
+              </div>
+              <p :if={@form["campos_propios"] != [] and @form["seleccionados_propios"] == []} class="text-gray-400 mt-1">
+                Sin nada tildado, se muestra la descripción de siempre + el id.
+              </p>
+            </div>
+
             <div class="flex justify-end gap-2">
               <button type="button" phx-click="cerrar_form_relacion" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
                 Cancelar

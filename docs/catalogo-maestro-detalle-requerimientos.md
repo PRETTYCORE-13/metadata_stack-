@@ -41,9 +41,11 @@ Objetivo: que el motor soporte esto **reusando al máximo la maquinaria existent
 **Funcional**: cada catálogo detalle puede definir, por estado, qué campos de sus renglones son editables.
 **Técnico**: reusa `editable_en` (ya existe en `schema_context_properties`) sin cambios de mecanismo — solo se aplica también a los campos del catálogo detalle.
 
-### R5 — El detalle admite campos obligatorios parametrizables por transición
+### R5 — El detalle admite campos obligatorios parametrizables por transición ✅
 **Funcional**: por ejemplo, exigir que "cantidad" y "producto" estén completos para poder confirmar el pedido, a nivel de cada renglón.
-**Técnico**: reusa la regla built-in `campos_requeridos` (ya está en el vocabulario cerrado de 8 reglas PRE) — se declara sobre transiciones del catálogo detalle igual que hoy se declara sobre el header.
+**Implementado**: cada catálogo detalle tiene su propio módulo `MetadataApp.MetaBusinessProcess.Reglas.<CatalogoDetalle>.Pre` (mismo mecanismo de despacho por convención que el header — `Reglas.evaluar_pre/3` resuelve el módulo a partir de `registro.__struct__.__schema__(:source)`, nunca del catálogo del maestro), editable desde su propia pestaña "Reglas" en `BcMotorLive` (única pestaña que un catálogo detalle conserva junto a "Configuración" — "Diagrama" y "Contrato" quedan ocultas porque el detalle no tiene autómata ni documentación de API propios, ver R3). Dentro de ese módulo, un `case accion do ... end` puede exigir campos distintos según la transición, reusando el helper del vocabulario cerrado: `MetaStateEngine.Reglas.Pre.evaluar("campos_requeridos", registro, contexto, %{"campos" => [...]})`. `MetaStateEngine.evaluar_precondiciones_todos/4` (R15) ya corre esa regla PROPIA del catálogo contra cada renglón en alcance — el header nunca ve ni comparte la lista de campos requeridos de sus detalles.
+
+**Verificado en vivo** contra `pty_crm_comando_enc`/`pty_crm_comando_det` (catálogo real de este ambiente): con un Pre de ejemplo que exige `pty_crm_comando_det_telefono` (campo `opcional: true` a nivel de schema) solo para la transición `"baja"`, ejecutar esa transición sobre un renglón sin teléfono se rechaza con `{:error, {:precondiciones, [%{renglon: %{renglon_id: 1, catalogo: "pty_crm_comando_det"}, mensaje: "faltan completar: pty_crm_comando_det_telefono", regla: "pre"}]}}`, y con el teléfono completo la misma transición pasa — confirmado con `Repo.transaction/1` + rollback intencional, sin dejar datos residuales.
 
 ### R6 — El detalle modifica el contrato final (payload) ✅
 **Funcional**: al ejecutar una transición sobre el pedido, el payload deja de ser solo los campos del encabezado.

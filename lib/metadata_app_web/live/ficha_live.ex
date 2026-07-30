@@ -188,14 +188,19 @@ defmodule MetadataAppWeb.FichaLive do
     end
   end
 
+  # Cualquier transición del encabezado (baja/reactivar/lo que sea que el
+  # catálogo tenga configurado, salvo "guardar" — ver guardar_cambios/6)
+  # vuelve al listado en automático en vez de quedarse en la ficha —
+  # pedido explícito del usuario. El flash sobrevive el push_navigate
+  # (LiveView lo lleva a la próxima página), así el listado igual muestra
+  # la confirmación.
   def handle_event("ejecutar_transicion", %{"accion" => accion}, socket) do
     case MetaStateEngine.ejecutar_transicion(socket.assigns.registro, accion, %{}) do
-      {:ok, actualizado} ->
+      {:ok, _actualizado} ->
         {:noreply,
          socket
-         |> assign(:error_guardado, nil)
-         |> cargar_registro(actualizado)
-         |> put_flash(:info, "Transición ejecutada.")}
+         |> put_flash(:info, "Transición ejecutada.")
+         |> push_navigate(to: socket.assigns.header.schema_context_nav)}
 
       {:error, razon} ->
         {:noreply, assign(socket, :error_guardado, formatear_error(razon))}
@@ -361,7 +366,7 @@ defmodule MetadataAppWeb.FichaLive do
   defp guardar_alta(socket) do
     %{
       schema_mod: schema_mod,
-      tabla: tabla,
+      header: header,
       form_values: attrs,
       detalle_renglones_nuevos: renglones_grilla
     } = socket.assigns
@@ -372,8 +377,11 @@ defmodule MetadataAppWeb.FichaLive do
     renglones = Map.new(renglones_grilla, fn {catalogo, filas} -> {catalogo, limpiar_renglones_vacios(filas)} end)
 
     case CatalogoGenerico.crear(schema_mod, attrs, renglones: renglones, contexto: socket.assigns.contexto_auditoria) do
-      {:ok, nuevo} ->
-        {:noreply, push_navigate(socket, to: "/registro/#{tabla}/#{nuevo.id}")}
+      {:ok, _nuevo} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Registro creado.")
+         |> push_navigate(to: header.schema_context_nav)}
 
       # El changeset puede ser del encabezado (schema_mod, error normal de
       # campo) o de UN renglón en staging (otro struct — R6 rechaza todo o
@@ -419,14 +427,14 @@ defmodule MetadataAppWeb.FichaLive do
       end)
 
     case resultado do
-      {:ok, actualizado} ->
+      # Vuelve al listado en automático en vez de quedarse en la ficha —
+      # mismo criterio que "ejecutar_transicion" (pedido explícito del
+      # usuario, para "guardar", "baja", "cancelar", cualquier transición).
+      {:ok, _actualizado} ->
         {:noreply,
          socket
-         |> assign(:form_values, %{})
-         |> assign(:errores_campos, %{})
-         |> assign(:error_guardado, nil)
-         |> cargar_registro(actualizado)
-         |> put_flash(:info, "Cambios guardados.")}
+         |> put_flash(:info, "Cambios guardados.")
+         |> push_navigate(to: socket.assigns.header.schema_context_nav)}
 
       # Mismo criterio que guardar_alta/2: el changeset puede ser del
       # encabezado (error normal de campo) o de un renglón nuevo/editado —
@@ -666,13 +674,68 @@ defmodule MetadataAppWeb.FichaLive do
     if campo_fk && dep_mod && dep_header do
       filtro = %{campo_fk.schema_context_field => id}
 
+      # "campos_relacion" (BcMotorLive → Relaciones → Configurar, sección
+      # "Campos propios... que se muestran cuando aparece como
+      # relacionado") — configurado A MANO por catálogo, a diferencia de
+      # campo_descriptivo/1 (heurística automática, sigue siendo el
+      # fallback si nadie configuró nada acá).
+      campos_elegidos = campo_fk.schema_context_properties["campos_relacion"] || []
+
       %{
         catalogo: dep_nombre,
         etiqueta: dep_header.schema_context_label,
         total: CatalogoGenerico.contar(dep_mod, filtro),
-        filas: CatalogoGenerico.listar(dep_mod, filtro, limit: 8)
+        filas: CatalogoGenerico.listar(dep_mod, filtro, limit: 8),
+        campo_descriptivo: campo_descriptivo(dep_nombre),
+        columnas: columnas_tabla_relacion(dep_nombre, campos_elegidos)
       }
     end
+  end
+
+  # Campo que mejor describe una fila de `catalogo` para mostrarla en la
+  # tabla de "Relaciones" (antes se mostraba solo el id crudo, ej. "#2",
+  # sin ninguna pista de a qué producto correspondía). Heurística simple,
+  # sin convención nueva que declarar catálogo por catálogo: el primer
+  # campo VISIBLE de tipo texto, en el mismo orden ya configurado en el
+  # Constructor — se calcula una sola vez por catálogo dependiente (no por
+  # fila). Sin ningún campo texto visible, no hay nada mejor que mostrar
+  # que el id (fallback en etiqueta_fila/2).
+  defp campo_descriptivo(catalogo) do
+    catalogo
+    |> MetaSchemaContext.listar_detalles()
+    |> Enum.filter(fn d -> d.schema_context_properties["visible"] and d.schema_context_properties["tipo"] == "string" end)
+    |> Enum.sort_by(&get_in(&1.schema_context_properties, ["orden"]))
+    |> case do
+      [] -> nil
+      [primero | _] -> String.to_existing_atom(primero.schema_context_field)
+    end
+  end
+
+  defp etiqueta_fila(_fila, nil), do: nil
+  defp etiqueta_fila(fila, campo) do
+    case Map.get(fila, campo) do
+      valor when valor not in [nil, ""] -> valor
+      _ -> nil
+    end
+  end
+
+  # "Campos a mostrar" del panel del Constructor (nodo "tabla") — mismo
+  # orden en que se tildaron (no el orden del catálogo), así quien arma la
+  # plantilla controla qué se ve primero.
+  defp columnas_tabla_relacion(_catalogo, []), do: []
+
+  defp columnas_tabla_relacion(catalogo, campos_elegidos) do
+    detalles = MetaSchemaContext.listar_detalles(catalogo)
+
+    Enum.map(campos_elegidos, fn campo ->
+      etiqueta =
+        case Enum.find(detalles, &(&1.schema_context_field == campo)) do
+          nil -> campo
+          d -> d.schema_context_properties["etiqueta"]
+        end
+
+      %{campo: String.to_existing_atom(campo), etiqueta: etiqueta}
+    end)
   end
 
   # No existía ninguna consulta de "eventos de este registro" — se agrega
@@ -771,11 +834,18 @@ defmodule MetadataAppWeb.FichaLive do
   end
 
   def render(assigns) do
+    contexto_formula = contexto_actual(assigns[:current_scope])
+
     assigns =
-      assign(
-        assigns,
+      assigns
+      |> assign(
         :renglones_nuevos_count,
         contar_cambios_detalle(assigns.detalle_renglones_nuevos, assigns.detalle_renglones_editados)
+      )
+      |> assign(:contexto_formula, contexto_formula)
+      |> assign(
+        :valores_calculados,
+        valores_con_calculados(assigns.columnas, assigns.registro, assigns.form_values, contexto_formula, assigns.plantilla)
       )
 
     ~H"""
@@ -872,7 +942,7 @@ defmodule MetadataAppWeb.FichaLive do
 
       <.tab_datos :if={@tab == "datos"} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
         plantilla={@plantilla} relaciones={@relaciones} estados_por_id={@estados_por_id}
-        edicion={%{valores: @form_values, errores: @errores_campos, contexto: contexto_actual(assigns[:current_scope])}} />
+        edicion={%{valores: @form_values, errores: @errores_campos, contexto: @contexto_formula, calculados: @valores_calculados}} />
       <.tab_relaciones :if={@tab == "relaciones"} relaciones={@relaciones} />
       <.tab_historial :if={@tab == "historial"} historial={@historial} estados_por_id={@estados_por_id} />
       <.tab_detalle :if={@tab == "detalle"} modo={@modo} catalogos_detalle={@catalogos_detalle} detalle_renglones={@detalle_renglones}
@@ -1064,11 +1134,15 @@ defmodule MetadataAppWeb.FichaLive do
   # sin guardar todavía, si lo hay; si no, el valor persistido). Así el
   # resultado se actualiza solo mientras se edita, sin código nuevo: ya
   # viaja por el mismo phx-change="validar" que dispara cualquier otro
-  # campo del formulario.
+  # campo del formulario. `edicion.calculados` (armado UNA sola vez por
+  # render/1, ver valores_con_calculados/5) ya trae mezclados los campos
+  # reales/contexto CON el resultado de cualquier otro campo_calculado de
+  # la misma plantilla — así una fórmula puede referenciar "{OtroCampo}"
+  # por su etiqueta, sin que Formula.ex necesite saber que eso existe (para
+  # el evaluador es un campo más del mapa, como cualquier {campo} real).
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "campo_calculado"}} = assigns) do
-    valores = valores_efectivos(assigns.columnas, assigns.registro, assigns.edicion.valores, assigns.edicion.contexto)
     formula = assigns.nodo["propiedades"]["formula"] || ""
-    resultado = formula |> Formula.evaluar(valores) |> formatear_calculado(assigns.nodo["propiedades"])
+    resultado = formula |> Formula.evaluar(assigns.edicion.calculados) |> formatear_calculado(assigns.nodo["propiedades"])
     assigns = assign(assigns, :resultado, resultado)
 
     ~H"""
@@ -1132,10 +1206,15 @@ defmodule MetadataAppWeb.FichaLive do
 
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "tabla"}} = assigns) do
     r = Enum.find(assigns.relaciones, &(&1.catalogo == assigns.nodo["propiedades"]["catalogo"]))
-    assigns = assign(assigns, :r, r)
+
+    campos_elegidos =
+      assigns.nodo["propiedades"]["campos"] |> List.wrap() |> Enum.reject(&(&1 in [nil, ""]))
+
+    columnas = if r, do: columnas_tabla_relacion(r.catalogo, campos_elegidos), else: []
+    assigns = assigns |> assign(:r, r) |> assign(:columnas, columnas)
 
     ~H"""
-    <.tabla_relacion :if={@r} r={@r} titulo={@nodo["propiedades"]["titulo"]} />
+    <.tabla_relacion :if={@r} r={@r} titulo={@nodo["propiedades"]["titulo"]} columnas={@columnas} />
     """
   end
 
@@ -1244,6 +1323,80 @@ defmodule MetadataAppWeb.FichaLive do
     Map.merge(contexto, valores_reales)
   end
 
+  # valores_efectivos/4 + el resultado de CUALQUIER campo_calculado de la
+  # plantilla, mezclado en el mismo mapa bajo su "etiqueta" — así una
+  # fórmula puede escribir "{OtroCampo}" igual que escribiría "{campo_real}",
+  # sin sintaxis especial (Formula.resolver_campo/2 ya hace un Map.get/2
+  # plano, no le importa de dónde salió cada valor). Se resuelve UNA vez
+  # por render (ver render/1), no una vez por nodo — evita recalcular la
+  # misma dependencia N veces si varios campos_calculados la comparten.
+  #
+  # Sin plantilla (el caso común, ningún catálogo publicó una todavía):
+  # ningún campo_calculado que buscar, se devuelve valores_efectivos/4 tal
+  # cual, mismo costo que antes de que existiera esto.
+  defp valores_con_calculados(_columnas, _registro, _valores_form, _contexto, nil), do: %{}
+
+  defp valores_con_calculados(columnas, registro, valores_form, contexto, plantilla) do
+    base = valores_efectivos(columnas, registro, valores_form, contexto)
+    nodos = MetaPlantillas.nodos_de_tipo(plantilla.definicion, "campo_calculado")
+
+    Enum.reduce(nodos, base, fn nodo, valores ->
+      nombre = nodo["propiedades"]["etiqueta"]
+
+      if nombre in [nil, ""] or Map.has_key?(valores, nombre) do
+        valores
+      else
+        {_valor, valores2} = resolver_calculado(nombre, nodos, valores, MapSet.new())
+        valores2
+      end
+    end)
+  end
+
+  # Resolución perezosa con memoria (una vez resuelto, se guarda en
+  # `valores` bajo su propia etiqueta) y con guarda de ciclos: `en_progreso`
+  # lleva las etiquetas que ya se están resolviendo MÁS ARRIBA en esta
+  # misma cadena de dependencias — si "nombre" ya está ahí, hay un ciclo
+  # (A depende de B que depende de A, directo o indirecto) y se corta sin
+  # recursión infinita, dejando esa dependencia sin resolver (fail-open,
+  # mismo criterio que el resto de Formula: la fórmula que dependía de eso
+  # simplemente da error de campo no numérico, no tumba la ficha).
+  defp resolver_calculado(nombre, _nodos, valores, _en_progreso) when is_map_key(valores, nombre) do
+    {Map.get(valores, nombre), valores}
+  end
+
+  defp resolver_calculado(nombre, nodos, valores, en_progreso) do
+    if MapSet.member?(en_progreso, nombre) do
+      {nil, valores}
+    else
+      case Enum.find(nodos, &(&1["propiedades"]["etiqueta"] == nombre)) do
+        nil ->
+          {nil, valores}
+
+        nodo ->
+          formula = nodo["propiedades"]["formula"] || ""
+          dependencias = formula |> Formula.tokens_para_mostrar() |> Enum.flat_map(&campo_referenciado/1)
+          en_progreso2 = MapSet.put(en_progreso, nombre)
+
+          valores_con_deps =
+            Enum.reduce(dependencias, valores, fn dep, acc ->
+              {_valor, acc2} = resolver_calculado(dep, nodos, acc, en_progreso2)
+              acc2
+            end)
+
+          resultado =
+            case Formula.evaluar(formula, valores_con_deps) do
+              {:ok, v} -> v
+              {:error, _motivo} -> nil
+            end
+
+          {resultado, Map.put(valores_con_deps, nombre, resultado)}
+      end
+    end
+  end
+
+  defp campo_referenciado({:campo, nombre}), do: [nombre]
+  defp campo_referenciado(_token), do: []
+
   # Un "IF ... THEN ... ELSE ..." puede devolver texto (ej. "Disponible" /
   # "Agotado") en vez de un número — Formula.evaluar/2 ahora puede dar
   # cualquiera de los dos, así que este clause tiene que ir ANTES del
@@ -1257,10 +1410,46 @@ defmodule MetadataAppWeb.FichaLive do
         _ -> 2
       end
 
-    :erlang.float_to_binary(numero * 1.0, decimals: decimales)
+    texto = :erlang.float_to_binary(numero * 1.0, decimals: decimales)
+
+    case propiedades["formato"] do
+      "moneda" -> "$" <> con_separador_miles(texto)
+      "porcentaje" -> texto <> "%"
+      _ -> texto
+    end
   end
 
   defp formatear_calculado({:error, _motivo}, _propiedades), do: "—"
+
+  # "12345.67" -> "12,345.67" (y "-12345.67" -> "-12,345.67") — sin
+  # dependencia nueva, solo para "moneda". Nunca se usa antes de pasar por
+  # float_to_binary/2 arriba, así que siempre llega con "." como separador
+  # decimal (nunca ninguno si decimales: 0).
+  defp con_separador_miles(numero_texto) do
+    case String.split(numero_texto, ".", parts: 2) do
+      [entero, decimales] -> separar_miles(entero) <> "." <> decimales
+      [entero] -> separar_miles(entero)
+    end
+  end
+
+  defp separar_miles(entero) do
+    {signo, digitos} =
+      if String.starts_with?(entero, "-") do
+        {"-", String.trim_leading(entero, "-")}
+      else
+        {"", entero}
+      end
+
+    agrupado =
+      digitos
+      |> String.reverse()
+      |> String.graphemes()
+      |> Enum.chunk_every(3)
+      |> Enum.map_join(",", &Enum.join/1)
+      |> String.reverse()
+
+    signo <> agrupado
+  end
 
   # id dinámico (lo que el usuario tipeó en el campo referencia) en vez de
   # fijo — mismo espíritu que Formula's "{catalogo#id.campo}", pero acá
@@ -1315,6 +1504,7 @@ defmodule MetadataAppWeb.FichaLive do
   defp campo_row(assigns) do
     editable? = assigns.col.schema_context_field in assigns.campos_editables
     campo_atom = String.to_existing_atom(assigns.col.schema_context_field)
+    props = assigns.col.schema_context_properties
 
     valor_actual = Map.get(assigns.registro, campo_atom)
 
@@ -1323,12 +1513,22 @@ defmodule MetadataAppWeb.FichaLive do
 
     errores_campo = Map.get(assigns.edicion.errores, campo_atom)
 
+    # Referencia: mismo picker/etiqueta tanto editable como de solo lectura
+    # (CatalogoGenerico.opciones_referencia/1, que ya resuelve "campos de
+    # acompañamiento" configurados en BcMotorLive → Relaciones) — antes acá
+    # se mostraba el id crudo (editable, una caja de texto libre; solo
+    # lectura, el número pelado), sin ninguna pista de a qué apunta.
+    opciones_referencia = if props["tipo"] == "referencia", do: CatalogoGenerico.opciones_referencia(props), else: []
+    valor_legible = if props["tipo"] == "referencia", do: etiqueta_opcion(opciones_referencia, valor_actual), else: valor_actual
+
     assigns =
       assigns
       |> assign(:editable?, editable?)
       |> assign(:valor_actual, valor_actual)
       |> assign(:valor_mostrado, valor_mostrado)
       |> assign(:errores_campo, errores_campo)
+      |> assign(:opciones_referencia, opciones_referencia)
+      |> assign(:valor_legible, valor_legible)
 
     ~H"""
     <div class="flex items-center gap-3 px-4 py-2.5 border-b border-gray-100 last:border-b-0 text-sm">
@@ -1346,14 +1546,23 @@ defmodule MetadataAppWeb.FichaLive do
       </span>
 
       <div :if={@editable?} class="flex-1 min-w-0">
-        <.campo_input columna={@col} valor={@valor_mostrado} mostrar_etiqueta={false} />
+        <.campo_input columna={@col} valor={@valor_mostrado} mostrar_etiqueta={false} opciones={@opciones_referencia} />
         <p :if={@errores_campo} class="text-red-600 text-xs mt-1">{Enum.join(@errores_campo, "; ")}</p>
       </div>
       <span :if={!@editable?} class="text-gray-900 font-medium truncate">
-        {(@valor_actual not in [nil, ""] && @valor_actual) || "—"}
+        {(@valor_legible not in [nil, ""] && @valor_legible) || "—"}
       </span>
     </div>
     """
+  end
+
+  defp etiqueta_opcion(_opciones, nil), do: nil
+
+  defp etiqueta_opcion(opciones, id) do
+    case Enum.find(opciones, fn {oid, _etiqueta} -> oid == id end) do
+      {_id, etiqueta} -> etiqueta
+      nil -> "##{id}"
+    end
   end
 
   attr :relaciones, :list, required: true
@@ -1361,7 +1570,7 @@ defmodule MetadataAppWeb.FichaLive do
   defp tab_relaciones(assigns) do
     ~H"""
     <div class="space-y-4">
-      <.tabla_relacion :for={r <- @relaciones} r={r} titulo={"#{r.etiqueta} (#{r.total})"} />
+      <.tabla_relacion :for={r <- @relaciones} r={r} titulo={"#{r.etiqueta} (#{r.total})"} columnas={r.columnas} />
       <p :if={@relaciones == []} class="text-center text-gray-400 text-sm py-8">Ningún catálogo depende de este registro.</p>
     </div>
     """
@@ -1369,7 +1578,13 @@ defmodule MetadataAppWeb.FichaLive do
 
   attr :r, :map, required: true
   attr :titulo, :string, required: true
+  attr :columnas, :list, default: []
 
+  # Sin @columnas (el tab "Relaciones" genérico, siempre así — no hay
+  # config por catálogo ahí): una sola columna con campo_descriptivo/2 +
+  # id. Con @columnas (nodo "tabla" del Constructor, con "Campos a
+  # mostrar" elegidos a mano): una columna real por campo elegido, en el
+  # mismo orden en que se tildaron.
   defp tabla_relacion(assigns) do
     ~H"""
     <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -1377,9 +1592,27 @@ defmodule MetadataAppWeb.FichaLive do
         <span class="font-bold text-gray-700 text-sm">{@titulo}</span>
       </div>
       <table class="min-w-full text-xs">
+        <thead :if={@columnas != []} class="bg-gray-50">
+          <tr>
+            <th :for={col <- @columnas} class="px-4 py-2 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wide">{col.etiqueta}</th>
+            <th class="px-4 py-2"></th>
+          </tr>
+        </thead>
         <tbody class="divide-y divide-gray-50">
           <tr :for={fila <- @r.filas} class="hover:bg-purple-50/60">
-            <td class="px-4 py-1.5 text-gray-500 w-16">#{fila.id}</td>
+            <%= if @columnas == [] do %>
+              <td class="px-4 py-1.5 text-gray-700">
+                <%= if descripcion = etiqueta_fila(fila, @r.campo_descriptivo) do %>
+                  {descripcion} <span class="text-gray-400">· #{fila.id}</span>
+                <% else %>
+                  <span class="text-gray-500">#{fila.id}</span>
+                <% end %>
+              </td>
+            <% else %>
+              <td :for={col <- @columnas} class="px-4 py-1.5 text-gray-700">
+                {(Map.get(fila, col.campo) not in [nil, ""] && Map.get(fila, col.campo)) || "—"}
+              </td>
+            <% end %>
             <td class="px-4 py-1.5 text-right">
               <.link navigate={"/registro/#{@r.catalogo}/#{fila.id}"} class="text-purple-700 font-semibold hover:underline">
                 Ver ficha
@@ -1387,7 +1620,7 @@ defmodule MetadataAppWeb.FichaLive do
             </td>
           </tr>
           <tr :if={@r.filas == []}>
-            <td class="px-4 py-4 text-center text-gray-400" colspan="2">Sin registros todavía.</td>
+            <td class="px-4 py-4 text-center text-gray-400" colspan={max(length(@columnas), 1) + 1}>Sin registros todavía.</td>
           </tr>
         </tbody>
       </table>

@@ -427,6 +427,34 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     props["tipo"] == "referencia" and is_list(props["campos_acompanamiento"]) and props["campos_acompanamiento"] != []
   end
 
+  # Opciones para el <select> de un campo tipo "referencia" en
+  # CampoInputComponents.campo_input/1 (picker simple, sin búsqueda) — TODOS
+  # los registros del catálogo destino, con la etiqueta armada a partir de
+  # "campos_acompanamiento" ya configurado en BcMotorLive → pestaña
+  # Relaciones (mismo criterio que mapa_acompanamiento/2 para el GET/tabla).
+  # Sin nada configurado ahí, cae al id crudo — sigue siendo mejor que
+  # esconder el campo. Tope de 500 registros a propósito: un <select> con
+  # más opciones que eso deja de ser usable de todos modos (búsqueda con
+  # filtro real es Fase 2, ver docs/roadmap-campos-acompanamiento.md).
+  def opciones_referencia(props) do
+    case MetadataApp.BusinessProcessBuilder.MetaSchemaContext.modulo_por_nombre(props["catalogo"]) do
+      nil -> []
+      modulo -> modulo |> listar(%{}, limit: 500) |> Enum.map(&{&1.id, etiqueta_opcion_referencia(&1, props["campos_acompanamiento"])})
+    end
+  end
+
+  defp etiqueta_opcion_referencia(registro, campos) when is_list(campos) and campos != [] do
+    campos
+    |> Enum.map(&Map.get(registro, String.to_existing_atom(&1)))
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> case do
+      [] -> "##{registro.id}"
+      valores -> Enum.map_join(valores, " · ", &to_string/1)
+    end
+  end
+
+  defp etiqueta_opcion_referencia(registro, _campos), do: "##{registro.id}"
+
   defp resolver_acompanamiento(nil, _ids, _campos), do: %{}
   defp resolver_acompanamiento(_modulo, [], _campos), do: %{}
 

@@ -25,6 +25,7 @@ defmodule MetadataAppWeb.CampoInputComponents do
   attr :mostrar_etiqueta, :boolean, default: true
   attr :name, :string, default: nil
   attr :required, :boolean, default: true
+  attr :opciones, :list, default: []
 
   def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
     assigns = assign_name(assigns)
@@ -77,8 +78,29 @@ defmodule MetadataAppWeb.CampoInputComponents do
     """
   end
 
-  # Default (string, referencia sin picker todavía — ver
-  # project_frontend_referencia_ux, responsabilidad de Frontend a futuro).
+  # Referencia: picker simple (<select>, sin búsqueda — catálogos grandes
+  # quedan para una Fase 2, ver docs/roadmap-campos-acompanamiento.md).
+  # `@opciones` ([{id, etiqueta}, ...]) la arma el caller vía
+  # CatalogoGenerico.opciones_referencia/1 — la etiqueta ya viene resuelta
+  # desde "campos_acompanamiento" (o "#<id>" si el catálogo destino no
+  # configuró ninguno), así se ve el dato real en vez del id crudo. Mismo
+  # criterio que "enum" arriba: sin placeholder en blanco, si @valor no
+  # matchea ninguna opción el navegador selecciona la primera.
+  def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "referencia"}}} = assigns) do
+    assigns = assign_name(assigns)
+
+    ~H"""
+    <div>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-0.5">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <select name={@name} required={@required}
+        class="w-full border border-gray-300 rounded text-gray-900 px-2 py-1.5">
+        <option :for={{id, etiqueta} <- @opciones} value={id} selected={to_string(id) == @valor}>{etiqueta}</option>
+      </select>
+    </div>
+    """
+  end
+
+  # Default (string).
   def campo_input(assigns) do
     assigns = assign_name(assigns)
 
