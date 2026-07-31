@@ -119,12 +119,12 @@ defmodule MetadataAppWeb.CoreComponents do
     assigns = assign(assigns, :primera_key, primera_key)
 
     ~H"""
-    <div class="flex gap-1 border-b border-gray-200 mb-4">
+    <div class="flex gap-1 border-b border-gray-200 mb-4 overflow-x-auto">
       <%= for tab <- @tabs do %>
         <.link
           :if={Map.has_key?(tab, :navigate)}
           navigate={tab.navigate}
-          class="px-3 py-2 -mb-px text-sm font-semibold border-b-2 transition-colors border-transparent text-gray-500 hover:text-gray-700"
+          class="px-3 py-2 -mb-px text-sm font-semibold border-b-2 transition-colors border-transparent text-gray-500 hover:text-gray-700 whitespace-nowrap shrink-0"
         >
           {tab.label}
         </.link>
@@ -134,7 +134,7 @@ defmodule MetadataAppWeb.CoreComponents do
           id={"#{@id}-tab-#{tab.key}"}
           phx-click={js_activar_tab(@id, @tabs, tab.key)}
           class={[
-            "px-3 py-2 -mb-px text-sm font-semibold border-b-2 transition-colors",
+            "px-3 py-2 -mb-px text-sm font-semibold border-b-2 transition-colors whitespace-nowrap shrink-0",
             tab.key == @primera_key && "border-purple-600 text-purple-700",
             tab.key != @primera_key && "border-transparent text-gray-500 hover:text-gray-700"
           ]}

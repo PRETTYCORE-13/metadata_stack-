@@ -37,6 +37,14 @@ defmodule MetadataAppWeb.AdminNav do
   para evitar navegar a la misma URL (causaría remount).
   """
   def handle_nav(id, socket, current_page \\ nil) do
+    # DIAGNÓSTICO TEMPORAL — sacar después de encontrar el bug de
+    # "abrir Vista de una carpeta me manda a Inicio". Si esto se ve en el
+    # log justo después de "abrir_editar_orden_carpeta", confirma que ALGO
+    # dispara change_page con un id de @routes (probablemente "tienda"),
+    # no un bug directo del nuevo código.
+    require Logger
+    Logger.warning("AdminNav.handle_nav id=#{inspect(id)} current_page=#{inspect(current_page)}")
+
     case id do
       "toggle_sidebar" ->
         {:noreply, update(socket, :sidebar_open, &(not &1))}
@@ -46,7 +54,7 @@ defmodule MetadataAppWeb.AdminNav do
 
       other ->
         case Map.get(@routes, other) do
-          nil  -> {:noreply, socket}
+          nil -> {:noreply, socket}
           path -> {:noreply, push_navigate(socket, to: path)}
         end
     end

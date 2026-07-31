@@ -66,6 +66,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      # navegador (esto es puro estado de socket, nunca se persiste).
      |> assign(:carpetas_expandidas, MapSet.new())
      |> assign(:editando_orden, false)
+     |> assign(:carpeta_editando_orden, nil)
      |> assign(:accion_eliminar, nil)
      |> assign(:seleccionados, MapSet.new())
      |> assign(:wizard_publicar, nil)
@@ -125,11 +126,20 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # único contenedor plano (las carpetas raíz de esta página), así que se
   # reusa tal cual sin tocar el JS.
   def handle_event("abrir_editar_orden", _params, socket) do
-    {:noreply, assign(socket, :editando_orden, true)}
+    {:noreply, socket |> assign(:editando_orden, true) |> assign(:carpeta_editando_orden, nil)}
+  end
+
+  # Igual que "abrir_editar_orden", pero acotado a UNA carpeta madre —
+  # botón "Vista" propio en cada fila de carpeta raíz (ver filas_arbol/1).
+  def handle_event("abrir_editar_orden_carpeta", %{"clave" => clave}, socket) do
+    # DIAGNÓSTICO TEMPORAL — sacar junto con el de admin_nav.ex.
+    require Logger
+    Logger.warning("BcListLive abrir_editar_orden_carpeta clave=#{inspect(clave)}")
+    {:noreply, socket |> assign(:editando_orden, true) |> assign(:carpeta_editando_orden, clave)}
   end
 
   def handle_event("cerrar_editar_orden", _params, socket) do
-    {:noreply, assign(socket, :editando_orden, false)}
+    {:noreply, socket |> assign(:editando_orden, false) |> assign(:carpeta_editando_orden, nil)}
   end
 
   # Recalcula el orden completo de los hermanos visibles en este
@@ -1269,7 +1279,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
       <.seccion_borradores :if={@borradores != []} borradores={@borradores} />
 
-      <.panel_editar_orden :if={@editando_orden} arbol={@arbol} />
+      <.panel_editar_orden :if={@editando_orden} arbol={@arbol} carpeta_editando_orden={@carpeta_editando_orden} />
 
       <div :if={!@editando_orden}>
         <div class="mb-4 flex items-center gap-3">
@@ -1355,13 +1365,27 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # orden se guarda por ruta (ver clave_de_carpeta/2 y
   # MetaSchemaContext.reordenar_hermanos/1), no por `schema_context_name`.
   attr :arbol, :list, required: true
+  attr :carpeta_editando_orden, :string, default: nil
 
   defp panel_editar_orden(assigns) do
+    carpeta =
+      assigns.carpeta_editando_orden &&
+        Enum.find(assigns.arbol, &(&1.tipo == :carpeta and clave_de_carpeta(&1, "") == assigns.carpeta_editando_orden))
+
+    assigns =
+      assigns
+      |> assign(:carpeta, carpeta)
+      |> assign(:nodos, if(carpeta, do: carpeta.hijos, else: assigns.arbol))
+      |> assign(:ruta_base, if(carpeta, do: carpeta.segmento, else: ""))
+      |> assign(:contenedor_base, if(carpeta, do: clave_de_carpeta(carpeta, ""), else: ""))
+
     ~H"""
     <div class="mb-4 rounded-xl border border-purple-200 bg-purple-50/40 overflow-hidden">
       <div class="flex items-center justify-between px-4 py-2.5 bg-purple-50 border-b border-purple-200">
         <div>
-          <h2 class="text-sm font-bold text-purple-900">Editar vista</h2>
+          <h2 class="text-sm font-bold text-purple-900">
+            Editar vista<span :if={@carpeta}> — {@carpeta.nombre}</span>
+          </h2>
           <p class="text-xs text-purple-600">
             Arrastrá para cambiar el orden — carpetas y archivos, a cualquier nivel. Se guarda solo al soltar, y se refleja acá y en el menú.
           </p>
@@ -1371,8 +1395,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         </button>
       </div>
       <div class="p-3">
-        <.arbol_editable :if={@arbol != []} nodos={@arbol} />
-        <p :if={@arbol == []} class="px-4 py-6 text-center text-gray-400 text-sm">No hay nada en esta página para reordenar.</p>
+        <.arbol_editable :if={@nodos != []} nodos={@nodos} contenedor_id={@contenedor_base} ruta_padre={@ruta_base} />
+        <p :if={@nodos == []} class="px-4 py-6 text-center text-gray-400 text-sm">No hay nada acá para reordenar.</p>
       </div>
     </div>
     """
@@ -1403,8 +1427,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
     ~H"""
     <div id={"orden-lista-" <> @grupo} phx-hook="ListaOrdenable" data-contenedor-id={@contenedor_id} data-grupo={@grupo} class="space-y-1.5">
-      <div :for={nodo <- @nodos} id={"orden-nodo-" <> clave_de_carpeta(nodo, @ruta_padre)}>
-        <div data-id={clave_de_carpeta(nodo, @ruta_padre)} class="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm">
+      <div :for={nodo <- @nodos} id={"orden-nodo-" <> clave_de_carpeta(nodo, @ruta_padre)} data-id={clave_de_carpeta(nodo, @ruta_padre)}>
+        <div class="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm">
           <svg class="jal-manija text-gray-300 hover:text-gray-500 cursor-grab flex-shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" title="Arrastrar para reordenar">
             <circle cx="8" cy="6" r="1.6" /><circle cx="16" cy="6" r="1.6" /><circle cx="8" cy="12" r="1.6" /><circle cx="16" cy="12" r="1.6" /><circle cx="16" cy="18" r="1.6" /><circle cx="8" cy="18" r="1.6" />
           </svg>
@@ -1437,33 +1461,35 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         <h2 class="text-sm font-bold text-purple-900">Borradores</h2>
         <p class="text-xs text-purple-600">Catálogos que empezaste a diseñar pero todavía no creaste.</p>
       </div>
-      <table class="min-w-full divide-y divide-gray-100 text-sm">
-        <tbody class="divide-y divide-gray-100">
-          <%= for b <- @borradores do %>
-            <tr>
-              <td class="px-4 py-2 text-gray-800">{b.nombre}</td>
-              <td class="px-4 py-2 text-gray-500">Editado {formatear_fecha_borrador(b.updated_at)}</td>
-              <td class="px-4 py-2">
-                <div class="flex gap-2 justify-end">
-                  <.link navigate={~p"/sysadmin/bc-list/nuevo-completo?borrador=#{b.id}"}
-                    class="text-blue-600 hover:text-blue-800 text-xs font-semibold">
-                    Continuar
-                  </.link>
-                  <button
-                    type="button"
-                    phx-click="eliminar_borrador"
-                    phx-value-id={b.id}
-                    data-confirm={"¿Eliminar el borrador \"#{b.nombre}\"?"}
-                    class="text-red-600 hover:text-red-800 text-xs font-semibold"
-                  >
-                    Eliminar
-                  </button>
-                </div>
-              </td>
-            </tr>
-          <% end %>
-        </tbody>
-      </table>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-100 text-sm">
+          <tbody class="divide-y divide-gray-100">
+            <%= for b <- @borradores do %>
+              <tr>
+                <td class="px-4 py-2 text-gray-800">{b.nombre}</td>
+                <td class="px-4 py-2 text-gray-500">Editado {formatear_fecha_borrador(b.updated_at)}</td>
+                <td class="px-4 py-2">
+                  <div class="flex gap-2 justify-end">
+                    <.link navigate={~p"/sysadmin/bc-list/nuevo-completo?borrador=#{b.id}"}
+                      class="text-blue-600 hover:text-blue-800 text-xs font-semibold">
+                      Continuar
+                    </.link>
+                    <button
+                      type="button"
+                      phx-click="eliminar_borrador"
+                      phx-value-id={b.id}
+                      data-confirm={"¿Eliminar el borrador \"#{b.nombre}\"?"}
+                      class="text-red-600 hover:text-red-800 text-xs font-semibold"
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      </div>
     </div>
     """
   end
@@ -2122,30 +2148,46 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               >
                 <span class="pc-carpeta-chevron inline-block w-3 text-gray-400">{if expandida?, do: "▾", else: "▸"}</span>
                 <span class="w-6 h-6 rounded-md bg-gray-400/30 text-(--pc-texto) flex items-center justify-center flex-shrink-0">
-                  <span class="material-symbols-outlined" style="font-size: 15px">folder</span>
+                  <span class="material-symbols-outlined" style="font-size: 15px">
+                    {if Map.get(nodo, :icono) not in [nil, ""], do: nodo.icono, else: "folder"}
+                  </span>
                 </span>
                 {nodo.nombre}
               </button>
-              <%= if nodo.id do %>
+              <%= if nodo.id || (@nivel == 0 and nodo.hijos != []) do %>
                 <div class="flex items-center gap-2 normal-case tracking-normal flex-shrink-0 pc-acciones-chip rounded-lg px-2.5 py-1">
-                  <button
-                    type="button"
-                    id={"btn-editar-carpeta-#{nodo.id}"}
-                    phx-click="abrir_editar_carpeta"
-                    phx-value-nombre={nodo.id}
-                    class="text-blue-600 hover:text-blue-800 text-xs font-semibold"
-                  >
-                    Editar
-                  </button>
-                  <%= if nodo.hijos == [] do %>
+                  <%= if nodo.id do %>
                     <button
                       type="button"
-                      phx-click="pedir_eliminar_carpeta"
+                      id={"btn-editar-carpeta-#{nodo.id}"}
+                      phx-click="abrir_editar_carpeta"
                       phx-value-nombre={nodo.id}
-                      phx-value-label={nodo.nombre}
-                      class="text-red-600 hover:text-red-800 text-xs font-semibold"
+                      class="text-blue-600 hover:text-blue-800 text-xs font-semibold"
                     >
-                      Eliminar
+                      Editar
+                    </button>
+                    <%= if nodo.hijos == [] do %>
+                      <button
+                        type="button"
+                        phx-click="pedir_eliminar_carpeta"
+                        phx-value-nombre={nodo.id}
+                        phx-value-label={nodo.nombre}
+                        class="text-red-600 hover:text-red-800 text-xs font-semibold"
+                      >
+                        Eliminar
+                      </button>
+                    <% end %>
+                  <% end %>
+                  <%= if @nivel == 0 and nodo.hijos != [] do %>
+                    <button
+                      type="button"
+                      id={"btn-vista-carpeta-#{clave_de_carpeta(nodo, @ruta_padre)}"}
+                      phx-click="abrir_editar_orden_carpeta"
+                      phx-value-clave={clave_de_carpeta(nodo, @ruta_padre)}
+                      title="Reordenar solo el contenido de esta carpeta madre"
+                      class="text-purple-600 hover:text-purple-800 text-xs font-semibold"
+                    >
+                      Vista
                     </button>
                   <% end %>
                 </div>
@@ -2172,7 +2214,11 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             <div class="flex items-center gap-2">
               <span class="w-6 h-6 rounded-md bg-gray-400/30 text-(--pc-texto) flex items-center justify-center flex-shrink-0">
                 <span class="material-symbols-outlined" style="font-size: 15px">
-                  {if Map.get(nodo, :es_consulta, false), do: "search", else: "description"}
+                  <%= cond do %>
+                    <% Map.get(nodo, :icono) not in [nil, ""] -> %>{nodo.icono}
+                    <% Map.get(nodo, :es_consulta, false) -> %>search
+                    <% true -> %>description
+                  <% end %>
                 </span>
               </span>
               <span class="font-semibold text-gray-800">{nodo.id}</span>

@@ -89,6 +89,61 @@ const RedimensionarSidebar = {
   },
 }
 
+// Mismo mecanismo que RedimensionarSidebar de arriba, pero para el panel
+// flotante (pc-sidebar-flyout) que muestra las opciones de una carpeta
+// raíz — su propia variable CSS/llave de localStorage, así ajustar uno no
+// mueve al otro.
+const ANCHO_MIN_FLYOUT = 180
+const ANCHO_MAX_FLYOUT = 420
+const LLAVE_LOCALSTORAGE_FLYOUT = "pc-flyout-width"
+
+const RedimensionarFlyout = {
+  mounted() {
+    const flyout = this.el.closest(".pc-sidebar-flyout")
+    if (!flyout) return
+
+    const raiz = document.documentElement
+
+    const guardado = localStorage.getItem(LLAVE_LOCALSTORAGE_FLYOUT)
+    if (guardado) raiz.style.setProperty("--pc-flyout-width", `${guardado}px`)
+
+    let arrastrando = false
+
+    const alMover = (e) => {
+      if (!arrastrando) return
+      const rect = flyout.getBoundingClientRect()
+      const ancho = Math.min(Math.max(e.clientX - rect.left, ANCHO_MIN_FLYOUT), ANCHO_MAX_FLYOUT)
+      raiz.style.setProperty("--pc-flyout-width", `${ancho}px`)
+    }
+
+    const alSoltar = () => {
+      if (!arrastrando) return
+      arrastrando = false
+      flyout.classList.remove("pc-resizing")
+      this.el.classList.remove("pc-resizing")
+      const ancho = raiz.style.getPropertyValue("--pc-flyout-width")
+      if (ancho) localStorage.setItem(LLAVE_LOCALSTORAGE_FLYOUT, parseInt(ancho, 10))
+    }
+
+    this.el.addEventListener("mousedown", (e) => {
+      arrastrando = true
+      flyout.classList.add("pc-resizing")
+      this.el.classList.add("pc-resizing")
+      e.preventDefault()
+    })
+
+    window.addEventListener("mousemove", alMover)
+    window.addEventListener("mouseup", alSoltar)
+
+    this._alMover = alMover
+    this._alSoltar = alSoltar
+  },
+  destroyed() {
+    window.removeEventListener("mousemove", this._alMover)
+    window.removeEventListener("mouseup", this._alSoltar)
+  },
+}
+
 // El colapsado/expandido del sidebar (@sidebar_open) es un assign de
 // SERVIDOR, distinto de tema/ancho (que son 100% del cliente) — cada
 // ruta es un mount de LiveView nuevo que hardcodea sidebar_open: false,
@@ -418,7 +473,7 @@ const AbrirVistaPrevia = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, PersistirSidebarAbierto, CopiarRuta, CopiarTextarea, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, CopiarRuta, CopiarTextarea, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable},
 })
 
 // Show progress bar on live navigation and form submits

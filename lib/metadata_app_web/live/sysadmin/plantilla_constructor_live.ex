@@ -570,13 +570,13 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
 
     ~H"""
     <div class={if @embebido?, do: "", else: "p-6"}>
-      <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center justify-between flex-wrap gap-2 mb-4">
         <div :if={!@embebido?}>
           <h1 class="text-xl font-bold text-gray-900">PostView — {@header.schema_context_label}</h1>
           <p class="text-xs text-gray-500 mt-0.5">Diseña el tab "Datos" de la Ficha 360° de este catálogo.</p>
         </div>
         <div :if={@embebido?}></div>
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 flex-wrap">
           <select :if={@plantillas != []} phx-change="seleccionar_plantilla" name="id"
             class="border border-gray-300 rounded-lg text-sm px-2 py-1.5 text-gray-700">
             <option :for={p <- @plantillas} value={p.id} selected={@plantilla && @plantilla.id == p.id}>
@@ -627,7 +627,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         Este catálogo todavía no tiene ningún PostView. Creá uno para empezar.
       </div>
 
-      <div :if={@plantilla} class="grid grid-cols-[180px_1fr_280px] gap-4">
+      <div :if={@plantilla} class="grid grid-cols-1 lg:grid-cols-[180px_1fr_280px] gap-4">
         <div class="bg-white border border-gray-200 rounded-xl p-3">
           <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">Estructura</div>
           <div class="flex flex-col gap-1.5 mb-4">

@@ -203,9 +203,9 @@ defmodule MetadataAppWeb.Sysadmin.RolesLive do
         </button>
       </div>
 
-      <div class="grid grid-cols-[360px_1fr] gap-4 items-start">
+      <div class="grid grid-cols-1 sm:grid-cols-[360px_1fr] gap-4 items-start">
         <!-- IZQUIERDA: tabla de roles -->
-        <div class="overflow-hidden rounded-xl border border-gray-200">
+        <div class="overflow-x-auto rounded-xl border border-gray-200">
           <table class="min-w-full divide-y divide-gray-200">
             <thead class="bg-gray-50">
               <tr>

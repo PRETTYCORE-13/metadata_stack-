@@ -46,100 +46,10 @@ defmodule MetadataAppWeb.MenuLayout do
         class="pc-sidebar-overlay"
         phx-click={mobile_toggle_js()}
       />
-      <!-- Sidebar: hermano de pc-platform-content (ya no metida adentro de
-           una fila junto al topbar) — así el riel del menú ocupa todo el
-           lado izquierdo desde arriba, y el logo queda en la topbar de la
-           derecha sin competirle espacio. -->
-      <aside
-        id="pc-sidebar"
-        phx-hook="PersistirSidebarAbierto"
-        class={"pc-platform-sidebar" <> if @sidebar_open, do: " pc-platform-sidebar-open", else: ""}
-      >
-        <div
-          class="pc-sidebar-resize-handle"
-          id="sidebar-resize-handle"
-          phx-hook="RedimensionarSidebar"
-          phx-update="ignore"
-          title="Arrastra para ajustar el ancho del menú"
-        >
-        </div>
-        <!-- HEADER: toggle (el branding ya vive en la topbar, a la
-             derecha). -->
-        <div class="pc-sidebar-header">
-          <!-- Cerrar sidebar: solo visible en móvil -->
-          <button type="button" class="pc-sidebar-close-mobile" phx-click={mobile_close_js()}>
-            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-          <!-- Toggle colapso: solo visible en desktop (oculto en móvil via CSS) -->
-          <button
-            type="button"
-            class="pc-sidebar-toggle"
-            phx-click={toggle_sidebar_js(@menu_event)}
-          >
-            <%= if @sidebar_open do %>
-              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="11 17 6 12 11 7" /><polyline points="18 17 13 12 18 7" />
-              </svg>
-            <% else %>
-              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="13 17 18 12 13 7" /><polyline points="6 17 11 12 6 7" />
-              </svg>
-            <% end %>
-          </button>
-          <!-- Tema claro/oscuro — reusa "phx:set-theme" (ya escuchado en
-               root.html.heex desde que existe la app, generado por
-               mix phx.new; acá recién se agrega el botón que lo dispara).
-               Sin `detail:` en JS.dispatch a propósito: el listener lee
-               `e.target.dataset.phxTheme` del botón, no un detail del
-               evento — mismo contrato que Layouts.theme_toggle/1 (que
-               vive sin uso real en el layout de demo). -->
-          <div class="pc-theme-toggle">
-            <button type="button" class="pc-theme-btn" phx-click={JS.dispatch("phx:set-theme")} data-phx-theme="light" title="Tema claro" aria-label="Cambiar a tema claro">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="4" />
-                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
-              </svg>
-            </button>
-            <button type="button" class="pc-theme-btn" phx-click={JS.dispatch("phx:set-theme")} data-phx-theme="dark" title="Tema oscuro" aria-label="Cambiar a tema oscuro">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        <!-- CUERPO DEL MENÚ -->
-        <div class="pc-sidebar-body">
-          <div>
-            <div class="px-3 pb-2 pt-3 pc-sidebar-search">
-              <input
-                type="text"
-                id="filtro-menu"
-                phx-hook="FiltroMenu"
-                phx-update="ignore"
-                placeholder="Buscar o pegar una ruta..."
-                class="w-full text-sm border border-gray-300 rounded-lg px-3 py-1.5 text-gray-900"
-              />
-            </div>
-
-            <nav class="pc-sidebar-nav">
-              <.menu_nodos
-                nodos={@menu_items}
-                current_page={@current_page}
-                sidebar_open={@sidebar_open}
-                menu_event={@menu_event}
-              />
-            </nav>
-          </div>
-        </div>
-      </aside>
-      <!-- Columna derecha: topbar + contenido + footer -->
-      <div class="pc-platform-content">
-      <!-- Topbar: logo + nombre de empresa (configurable, ver
-           config/runtime.exs NOMBRE_EMPRESA — pensado para blanqueo de
-           marca a futuro) + campana/login. -->
+      <!-- Topbar: FUERA de la fila riel+contenido (pc-platform-body de abajo)
+           a propósito — así la banda de arriba abarca TODO el ancho de la
+           pantalla, por encima del riel también, en vez de arrancar recién
+           después de él. -->
       <div class="pc-topbar">
         <!-- Hamburger: solo visible en móvil -->
         <button
@@ -242,6 +152,150 @@ defmodule MetadataAppWeb.MenuLayout do
           </div>
         </div>
       </div>
+      <!-- Fila de abajo: riel + flyout + contenido, ocupando el resto de la
+           altura debajo de la topbar de arriba. -->
+      <div class="pc-platform-body">
+      <!-- Sidebar: hermano de pc-platform-content — así el riel del menú
+           ocupa todo el lado izquierdo debajo de la topbar. -->
+      <aside
+        id="pc-sidebar"
+        phx-hook="PersistirSidebarAbierto"
+        class={"pc-platform-sidebar" <> if @sidebar_open, do: " pc-platform-sidebar-open", else: ""}
+      >
+        <div
+          class="pc-sidebar-resize-handle"
+          id="sidebar-resize-handle"
+          phx-hook="RedimensionarSidebar"
+          phx-update="ignore"
+          title="Arrastra para ajustar el ancho del menú"
+        >
+        </div>
+        <!-- HEADER: toggle (el branding ya vive en la topbar, a la
+             derecha). -->
+        <div class="pc-sidebar-header">
+          <!-- Cerrar sidebar: solo visible en móvil -->
+          <button type="button" class="pc-sidebar-close-mobile" phx-click={mobile_close_js()}>
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+          <!-- Toggle colapso: solo visible en desktop (oculto en móvil via CSS) -->
+          <button
+            type="button"
+            class="pc-sidebar-toggle"
+            phx-click={toggle_sidebar_js(@menu_event)}
+          >
+            <%= if @sidebar_open do %>
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="11 17 6 12 11 7" /><polyline points="18 17 13 12 18 7" />
+              </svg>
+            <% else %>
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="13 17 18 12 13 7" /><polyline points="6 17 11 12 6 7" />
+              </svg>
+            <% end %>
+          </button>
+          <!-- Tema claro/oscuro — reusa "phx:set-theme" (ya escuchado en
+               root.html.heex desde que existe la app, generado por
+               mix phx.new; acá recién se agrega el botón que lo dispara).
+               Sin `detail:` en JS.dispatch a propósito: el listener lee
+               `e.target.dataset.phxTheme` del botón, no un detail del
+               evento — mismo contrato que Layouts.theme_toggle/1 (que
+               vive sin uso real en el layout de demo). -->
+          <div class="pc-theme-toggle">
+            <button type="button" class="pc-theme-btn" phx-click={JS.dispatch("phx:set-theme")} data-phx-theme="light" title="Tema claro" aria-label="Cambiar a tema claro">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+              </svg>
+            </button>
+            <button type="button" class="pc-theme-btn" phx-click={JS.dispatch("phx:set-theme")} data-phx-theme="dark" title="Tema oscuro" aria-label="Cambiar a tema oscuro">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- CUERPO DEL MENÚ -->
+        <div class="pc-sidebar-body">
+          <div>
+            <div class="px-3 pb-2 pt-3 pc-sidebar-search">
+              <input
+                type="text"
+                id="filtro-menu"
+                phx-hook="FiltroMenu"
+                phx-update="ignore"
+                placeholder="Buscar o pegar una ruta..."
+                class="w-full text-sm border border-gray-300 rounded-lg px-3 py-1.5 text-gray-900"
+              />
+            </div>
+
+            <nav class="pc-sidebar-nav">
+              <.menu_nodos
+                nodos={@menu_items}
+                current_page={@current_page}
+                sidebar_open={@sidebar_open}
+                menu_event={@menu_event}
+              />
+            </nav>
+          </div>
+        </div>
+      </aside>
+      <!-- FLYOUT: panel que aparece pegado al borde derecho del riel al abrir
+           una carpeta raíz (nivel 0), mostrando SOLO las opciones de esa
+           carpeta — sin tocar el árbol/estilo de arriba, que sigue
+           funcionando exactamente igual. Mostrar/ocultar es 100% CSS
+           (:has() sobre el [open] nativo del <details> de arriba, ver
+           .pc-sidebar-flyout en menu.css), sin JS ni ida al servidor — y
+           `name="pc-menu-raiz-group"` (puesto en menu_nodos/1) hace que el
+           navegador se encargue solo de que abrir una carpeta raíz cierre
+           cualquier otra, como un accordion nativo. -->
+      <div class="pc-sidebar-flyout" id="pc-sidebar-flyout">
+        <!-- Ajustable igual que el riel principal (mismo mecanismo de
+             arrastre, ver RedimensionarFlyout en app.js) — su propia
+             variable CSS/llave de localStorage, así no se pisan entre sí. -->
+        <div
+          class="pc-flyout-resize-handle"
+          id="flyout-resize-handle"
+          phx-hook="RedimensionarFlyout"
+          phx-update="ignore"
+          title="Arrastra para ajustar el ancho del submenú"
+        >
+        </div>
+        <%= for {nodo, idx} <- Enum.with_index(@menu_items), nodo.tipo == :carpeta do %>
+          <div class={"pc-flyout-panel pc-flyout-panel-#{idx}"} id={"pc-flyout-panel-#{idx}"}>
+            <div class="pc-flyout-header">
+              <span class="pc-flyout-header-nombre">{nodo.nombre}</span>
+              <button
+                type="button"
+                class="pc-flyout-cerrar"
+                phx-click={JS.remove_attribute("open", to: "#menu-carpeta-#{nodo.segmento}")}
+                title="Cerrar"
+                aria-label="Cerrar submenú"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
+            <nav class="pc-flyout-nav">
+              <.menu_nodos
+                nodos={nodo.hijos}
+                current_page={@current_page}
+                sidebar_open={true}
+                menu_event={@menu_event}
+                ruta_padre={nodo.segmento}
+                id_prefix="flyout-carpeta-"
+                con_flyout={false}
+              />
+            </nav>
+          </div>
+        <% end %>
+      </div>
+      <!-- Columna derecha: contenido + footer (la topbar ya se movió afuera
+           de pc-platform-body, ver arriba). -->
+      <div class="pc-platform-content">
       <!-- CONTENIDO -->
       <main class="pc-platform-main">
           <%!-- Banda de publicidad (valores por defecto, sin backend todavía)
@@ -290,6 +344,7 @@ defmodule MetadataAppWeb.MenuLayout do
         <% end %>
       </div>
       </div>
+      </div>
     </div>
     """
   end
@@ -300,27 +355,61 @@ defmodule MetadataAppWeb.MenuLayout do
   attr :nodos, :list, required: true
   attr :current_page, :string, required: true
   attr :nivel, :integer, default: 0
-  # Colapsado (rail de solo íconos), un click en una carpeta expande primero
-  # todo el sidebar — si no, el <details> se abre igual pero sus hijos
-  # quedan ocultos por CSS (ver comentario sobre íconos superpuestos más
-  # abajo en menu.css) y visualmente no pasa nada.
+  # Colapsado (rail de solo íconos), un click en una carpeta expande
+  # primero todo el sidebar Y ESA carpeta puntual (JS.set_attribute más
+  # abajo) — un JS.push (lo que hace toggle_sidebar_js por dentro) le hace
+  # preventDefault al click, así que el toggle NATIVO de <details> (el que
+  # pasaría solo, sin JS, con un click normal en <summary>) nunca llega a
+  # dispararse solo. Sin el set_attribute explícito, cualquier ícono
+  # colapsado solo abría el riel entero, sin abrir la carpeta puntual que
+  # se clickeó.
   attr :sidebar_open, :boolean, default: true
   attr :menu_event, :string, default: "change_page"
+  attr :ruta_padre, :string, default: ""
+  # Prefijo del id del <details> de cada carpeta — por defecto el árbol
+  # normal del riel ("menu-carpeta-..."). El flyout de abajo (pc-sidebar-
+  # flyout) reusa este mismo componente para pintar los hijos de la
+  # carpeta raíz activa, así que necesita su PROPIO prefijo ("flyout-
+  # carpeta-...") para no terminar con dos elementos con el mismo id en
+  # la página (uno en el riel, otro adentro del panel flotante).
+  attr :id_prefix, :string, default: "menu-carpeta-"
+  # Solo la carpeta raíz (nivel 0) del riel principal debe "ser" la que
+  # dispara el flyout de al lado — ver pc-sidebar-flyout en sidebar/1, que
+  # decide qué panel mostrar en CSS puro mirando el atributo nativo
+  # [open] de estos <details> (sin JS: :has() + name= para que abrir una
+  # se cierre la otra, como un accordion nativo). Cuando este componente
+  # se llama para pintar el CONTENIDO de ese flyout (ver sidebar/1) pasa
+  # con_flyout={false} para que sus propios nivel-0 internos no compitan
+  # por el mismo grupo exclusivo que la carpeta raíz real.
+  attr :con_flyout, :boolean, default: true
 
   def menu_nodos(assigns) do
     ~H"""
-    <%= for nodo <- @nodos do %>
+    <%= for {nodo, idx} <- Enum.with_index(@nodos) do %>
       <%= if nodo.tipo == :carpeta do %>
-        <details class="pc-menu-carpeta" open={contiene_activo?(nodo, @current_page)}>
+        <% ruta = if @ruta_padre == "", do: nodo.segmento, else: @ruta_padre <> "/" <> nodo.segmento %>
+        <% id_carpeta = @id_prefix <> ruta %>
+        <% es_raiz_flotante = @nivel == 0 and @con_flyout %>
+        <% activo = contiene_activo?(nodo, @current_page) %>
+        <details
+          id={id_carpeta}
+          class={["pc-menu-carpeta", es_raiz_flotante && "pc-carpeta-raiz", es_raiz_flotante && "pc-carpeta-raiz-#{idx}"]}
+          name={es_raiz_flotante && "pc-menu-raiz-group"}
+          open={activo}
+        >
           <summary
             class={["pc-menu-carpeta-summary", @nivel == 0 && "pc-menu-carpeta-summary-raiz"]}
             style={"padding-left: #{12 + @nivel * 16}px"}
-            phx-click={if(!@sidebar_open, do: toggle_sidebar_js(@menu_event))}
+            phx-click={
+              if(!@sidebar_open,
+                do: toggle_sidebar_js(@menu_event) |> JS.set_attribute({"open", "true"}, to: "##{id_carpeta}")
+              )
+            }
           >
             <svg class="pc-menu-carpeta-icono-flecha w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="9 18 15 12 9 6" />
             </svg>
-            <span class="pc-menu-carpeta-icono-carpeta">
+            <span class={["pc-menu-carpeta-icono-carpeta", activo && "pc-menu-carpeta-icono-carpeta-activo"]}>
               <%= if Map.get(nodo, :icono) not in [nil, ""] do %>
                 <span class="material-symbols-outlined">{nodo.icono}</span>
               <% else %>
@@ -337,6 +426,8 @@ defmodule MetadataAppWeb.MenuLayout do
             nivel={@nivel + 1}
             sidebar_open={@sidebar_open}
             menu_event={@menu_event}
+            ruta_padre={ruta}
+            id_prefix={@id_prefix}
           />
         </details>
       <% else %>

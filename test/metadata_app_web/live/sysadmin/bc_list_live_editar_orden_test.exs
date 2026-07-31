@@ -63,12 +63,21 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveEditarOrdenTest do
     {:ok, view, html} = live(conn, ~p"/sysadmin/bc-list")
     refute html =~ "Editar vista</h2>"
 
-    html = view |> element("button", "Vista") |> render_click()
+    html = view |> element("button[phx-click=abrir_editar_orden]", "Vista") |> render_click()
 
     assert html =~ "Arrastrá para cambiar el orden"
     assert html =~ "Carpeta A #{sufijo}"
     assert html =~ "Carpeta B #{sufijo}"
     assert html =~ "id=\"orden-nodo-orden_a_#{sufijo}\""
+
+    # Regresión: SortableJS toma como "ítem arrastrado" (evt.item) el
+    # elemento CONTENEDOR del :for (el que lleva este id="orden-nodo-...",
+    # el hijo directo de la lista Sortable) — si data-id vive en un <div>
+    # anidado adentro en vez de en ESTE mismo elemento, evt.item.dataset.id
+    # da undefined en el navegador real y "mover_a" nunca se manda,
+    # aunque cualquier test que empuje el evento a mano (render_hook) no
+    # lo note, porque no pasa por esta extracción del DOM real.
+    assert html =~ "id=\"orden-nodo-orden_a_#{sufijo}\" data-id=\"orden_a_#{sufijo}\""
   end
 
   test "soltar una carpeta en nueva posición persiste el orden y se ve reflejado al reabrir la página", %{conn: conn} do
@@ -79,7 +88,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveEditarOrdenTest do
     crear_carpeta_raiz(nombre_b, "Carpeta B #{sufijo}")
 
     {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
-    view |> element("button", "Vista") |> render_click()
+    view |> element("button[phx-click=abrir_editar_orden]", "Vista") |> render_click()
 
     # Simula lo que manda el hook ListaOrdenable al soltar (Sortable.js
     # onEnd) — arrastrar "B" a la posición 0, adelante de "A".
@@ -108,7 +117,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveEditarOrdenTest do
     cat = crear_catalogo("cat_#{sufijo}", "Catalogo Zzz #{sufijo}", "/#{padre.schema_context_name}/zzz")
 
     {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
-    html = view |> element("button", "Vista") |> render_click()
+    html = view |> element("button[phx-click=abrir_editar_orden]", "Vista") |> render_click()
 
     # Cada contenedor (raíz, y cada carpeta) trae su propio data-grupo
     # único — así arrastrar dentro de "padre" nunca puede soltar sin
@@ -137,6 +146,42 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveEditarOrdenTest do
     assert raiz_sin_orden == [nil]
   end
 
+  test "reordenar ARCHIVOS dentro de una carpeta implícita anidada DOS niveles (carpeta > carpeta > archivo)", %{conn: conn} do
+    sufijo = unique()
+    # tienda_#{sufijo} (explícita) > electronica (implícita, sin Header
+    # propio) > los dos catálogos — mismo caso reportado: "no respeta
+    # orden en archivos dentro de carpetas dentro de otras carpetas".
+    padre = crear_carpeta_raiz("tienda3_#{sufijo}", "DEMO - Tienda #{sufijo}")
+    celulares = crear_catalogo("cel3_#{sufijo}", "DEMO - Celulares #{sufijo}", "/#{padre.schema_context_name}/electronica/cel")
+    laptops = crear_catalogo("lap3_#{sufijo}", "DEMO - Laptops #{sufijo}", "/#{padre.schema_context_name}/electronica/lap")
+
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
+    html = view |> element("button[phx-click=abrir_editar_orden]", "Vista") |> render_click()
+
+    clave_electronica = "ruta:#{padre.schema_context_name}/electronica"
+    assert html =~ "data-contenedor-id=\"#{clave_electronica}\""
+    assert html =~ "data-id=\"#{celulares.schema_context_name}\""
+    assert html =~ "data-id=\"#{laptops.schema_context_name}\""
+
+    # "Celulares" ganaría alfabéticamente frente a "Laptops" — se fuerza
+    # lo contrario, arrastrándolo a la posición 0 DENTRO de "electronica".
+    render_hook(view, "mover_a", %{
+      "id" => laptops.schema_context_name,
+      "contenedor_id" => clave_electronica,
+      "index" => 0
+    })
+
+    hijos =
+      MetaSchemaContext.listar_headers_arbol()
+      |> Enum.find(&(&1.tipo == :carpeta and &1.id == padre.schema_context_name))
+      |> Map.fetch!(:hijos)
+      |> Enum.find(&(&1.tipo == :carpeta and &1.segmento == "electronica"))
+      |> Map.fetch!(:hijos)
+      |> Enum.map(& &1.id)
+
+    assert hijos == [laptops.schema_context_name, celulares.schema_context_name]
+  end
+
   test "reordenar DENTRO de una carpeta implícita (sin '+ Nueva carpeta' propia)", %{conn: conn} do
     sufijo = unique()
     # Nadie creó la carpeta "implicita_#{sufijo}" a mano — existe solo
@@ -147,7 +192,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveEditarOrdenTest do
     cat_b = crear_catalogo("cat_b_#{sufijo}", "Catalogo B #{sufijo}", "/implicita_#{sufijo}/b")
 
     {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
-    html = view |> element("button", "Vista") |> render_click()
+    html = view |> element("button[phx-click=abrir_editar_orden]", "Vista") |> render_click()
 
     assert html =~ "Catalogo A #{sufijo}"
     assert html =~ "Catalogo B #{sufijo}"
@@ -181,7 +226,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveEditarOrdenTest do
     crear_catalogo("cam_#{sufijo}", "DEMO - Camisas #{sufijo}", "/#{padre.schema_context_name}/ropa/cam")
 
     {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
-    html = view |> element("button", "Vista") |> render_click()
+    html = view |> element("button[phx-click=abrir_editar_orden]", "Vista") |> render_click()
 
     ruta_electronica = "ruta:#{padre.schema_context_name}/electronica"
     ruta_ropa = "ruta:#{padre.schema_context_name}/ropa"
@@ -219,10 +264,50 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveEditarOrdenTest do
     crear_carpeta_raiz("orden_a_#{sufijo}", "Carpeta A #{sufijo}")
 
     {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
-    view |> element("button", "Vista") |> render_click()
+    view |> element("button[phx-click=abrir_editar_orden]", "Vista") |> render_click()
     html = view |> element("button", "Listo") |> render_click()
 
     refute html =~ "Editar vista</h2>"
     assert html =~ "Buscar por nombre o etiqueta"
+  end
+
+  test "botón 'Vista' de UNA carpeta madre abre el panel acotado solo a su contenido", %{conn: conn} do
+    sufijo = unique()
+    padre_a = crear_carpeta_raiz("madre_a_#{sufijo}", "Madre A #{sufijo}")
+    padre_b = crear_carpeta_raiz("madre_b_#{sufijo}", "Madre B #{sufijo}")
+    cat_a1 = crear_catalogo("cat_a1_#{sufijo}", "Catalogo A1 #{sufijo}", "/#{padre_a.schema_context_name}/a1")
+    cat_a2 = crear_catalogo("cat_a2_#{sufijo}", "Catalogo A2 #{sufijo}", "/#{padre_a.schema_context_name}/a2")
+    cat_b1 = crear_catalogo("cat_b1_#{sufijo}", "Catalogo B1 #{sufijo}", "/#{padre_b.schema_context_name}/b1")
+
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
+
+    html = view |> element("#btn-vista-carpeta-#{padre_a.schema_context_name}") |> render_click()
+
+    assert html =~ "Editar vista<span> — Madre A #{sufijo}</span>"
+    assert html =~ cat_a1.schema_context_label
+    assert html =~ cat_a2.schema_context_label
+    refute html =~ cat_b1.schema_context_label
+    refute html =~ padre_b.schema_context_label
+
+    render_hook(view, "mover_a", %{
+      "id" => cat_a2.schema_context_name,
+      "contenedor_id" => padre_a.schema_context_name,
+      "index" => 0
+    })
+
+    hijos =
+      MetaSchemaContext.listar_headers_arbol()
+      |> Enum.find(&(&1.tipo == :carpeta and &1.id == padre_a.schema_context_name))
+      |> Map.fetch!(:hijos)
+      |> Enum.map(& &1.id)
+
+    assert hijos == [cat_a2.schema_context_name, cat_a1.schema_context_name]
+
+    orden_b =
+      MetaSchemaContext.listar_headers_arbol()
+      |> Enum.find(&(&1.tipo == :carpeta and &1.id == padre_b.schema_context_name))
+      |> Map.get(:orden)
+
+    assert is_nil(orden_b)
   end
 end

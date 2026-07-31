@@ -158,7 +158,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     <div class="max-w-6xl mx-auto p-8">
       <div class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-2">
-          <.link navigate={~p"/"} title="Volver al inicio"
+          <.link navigate={~p"/sysadmin/bc-list"} title="Volver al listado de BC"
             class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors shrink-0">
             <span class="material-symbols-outlined" style="font-size: 18px">arrow_back</span>
           </.link>
@@ -204,7 +204,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
         Mostrando solo los roles de <strong class="text-gray-800">{@usuario_seleccionado.email}</strong>.
       </p>
 
-      <div class="grid grid-cols-[220px_1fr] gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-[220px_1fr] gap-4">
         <div>
           <input
             type="text"

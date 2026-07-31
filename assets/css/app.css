@@ -102,8 +102,22 @@
     "Segoe UI Symbol", "Noto Color Emoji";
 }
 
+/* overflow-x:hidden es la red de seguridad ÚLTIMA para responsividad: si
+   algún elemento futuro (o alguno que se nos escapó en esta pasada) se
+   pasa del ancho de la pantalla en un celular — un input de ancho fijo,
+   una fila que no wrappea — que quede recortado ahí mismo en vez de
+   estirar TODA la página y generar scroll horizontal del body entero
+   (que es lo que se ve realmente "roto": el layout completo se corre, el
+   sidebar/topbar dejan de estar pegados a los bordes). Nada en la app
+   depende de poder scrollear la página entera de lado — el scroll
+   horizontal real (tablas anchas, tabs, el árbol del menú) ya vive en su
+   propio contenedor con overflow-x-auto, eso sigue funcionando igual.
+   Puesto directo en `body` (no en un `html {}` aparte) porque el
+   optimizador de Tailwind v4 lo estaba eliminando del build por
+   "redundante" cuando vivía solo. */
 body {
   font-variant-numeric: tabular-nums;
+  overflow-x: hidden;
 }
 
 /* Add variants based on LiveView classes */
@@ -126,3 +140,40 @@ body {
 .jal-fantasma {
   opacity: 0.35;
 }
+
+/* Fila dinámica de un PostView armado a mano en el Constructor (ver
+   nodo_plantilla_render/1 en ficha_live.ex) — el autor de la plantilla
+   elige cuántas columnas tiene cada fila (--pc-fila-cols), sin idea de en
+   qué pantalla se va a ver. Bajo 640px se colapsan todas a 1 columna
+   apilada, sin importar cuántas se hayan diseñado, para que ningún campo
+   quede aplastado en un celular. */
+.pc-fila-dinamica {
+  display: grid;
+  grid-template-columns: repeat(var(--pc-fila-cols, 1), minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .pc-fila-dinamica {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Red de seguridad para TODOS los modales (actuales y futuros): en este
+   código base el overlay de un modal siempre se arma con las mismas 4
+   clases de Tailwind ("fixed inset-0 ... flex items-center justify-center",
+   ver roles_live.ex, bc_motor_live.ex, bc_nuevo_completo_live.ex,
+   empresas_live.ex — algunos ya traen p-4 a mano, la mayoría no). Sin
+   padding acá, la tarjeta interna (normalmente max-w-sm/md w-full) toca
+   los bordes de la pantalla en un celular. Match por combinación de
+   clases (no requiere editar cada modal uno por uno) — se aplica solo
+   una vez por elemento, así que no importa que algunos ya tengan p-4
+   propio (mismo valor, sin conflicto). */
+.fixed.inset-0.flex.items-center.justify-center {
+  padding: 1rem;
+}
+
+/* Nota: no hace falta un `img { max-width: 100% }` acá — el preflight de
+   Tailwind (@layer base) ya pone `max-width:100%; height:auto` en TODA
+   imagen/video de la app, así que ninguna puede desbordar su contenedor
+   y ensanchar la página en un celular. */
