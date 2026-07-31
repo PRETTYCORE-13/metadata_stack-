@@ -117,47 +117,56 @@ defmodule MetadataAppWeb.Router do
   scope "/", MetadataAppWeb do
     pipe_through :browser
 
-    live "/", InicioLive
+    # Toda la app real (inicio, sysadmin/BPB, RBAC admin, fichas, catálogos)
+    # exige sesión — decisión explícita 2026-07-31, revierte la apertura
+    # interina de Fase 1 (2026-07-25, ver docs/roadmap RBAC) ahora que Fase 2
+    # RBAC ya está completa. Sin sesión, redirect directo a
+    # /meta_schema_usuario/log-in (UsuarioAuth.on_mount/4 :require_authenticated)
+    # — nunca se llega a ver "Bienvenido" ni ninguna otra página de negocio.
+    live_session :app_autenticada,
+      on_mount: [{MetadataAppWeb.UsuarioAuth, :require_authenticated}] do
+      live "/", InicioLive
 
-    # Ni existen en producción — ni la ruta ni el link del Frame (ver
-    # menu_layout.ex) tienen sentido ahí, no hay compilador para construir
-    # nada. Compile-time (no Mix.env() en runtime, rompería en un release
-    # compilado), mismo criterio que :dev_routes de arriba.
-    if Application.compile_env(:metadata_app, :bpb_habilitado) do
-      live "/sysadmin/bc-list", Sysadmin.BcListLive
-      live "/sysadmin/bc-list/nuevo-completo", Sysadmin.BcNuevoCompletoLive
-      live "/sysadmin/bc-list/:nombre/motor", Sysadmin.BcMotorLive
-      live "/sysadmin/bc-list/:nombre/consulta", Sysadmin.ConsultaEditorLive
-      live "/sysadmin/bc-list/:nombre/plantilla", Sysadmin.PlantillaConstructorLive
-      live "/sysadmin/buscar-trn", Sysadmin.BuscadorTrnLive
-      live "/sysadmin/tepache", Sysadmin.TepacheLive
+      # Ni existen en producción — ni la ruta ni el link del Frame (ver
+      # menu_layout.ex) tienen sentido ahí, no hay compilador para construir
+      # nada. Compile-time (no Mix.env() en runtime, rompería en un release
+      # compilado), mismo criterio que :dev_routes de arriba.
+      if Application.compile_env(:metadata_app, :bpb_habilitado) do
+        live "/sysadmin/bc-list", Sysadmin.BcListLive
+        live "/sysadmin/bc-list/nuevo-completo", Sysadmin.BcNuevoCompletoLive
+        live "/sysadmin/bc-list/:nombre/motor", Sysadmin.BcMotorLive
+        live "/sysadmin/bc-list/:nombre/consulta", Sysadmin.ConsultaEditorLive
+        live "/sysadmin/bc-list/:nombre/plantilla", Sysadmin.PlantillaConstructorLive
+        live "/sysadmin/buscar-trn", Sysadmin.BuscadorTrnLive
+        live "/sysadmin/tepache", Sysadmin.TepacheLive
+      end
+
+      # Administración de RBAC: siempre disponible (a diferencia del BPB de
+      # arriba, esto no es una herramienta de desarrollador — administradores
+      # en producción también necesitan gestionar roles/permisos).
+      live "/sysadmin/roles", Sysadmin.RolesLive
+      live "/sysadmin/roles/:id", Sysadmin.RolesLive
+      live "/sysadmin/usuarios", Sysadmin.UsuariosEmpresaLive
+      live "/sysadmin/empresas", Sysadmin.EmpresasLive
+      live "/sysadmin/catalogos/permisos", Sysadmin.CatalogoPermisosLive
+      live "/sysadmin/catalogos/:recurso/permisos", Sysadmin.CatalogoPermisosLive
+
+      # Alta de un registro nuevo — mismo LiveView que la Ficha 360°, en modo
+      # "sin registro todavía" (ver FichaLive.mount/3, clausula de un solo
+      # parámetro). Literal "nuevo" ANTES de "/:id" — si no, Phoenix intentaría
+      # resolverlo como el id de un registro llamado "nuevo".
+      live "/registro/:tabla/nuevo", FichaLive
+
+      # Ficha 360° de un registro puntual — literal, antes del comodín de abajo
+      # por el mismo motivo que todo lo demás en este archivo: "/*ruta" lo
+      # taparía si fuera después.
+      live "/registro/:tabla/:id", FichaLive
+
+      # Comodín al final: cualquier ruta de navegación de un catálogo (con la
+      # profundidad de carpetas que sea, ej. "/listas/motos" o
+      # "/catalogos/carros") cae aquí. Va después de las rutas literales de
+      # arriba para no taparlas.
+      live "/*ruta", CatalogoLive
     end
-
-    # Administración de RBAC: siempre disponible (a diferencia del BPB de
-    # arriba, esto no es una herramienta de desarrollador — administradores
-    # en producción también necesitan gestionar roles/permisos).
-    live "/sysadmin/roles", Sysadmin.RolesLive
-    live "/sysadmin/roles/:id", Sysadmin.RolesLive
-    live "/sysadmin/usuarios", Sysadmin.UsuariosEmpresaLive
-    live "/sysadmin/empresas", Sysadmin.EmpresasLive
-    live "/sysadmin/catalogos/permisos", Sysadmin.CatalogoPermisosLive
-    live "/sysadmin/catalogos/:recurso/permisos", Sysadmin.CatalogoPermisosLive
-
-    # Alta de un registro nuevo — mismo LiveView que la Ficha 360°, en modo
-    # "sin registro todavía" (ver FichaLive.mount/3, clausula de un solo
-    # parámetro). Literal "nuevo" ANTES de "/:id" — si no, Phoenix intentaría
-    # resolverlo como el id de un registro llamado "nuevo".
-    live "/registro/:tabla/nuevo", FichaLive
-
-    # Ficha 360° de un registro puntual — literal, antes del comodín de abajo
-    # por el mismo motivo que todo lo demás en este archivo: "/*ruta" lo
-    # taparía si fuera después.
-    live "/registro/:tabla/:id", FichaLive
-
-    # Comodín al final: cualquier ruta de navegación de un catálogo (con la
-    # profundidad de carpetas que sea, ej. "/listas/motos" o
-    # "/catalogos/carros") cae aquí. Va después de las rutas literales de
-    # arriba para no taparlas.
-    live "/*ruta", CatalogoLive
   end
 end
