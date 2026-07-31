@@ -132,6 +132,31 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContextOrdenTest do
     assert hijos == ["ropa", "electronica"]
   end
 
+  test "reordenar_hermanos/1 con CATÁLOGOS (no carpetas) dentro de una carpeta implícita anidada dos niveles" do
+    sufijo = unique()
+    padre = crear_carpeta_raiz("tienda2_#{sufijo}", "Tienda #{sufijo}")
+
+    # "electronica" es implícita — nadie la creó con "+ Nueva carpeta",
+    # existe solo porque estos dos catálogos comparten esa ruta anidada
+    # DENTRO de una carpeta explícita (2 niveles: tienda > electronica > catálogo).
+    celulares = crear_catalogo("celulares_#{sufijo}", "DEMO - Celulares #{sufijo}", "/#{padre.schema_context_name}/electronica/cel")
+    laptops = crear_catalogo("laptops_#{sufijo}", "DEMO - Laptops #{sufijo}", "/#{padre.schema_context_name}/electronica/lap")
+
+    # "Celulares" ganaría alfabéticamente frente a "Laptops" — se fuerza
+    # lo contrario.
+    :ok = MetaSchemaContext.reordenar_hermanos([laptops.schema_context_name, celulares.schema_context_name])
+
+    hijos =
+      MetaSchemaContext.listar_headers_arbol()
+      |> Enum.find(&(&1.tipo == :carpeta and &1.id == padre.schema_context_name))
+      |> Map.fetch!(:hijos)
+      |> Enum.find(&(&1.tipo == :carpeta and &1.segmento == "electronica"))
+      |> Map.fetch!(:hijos)
+      |> Enum.map(& &1.id)
+
+    assert hijos == [laptops.schema_context_name, celulares.schema_context_name]
+  end
+
   test "reordenar_hermanos/1 mezcla carpetas y catálogos dentro de una misma carpeta padre" do
     sufijo = unique()
     padre = crear_carpeta_raiz("padre_orden_#{sufijo}", "Padre #{sufijo}")

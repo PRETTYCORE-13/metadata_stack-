@@ -37,15 +37,22 @@ defmodule MetadataAppWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8">
+    <header class="navbar px-4 sm:px-6 lg:px-8 flex-wrap gap-y-2">
       <div class="flex-1">
         <a href="/" class="flex-1 flex w-fit items-center gap-2">
           <img src={~p"/images/logo.svg"} width="36" />
           <span class="text-sm font-semibold">v{Application.spec(:phoenix, :vsn)}</span>
         </a>
       </div>
-      <div class="flex-none">
-        <ul class="flex flex-column px-1 space-x-4 items-center">
+      <!-- min-w-0 + sm:flex-none (en vez de flex-none a secas): flex-none
+           bloquea el shrink del contenedor sin importar cuánto lo empuje
+           el flex-wrap de arriba — el <ul> de adentro nunca llegaba a
+           angostarse lo suficiente como para que SU PROPIO flex-wrap
+           entrara a tallar, y se salía del viewport en un celular. Bajo
+           sm (640px) sí hay lugar de sobra para el comportamiento
+           original de una sola fila sin crecer/achicarse. -->
+      <div class="min-w-0 sm:flex-none">
+        <ul class="flex flex-wrap px-1 gap-4 items-center justify-end">
           <li>
             <a href="https://phoenixframework.org/" class="btn btn-ghost">Website</a>
           </li>

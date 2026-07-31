@@ -194,17 +194,31 @@
   color: #6b7280 !important;
 }
 
-/* Layout: fila completa — el sidebar es hermano de pc-platform-content, no
-   queda metido debajo de una topbar de ancho completo, así ocupa todo el
-   lado izquierdo desde arriba (stretch por defecto en el eje cruzado). */
+/* Layout: columna completa — topbar de ancho completo arriba (fila 1) y
+   abajo (fila 2, pc-platform-body) el riel + flyout + contenido, uno al
+   lado del otro. Antes la topbar vivía DENTRO de pc-platform-content
+   (a la derecha del riel, sin cubrir esa franja) — ahora es hermana de
+   pc-platform-body, así abarca TODO el ancho de la pantalla, riel
+   incluido. */
 .pc-platform {
   display: flex;
+  flex-direction: column;
   height: 100vh;       /* fallback */
   height: 100dvh;      /* Safari iOS: excluye barra del browser */
   background: var(--pc-bg-secundario);
 }
 
-/* Columna derecha: topbar + contenido + footer, al lado del sidebar. */
+/* Fila 2: riel + flyout + contenido, ocupando el resto de la altura
+   debajo de la topbar. */
+.pc-platform-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Columna derecha: contenido + footer, al lado del sidebar (la topbar ya
+   no vive acá, ver pc-platform arriba). */
 .pc-platform-content {
   display: flex;
   flex-direction: column;
@@ -734,6 +748,36 @@
   display: none;
 }
 
+/* Carpetas raíz (con flyout, ver pc-carpeta-raiz) en el riel EXPANDIDO:
+   ya no expanden inline (sus hijos viven en el flyout de al lado, ver más
+   abajo), así que la flechita no tiene nada que indicar — se reemplaza
+   por su propio ícono, igual que en el riel colapsado. Y ese ícono se
+   pinta de acento cuando la página activa vive adentro de esa carpeta. */
+.pc-platform-sidebar .pc-carpeta-raiz > .pc-menu-carpeta-summary .pc-menu-carpeta-icono-flecha {
+  display: none;
+}
+
+.pc-platform-sidebar .pc-carpeta-raiz > .pc-menu-carpeta-summary .pc-menu-carpeta-icono-carpeta {
+  display: flex;
+}
+
+.pc-menu-carpeta-icono-carpeta-activo {
+  color: #a78bfa;
+}
+
+/* Íconos del riel principal (colapsado o expandido, ver reglas de arriba)
+   en negrita — trazo más grueso para el ícono genérico de carpeta (SVG,
+   stroke), y más peso de fuente para los configurados por catálogo
+   (Material Symbols). Escapado a .pc-platform-sidebar a propósito: NO
+   afecta a los mismos íconos reusados adentro del flyout. */
+.pc-platform-sidebar .pc-menu-carpeta-icono-carpeta svg {
+  stroke-width: 2.5;
+}
+
+.pc-platform-sidebar .pc-menu-carpeta-icono-carpeta .material-symbols-outlined {
+  font-variation-settings: "FILL" 0, "wght" 700, "GRAD" 0, "opsz" 24;
+}
+
 .pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-menu-carpeta-summary {
   justify-content: center;
   padding: 8px !important;
@@ -756,6 +800,231 @@
 /* La búsqueda no cabe útilmente en 68px — se oculta colapsado. */
 .pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-sidebar-search {
   display: none;
+}
+
+/* Las opciones de una carpeta raíz (nivel 0) ahora viven en el flyout de
+   al lado (ver más abajo) — el árbol inline del riel ya NO debe mostrarlas
+   ahí adentro también, aunque el <details> esté [open] (lo sigue estando,
+   nada más que para que el flyout sepa cuál mostrar vía :has()). Se oculta
+   SIEMPRE, no solo colapsado — a diferencia de la regla de arriba para
+   carpetas anidadas (que si no tiene flyout, sigue expandiendo inline). */
+.pc-platform-sidebar .pc-carpeta-raiz > :not(summary) {
+  display: none;
+}
+
+/* ---- SIDEBAR FLYOUT — columna que aparece pegada al borde derecho del
+   riel al abrir una carpeta raíz (nivel 0), con SOLO las opciones de esa
+   carpeta (ver pc-sidebar-flyout en menu_layout.ex). Mostrar/ocultar es
+   100% CSS: usa el atributo nativo [open] de los <details> raíz
+   (.pc-carpeta-raiz / .pc-carpeta-raiz-N, uno por índice) vía :has(), sin
+   JS ni ida al servidor — mismo mecanismo sin-JS que ya usa el árbol.
+   Es un item de flex MÁS (hermano de aside y de pc-platform-content, ver
+   .pc-platform) que colapsa a width:0 — NO position:absolute — así el
+   contenido de la página se corre a la derecha en vez de quedar tapado
+   debajo (responsive de verdad, no un overlay flotando encima). */
+.pc-sidebar-flyout {
+  position: relative;
+  flex-shrink: 0;
+  width: 0;
+  overflow: hidden;
+  background: #ffffff;
+  transition: width 0.18s ease;
+}
+
+/* Igual que .pc-platform-sidebar.pc-resizing (arriba) — sin esto, arrastrar
+   la manija se siente "atrasado" respecto al mouse, peleando contra la
+   transición de width pensada para el abrir/cerrar animado, no para el
+   arrastre en vivo. */
+.pc-sidebar-flyout.pc-resizing {
+  transition: none;
+}
+
+.pc-platform:has(.pc-carpeta-raiz[open]) .pc-sidebar-flyout {
+  /* Ajustable arrastrando pc-flyout-resize-handle (ver RedimensionarFlyout
+     en app.js) — la variable CSS vive en <html>, no acá, por el mismo
+     motivo que --pc-sidebar-width (este panel se vuelve a pintar seguido). */
+  width: var(--pc-flyout-width, 240px);
+  border-right: 1px solid #e5e7eb;
+  overflow-y: auto;
+}
+
+/* Manija para arrastrar y ajustar el ancho del flyout — mismo look que
+   pc-sidebar-resize-handle del riel principal. */
+.pc-flyout-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 20;
+  background: transparent;
+}
+
+.pc-flyout-resize-handle:hover,
+.pc-flyout-resize-handle.pc-resizing {
+  background: rgba(124, 58, 237, 0.35);
+}
+
+/* Colores fijos en blanco/negro para el árbol de adentro (pc-nav-item,
+   pc-menu-carpeta-summary...), sin importar el tema oscuro/claro del riel
+   (ver pc-theme-toggle) — el flyout se lee como "contenido" que se abre
+   desde el riel, no como una extensión del riel mismo. pc-flyout-header/
+   pc-flyout-cerrar (clases exclusivas de este panel, sin otro consumidor)
+   ya van en blanco/negro directo en su propia definición más abajo. */
+.pc-sidebar-flyout .pc-nav-item {
+  color: #111827;
+}
+
+.pc-sidebar-flyout .pc-nav-item:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.pc-sidebar-flyout .pc-nav-item-active {
+  background: #f5f3ff;
+  color: #6d28d9;
+  border-left-color: #7c3aed;
+}
+
+/* .pc-nav-label solo se hace visible (opacity:1) bajo .pc-platform-sidebar-
+   open (ver más arriba) — el flyout vive FUERA del <aside>, así que sin
+   esto el texto de cada página quedaba con opacity:0 (invisible, solo se
+   veía el ícono). Mismo motivo para el tamaño del ícono: sin esto se
+   quedaba en el tamaño "grande" (32px, pensado para el riel colapsado) en
+   vez del chico (15px) que usa el riel expandido. */
+.pc-sidebar-flyout .pc-nav-label {
+  opacity: 1;
+  color: #111827;
+}
+
+.pc-sidebar-flyout .pc-nav-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.pc-sidebar-flyout .pc-nav-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.pc-sidebar-flyout .pc-nav-icon .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.pc-sidebar-flyout .pc-nav-icon img {
+  width: 15px;
+  height: 15px;
+}
+
+.pc-sidebar-flyout .pc-menu-carpeta-summary {
+  color: #111827;
+}
+
+.pc-sidebar-flyout .pc-menu-carpeta-summary:hover {
+  background: #f3f4f6;
+}
+
+.pc-sidebar-flyout .pc-menu-carpeta-icono-flecha {
+  color: #6b7280;
+}
+
+.pc-flyout-panel {
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px;
+}
+
+/* Empareja cada carpeta raíz con su panel por índice de posición (hasta
+   30 carpetas raíz — de sobra para un menú lateral real). */
+.pc-platform:has(.pc-carpeta-raiz-0[open]) .pc-flyout-panel-0,
+.pc-platform:has(.pc-carpeta-raiz-1[open]) .pc-flyout-panel-1,
+.pc-platform:has(.pc-carpeta-raiz-2[open]) .pc-flyout-panel-2,
+.pc-platform:has(.pc-carpeta-raiz-3[open]) .pc-flyout-panel-3,
+.pc-platform:has(.pc-carpeta-raiz-4[open]) .pc-flyout-panel-4,
+.pc-platform:has(.pc-carpeta-raiz-5[open]) .pc-flyout-panel-5,
+.pc-platform:has(.pc-carpeta-raiz-6[open]) .pc-flyout-panel-6,
+.pc-platform:has(.pc-carpeta-raiz-7[open]) .pc-flyout-panel-7,
+.pc-platform:has(.pc-carpeta-raiz-8[open]) .pc-flyout-panel-8,
+.pc-platform:has(.pc-carpeta-raiz-9[open]) .pc-flyout-panel-9,
+.pc-platform:has(.pc-carpeta-raiz-10[open]) .pc-flyout-panel-10,
+.pc-platform:has(.pc-carpeta-raiz-11[open]) .pc-flyout-panel-11,
+.pc-platform:has(.pc-carpeta-raiz-12[open]) .pc-flyout-panel-12,
+.pc-platform:has(.pc-carpeta-raiz-13[open]) .pc-flyout-panel-13,
+.pc-platform:has(.pc-carpeta-raiz-14[open]) .pc-flyout-panel-14,
+.pc-platform:has(.pc-carpeta-raiz-15[open]) .pc-flyout-panel-15,
+.pc-platform:has(.pc-carpeta-raiz-16[open]) .pc-flyout-panel-16,
+.pc-platform:has(.pc-carpeta-raiz-17[open]) .pc-flyout-panel-17,
+.pc-platform:has(.pc-carpeta-raiz-18[open]) .pc-flyout-panel-18,
+.pc-platform:has(.pc-carpeta-raiz-19[open]) .pc-flyout-panel-19,
+.pc-platform:has(.pc-carpeta-raiz-20[open]) .pc-flyout-panel-20,
+.pc-platform:has(.pc-carpeta-raiz-21[open]) .pc-flyout-panel-21,
+.pc-platform:has(.pc-carpeta-raiz-22[open]) .pc-flyout-panel-22,
+.pc-platform:has(.pc-carpeta-raiz-23[open]) .pc-flyout-panel-23,
+.pc-platform:has(.pc-carpeta-raiz-24[open]) .pc-flyout-panel-24,
+.pc-platform:has(.pc-carpeta-raiz-25[open]) .pc-flyout-panel-25,
+.pc-platform:has(.pc-carpeta-raiz-26[open]) .pc-flyout-panel-26,
+.pc-platform:has(.pc-carpeta-raiz-27[open]) .pc-flyout-panel-27,
+.pc-platform:has(.pc-carpeta-raiz-28[open]) .pc-flyout-panel-28,
+.pc-platform:has(.pc-carpeta-raiz-29[open]) .pc-flyout-panel-29 {
+  display: flex;
+}
+
+.pc-flyout-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px 10px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.pc-flyout-header-nombre {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.pc-flyout-cerrar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pc-flyout-cerrar svg {
+  width: 13px;
+  height: 13px;
+}
+
+.pc-flyout-cerrar:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.pc-flyout-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* En móvil el riel ya se abre como panel deslizable de ancho completo —
+   no hay espacio para correr el contenido más a la derecha todavía. */
+@media (max-width: 768px) {
+  .pc-sidebar-flyout {
+    width: 0 !important;
+    border-right-width: 0 !important;
+  }
 }
 
 /* ---- NAV LABEL ---- */
@@ -1029,6 +1298,10 @@
   color: #6b7280;
 }
 
+:root[data-theme="light"] .pc-menu-carpeta-icono-carpeta-activo {
+  color: #7c3aed;
+}
+
 :root[data-theme="light"] .pc-submenu-item {
   color: #4b5563;
 }
@@ -1105,6 +1378,9 @@
   background: #e5e7eb;
   color: #111827;
 }
+
+/* .pc-sidebar-flyout y su contenido van fijos en blanco sin importar el
+   tema (ver la definición base más arriba) — nada que pisar acá. */
 
 /* ---- BOTÓN DE TEMA (claro/oscuro) — vive en pc-sidebar-header, al lado
    del toggle de colapsar/expandir. Reusa el mismo mecanismo que ya
@@ -1222,6 +1498,23 @@
     row-gap: 6px;
   }
 
+  /* pc-topbar-derecha (buscador TRN + campana + usuario) es un solo item
+     de flex dentro de pc-topbar — el wrap de arriba lo manda entero a su
+     propia fila, pero SUS hijos seguían en una sola fila sin wrap propio.
+     El buscador TRN (input de ancho fijo 190px, pensado para desktop) no
+     entraba en pantallas angostas y se salía del viewport, generando
+     scroll horizontal en TODA la página. Acá se lo deja wrappear también,
+     y el input se angosta en vez de quedarse fijo. */
+  .pc-topbar-derecha {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    justify-content: flex-end;
+  }
+
+  .pc-topbar-buscar-trn-input {
+    width: 120px;
+  }
+
   .pc-footer {
     padding: 6px 12px;
     flex-wrap: wrap;
@@ -1286,6 +1579,25 @@
     padding: 12px 14px;
     border-radius: 10px;
     min-height: 48px;
+  }
+
+  /* Faltaba el equivalente de lo de arriba para CARPETAS — sin esto, las
+     carpetas raíz (que ahora muestran su propio ícono en vez de la
+     flechita, ver pc-carpeta-raiz) quedaban con el nombre oculto (regla
+     de "riel colapsado" de más arriba, que no distingue colapsado-de-
+     escritorio de abierto-en-el-drawer-móvil) — el panel de 280px se
+     veía como una columna de íconos sueltos, sin texto, en vez de una
+     lista normal. !important porque pisa esa misma regla de colapsado
+     (con !important también) — misma especificidad, gana por orden. */
+  .pc-platform-sidebar.pc-sidebar-visible .pc-menu-carpeta-summary {
+    justify-content: flex-start !important;
+    padding: 12px 14px !important;
+    border-radius: 10px;
+    min-height: 48px;
+  }
+  .pc-platform-sidebar.pc-sidebar-visible .pc-menu-carpeta-summary > span.pc-menu-carpeta-nombre {
+    display: block;
+    font-size: 14px;
   }
 
   /* Ocultar botón de colapso de desktop en móvil */

@@ -1202,10 +1202,15 @@ defmodule MetadataAppWeb.FichaLive do
 
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "fila"}} = assigns) do
     n = max(length(assigns.nodo["hijos"]), 1)
-    assigns = assign(assigns, :estilo_grid, "display:grid; grid-template-columns: repeat(#{n}, minmax(0, 1fr)); gap: 12px")
+    assigns = assign(assigns, :estilo_grid, "--pc-fila-cols: #{n}")
 
     ~H"""
-    <div style={@estilo_grid}>
+    <!-- Filas armadas a mano en el Constructor (plantilla_constructor_live)
+         pueden tener cualquier cantidad de columnas — en vez de forzar ese
+         mismo número de columnas fijas en un celular (ver .pc-fila-dinamica
+         en app.css, que las colapsa a 1 columna bajo 640px), quedaría
+         cada campo apretadísimo e ilegible. -->
+    <div class="pc-fila-dinamica" style={@estilo_grid}>
       <.nodo_plantilla :for={hijo <- @nodo["hijos"]} nodo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables} relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} />
     </div>
     """
@@ -1724,39 +1729,41 @@ defmodule MetadataAppWeb.FichaLive do
       <div class="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 bg-gray-50">
         <span class="font-bold text-gray-700 text-sm">{@titulo}</span>
       </div>
-      <table class="min-w-full text-xs">
-        <thead :if={@columnas != []} class="bg-gray-50">
-          <tr>
-            <th :for={col <- @columnas} class="px-4 py-2 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wide">{col.etiqueta}</th>
-            <th class="px-4 py-2"></th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-50">
-          <tr :for={fila <- @r.filas} class="hover:bg-purple-50/60">
-            <%= if @columnas == [] do %>
-              <td class="px-4 py-1.5 text-gray-700">
-                <%= if descripcion = etiqueta_fila(fila, @r.campo_descriptivo) do %>
-                  {descripcion} <span class="text-gray-400">· #{fila.id}</span>
-                <% else %>
-                  <span class="text-gray-500">#{fila.id}</span>
-                <% end %>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-xs">
+          <thead :if={@columnas != []} class="bg-gray-50">
+            <tr>
+              <th :for={col <- @columnas} class="px-4 py-2 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wide">{col.etiqueta}</th>
+              <th class="px-4 py-2"></th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-50">
+            <tr :for={fila <- @r.filas} class="hover:bg-purple-50/60">
+              <%= if @columnas == [] do %>
+                <td class="px-4 py-1.5 text-gray-700">
+                  <%= if descripcion = etiqueta_fila(fila, @r.campo_descriptivo) do %>
+                    {descripcion} <span class="text-gray-400">· #{fila.id}</span>
+                  <% else %>
+                    <span class="text-gray-500">#{fila.id}</span>
+                  <% end %>
+                </td>
+              <% else %>
+                <td :for={col <- @columnas} class="px-4 py-1.5 text-gray-700">
+                  {(Map.get(fila, col.campo) not in [nil, ""] && Map.get(fila, col.campo)) || "—"}
+                </td>
+              <% end %>
+              <td class="px-4 py-1.5 text-right">
+                <.link navigate={"/registro/#{@r.catalogo}/#{fila.id}"} class="text-purple-700 font-semibold hover:underline">
+                  Ver ficha
+                </.link>
               </td>
-            <% else %>
-              <td :for={col <- @columnas} class="px-4 py-1.5 text-gray-700">
-                {(Map.get(fila, col.campo) not in [nil, ""] && Map.get(fila, col.campo)) || "—"}
-              </td>
-            <% end %>
-            <td class="px-4 py-1.5 text-right">
-              <.link navigate={"/registro/#{@r.catalogo}/#{fila.id}"} class="text-purple-700 font-semibold hover:underline">
-                Ver ficha
-              </.link>
-            </td>
-          </tr>
-          <tr :if={@r.filas == []}>
-            <td class="px-4 py-4 text-center text-gray-400" colspan={max(length(@columnas), 1) + 1}>Sin registros todavía.</td>
-          </tr>
-        </tbody>
-      </table>
+            </tr>
+            <tr :if={@r.filas == []}>
+              <td class="px-4 py-4 text-center text-gray-400" colspan={max(length(@columnas), 1) + 1}>Sin registros todavía.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
     """
   end
