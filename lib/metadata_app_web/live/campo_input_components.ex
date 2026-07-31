@@ -31,10 +31,10 @@ defmodule MetadataAppWeb.CampoInputComponents do
     assigns = assign_name(assigns)
 
     ~H"""
-    <label class="flex items-center gap-1.5 mb-0.5">
+    <label class="flex items-center gap-1 text-[11px] leading-tight">
       <input type="hidden" name={@name} value="false" />
       <input type="checkbox" name={@name} value="true" checked={@valor == "true"} class="accent-purple-600" />
-      <span :if={@mostrar_etiqueta}>{@columna.schema_context_properties["etiqueta"]}</span>
+      <span :if={@mostrar_etiqueta} class="text-gray-500">{@columna.schema_context_properties["etiqueta"]}</span>
     </label>
     """
   end
@@ -44,9 +44,9 @@ defmodule MetadataAppWeb.CampoInputComponents do
 
     ~H"""
     <div>
-      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-0.5">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
       <select name={@name} required={@required}
-        class="w-full border border-gray-300 rounded text-gray-900 px-2 py-1.5">
+        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight">
         <option :for={v <- @columna.schema_context_properties["valores"]} value={v} selected={v == @valor}>{v}</option>
       </select>
     </div>
@@ -59,9 +59,9 @@ defmodule MetadataAppWeb.CampoInputComponents do
 
     ~H"""
     <div>
-      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-0.5">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
       <input type="number" step={@step} name={@name} value={@valor} required={@required}
-        class="w-full border border-gray-300 rounded text-gray-900 px-2 py-1.5" />
+        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight" />
     </div>
     """
   end
@@ -71,9 +71,9 @@ defmodule MetadataAppWeb.CampoInputComponents do
 
     ~H"""
     <div>
-      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-0.5">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
       <input type="date" name={@name} value={@valor} required={@required}
-        class="w-full border border-gray-300 rounded text-gray-900 px-2 py-1.5" />
+        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight" />
     </div>
     """
   end
@@ -91,9 +91,9 @@ defmodule MetadataAppWeb.CampoInputComponents do
 
     ~H"""
     <div>
-      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-0.5">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
       <select name={@name} required={@required}
-        class="w-full border border-gray-300 rounded text-gray-900 px-2 py-1.5">
+        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight">
         <option :for={{id, etiqueta} <- @opciones} value={id} selected={to_string(id) == @valor}>{etiqueta}</option>
       </select>
     </div>
@@ -106,10 +106,10 @@ defmodule MetadataAppWeb.CampoInputComponents do
 
     ~H"""
     <div>
-      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-0.5">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
       <input type="text" name={@name} value={@valor} required={@required}
         maxlength={@columna.schema_context_properties["longitud"]}
-        class="w-full border border-gray-300 rounded text-gray-900 px-2 py-1.5" />
+        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight" />
     </div>
     """
   end
