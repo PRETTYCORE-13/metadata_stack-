@@ -111,13 +111,28 @@ if config_env() == :prod do
   # "falla fuerte, no silencioso" que ya usa DB_* arriba: sin estas 3
   # variables, el release ni arranca, en vez de mandar magic-links al
   # vacío sin que nadie se entere.
+  smtp_relay =
+    System.get_env("SMTP_RELAY") || raise("environment variable SMTP_RELAY is missing")
+
   config :metadata_app, MetadataApp.Mailer,
     adapter: Swoosh.Adapters.SMTP,
-    relay: System.get_env("SMTP_RELAY") || raise("environment variable SMTP_RELAY is missing"),
+    relay: smtp_relay,
     username: System.get_env("SMTP_USERNAME") || raise("environment variable SMTP_USERNAME is missing"),
     password: System.get_env("SMTP_PASSWORD") || raise("environment variable SMTP_PASSWORD is missing"),
     port: String.to_integer(System.get_env("SMTP_PORT") || "587"),
     tls: :always,
+    # Sin cacerts explícitos, el handshake TLS con Gmail falla
+    # (:tls_failed) — Erlang no usa el trust store del SO por su cuenta,
+    # hay que pasárselo. Confirmado en vivo contra smtp.gmail.com
+    # (2026-07-31): sin esto el envío nunca se completaba (ni error visible
+    # en logs, porque el resultado {:error, ...} se ignora en el flujo de
+    # login por diseño anti-enumeración).
+    tls_options: [
+      verify: :verify_peer,
+      cacerts: :public_key.cacerts_get(),
+      server_name_indication: String.to_charlist(smtp_relay),
+      depth: 3
+    ],
     auth: :always,
     retries: 2
 
