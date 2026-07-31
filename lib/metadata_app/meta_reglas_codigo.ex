@@ -239,6 +239,35 @@ defmodule MetadataApp.MetaReglasCodigo do
     compilar_disponible?() and Enum.any?(@tipos, &(not sincronizado?(header, &1)))
   end
 
+  @doc """
+  Si en dev/test hay código guardado que quedó desincronizado del
+  archivo en disco (alguien lo editó directo en su editor de texto, no
+  vía la pestaña Reglas del Builder — ver el aviso de sin_compilar?/1),
+  lo toma como la versión "oficial": lo guarda y lo recompila. Así
+  puede_desplegar?/1 (y por lo tanto el checkbox de "Publicar" en
+  BcListLive) no se queda bloqueado por un candado del que nadie se
+  acordó de destrabar a mano. No-op si ya está sincronizado, si no hay
+  código guardado todavía, si el archivo no existe, o fuera de dev/test.
+  """
+  def resincronizar_si_hace_falta(header) do
+    if compilar_disponible?() do
+      Enum.each(@tipos, fn tipo ->
+        if not sincronizado?(header, tipo) do
+          case File.read(ruta_disco(header.schema_context_name, tipo)) do
+            {:ok, codigo} ->
+              {:ok, _} = guardar(header, tipo, codigo)
+              compilar(header, tipo)
+
+            {:error, _} ->
+              :ok
+          end
+        end
+      end)
+    end
+
+    :ok
+  end
+
   # --- Compilar (dev/test-only) / Publicar (git commit local, nunca push) ---
 
   def compilar_disponible?, do: Application.get_env(:metadata_app, :generar_catalogos_en_caliente, false)
