@@ -414,13 +414,13 @@ defmodule MetadataAppWeb.CatalogoLive do
     ~H"""
     <div class="p-6">
       <div class="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
-        <div class="flex items-center justify-between mb-4">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
           <div class="flex items-center gap-2">
             <span class="material-symbols-outlined text-purple-600" title="Consulta Ecto (solo lectura)">search</span>
             <h1 class="text-xl font-bold text-gray-900">{@label}</h1>
           </div>
 
-          <span class="text-xs font-medium text-gray-500 bg-gray-100 rounded-full px-3 py-1">
+          <span class="text-xs font-medium text-gray-500 bg-gray-100 rounded-full px-3 py-1 self-start sm:self-auto">
             {@inicio}-{@fin} de {@total_filas}
           </span>
         </div>
@@ -529,16 +529,17 @@ defmodule MetadataAppWeb.CatalogoLive do
     ~H"""
     <div class="p-6">
       <div class="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
-        <div class="flex items-center justify-between mb-4">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
           <h1 class="text-xl font-bold text-gray-900">{@label}</h1>
 
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 flex-wrap">
             <.link :if={@campos_alta != []} navigate={"/registro/#{@current_page}/nuevo"}
+              aria-label="Nuevo registro"
               class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
               </svg>
-              Nuevo registro
+              <span class="hidden sm:inline">Nuevo registro</span>
             </.link>
             <span class="text-xs font-medium text-gray-500 bg-gray-100 rounded-full px-3 py-1">
               {@inicio}-{@fin} de {@total_filas}
@@ -549,7 +550,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 phx-click="pagina_anterior"
                 disabled={@pagina <= 1}
                 aria-label="Página anterior"
-                class="w-7 h-7 flex items-center justify-center rounded-md text-gray-600 hover:bg-white hover:shadow-sm disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:shadow-none transition"
+                class="w-9 h-9 sm:w-7 sm:h-7 flex items-center justify-center rounded-md text-gray-600 hover:bg-white hover:shadow-sm disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:shadow-none transition"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="15 18 9 12 15 6" />
@@ -560,7 +561,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 phx-click="pagina_siguiente"
                 disabled={@pagina >= @total_paginas}
                 aria-label="Página siguiente"
-                class="w-7 h-7 flex items-center justify-center rounded-md text-gray-600 hover:bg-white hover:shadow-sm disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:shadow-none transition"
+                class="w-9 h-9 sm:w-7 sm:h-7 flex items-center justify-center rounded-md text-gray-600 hover:bg-white hover:shadow-sm disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:shadow-none transition"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="9 18 15 12 9 6" />
