@@ -10,6 +10,7 @@ defmodule MetadataAppWeb.Router do
     plug :put_root_layout, html: {MetadataAppWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+    plug MetadataAppWeb.DevAutoLogin
     plug :fetch_current_scope_for_usuario
   end
 

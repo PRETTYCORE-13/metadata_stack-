@@ -46,6 +46,12 @@ defmodule MetadataAppWeb.FichaLiveAuditoriaTest do
       "meta_fixture_cliente_venta" => "100.50"
     }
 
+    # El form ya no lee los valores directo del submit -- "validar" (phx-change)
+    # los mantiene en vivo en @form_values (para que "Guardar" funcione parado
+    # en cualquier tab, no solo en "Datos") -- un browser real ya dispara esto
+    # solo mientras el usuario tipea, acá hay que simularlo antes de enviar.
+    render_change(view, "validar", %{"campos" => campos})
+
     view
     |> form("#form-ficha-datos", %{"campos" => campos})
     |> render_submit()

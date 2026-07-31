@@ -429,18 +429,77 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
 
   # Opciones para el <select> de un campo tipo "referencia" en
   # CampoInputComponents.campo_input/1 (picker simple, sin búsqueda) — TODOS
-  # los registros del catálogo destino, con la etiqueta armada a partir de
-  # "campos_acompanamiento" ya configurado en BcMotorLive → pestaña
-  # Relaciones (mismo criterio que mapa_acompanamiento/2 para el GET/tabla).
-  # Sin nada configurado ahí, cae al id crudo — sigue siendo mejor que
-  # esconder el campo. Tope de 500 registros a propósito: un <select> con
+  # los registros del catálogo destino, con la etiqueta armada por
+  # etiqueta_para_referencia/2: prioriza "campo_visualizacion" (BcMotorLive →
+  # Relaciones → Configuración de visualización) si está configurado, y si
+  # no cae al join de "campos_acompanamiento" de siempre (retrocompatible,
+  # sin migración de datos — ver validar_campo_visualizacion/1 en
+  # MetaSchemaContext). Tope de 500 registros a propósito: un <select> con
   # más opciones que eso deja de ser usable de todos modos (búsqueda con
   # filtro real es Fase 2, ver docs/roadmap-campos-acompanamiento.md).
   def opciones_referencia(props) do
     case MetadataApp.BusinessProcessBuilder.MetaSchemaContext.modulo_por_nombre(props["catalogo"]) do
       nil -> []
-      modulo -> modulo |> listar(%{}, limit: 500) |> Enum.map(&{&1.id, etiqueta_opcion_referencia(&1, props["campos_acompanamiento"])})
+      modulo -> modulo |> listar(%{}, limit: 500) |> Enum.map(&{&1.id, etiqueta_para_referencia(&1, props)})
     end
+  end
+
+  @doc "Pública para la vista previa en vivo del panel de Relaciones (BcMotorLive)."
+  def etiqueta_para_referencia(registro, %{"campo_visualizacion" => %{} = config}), do: etiqueta_con_visualizacion(registro, config)
+  def etiqueta_para_referencia(registro, props), do: etiqueta_opcion_referencia(registro, props["campos_acompanamiento"])
+
+  defp etiqueta_con_visualizacion(registro, %{"modo" => "descripcion", "campo_descripcion" => campo}) do
+    valor_campo(registro, campo) || "##{registro.id}"
+  end
+
+  defp etiqueta_con_visualizacion(registro, %{"modo" => "codigo_descripcion"} = config) do
+    [valor_campo(registro, config["campo_codigo"]), valor_campo(registro, config["campo_descripcion"])]
+    |> Enum.reject(&is_nil/1)
+    |> case do
+      [] -> "##{registro.id}"
+      partes -> Enum.join(partes, " - ")
+    end
+  end
+
+  defp etiqueta_con_visualizacion(registro, %{"modo" => "plantilla", "plantilla" => plantilla}) when is_binary(plantilla) do
+    sustituir_variables(plantilla, registro)
+  end
+
+  defp etiqueta_con_visualizacion(registro, %{"modo" => "calculado", "formula" => formula}) when is_binary(formula) do
+    valores = registro |> Map.from_struct() |> Map.new(fn {campo, valor} -> {Atom.to_string(campo), valor} end)
+
+    case MetadataApp.MetaPlantillas.Formula.evaluar(formula, valores) do
+      {:ok, resultado} -> to_string(resultado)
+      {:error, _motivo} -> "##{registro.id}"
+    end
+  end
+
+  defp etiqueta_con_visualizacion(registro, _config), do: "##{registro.id}"
+
+  defp valor_campo(_registro, nil), do: nil
+
+  defp valor_campo(registro, campo) do
+    case Map.get(registro, safe_atom(campo)) do
+      valor when valor in [nil, ""] -> nil
+      valor -> to_string(valor)
+    end
+  end
+
+  # "{campo}" -> el valor real de esa columna en `registro`; cualquier otra
+  # cosa (texto literal entre las llaves, un typo) se deja intacta —
+  # validar_campo_visualizacion/1 ya impide guardar una plantilla con
+  # variables que no existen, esto es la segunda capa de defensa en tiempo
+  # de lectura (fail-open, nunca rompe el picker por una config vieja).
+  defp sustituir_variables(plantilla, registro) do
+    Regex.replace(~r/\{(\w+)\}/, plantilla, fn original, campo ->
+      valor_campo(registro, campo) || original
+    end)
+  end
+
+  defp safe_atom(campo) do
+    String.to_existing_atom(campo)
+  rescue
+    ArgumentError -> nil
   end
 
   defp etiqueta_opcion_referencia(registro, campos) when is_list(campos) and campos != [] do

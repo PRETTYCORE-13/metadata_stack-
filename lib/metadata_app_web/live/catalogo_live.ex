@@ -647,7 +647,8 @@ defmodule MetadataAppWeb.CatalogoLive do
             </thead>
             <tbody class="divide-y divide-gray-100">
               <%= for fila <- @filas do %>
-                <tr class="hover:bg-purple-50/60 transition-colors">
+                <tr class="hover:bg-purple-50/60 transition-colors cursor-pointer"
+                  ondblclick={"window.location='/registro/#{@current_page}/#{fila.id}'"}>
                   <td class="px-4 py-1.5 text-[10px] text-gray-700">
                     {fila.id}
                   </td>

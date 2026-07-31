@@ -11,7 +11,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
   on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "editar"}}
 
-  alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador}
+  alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador, CatalogoGenerico}
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.MetaReglasCodigo
   alias MetadataAppWeb.AdminNav
@@ -25,6 +25,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
     %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"}
   ]
+
 
   # Mismo set curado que BcListLive (modales de carpeta) — el ícono del
   # header se edita con el mismo selector en ambas pantallas.
@@ -423,6 +424,14 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # --- Relaciones: qué campos de OTRO catálogo (el referenciado) trae de
   # prestado un campo tipo "referencia" de este ------------------------------
 
+  @modos_visualizacion [
+    {"sin_configurar", "Sin configurar (usar los campos de arriba)"},
+    {"descripcion", "Solo descripción"},
+    {"codigo_descripcion", "Código y descripción"},
+    {"plantilla", "Plantilla personalizada"},
+    {"calculado", "Expresión calculada"}
+  ]
+
   def handle_event("abrir_form_relacion", %{"campo" => campo}, socket) do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
     props = detalle.schema_context_properties
@@ -441,6 +450,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
        "seleccionados" => props["campos_acompanamiento"] || [],
        "campos_propios" => campos_propios,
        "seleccionados_propios" => props["campos_relacion"] || [],
+       "campo_visualizacion" => props["campo_visualizacion"] || %{"modo" => "sin_configurar"},
+       "registro_muestra" => registro_muestra_de(props["catalogo"]),
        "error" => nil
      })}
   end
@@ -449,16 +460,38 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     {:noreply, assign(socket, :relacion_form, nil)}
   end
 
+  # Solo actualiza el estado en memoria (nunca la base) — así la vista
+  # previa de "Configuración de visualización" reacciona en vivo mientras
+  # se arma la plantilla/fórmula, sin que cada tecla dispare un guardado
+  # real. El guardado de verdad sigue siendo phx-submit="guardar_relacion".
+  def handle_event("previsualizar_visualizacion", params, socket) do
+    campo_visualizacion = Map.get(params, "campo_visualizacion", %{})
+    {:noreply, update(socket, :relacion_form, &Map.put(&1, "campo_visualizacion", campo_visualizacion))}
+  end
+
+  # Botones "insertar campo" de la plantilla/fórmula — mismo criterio que
+  # el constructor de fórmulas de campo_calculado (agregar_token_formula/2
+  # en PlantillaConstructorLive): concatenar texto al final, sin depender
+  # de la posición del cursor en el input.
+  def handle_event("insertar_variable_visualizacion", %{"campo" => campo, "destino" => destino}, socket) do
+    cv = socket.assigns.relacion_form["campo_visualizacion"]
+    actual = Map.get(cv, destino) || ""
+    cv_actualizado = Map.put(cv, destino, actual <> "{#{campo}}")
+    {:noreply, update(socket, :relacion_form, &Map.put(&1, "campo_visualizacion", cv_actualizado))}
+  end
+
   def handle_event("guardar_relacion", params, socket) do
     %{"campo" => campo} = socket.assigns.relacion_form
     campos_seleccionados = params |> Map.get("campos", []) |> List.wrap() |> Enum.reject(&(&1 == ""))
     campos_relacion = params |> Map.get("campos_relacion", []) |> List.wrap() |> Enum.reject(&(&1 == ""))
+    campo_visualizacion = Map.get(params, "campo_visualizacion", %{})
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
 
     props =
       detalle.schema_context_properties
       |> Map.put("campos_acompanamiento", campos_seleccionados)
       |> Map.put("campos_relacion", campos_relacion)
+      |> aplicar_campo_visualizacion(campo_visualizacion)
 
     case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
       {:ok, _detalle} ->
@@ -470,6 +503,33 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       {:error, changeset} ->
         {:noreply, update(socket, :relacion_form, &Map.put(&1, "error", resumen_errores(changeset)))}
+    end
+  end
+
+  # Categoría de un campo (acordeón donde cae en la Ficha 360° → tab
+  # Detalle) — sin modal, cambio directo apenas se elige la opción, mismo
+  # criterio inmediato que guardar_get_view/2 de abajo.
+  def handle_event("cambiar_categoria", %{"campo" => campo, "categoria" => categoria}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "categoria", categoria)
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la categoría de \"#{campo}\".")}
+    end
+  end
+
+  # "En grilla" de un campo — si aparece como columna en la grilla del tab
+  # Detalle de la Ficha 360° (catálogos con muchos campos quieren mostrar
+  # solo un subconjunto ahí; el formulario de al lado siempre muestra
+  # todos). Mismo criterio inmediato que cambiar_categoria/2 arriba.
+  def handle_event("cambiar_mostrar_en_grilla", %{"campo" => campo, "mostrar_en_grilla" => valor}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "mostrar_en_grilla", valor == "true")
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"#{campo}\".")}
     end
   end
 
@@ -899,6 +959,27 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # texto plano "campo: mensaje" (mismo criterio que ya usan otras pantallas
   # de este proyecto para errores de changeset).
   defp resumen_errores(changeset), do: MetadataApp.MetaErrores.resumen(changeset)
+
+  # "sin_configurar" (default de abrir_form_relacion/1 cuando el campo
+  # nunca tuvo campo_visualizacion) borra la llave entera en vez de
+  # guardar el modo tal cual — así un catálogo que nunca tocó esta sección
+  # sigue funcionando 100% con campos_acompanamiento, sin ninguna llave
+  # nueva en la base (retrocompatibilidad real, no solo "vacío").
+  defp aplicar_campo_visualizacion(props, %{"modo" => "sin_configurar"}), do: Map.delete(props, "campo_visualizacion")
+  defp aplicar_campo_visualizacion(props, config), do: Map.put(props, "campo_visualizacion", config)
+
+  defp registro_muestra_de(catalogo) do
+    case MetaSchemaContext.modulo_por_nombre(catalogo) do
+      nil ->
+        nil
+
+      modulo ->
+        case CatalogoGenerico.listar(modulo, %{}, limit: 1) do
+          [registro] -> registro
+          [] -> nil
+        end
+    end
+  end
 
   # --- Tab API: ejemplos de payload por verbo ---------------------------------
   # Documentación generada a partir de los campos REALES del catálogo (no
@@ -1362,6 +1443,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Etiqueta</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Opcional</th>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Categoría (Ficha → Detalle)</th>
+                <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si aparece como columna en la grilla del tab Detalle de la Ficha 360° — el formulario de al lado siempre muestra todos los campos, esto es solo la tabla">En grilla</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
             </thead>
@@ -1382,6 +1465,22 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                     <% end %>
                   </td>
                   <td class="px-1.5 py-1 text-gray-600">{if Map.get(props, "opcional"), do: "Sí", else: "—"}</td>
+                  <td class="px-1.5 py-1">
+                    <form phx-change="cambiar_categoria">
+                      <input type="hidden" name="campo" value={c.schema_context_field} />
+                      <select name="categoria" class="border border-gray-300 rounded px-1 py-0.5 text-[11px]">
+                        <option :for={{codigo, etiqueta} <- MetaSchemaContext.categorias_campo()} value={codigo}
+                          selected={MetaSchemaContext.categoria_campo(props) == codigo}>{etiqueta}</option>
+                      </select>
+                    </form>
+                  </td>
+                  <td class="px-1.5 py-1 text-center">
+                    <form phx-change="cambiar_mostrar_en_grilla">
+                      <input type="hidden" name="campo" value={c.schema_context_field} />
+                      <input type="hidden" name="mostrar_en_grilla" value="false" />
+                      <input type="checkbox" name="mostrar_en_grilla" value="true" checked={MetaSchemaContext.mostrar_en_grilla?(props)} class="accent-purple-600" />
+                    </form>
+                  </td>
                   <td class="px-1.5 py-1">
                     <button type="button" phx-click="abrir_eliminar_campo" phx-value-campo={c.schema_context_field}
                       class="text-red-600 hover:text-red-800 text-[11px] font-semibold">Eliminar</button>
@@ -2289,9 +2388,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # Qué campos del catálogo REFERENCIADO trae de prestado este campo tipo
   # "referencia" — lanzado desde el panel Relaciones.
   defp modal_relacion(assigns) do
+    assigns = assign(assigns, :modos_visualizacion, @modos_visualizacion)
+
     ~H"""
     <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div class="bg-white rounded-xl shadow-lg max-w-sm w-full p-4 text-xs">
+      <div class="bg-white rounded-xl shadow-lg max-w-xl w-full p-4 text-xs max-h-[90vh] overflow-y-auto">
         <h2 class="text-sm font-bold text-gray-900 mb-1">Configurar relación</h2>
         <p class="text-gray-600 mb-3">
           Campos de <strong class="font-mono">{@form["catalogo_destino"]}</strong> que <strong class="font-mono">{@form["campo"]}</strong> trae de prestado al listar/consultar este catálogo.
@@ -2311,7 +2412,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             </button>
           </div>
         <% else %>
-          <form phx-submit="guardar_relacion">
+          <form phx-change="previsualizar_visualizacion" phx-submit="guardar_relacion">
             <div class="flex flex-col gap-1.5 mb-3">
               <%= for campo <- @form["campos_destino"] do %>
                 <label class="flex items-center gap-1.5">
@@ -2340,6 +2441,87 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
               <p :if={@form["campos_propios"] != [] and @form["seleccionados_propios"] == []} class="text-gray-400 mt-1">
                 Sin nada tildado, se muestra la descripción de siempre + el id.
               </p>
+            </div>
+
+            <% cv = @form["campo_visualizacion"] %>
+            <div class="border-t border-gray-200 pt-2.5 mt-1 mb-3">
+              <p class="font-semibold text-gray-700 mb-1.5">Configuración de visualización</p>
+              <p class="text-gray-500 mb-2">
+                El valor guardado siempre es el id de <strong class="font-mono">{@form["catalogo_destino"]}</strong> — esto solo define el TEXTO que se muestra al elegir/ver este campo.
+              </p>
+
+              <div>
+                <label class="block text-gray-700 mb-0.5">Tipo de visualización</label>
+                <select name="campo_visualizacion[modo]" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                  <option :for={{valor, etiqueta} <- @modos_visualizacion} value={valor} selected={cv["modo"] == valor}>{etiqueta}</option>
+                </select>
+              </div>
+
+              <div :if={cv["modo"] == "descripcion"} class="mt-2">
+                <label class="block text-gray-700 mb-0.5">Campo de descripción</label>
+                <select name="campo_visualizacion[campo_descripcion]" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                  <option value="">— Elegir —</option>
+                  <option :for={campo <- @form["campos_destino"]} value={campo} selected={cv["campo_descripcion"] == campo}>{campo}</option>
+                </select>
+              </div>
+
+              <div :if={cv["modo"] == "codigo_descripcion"} class="mt-2 grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-gray-700 mb-0.5">Campo de código</label>
+                  <select name="campo_visualizacion[campo_codigo]" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                    <option value="">— Elegir —</option>
+                    <option :for={campo <- @form["campos_destino"]} value={campo} selected={cv["campo_codigo"] == campo}>{campo}</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-gray-700 mb-0.5">Campo de descripción</label>
+                  <select name="campo_visualizacion[campo_descripcion]" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                    <option value="">— Elegir —</option>
+                    <option :for={campo <- @form["campos_destino"]} value={campo} selected={cv["campo_descripcion"] == campo}>{campo}</option>
+                  </select>
+                </div>
+              </div>
+
+              <div :if={cv["modo"] == "plantilla"} class="mt-2">
+                <label class="block text-gray-700 mb-0.5">Plantilla de visualización</label>
+                <input type="text" name="campo_visualizacion[plantilla]" value={cv["plantilla"]} placeholder="{campo_a} - {campo_b}"
+                  class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono" />
+                <p class="text-gray-400 mt-1">Insertar campo:</p>
+                <div class="flex flex-wrap gap-1 mt-0.5">
+                  <button :for={campo <- @form["campos_destino"]} type="button" phx-click="insertar_variable_visualizacion"
+                    phx-value-campo={campo} phx-value-destino="plantilla"
+                    class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-mono hover:bg-indigo-100">+{"{" <> campo <> "}"}</button>
+                </div>
+              </div>
+
+              <div :if={cv["modo"] == "calculado"} class="mt-2">
+                <label class="block text-gray-700 mb-0.5">Fórmula</label>
+                <input type="text" name="campo_visualizacion[formula]" value={cv["formula"]}
+                  placeholder="IF {campo} > 0 THEN &quot;Sí&quot; ELSE &quot;No&quot;"
+                  class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono" />
+                <p class="text-gray-400 mt-1">Insertar campo:</p>
+                <div class="flex flex-wrap gap-1 mt-0.5">
+                  <button :for={campo <- @form["campos_destino"]} type="button" phx-click="insertar_variable_visualizacion"
+                    phx-value-campo={campo} phx-value-destino="formula"
+                    class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-mono hover:bg-indigo-100">+{"{" <> campo <> "}"}</button>
+                </div>
+              </div>
+
+              <%= if cv["modo"] != "sin_configurar" do %>
+                <div :if={@form["registro_muestra"]} class="mt-2 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5">
+                  <p class="text-gray-500">Vista previa (con un registro real):</p>
+                  <p class="font-semibold text-gray-900">{CatalogoGenerico.etiqueta_para_referencia(@form["registro_muestra"], %{"campo_visualizacion" => cv})}</p>
+                </div>
+                <p :if={!@form["registro_muestra"]} class="mt-2 text-gray-400">
+                  <strong class="font-mono">{@form["catalogo_destino"]}</strong> todavía no tiene registros para previsualizar.
+                </p>
+              <% end %>
+
+              <div :if={cv["modo"] in ["plantilla", "calculado"]} class="mt-2 text-gray-400">
+                <p class="font-semibold text-gray-500">Ejemplos</p>
+                <p>Plantilla: <span class="font-mono">{"{codigo} - {nombre}"}</span> → "K001 - Coca-Cola"</p>
+                <p>Fórmula: <span class="font-mono">{~s(IF {stock} > 0 THEN "Disponible" ELSE "Agotado")}</span></p>
+              </div>
             </div>
 
             <div class="flex justify-end gap-2">

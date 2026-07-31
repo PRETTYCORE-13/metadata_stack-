@@ -147,6 +147,7 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:detalle_renglones, %{})
          |> assign(:detalle_renglones_nuevos, %{})
          |> assign(:detalle_renglones_editados, %{})
+         |> assign(:detalle_seleccion, %{})
          |> assign(:detalle_form_error, nil)}
     end
   end
@@ -295,10 +296,14 @@ defmodule MetadataAppWeb.FichaLive do
       {:ok, actualizado} ->
         socket = cargar_registro(socket, actualizado)
 
+        # columnas_grilla (subset curado), no columnas (completo) — el hook
+        # JS se montó con ese mismo subset (ver panel_detalle_catalogo/1),
+        # así que grid_recargar tiene que reconstruir "values" con las
+        # mismas columnas o quedan desalineadas con this.columns del hook.
         columnas =
           socket.assigns.catalogos_detalle
-          |> Enum.find(%{columnas: []}, &(&1.nombre == catalogo))
-          |> Map.get(:columnas)
+          |> Enum.find(%{columnas_grilla: []}, &(&1.nombre == catalogo))
+          |> Map.get(:columnas_grilla)
 
         filas = Map.get(socket.assigns.detalle_renglones, catalogo, [])
 
@@ -311,6 +316,125 @@ defmodule MetadataAppWeb.FichaLive do
 
       {:error, razon} ->
         {:noreply, assign(socket, :error_guardado, formatear_error(razon))}
+    end
+  end
+
+  # --- Layout de 2 columnas del tab Detalle: formulario fijo (izq, 1/3) +
+  # grilla (der, 2/3) — el formulario muestra/edita SIEMPRE el renglón
+  # "seleccionado" en la grilla (@detalle_seleccion, por catálogo), nunca
+  # un modal ni una fila expandida. El dueño de los DATOS de una fila
+  # sigue siendo el hook JS (this.rows, igual que antes) — el formulario
+  # es una vista alternativa de ESA misma fila, sincronizada en las dos
+  # direcciones por push_event, reusando CampoInputComponents.campo_input/1
+  # (con su picker de "referencia" ya construido) en vez de reinventar el
+  # dispatch por tipo en JS.
+
+  # El hook manda esto cada vez que la fila "activa" cambia (click,
+  # flechas, Tab, foco programático) — nunca por tecla dentro de la MISMA
+  # fila. `valores` son los que la grilla YA tiene en memoria para esa fila
+  # (incluye tipeo sin sincronizar todavía), así el formulario arranca
+  # siempre con el dato más fresco, no con lo último persistido.
+  def handle_event(
+        "detalle_seleccionar_fila",
+        %{"catalogo" => catalogo, "client_id" => client_id, "valores" => valores} = params,
+        socket
+      ) do
+    seleccion = %{client_id: client_id, renglon_id: Map.get(params, "renglon_id"), valores: valores}
+    {:noreply, assign(socket, :detalle_seleccion, Map.put(socket.assigns.detalle_seleccion, catalogo, seleccion))}
+  end
+
+  # Edición en el formulario izquierdo — refleja de inmediato en la fila
+  # correspondiente de la grilla (grid_actualizar_fila), que corre el mismo
+  # camino de siempre ahí (setCelda/validación/sync debounced) como si el
+  # usuario hubiese tipeado directo en la celda.
+  def handle_event("detalle_form_cambiar", %{"catalogo" => catalogo, "renglon" => campos}, socket) do
+    case Map.get(socket.assigns.detalle_seleccion, catalogo) do
+      nil ->
+        {:noreply, socket}
+
+      seleccion ->
+        nueva_seleccion = %{seleccion | valores: Map.merge(seleccion.valores, campos)}
+
+        {:noreply,
+         socket
+         |> assign(:detalle_seleccion, Map.put(socket.assigns.detalle_seleccion, catalogo, nueva_seleccion))
+         |> push_event("grid_actualizar_fila", %{catalogo: catalogo, client_id: seleccion.client_id, valores: campos})}
+    end
+  end
+
+  # Limpia el formulario y le pide a la grilla una fila nueva en blanco —
+  # la grilla la crea, la enfoca (arranca a escribir de una) y reporta su
+  # client_id real vía "detalle_seleccionar_fila", cerrando el círculo.
+  def handle_event("detalle_nueva_linea", %{"catalogo" => catalogo}, socket) do
+    seleccion = %{client_id: nil, renglon_id: nil, valores: %{}}
+
+    {:noreply,
+     socket
+     |> assign(:detalle_seleccion, Map.put(socket.assigns.detalle_seleccion, catalogo, seleccion))
+     |> push_event("grid_nueva_fila", %{catalogo: catalogo})}
+  end
+
+  # Solo para una fila TODAVÍA no persistida (R12: un renglón ya guardado
+  # nunca se borra directo, solo por una transición real — ver
+  # "renglon_transicion" arriba). El botón ya viene disabled en ese caso
+  # (ver tab_detalle/1), esto es la defensa por si igual llega el evento.
+  def handle_event("detalle_eliminar_linea", %{"catalogo" => catalogo}, socket) do
+    case Map.get(socket.assigns.detalle_seleccion, catalogo) do
+      %{renglon_id: nil, client_id: client_id} when not is_nil(client_id) ->
+        {:noreply,
+         socket
+         |> assign(:detalle_seleccion, Map.delete(socket.assigns.detalle_seleccion, catalogo))
+         |> push_event("grid_quitar_fila", %{catalogo: catalogo, client_id: client_id})}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  # Prev/Next entre renglones YA persistidos (@detalle_renglones — los
+  # todavía sin guardar solo existen en la grilla, no acá). Los valores del
+  # formulario salen directo de ahí, sin ida y vuelta al hook — solo se le
+  # pide que resalte/enfoque esa fila (grid_resaltar_fila), que de paso
+  # confirma el client_id real al reportar la selección de nuevo.
+  def handle_event("detalle_navegar", %{"catalogo" => catalogo, "direccion" => direccion}, socket) do
+    filas = Map.get(socket.assigns.detalle_renglones, catalogo, [])
+    columnas = columnas_de_catalogo(socket.assigns.catalogos_detalle, catalogo)
+    actual_id = get_in(socket.assigns.detalle_seleccion, [catalogo, :renglon_id])
+
+    case renglon_adyacente(filas, actual_id, direccion) do
+      nil ->
+        {:noreply, socket}
+
+      fila ->
+        seleccion = %{client_id: nil, renglon_id: fila.renglon_id, valores: valores_como_texto(fila, columnas)}
+
+        {:noreply,
+         socket
+         |> assign(:detalle_seleccion, Map.put(socket.assigns.detalle_seleccion, catalogo, seleccion))
+         |> push_event("grid_resaltar_fila", %{catalogo: catalogo, renglon_id: fila.renglon_id})}
+    end
+  end
+
+  defp columnas_de_catalogo(catalogos_detalle, nombre) do
+    catalogos_detalle |> Enum.find(%{columnas: []}, &(&1.nombre == nombre)) |> Map.get(:columnas)
+  end
+
+  defp valores_como_texto(fila, columnas) do
+    Map.new(columnas, fn col ->
+      {col.schema_context_field, to_string(Map.get(fila, String.to_existing_atom(col.schema_context_field)))}
+    end)
+  end
+
+  defp renglon_adyacente([], _actual_id, _direccion), do: nil
+  defp renglon_adyacente(filas, nil, _direccion), do: List.first(filas)
+
+  defp renglon_adyacente(filas, actual_id, direccion) do
+    idx = Enum.find_index(filas, &(&1.renglon_id == actual_id))
+    delta = if direccion == "siguiente", do: 1, else: -1
+
+    case idx do
+      nil -> List.first(filas)
+      i -> Enum.at(filas, i + delta)
     end
   end
 
@@ -615,6 +739,7 @@ defmodule MetadataAppWeb.FichaLive do
     |> assign(:detalle_renglones, detalle_renglones)
     |> assign(:detalle_renglones_nuevos, %{})
     |> assign(:detalle_renglones_editados, %{})
+    |> assign(:detalle_seleccion, %{})
     |> assign(:detalle_form_error, nil)
   end
 
@@ -629,7 +754,14 @@ defmodule MetadataAppWeb.FichaLive do
         |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
         |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
 
-      %{nombre: h.schema_context_name, etiqueta: h.schema_context_label, columnas: columnas_detalle}
+      # :columnas_grilla — subconjunto curado (BcMotorLive → Campos → "En
+      # grilla") para catálogos con muchos campos, donde mostrar TODOS como
+      # columna en la tabla ancha es inusable. :columnas (completo) sigue
+      # siendo lo que usa el formulario de al lado (formulario_renglon/1) —
+      # ahí sí entra cualquier campo visible, sin curar.
+      columnas_grilla = Enum.filter(columnas_detalle, &MetaSchemaContext.mostrar_en_grilla?(&1.schema_context_properties))
+
+      %{nombre: h.schema_context_name, etiqueta: h.schema_context_label, columnas: columnas_detalle, columnas_grilla: columnas_grilla}
     end)
   end
 
@@ -946,7 +1078,8 @@ defmodule MetadataAppWeb.FichaLive do
       <.tab_relaciones :if={@tab == "relaciones"} relaciones={@relaciones} />
       <.tab_historial :if={@tab == "historial"} historial={@historial} estados_por_id={@estados_por_id} />
       <.tab_detalle :if={@tab == "detalle"} modo={@modo} catalogos_detalle={@catalogos_detalle} detalle_renglones={@detalle_renglones}
-        otras_transiciones={@otras_transiciones} detalle_form_error={@detalle_form_error} estados_por_id={@estados_por_id} />
+        otras_transiciones={@otras_transiciones} detalle_form_error={@detalle_form_error} estados_por_id={@estados_por_id}
+        detalle_seleccion={@detalle_seleccion} />
     </div>
     """
   end
@@ -1675,33 +1808,135 @@ defmodule MetadataAppWeb.FichaLive do
   attr :otras_transiciones, :list, default: []
   attr :detalle_form_error, :string, default: nil
   attr :estados_por_id, :map, required: true
+  attr :detalle_seleccion, :map, required: true
 
-  # Una sola grilla por catálogo detalle (Grid Editable Empresarial, ver
-  # docs/catalogo-maestro-detalle-requerimientos.md Fase 6/Grid Editable) —
-  # renglones ya persistidos y renglones nuevos conviven en la misma tabla:
-  # el hook JS GridEditableComponents.grid/1 se encarga de mostrarlos, dejar
-  # tipear filas nuevas al final, y ofrecer las transiciones disponibles
-  # (@otras_transiciones) como acción por fila para un renglón ya
-  # persistido — R12 sigue intacto (nunca se edita/borra un renglón
-  # directo, esa transición es la única forma real de tocarlo).
+  # Layout tipo IDE (editor fijo + área de trabajo amplia): un catálogo
+  # detalle = un par formulario (1/3, izquierda) + grilla (2/3, derecha),
+  # apilados verticalmente si hay más de un catálogo detalle. El
+  # formulario nunca es un modal ni una fila expandida — siempre muestra
+  # el renglón "seleccionado" en la grilla de al lado (ver
+  # panel_detalle_catalogo/1).
   defp tab_detalle(assigns) do
     ~H"""
     <div class="space-y-4">
       <div class="text-xs text-purple-700 bg-purple-50 rounded-lg px-3 py-2">
-        Escribí directo en la tabla, o pegá filas copiadas de Excel — se guarda todo junto con el resto de los cambios, al hacer clic en "Guardar" arriba.
+        Elegí una fila de la tabla (o "Nueva línea") para editarla en el formulario — también podés escribir directo en la tabla, o pegar filas copiadas de Excel. Se guarda todo junto con el resto de los cambios, al hacer clic en "Guardar" arriba.
       </div>
       <div :if={@detalle_form_error} class="bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2">{@detalle_form_error}</div>
 
-      <div :for={cat <- @catalogos_detalle} class="bg-white border border-gray-200 rounded-xl overflow-hidden">
-        <div class="px-4 py-2.5 border-b border-gray-100 bg-gray-50">
-          <span class="font-bold text-gray-700 text-sm">{cat.etiqueta}</span>
-        </div>
+      <.panel_detalle_catalogo :for={cat <- @catalogos_detalle} cat={cat}
+        filas={Map.get(@detalle_renglones, cat.nombre, [])} otras_transiciones={@otras_transiciones}
+        estados_por_id={@estados_por_id} seleccion={Map.get(@detalle_seleccion, cat.nombre)} />
+    </div>
+    """
+  end
 
-        <GridEditableComponents.grid id={"grid-#{cat.nombre}"} catalogo={cat.nombre} columnas={cat.columnas}
-          filas_existentes={Map.get(@detalle_renglones, cat.nombre, [])} transiciones_disponibles={@otras_transiciones}
-          estados_por_id={@estados_por_id} />
+  attr :cat, :map, required: true
+  attr :filas, :list, required: true
+  attr :otras_transiciones, :list, required: true
+  attr :estados_por_id, :map, required: true
+  attr :seleccion, :map, default: nil
+
+  defp panel_detalle_catalogo(assigns) do
+    ~H"""
+    <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div class="px-4 py-2.5 border-b border-gray-100 bg-gray-50">
+        <span class="font-bold text-gray-700 text-sm">{@cat.etiqueta}</span>
+      </div>
+
+      <div class="border-b border-gray-100">
+        <.formulario_renglon cat={@cat} seleccion={@seleccion} total={length(@filas)} />
+      </div>
+
+      <div class="overflow-x-auto">
+        <GridEditableComponents.grid id={"grid-#{@cat.nombre}"} catalogo={@cat.nombre} columnas={@cat.columnas_grilla}
+          filas_existentes={@filas} transiciones_disponibles={@otras_transiciones} estados_por_id={@estados_por_id} />
       </div>
     </div>
     """
   end
+
+  attr :cat, :map, required: true
+  attr :seleccion, :map, default: nil
+  attr :total, :integer, required: true
+
+  defp formulario_renglon(assigns) do
+    grupos = if assigns.seleccion, do: agrupar_por_categoria(assigns.cat.columnas), else: []
+    assigns = assign(assigns, :grupos, grupos)
+
+    ~H"""
+    <div class="flex flex-col">
+      <div class="px-4 py-2 border-b border-gray-100 bg-gray-50 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+        <%= cond do %>
+          <% is_nil(@seleccion) -> %>
+            Ningún renglón seleccionado
+          <% is_nil(@seleccion.renglon_id) -> %>
+            Nueva línea
+          <% true -> %>
+            Renglón #{@seleccion.renglon_id}
+        <% end %>
+      </div>
+
+      <%= if is_nil(@seleccion) do %>
+        <p class="px-4 py-6 text-center text-gray-400">
+          Hacé clic en una fila de la tabla, o en "+ Nueva línea" abajo, para capturar/editar acá.
+        </p>
+      <% else %>
+        <form phx-change="detalle_form_cambiar">
+          <input type="hidden" name="catalogo" value={@cat.nombre} />
+          <details :for={grupo <- @grupos} open={grupo.codigo == "info_general"} class="group border-b border-gray-100 last:border-b-0">
+            <summary class="cursor-pointer select-none px-3 py-1.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 flex items-center justify-between">
+              {grupo.etiqueta}
+              <span class="text-gray-300 transition-transform group-open:rotate-180">⌄</span>
+            </summary>
+            <div class="px-3 pb-2 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-x-2 gap-y-1.5">
+              <.campo_input :for={campo <- grupo.campos} columna={campo} mostrar_etiqueta={true}
+                valor={Map.get(@seleccion.valores, campo.schema_context_field, "")}
+                name={"renglon[#{campo.schema_context_field}]"} opciones={opciones_para_campo(campo)} />
+            </div>
+          </details>
+        </form>
+      <% end %>
+
+      <div class="border-t border-gray-100 px-4 py-2.5 flex items-center gap-1.5 flex-wrap">
+        <button type="button" phx-click="detalle_nueva_linea" phx-value-catalogo={@cat.nombre}
+          class="px-2 py-1 rounded-lg bg-purple-600 text-white text-[11px] font-semibold hover:bg-purple-700">
+          + Nueva línea
+        </button>
+        <button type="button" phx-click="detalle_eliminar_linea" phx-value-catalogo={@cat.nombre}
+          disabled={is_nil(@seleccion) or not is_nil(@seleccion.renglon_id)}
+          title={@seleccion && @seleccion.renglon_id && "Un renglón ya guardado se quita con una transición, no se borra directo"}
+          class="px-2 py-1 rounded-lg border border-gray-300 text-gray-600 text-[11px] font-semibold hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">
+          Eliminar línea
+        </button>
+        <div class="ml-auto flex items-center gap-1">
+          <button type="button" phx-click="detalle_navegar" phx-value-catalogo={@cat.nombre} phx-value-direccion="anterior"
+            disabled={@total == 0} title="Renglón anterior"
+            class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">‹</button>
+          <button type="button" phx-click="detalle_navegar" phx-value-catalogo={@cat.nombre} phx-value-direccion="siguiente"
+            disabled={@total == 0} title="Renglón siguiente"
+            class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">›</button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  # Agrupa las columnas de un catálogo detalle en el vocabulario cerrado de
+  # MetaSchemaContext.categorias_campo/0 (configurado por campo desde
+  # BcMotorLive → Campos → "Categoría"), en el orden fijo de ese
+  # vocabulario — solo se listan las categorías que de verdad tienen algún
+  # campo, para no mostrar acordeones vacíos.
+  defp agrupar_por_categoria(columnas) do
+    MetaSchemaContext.categorias_campo()
+    |> Enum.map(fn {codigo, etiqueta} ->
+      %{codigo: codigo, etiqueta: etiqueta, campos: Enum.filter(columnas, &(MetaSchemaContext.categoria_campo(&1) == codigo))}
+    end)
+    |> Enum.reject(&(&1.campos == []))
+  end
+
+  defp opciones_para_campo(%{schema_context_properties: %{"tipo" => "referencia"}} = campo),
+    do: CatalogoGenerico.opciones_referencia(campo.schema_context_properties)
+
+  defp opciones_para_campo(_campo), do: []
 end

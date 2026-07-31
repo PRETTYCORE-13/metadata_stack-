@@ -73,7 +73,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   # el borrado). No modifica nada.
   def impacto(schema_context_name) do
     with {:ok, header} <- buscar_header(schema_context_name) do
-      filas = Repo.aggregate(from(t in schema_context_name), :count)
+      filas = contar_filas_si_existe(schema_context_name)
       dependientes = MetaSchemaContext.listar_dependientes(schema_context_name)
       escenario = MetaEstadosAdmin.contar_escenario(header.id)
 
@@ -125,6 +125,26 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
         {:ok, %{tabla: schema_context_name, archivo_eliminado: archivo_eliminado?, reglas_eliminadas: reglas_eliminadas?}}
       end
     end
+  end
+
+  # Bug real (visto en producción): un catálogo puede tener metadata
+  # (meta_schema_header/detail) sin que su tabla física llegue a existir
+  # nunca — la creación quedó a medias en algún punto entre insertar la
+  # metadata y correr crear_migracion/3. Sin esto, impacto/1 explotaba con
+  # un Postgrex.Error crudo (undefined_table) en vez de simplemente
+  # reportar 0 filas — no hay ninguna fila que perder si la tabla nunca
+  # existió.
+  defp contar_filas_si_existe(schema_context_name) do
+    if tabla_existe?(schema_context_name) do
+      Repo.aggregate(from(t in schema_context_name), :count)
+    else
+      0
+    end
+  end
+
+  defp tabla_existe?(schema_context_name) do
+    %{rows: [[existe]]} = Repo.query!("SELECT to_regclass($1) IS NOT NULL", [schema_context_name])
+    existe
   end
 
   # Vista previa del impacto de quitar UN campo: cuántas filas tienen un
@@ -405,7 +425,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   # la cantidad real de filas, no hay forma de completar este chequeo a
   # ciegas (salvo casualidad en un catálogo vacío).
   defp validar_confirmacion_filas(schema_context_name, confirmar_filas) do
-    filas = Repo.aggregate(from(t in schema_context_name), :count)
+    filas = contar_filas_si_existe(schema_context_name)
 
     if filas == confirmar_filas do
       :ok
@@ -440,7 +460,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
       use Ecto.Migration
 
       def change do
-        drop table(:#{schema_context_name})
+        drop_if_exists table(:#{schema_context_name})
       end
     end
     """

@@ -6,10 +6,12 @@ defmodule MetadataApp.Autenticacion.UsuarioNotifier do
 
   # Delivers the email using the application mailer.
   defp deliver(recipient, subject, body) do
+    remitente = Application.get_env(:metadata_app, :mailer_from, "contact@example.com")
+
     email =
       new()
       |> to(recipient)
-      |> from({"MetadataApp", "contact@example.com"})
+      |> from({"MetadataApp", remitente})
       |> subject(subject)
       |> text_body(body)
 

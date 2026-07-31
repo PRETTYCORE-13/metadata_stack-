@@ -9,8 +9,13 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
 
   use MetadataAppWeb, :live_view_admin
 
-  on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
-  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"rbac_admin", "leer"}}
+  # Sin permiso de rbac_admin a propósito: un usuario recién registrado no
+  # tiene ningún rol todavía, y esta es la única pantalla que le permite
+  # crear su propia empresa y quedar admin ahí (bootstrap, ver
+  # Autenticacion.crear_empresa_para_usuario/2). Exigir "rbac_admin"/"leer"
+  # acá sería pedirle el permiso que esta misma pantalla otorga. Seguro
+  # porque la lista siempre está limitada a "mis empresas".
+  on_mount {MetadataAppWeb.UsuarioAuth, :require_authenticated}
 
   alias MetadataApp.Autenticacion
   alias MetadataAppWeb.AdminNav
@@ -56,7 +61,22 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
 
     case Autenticacion.crear_empresa_para_usuario(nombre, usuario_id) do
       {:ok, _empresa} ->
-        {:noreply, socket |> assign(form_nueva_empresa: nil, error_form: nil) |> cargar_empresas()}
+        socket = socket |> assign(form_nueva_empresa: nil, error_form: nil) |> cargar_empresas()
+
+        # `empresa_activa` solo se fija en la sesión al momento de loguearse
+        # (ver UsuarioAuth.log_in_usuario/3) — si el usuario entró sin
+        # ninguna empresa todavía (como cualquiera recién registrado, ver
+        # el bootstrap de arriba), crearla acá no actualiza esa sesión. Sin
+        # este redirect quedaría con acceso a "sus empresas" pero sin poder
+        # usar Usuarios/Roles/Permisos, que dependen de saber en cuál está
+        # activo. `seleccionar-empresa` ya resuelve esto con un solo click
+        # (POST real a EmpresaSessionController, mismo mecanismo que usa
+        # cualquiera con 2+ empresas).
+        if is_nil(socket.assigns.current_scope.empresa_activa) do
+          {:noreply, push_navigate(socket, to: ~p"/meta_schema_usuario/seleccionar-empresa")}
+        else
+          {:noreply, socket}
+        end
 
       {:error, changeset} ->
         mensaje = changeset.errors |> Enum.map_join(", ", fn {campo, {msg, _}} -> "#{campo} #{msg}" end)

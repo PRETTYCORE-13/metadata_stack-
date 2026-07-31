@@ -59,7 +59,14 @@ if config_env() == :prod do
   config :metadata_app, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
   config :metadata_app, MetadataAppWeb.Endpoint,
-    url: [host: host, port: 443, scheme: "https"],
+    # No hay proxy reverso con TLS delante de este servidor — la app se
+    # accede directo en PORT (4000) por http. Con :443/https acá (el
+    # default de phx.gen.release, pensado para detrás de un proxy),
+    # cualquier URL absoluta generada por el código (como el link del
+    # magic-link del correo) apunta a un puerto/protocolo donde no hay
+    # nada escuchando, y el usuario cae en un 400 Bad Request al hacer
+    # clic. Si en el futuro se agrega HTTPS real, volver a ajustar esto.
+    url: [host: host, port: port, scheme: "http"],
     http: [
       # Enable IPv6 and bind on all interfaces.
       # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
@@ -102,21 +109,46 @@ if config_env() == :prod do
   #
   # Check `Plug.SSL` for all available options in `force_ssl`.
 
-  # ## Configuring the mailer
-  #
-  # In production you need to configure the mailer to use a different adapter.
-  # Here is an example configuration for Mailgun:
-  #
-  #     config :metadata_app, MetadataApp.Mailer,
-  #       adapter: Swoosh.Adapters.Mailgun,
-  #       api_key: System.get_env("MAILGUN_API_KEY"),
-  #       domain: System.get_env("MAILGUN_DOMAIN")
-  #
-  # Most non-SMTP adapters require an API client. Swoosh supports Req, Hackney,
-  # and Finch out-of-the-box. This configuration is typically done at
-  # compile-time in your config/prod.exs:
-  #
-  #     config :swoosh, :api_client, Swoosh.ApiClient.Req
-  #
-  # See https://hexdocs.pm/swoosh/Swoosh.html#module-installation for details.
+  # Correo real para el magic-link de login (roadmap: acceso de usuarios
+  # reales en producción) — sin esto, Swoosh.Adapters.Local (el default en
+  # config.exs) "envía" a una bandeja en memoria que solo existe en dev
+  # (/dev/mailbox, ni siquiera montado en prod), así que nadie recibía
+  # nada. SMTP genérico (no un servicio transaccional dedicado) porque el
+  # equipo ya tiene una cuenta de correo real para usar — mismo criterio
+  # "falla fuerte, no silencioso" que ya usa DB_* arriba: sin estas 3
+  # variables, el release ni arranca, en vez de mandar magic-links al
+  # vacío sin que nadie se entere.
+  smtp_relay =
+    System.get_env("SMTP_RELAY") || raise("environment variable SMTP_RELAY is missing")
+
+  config :metadata_app, MetadataApp.Mailer,
+    adapter: Swoosh.Adapters.SMTP,
+    relay: smtp_relay,
+    username: System.get_env("SMTP_USERNAME") || raise("environment variable SMTP_USERNAME is missing"),
+    password: System.get_env("SMTP_PASSWORD") || raise("environment variable SMTP_PASSWORD is missing"),
+    port: String.to_integer(System.get_env("SMTP_PORT") || "587"),
+    tls: :always,
+    # Sin cacerts explícitos, el handshake TLS con Gmail falla
+    # (:tls_failed) — Erlang no usa el trust store del SO por su cuenta,
+    # hay que pasárselo. Confirmado en vivo contra smtp.gmail.com
+    # (2026-07-31): sin esto el envío nunca se completaba (ni error visible
+    # en logs, porque el resultado {:error, ...} se ignora en el flujo de
+    # login por diseño anti-enumeración).
+    tls_options: [
+      verify: :verify_peer,
+      cacerts: :public_key.cacerts_get(),
+      server_name_indication: String.to_charlist(smtp_relay),
+      depth: 3
+    ],
+    auth: :always,
+    retries: 2
+
+  # El remitente ("From") debe alinear con la cuenta autenticada arriba —
+  # si no, Gmail (y la mayoría de relays) aceptan el envío (250 OK, por eso
+  # la app no ve error) pero el mensaje falla DMARC/SPF del lado del
+  # destinatario y se descarta en silencio, sin llegar ni a spam. Por
+  # default usa la misma cuenta SMTP_USERNAME; SMTP_FROM es solo para el
+  # caso de un alias verificado distinto.
+  config :metadata_app,
+    mailer_from: System.get_env("SMTP_FROM") || System.get_env("SMTP_USERNAME")
 end

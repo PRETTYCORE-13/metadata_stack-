@@ -3,7 +3,7 @@ import Config
 # Configure your database
 config :metadata_app, MetadataApp.Repo,
   hostname: System.get_env("DB_HOSTNAME_PSQL", "localhost"),
-  port: String.to_integer(System.get_env("DB_PORT_PSQL", "1111")),
+  port: String.to_integer(System.get_env("DB_PORT_PSQL", "5432")),
   username: System.get_env("DB_USERNAME_PSQL", "metadata"),
   password: System.get_env("DB_PASSWORD_PSQL", "metadata1234%"),
   database: System.get_env("DB_NAME_PSQL", "metadata"),
@@ -66,6 +66,13 @@ config :metadata_app, MetadataAppWeb.Endpoint,
 
 # Enable dev routes for dashboard and mailbox
 config :metadata_app, dev_routes: true
+
+# Auto-login transparente con un usuario demo fijo (ver
+# MetadataAppWeb.DevAutoLogin) -- evita el flujo de magic-link en cada
+# arranque local. Compile-time (Application.compile_env/3, mismo
+# criterio que dev_routes/bpb_habilitado de arriba): no existe en un
+# release compilado con MIX_ENV=prod ni :test, sin importar runtime env.
+config :metadata_app, auto_login_demo_dev: true
 
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"
