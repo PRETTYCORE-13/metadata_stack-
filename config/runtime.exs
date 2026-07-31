@@ -120,4 +120,13 @@ if config_env() == :prod do
     tls: :always,
     auth: :always,
     retries: 2
+
+  # El remitente ("From") debe alinear con la cuenta autenticada arriba —
+  # si no, Gmail (y la mayoría de relays) aceptan el envío (250 OK, por eso
+  # la app no ve error) pero el mensaje falla DMARC/SPF del lado del
+  # destinatario y se descarta en silencio, sin llegar ni a spam. Por
+  # default usa la misma cuenta SMTP_USERNAME; SMTP_FROM es solo para el
+  # caso de un alias verificado distinto.
+  config :metadata_app,
+    mailer_from: System.get_env("SMTP_FROM") || System.get_env("SMTP_USERNAME")
 end
