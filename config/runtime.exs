@@ -102,21 +102,22 @@ if config_env() == :prod do
   #
   # Check `Plug.SSL` for all available options in `force_ssl`.
 
-  # ## Configuring the mailer
-  #
-  # In production you need to configure the mailer to use a different adapter.
-  # Here is an example configuration for Mailgun:
-  #
-  #     config :metadata_app, MetadataApp.Mailer,
-  #       adapter: Swoosh.Adapters.Mailgun,
-  #       api_key: System.get_env("MAILGUN_API_KEY"),
-  #       domain: System.get_env("MAILGUN_DOMAIN")
-  #
-  # Most non-SMTP adapters require an API client. Swoosh supports Req, Hackney,
-  # and Finch out-of-the-box. This configuration is typically done at
-  # compile-time in your config/prod.exs:
-  #
-  #     config :swoosh, :api_client, Swoosh.ApiClient.Req
-  #
-  # See https://hexdocs.pm/swoosh/Swoosh.html#module-installation for details.
+  # Correo real para el magic-link de login (roadmap: acceso de usuarios
+  # reales en producción) — sin esto, Swoosh.Adapters.Local (el default en
+  # config.exs) "envía" a una bandeja en memoria que solo existe en dev
+  # (/dev/mailbox, ni siquiera montado en prod), así que nadie recibía
+  # nada. SMTP genérico (no un servicio transaccional dedicado) porque el
+  # equipo ya tiene una cuenta de correo real para usar — mismo criterio
+  # "falla fuerte, no silencioso" que ya usa DB_* arriba: sin estas 3
+  # variables, el release ni arranca, en vez de mandar magic-links al
+  # vacío sin que nadie se entere.
+  config :metadata_app, MetadataApp.Mailer,
+    adapter: Swoosh.Adapters.SMTP,
+    relay: System.get_env("SMTP_RELAY") || raise("environment variable SMTP_RELAY is missing"),
+    username: System.get_env("SMTP_USERNAME") || raise("environment variable SMTP_USERNAME is missing"),
+    password: System.get_env("SMTP_PASSWORD") || raise("environment variable SMTP_PASSWORD is missing"),
+    port: String.to_integer(System.get_env("SMTP_PORT") || "587"),
+    tls: :always,
+    auth: :always,
+    retries: 2
 end
