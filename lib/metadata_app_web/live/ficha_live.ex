@@ -1669,19 +1669,21 @@ defmodule MetadataAppWeb.FichaLive do
       |> assign(:valor_legible, valor_legible)
 
     ~H"""
-    <div class="flex items-center gap-3 px-4 py-2.5 border-b border-gray-100 last:border-b-0 text-sm">
-      <span class="w-5 flex-shrink-0 text-gray-400 self-start mt-0.5">
-        <svg :if={@editable?} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-purple-600">
-          <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
-        </svg>
-        <svg :if={!@editable?} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" />
-        </svg>
-      </span>
-      <span class="w-56 flex-shrink-0 text-gray-500 self-start mt-0.5">
-        {@col.schema_context_properties["etiqueta"]}
-        <span :if={@editable? and @col.schema_context_properties["tipo"] != "boolean"} class="text-red-500">*</span>
-      </span>
+    <div class="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3 px-4 py-2.5 border-b border-gray-100 last:border-b-0 text-sm">
+      <div class="flex items-center gap-3 sm:contents">
+        <span class="w-5 flex-shrink-0 text-gray-400 self-start mt-0.5">
+          <svg :if={@editable?} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-purple-600">
+            <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+          </svg>
+          <svg :if={!@editable?} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" />
+          </svg>
+        </span>
+        <span class="w-full sm:w-56 flex-shrink-0 text-gray-500 self-start mt-0.5">
+          {@col.schema_context_properties["etiqueta"]}
+          <span :if={@editable? and @col.schema_context_properties["tipo"] != "boolean"} class="text-red-500">*</span>
+        </span>
+      </div>
 
       <div :if={@editable?} class="flex-1 min-w-0">
         <.campo_input columna={@col} valor={@valor_mostrado} mostrar_etiqueta={false} opciones={@opciones_referencia} />
