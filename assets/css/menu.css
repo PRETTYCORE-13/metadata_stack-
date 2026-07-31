@@ -1043,7 +1043,14 @@
     transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
-  .pc-platform:has(.pc-carpeta-raiz[open]) .pc-sidebar-flyout {
+  /* Además de "la carpeta está abierta", exige "el drawer sigue
+     visible" — sin esto, tocar un link de adentro del flyout cerraba
+     el drawer (mobile_close_js) pero el panel flotante se quedaba
+     tapando la pantalla, porque nada le había sacado el "open" a su
+     <details>. Como cerrar el drawer (der por el link, la X, o el
+     overlay) siempre saca "pc-sidebar-visible", este panel se cierra
+     solo junto con él, sin JS nuevo. */
+  .pc-platform:has(.pc-platform-sidebar.pc-sidebar-visible):has(.pc-carpeta-raiz[open]) .pc-sidebar-flyout {
     transform: translateX(0);
   }
 
