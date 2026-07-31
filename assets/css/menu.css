@@ -1018,12 +1018,50 @@
   gap: 2px;
 }
 
-/* En móvil el riel ya se abre como panel deslizable de ancho completo —
-   no hay espacio para correr el contenido más a la derecha todavía. */
+/* En móvil no hay espacio para correr el contenido a la derecha del
+   riel (que ya ocupa la pantalla como drawer deslizable) — el flyout
+   pasa a ser su PROPIO panel de 280px que se desliza por ENCIMA del
+   drawer (position:fixed + transform, no width) tapándolo en vez de
+   empujarlo, como una segunda pantalla ("entrar a la carpeta" /
+   "volver"). Mismo mecanismo 100% CSS que en desktop — el :has() sobre
+   el [open] del <details> raíz sigue siendo lo único que decide
+   mostrar/ocultar, solo cambia CÓMO se muestra acá. El botón "Cerrar"
+   de cada panel (ya cableado, quita el "open") funciona tal cual como
+   el "volver". */
 @media (max-width: 768px) {
   .pc-sidebar-flyout {
-    width: 0 !important;
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    height: 100dvh;
+    width: 280px !important;
+    z-index: 51;
     border-right-width: 0 !important;
+    overflow-y: auto;
+    transform: translateX(-100%);
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .pc-platform:has(.pc-carpeta-raiz[open]) .pc-sidebar-flyout {
+    transform: translateX(0);
+  }
+
+  /* Arrastrar para ajustar ancho no tiene sentido en un panel fijo de
+     280px que se desliza — mismo criterio que ya usa
+     .pc-sidebar-resize-handle acá arriba para el riel principal. */
+  .pc-flyout-resize-handle {
+    display: none !important;
+  }
+
+  .pc-flyout-panel {
+    padding: 14px;
+  }
+
+  .pc-sidebar-flyout .pc-nav-item {
+    padding: 12px 14px;
+    border-radius: 10px;
+    min-height: 48px;
   }
 }
 
