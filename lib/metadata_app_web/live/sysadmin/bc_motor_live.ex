@@ -26,6 +26,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"}
   ]
 
+
   # Mismo set curado que BcListLive (modales de carpeta) — el ícono del
   # header se edita con el mismo selector en ambas pantallas.
   @iconos_sugeridos ~w(
@@ -470,6 +471,33 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       {:error, changeset} ->
         {:noreply, update(socket, :relacion_form, &Map.put(&1, "error", resumen_errores(changeset)))}
+    end
+  end
+
+  # Categoría de un campo (acordeón donde cae en la Ficha 360° → tab
+  # Detalle) — sin modal, cambio directo apenas se elige la opción, mismo
+  # criterio inmediato que guardar_get_view/2 de abajo.
+  def handle_event("cambiar_categoria", %{"campo" => campo, "categoria" => categoria}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "categoria", categoria)
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la categoría de \"#{campo}\".")}
+    end
+  end
+
+  # "En grilla" de un campo — si aparece como columna en la grilla del tab
+  # Detalle de la Ficha 360° (catálogos con muchos campos quieren mostrar
+  # solo un subconjunto ahí; el formulario de al lado siempre muestra
+  # todos). Mismo criterio inmediato que cambiar_categoria/2 arriba.
+  def handle_event("cambiar_mostrar_en_grilla", %{"campo" => campo, "mostrar_en_grilla" => valor}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "mostrar_en_grilla", valor == "true")
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"#{campo}\".")}
     end
   end
 
@@ -1362,6 +1390,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Etiqueta</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Opcional</th>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Categoría (Ficha → Detalle)</th>
+                <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si aparece como columna en la grilla del tab Detalle de la Ficha 360° — el formulario de al lado siempre muestra todos los campos, esto es solo la tabla">En grilla</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
             </thead>
@@ -1382,6 +1412,22 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                     <% end %>
                   </td>
                   <td class="px-1.5 py-1 text-gray-600">{if Map.get(props, "opcional"), do: "Sí", else: "—"}</td>
+                  <td class="px-1.5 py-1">
+                    <form phx-change="cambiar_categoria">
+                      <input type="hidden" name="campo" value={c.schema_context_field} />
+                      <select name="categoria" class="border border-gray-300 rounded px-1 py-0.5 text-[11px]">
+                        <option :for={{codigo, etiqueta} <- MetaSchemaContext.categorias_campo()} value={codigo}
+                          selected={MetaSchemaContext.categoria_campo(props) == codigo}>{etiqueta}</option>
+                      </select>
+                    </form>
+                  </td>
+                  <td class="px-1.5 py-1 text-center">
+                    <form phx-change="cambiar_mostrar_en_grilla">
+                      <input type="hidden" name="campo" value={c.schema_context_field} />
+                      <input type="hidden" name="mostrar_en_grilla" value="false" />
+                      <input type="checkbox" name="mostrar_en_grilla" value="true" checked={MetaSchemaContext.mostrar_en_grilla?(props)} class="accent-purple-600" />
+                    </form>
+                  </td>
                   <td class="px-1.5 py-1">
                     <button type="button" phx-click="abrir_eliminar_campo" phx-value-campo={c.schema_context_field}
                       class="text-red-600 hover:text-red-800 text-[11px] font-semibold">Eliminar</button>

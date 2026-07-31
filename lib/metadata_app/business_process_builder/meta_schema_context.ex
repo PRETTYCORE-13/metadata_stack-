@@ -400,6 +400,49 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     end
   end
 
+  # Agrupación visual de campos en el formulario de la Ficha 360° → tab
+  # Detalle (acordeones — ver FichaLive.acordeones_detalle/1, configurado
+  # por campo desde BcMotorLive → Campos → "Categoría"). Vocabulario
+  # cerrado a propósito (nada de texto libre): así el orden de los
+  # acordeones es siempre el mismo sin importar el catálogo, y no hay
+  # forma de terminar con "Impuesto"/"impuestos"/"IMPUESTOS" como 3
+  # categorías distintas por typo. "info_general" es el default para
+  # cualquier campo que nunca se haya tocado (catálogos ya existentes
+  # antes de esto) — ver categoria_campo/1.
+  @categorias_campo [
+    {"info_general", "Información general"},
+    {"impuestos", "Impuestos"},
+    {"descuentos", "Descuentos"},
+    {"entrega_logistica", "Entrega y logística"},
+    {"personalizados", "Campos personalizados"},
+    {"observaciones", "Observaciones"}
+  ]
+
+  def categorias_campo, do: @categorias_campo
+
+  def etiqueta_categoria_campo(codigo), do: Map.get(Map.new(@categorias_campo), codigo, "Información general")
+
+  # Categoría efectiva de un detalle (struct o mapa con "categoria" en
+  # schema_context_properties) — nunca nil, cae al default si no está
+  # configurada o si trae un código que ya no existe en el vocabulario.
+  def categoria_campo(%{schema_context_properties: props}), do: categoria_campo(props)
+
+  def categoria_campo(%{} = props) do
+    codigo = Map.get(props, "categoria")
+    if codigo in Enum.map(@categorias_campo, &elem(&1, 0)), do: codigo, else: "info_general"
+  end
+
+  # Columnas curadas de la grilla del tab Detalle (Ficha 360°) — con
+  # catálogos de 30+ campos, mostrar TODOS como columna en una tabla ancha
+  # es inusable; esto deja elegir por campo (BcMotorLive → Campos → "En
+  # grilla") cuáles se ven ahí. Opt-OUT (default true) a propósito, no
+  # opt-in: así ningún catálogo ya existente pierde columnas de la grilla
+  # de un día para el otro sin que nadie lo haya configurado — el
+  # formulario de al lado siempre sigue mostrando TODOS los campos
+  # visibles, sin importar esto (ver FichaLive.formulario_renglon/1).
+  def mostrar_en_grilla?(%{schema_context_properties: props}), do: mostrar_en_grilla?(props)
+  def mostrar_en_grilla?(%{} = props), do: Map.get(props, "mostrar_en_grilla", true) != false
+
   def listar_detalles(schema_context_name) do
     from(d in Detail,
       join: h in assoc(d, :header),

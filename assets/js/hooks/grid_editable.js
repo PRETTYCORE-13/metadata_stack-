@@ -180,6 +180,11 @@ export default {
     this.ventanaInicio = null
     this.ventanaFin = null
     this.scrollRaf = null
+    // Layout 2 columnas (formulario izq. + grilla der.): clientId de la
+    // fila "activa" — el formulario de FichaLive.formulario_renglon/1
+    // muestra/edita SIEMPRE esta fila (nunca un modal). null = ninguna
+    // seleccionada todavía.
+    this.filaSeleccionadaClientId = null
 
     // Fase 3, Nivel A: arranca con lo que ya está persistido (si el
     // catálogo ya tenía renglones) como base de "valores recientes" — no
@@ -201,6 +206,11 @@ export default {
     // tecla — si no, un valor a medio escribir ("Ju", "Jua", "Juan")
     // ensuciaría la lista de sugerencias con basura intermedia.
     this.el.addEventListener("focusout", (e) => this.alSalirCelda(e))
+    // Selección de fila (layout 2 columnas): CUALQUIER forma de llegar el
+    // foco a una celda (clic, Tab, flechas, enfocarCelda programático)
+    // pasa por acá — un solo lugar, en vez de repetir la lógica en cada
+    // manejador de teclado/clic.
+    this.el.addEventListener("focusin", (e) => this.alEnfocarCelda(e))
 
     // Throttleado con requestAnimationFrame — el scroll dispara muchos
     // eventos por segundo, pero repintar la ventana en cada uno es
@@ -242,12 +252,66 @@ export default {
       if (catalogo !== this.catalogo) return
       this.rows = (filas || []).map(filaDesdeServidor)
       if (transiciones) this.transiciones = transiciones
+      this.filaSeleccionadaClientId = null
       // Dataset nuevo — la ventana anterior ya no tiene sentido, se
       // recalcula de cero en el próximo render() según el alto real del
       // contenedor en ese momento.
       this.ventanaInicio = null
       this.ventanaFin = null
       this.render()
+    })
+
+    // --- Layout 2 columnas: eventos del formulario izquierdo -------------
+
+    // El formulario editó un campo de la fila seleccionada — se aplica acá
+    // exactamente igual que si se hubiese tipeado en la celda (misma
+    // validación/sync debounced), así las dos vistas de la fila nunca se
+    // desincronizan.
+    this.handleEvent("grid_actualizar_fila", ({catalogo, client_id, valores}) => {
+      if (catalogo !== this.catalogo) return
+      const idx = this.rows.findIndex((r) => r.clientId === client_id)
+      if (idx === -1) return
+      Object.entries(valores).forEach(([campo, valor]) => this.setCelda(idx, campo, valor))
+      this.render()
+      this.programarValidacionServidor(idx)
+      this.programarSync()
+    })
+
+    // "+ Nueva línea" del formulario: crea una fila real en blanco (no la
+    // fantasma efímera de filasVisibles/2, que cambia de clientId en cada
+    // llamada) y la enfoca — enfocarCelda dispara "focusin", que reporta
+    // la selección real (con su clientId verdadero) de vuelta al servidor.
+    this.handleEvent("grid_nueva_fila", ({catalogo}) => {
+      if (catalogo !== this.catalogo) return
+      const idx = this.rows.length
+      this.asegurarFila(idx)
+      this.render()
+      this.enfocarCelda(idx, 0)
+    })
+
+    // "Eliminar línea" del formulario — solo para filas TODAVÍA sin
+    // renglon_id (mismo criterio que borrarFilaNueva/ge-quitar; el
+    // servidor ya lo garantiza del otro lado, esto es defensa en
+    // profundidad, nunca borra un renglón persistido).
+    this.handleEvent("grid_quitar_fila", ({catalogo, client_id}) => {
+      if (catalogo !== this.catalogo) return
+      const idx = this.rows.findIndex((r) => r.clientId === client_id)
+      if (idx === -1 || this.rows[idx].renglonId != null) return
+      this.rows.splice(idx, 1)
+      if (this.filaSeleccionadaClientId === client_id) this.filaSeleccionadaClientId = null
+      this.render()
+      this.programarSync()
+    })
+
+    // Navegación anterior/siguiente del formulario, entre renglones YA
+    // persistidos — el servidor ya resolvió cuál es y actualizó el
+    // formulario con sus valores; acá solo hace falta resaltar/enfocar esa
+    // fila (enfocarCelda ya sabe traerla a la vista si está virtualizada).
+    this.handleEvent("grid_resaltar_fila", ({catalogo, renglon_id}) => {
+      if (catalogo !== this.catalogo) return
+      const idx = this.filasVisibles().findIndex((f) => f.renglonId === renglon_id)
+      if (idx === -1) return
+      this.enfocarCelda(idx, 0)
     })
 
     this.render()
@@ -312,6 +376,31 @@ export default {
     const campo = input.dataset.campo
     this.valoresRecientes[campo] = actualizarValoresRecientes(this.valoresRecientes[campo] || [], input.value)
     this.actualizarDatalist(campo)
+  },
+
+  // --- Layout 2 columnas: selección de fila ---------------------------------
+  alEnfocarCelda(e) {
+    const input = e.target.closest(".ge-input")
+    if (!input) return
+    this.seleccionarFila(parseInt(input.dataset.row, 10))
+  },
+
+  // Promueve la fila a "real" (asegurarFila — si era la fantasma efímera,
+  // ahora vive en this.rows con un clientId estable) y le avisa al
+  // formulario de FichaLive cuál es el renglón activo, con los valores que
+  // la grilla YA tiene en memoria (incluye tipeo todavía sin sincronizar).
+  seleccionarFila(rowIdx) {
+    this.asegurarFila(rowIdx)
+    const fila = this.rows[rowIdx]
+    if (!fila || fila.clientId === this.filaSeleccionadaClientId) return
+    this.filaSeleccionadaClientId = fila.clientId
+    this.render()
+    this.pushEvent("detalle_seleccionar_fila", {
+      catalogo: this.catalogo,
+      client_id: fila.clientId,
+      renglon_id: fila.renglonId,
+      valores: fila.values,
+    })
   },
 
   render() {
@@ -395,6 +484,11 @@ export default {
       sin_cambios: "bg-transparent",
     }[status]
 
+    // Layout 2 columnas: la fila que el formulario de la izquierda está
+    // mostrando/editando ahora mismo — un ring en vez de tocar el fondo,
+    // así convive sin pelearse con los colores de status de arriba.
+    const claseSeleccionada = fila.clientId === this.filaSeleccionadaClientId ? "ring-1 ring-inset ring-purple-400" : ""
+
     // Fase 3, Nivel A: aviso suave (nunca bloquea) cuando esta fila parece
     // repetida de otra ya cargada.
     const avisoDuplicado = esDuplicado
@@ -437,7 +531,7 @@ export default {
     // del contenido real y el scroll salta.
     const estilo = alturaFija ? ` style="height:${ROW_H}px"` : ""
 
-    return `<tr class="${filaClases}" data-row="${i}"${estilo}>
+    return `<tr class="${filaClases} ${claseSeleccionada}" data-row="${i}"${estilo}>
       <td class="px-2 py-1 text-gray-400 align-top pt-2 text-[10px]">${i + 1}</td>
       <td class="px-1 py-1 align-top pt-2.5" title="${status}"><span class="inline-block w-1.5 h-1.5 rounded-full ${puntoClase}"></span>${avisoDuplicado}</td>
       ${celdas}
@@ -656,13 +750,21 @@ export default {
   // que todavía no tienen renglon_id; "editadas" son renglones YA
   // persistidos con al menos un campo tocado (dirty) — ver
   // FichaLive.handle_event("grid_sync", ...).
+  //
+  // Ojo: la vaciedad acá se mide sobre TODO fila.values, no solo
+  // this.columns (columnas curadas de la grilla, ver
+  // MetaSchemaContext.mostrar_en_grilla?/1) — un campo cargado SOLO desde
+  // el formulario de arriba (grid_actualizar_fila) puede no estar entre
+  // las columnas visibles de la grilla; si se midiera solo contra
+  // this.columns, una fila con datos reales pero "vacía" a los ojos de la
+  // grilla se descartaría en silencio acá.
   sincronizarAhora() {
     clearTimeout(this.syncTimer)
     const nuevas = []
     const editadas = []
 
     this.rows.forEach((fila) => {
-      if (filaVacia(fila.values, this.columns)) return
+      if (!Object.values(fila.values).some((v) => !celdaVacia(v))) return
       if (fila.renglonId == null) nuevas.push(fila.values)
       else if (fila.dirty.size > 0) editadas.push({renglon_id: fila.renglonId, campos: fila.values})
     })
