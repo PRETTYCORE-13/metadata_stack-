@@ -50,10 +50,41 @@ defmodule MetadataApp.MetaImportExport do
         end
 
       existente ->
-        case sincronizar_detalles_nuevos(existente, contexto["detalles"] || []) do
+        cambios =
+          Enum.reject(
+            [
+              sincronizar_icono(existente, contexto["schema_context_icono"]) && "ícono actualizado",
+              case sincronizar_detalles_nuevos(existente, contexto["detalles"] || []) do
+                [] -> nil
+                campos -> "campo(s) nuevo(s) sincronizado(s): #{Enum.join(campos, ", ")}"
+              end
+            ],
+            &is_nil/1
+          )
+
+        case cambios do
           [] -> "= #{nombre}: ya existía, sin cambios"
-          campos -> "= #{nombre}: ya existía, campo(s) nuevo(s) sincronizado(s): #{Enum.join(campos, ", ")}"
+          cambios -> "~ #{nombre}: ya existía, #{Enum.join(cambios, "; ")}"
         end
+    end
+  end
+
+  # Igual que sincronizar_detalles_nuevos/2 pero para el ícono del propio
+  # header: sin esto, cambiar el ícono de un BC ya publicado y volver a
+  # publicar no lo actualizaba (importar_contexto/1 solo creaba o dejaba
+  # intacto). `false` en el chequeo de igualdad cubre tanto "no cambió"
+  # como "el bundle no trae ícono" (nil), sin tocar la BD innecesariamente.
+  defp sincronizar_icono(_header, nil), do: false
+
+  defp sincronizar_icono(%{schema_context_icono: mismo}, mismo), do: false
+
+  defp sincronizar_icono(header, icono_nuevo) do
+    case MetaSchemaContext.actualizar_header(header, %{"schema_context_icono" => icono_nuevo}) do
+      {:ok, _header} ->
+        true
+
+      {:error, changeset} ->
+        raise "Error sincronizando ícono de #{header.schema_context_name}: #{inspect(changeset.errors)}"
     end
   end
 

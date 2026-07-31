@@ -767,6 +767,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
           schema_context_label: header.schema_context_label,
           schema_context_type: header.schema_context_type,
           schema_context_nav: header.schema_context_nav,
+          schema_context_icono: header.schema_context_icono,
           schema_visible: header.schema_visible,
           schema_set_permissions: header.schema_set_permissions,
           schema_profiles: header.schema_profiles,
