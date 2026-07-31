@@ -9,8 +9,13 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
 
   use MetadataAppWeb, :live_view_admin
 
-  on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
-  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"rbac_admin", "leer"}}
+  # Sin permiso de rbac_admin a propósito: un usuario recién registrado no
+  # tiene ningún rol todavía, y esta es la única pantalla que le permite
+  # crear su propia empresa y quedar admin ahí (bootstrap, ver
+  # Autenticacion.crear_empresa_para_usuario/2). Exigir "rbac_admin"/"leer"
+  # acá sería pedirle el permiso que esta misma pantalla otorga. Seguro
+  # porque la lista siempre está limitada a "mis empresas".
+  on_mount {MetadataAppWeb.UsuarioAuth, :require_authenticated}
 
   alias MetadataApp.Autenticacion
   alias MetadataAppWeb.AdminNav
