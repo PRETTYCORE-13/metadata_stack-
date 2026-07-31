@@ -340,7 +340,9 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   # botón ya viene disabled sin campos y desaparece si ya hay algo
   # cargado (ver render) — esto es la revalidación de segunda línea.
   def handle_event("crear_bc_base", _params, socket) do
-    if socket.assigns.campos == [] or socket.assigns.estados != [] or socket.assigns.transiciones != [] do
+    es_detalle? = socket.assigns.contexto["encabezado_de"] not in [nil, ""]
+
+    if es_detalle? or socket.assigns.campos == [] or socket.assigns.estados != [] or socket.assigns.transiciones != [] do
       {:noreply, socket}
     else
       campos_editables = Enum.map(socket.assigns.campos, & &1["nombre"])
@@ -792,7 +794,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
           nombre_sistema_preview={@nombre_sistema_preview} nav_preview={@nav_preview} nav_error={@contexto_nav_error} />
         <.panel_campos campos={@campos} />
 
-        <div :if={@estados == [] and @transiciones == []} class="border border-dashed border-purple-300 bg-purple-50/40 rounded-lg p-3 flex items-center justify-between gap-3">
+        <div :if={@estados == [] and @transiciones == [] and @contexto["encabezado_de"] in [nil, ""]} class="border border-dashed border-purple-300 bg-purple-50/40 rounded-lg p-3 flex items-center justify-between gap-3">
           <p class="text-purple-900">
             <strong>Crea BC Base</strong>: arma de una vez los estados <strong>Activo/Baja</strong> y las transiciones
             <strong>Nuevo/Guardar/Baja/Reactivar</strong> — el punto de partida del ~70% de los catálogos.
