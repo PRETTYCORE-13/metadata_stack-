@@ -30,6 +30,7 @@ defmodule MetadataAppWeb.FichaLive do
   alias MetadataApp.Autenticacion.Scope
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerico}
   alias MetadataApp.MetaStateEngine
+  alias MetadataApp.Permissions
   alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaPlantillas.Formula
   alias MetadataApp.MetaSchema.TransicionEvento
@@ -472,6 +473,17 @@ defmodule MetadataAppWeb.FichaLive do
            :error_guardado,
            "Este catálogo no tiene una transición \"guardar\" configurada — no se pueden editar renglones existentes sin pasar por una transición del encabezado."
          )}
+
+      # Sin renglones EDITADOS (solo nuevos), aplicar_encabezado/5 nunca pasa
+      # por ejecutar_transicion/4 (ver esa función) — y crear_renglones_nuevos/3
+      # tampoco lo hace, así que sin este chequeo el permiso de "guardar" del
+      # rol quedaba sin exigirse para renglones NUEVOS (encontrado real: se
+      # podía insertar sin tener concedida la transición). Mismo permiso que
+      # ya se usa para editar el encabezado — no uno nuevo por diseño.
+      hay_renglones_nuevos? and
+          not Permissions.can?(socket.assigns.current_scope, "guardar", socket.assigns.header.schema_context_name) ->
+        {:noreply,
+         assign(socket, :error_guardado, "No tenés permiso para agregar renglones a este catálogo.")}
 
       registro_cambio_de_estado?(schema_mod, registro) ->
         {:noreply,
@@ -1821,9 +1833,6 @@ defmodule MetadataAppWeb.FichaLive do
   defp tab_detalle(assigns) do
     ~H"""
     <div class="space-y-4">
-      <div class="text-xs text-purple-700 bg-purple-50 rounded-lg px-3 py-2">
-        Elegí una fila de la tabla (o "Nueva línea") para editarla en el formulario — también podés escribir directo en la tabla, o pegar filas copiadas de Excel. Se guarda todo junto con el resto de los cambios, al hacer clic en "Guardar" arriba.
-      </div>
       <div :if={@detalle_form_error} class="bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2">{@detalle_form_error}</div>
 
       <.panel_detalle_catalogo :for={cat <- @catalogos_detalle} cat={cat}
