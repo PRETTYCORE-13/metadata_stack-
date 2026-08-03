@@ -1894,29 +1894,57 @@ defmodule MetadataAppWeb.FichaLive do
 
   defp formulario_renglon(assigns) do
     grupos = if assigns.seleccion, do: agrupar_por_categoria(assigns.cat.columnas), else: []
-    assigns = assign(assigns, :grupos, grupos)
+    {primer_grupo, resto_grupos} = separar_primer_grupo(grupos)
+    assigns = assigns |> assign(:primer_grupo, primer_grupo) |> assign(:resto_grupos, resto_grupos)
 
     ~H"""
     <div class="flex flex-col">
-      <div class="px-4 py-2 border-b border-gray-100 bg-gray-50 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+      <div class="px-4 py-2 border-b border-gray-100 bg-gray-50 text-[11px] font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
         <%= cond do %>
           <% is_nil(@seleccion) -> %>
-            Ningún renglón seleccionado
+            <span class="text-gray-300">–</span> Ningún renglón seleccionado
           <% is_nil(@seleccion.renglon_id) -> %>
-            Nueva línea
+            <span class="text-green-600 font-bold">+</span> Nueva línea
           <% true -> %>
-            Renglón #{@seleccion.renglon_id}
+            <span class="text-purple-600 font-bold">×</span> Renglón #{@seleccion.renglon_id}
         <% end %>
       </div>
 
       <%= if is_nil(@seleccion) do %>
-        <p class="px-4 py-6 text-center text-gray-400">
-          Hacé clic en una fila de la tabla, o en "+ Nueva línea" abajo, para capturar/editar acá.
-        </p>
+        <div class="px-4 py-6 flex items-center justify-center gap-2 text-gray-400">
+          <span>Hacé clic en una fila de la tabla, o</span>
+          <button type="button" phx-click="detalle_nueva_linea" phx-value-catalogo={@cat.nombre} title="Nueva línea"
+            class="w-6 h-6 rounded-lg bg-purple-600 text-white font-bold hover:bg-purple-700 flex-none">+</button>
+          <span>para capturar/editar acá.</span>
+        </div>
       <% else %>
         <form phx-change="detalle_form_cambiar">
           <input type="hidden" name="catalogo" value={@cat.nombre} />
-          <details :for={grupo <- @grupos} open={grupo.codigo == "info_general"} class="group border-b border-gray-100 last:border-b-0">
+
+          <div :if={@primer_grupo} class="border-b border-gray-100">
+            <div class="px-3 py-1.5 text-[11px] font-semibold text-gray-600">{@primer_grupo.etiqueta}</div>
+            <div class="px-3 pb-2 flex flex-wrap items-end gap-2">
+              <div :for={campo <- @primer_grupo.campos} class="flex-1 min-w-[120px]">
+                <.campo_input columna={campo} mostrar_etiqueta={true}
+                  valor={Map.get(@seleccion.valores, campo.schema_context_field, "")}
+                  name={"renglon[#{campo.schema_context_field}]"} opciones={opciones_para_campo(campo)} />
+              </div>
+              <div class="flex items-center gap-1.5 flex-none pb-0.5">
+                <button type="button" phx-click="detalle_nueva_linea" phx-value-catalogo={@cat.nombre} title="Nueva línea"
+                  class="w-6 h-6 rounded-lg bg-purple-600 text-white font-bold hover:bg-purple-700">+</button>
+                <button type="button" phx-click="detalle_eliminar_linea" phx-value-catalogo={@cat.nombre}
+                  disabled={not is_nil(@seleccion.renglon_id)}
+                  title={
+                    if @seleccion.renglon_id,
+                      do: "Un renglón ya guardado se quita con una transición, no se borra directo",
+                      else: "Eliminar línea"
+                  }
+                  class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 font-bold hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">×</button>
+              </div>
+            </div>
+          </div>
+
+          <details :for={grupo <- @resto_grupos} class="group border-b border-gray-100 last:border-b-0">
             <summary class="cursor-pointer select-none px-3 py-1.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 flex items-center justify-between">
               {grupo.etiqueta}
               <span class="text-gray-300 transition-transform group-open:rotate-180">⌄</span>
@@ -1930,25 +1958,13 @@ defmodule MetadataAppWeb.FichaLive do
         </form>
       <% end %>
 
-      <div class="border-t border-gray-100 px-4 py-2.5 flex items-center gap-1.5 flex-wrap">
-        <button type="button" phx-click="detalle_nueva_linea" phx-value-catalogo={@cat.nombre}
-          class="px-2 py-1 rounded-lg bg-purple-600 text-white text-[11px] font-semibold hover:bg-purple-700">
-          + Nueva línea
-        </button>
-        <button type="button" phx-click="detalle_eliminar_linea" phx-value-catalogo={@cat.nombre}
-          disabled={is_nil(@seleccion) or not is_nil(@seleccion.renglon_id)}
-          title={@seleccion && @seleccion.renglon_id && "Un renglón ya guardado se quita con una transición, no se borra directo"}
-          class="px-2 py-1 rounded-lg border border-gray-300 text-gray-600 text-[11px] font-semibold hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">
-          Eliminar línea
-        </button>
-        <div class="ml-auto flex items-center gap-1">
-          <button type="button" phx-click="detalle_navegar" phx-value-catalogo={@cat.nombre} phx-value-direccion="anterior"
-            disabled={@total == 0} title="Renglón anterior"
-            class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">‹</button>
-          <button type="button" phx-click="detalle_navegar" phx-value-catalogo={@cat.nombre} phx-value-direccion="siguiente"
-            disabled={@total == 0} title="Renglón siguiente"
-            class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">›</button>
-        </div>
+      <div class="border-t border-gray-100 px-4 py-2.5 flex items-center justify-end gap-1">
+        <button type="button" phx-click="detalle_navegar" phx-value-catalogo={@cat.nombre} phx-value-direccion="anterior"
+          disabled={@total == 0} title="Renglón anterior"
+          class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">‹</button>
+        <button type="button" phx-click="detalle_navegar" phx-value-catalogo={@cat.nombre} phx-value-direccion="siguiente"
+          disabled={@total == 0} title="Renglón siguiente"
+          class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">›</button>
       </div>
     </div>
     """
@@ -1971,4 +1987,11 @@ defmodule MetadataAppWeb.FichaLive do
     do: CatalogoGenerico.opciones_referencia(campo.schema_context_properties)
 
   defp opciones_para_campo(_campo), do: []
+
+  # El primer grupo (normalmente "Información general", el único abierto
+  # por default) se pinta suelto, sin acordeón, con los botones +/× de
+  # nueva línea/eliminar pegados al final de su fila — el resto sigue
+  # colapsable como siempre.
+  defp separar_primer_grupo([primero | resto]), do: {primero, resto}
+  defp separar_primer_grupo([]), do: {nil, []}
 end
