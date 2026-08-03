@@ -290,6 +290,167 @@ const CopiarRuta = {
   },
 }
 
+// Selector de columnas visibles + orden ("Campos", ver panel_campos/1 en
+// catalogo_live.ex) — 100% del lado del cliente, sin un solo evento al
+// servidor: tildar/destildar/arrastrar un campo solo oculta/reordena
+// <th>/<td> por CSS/DOM (display:none, appendChild), nunca toca @columnas
+// ni la query real. El estado vive acá, a nivel de MÓDULO — no en
+// localStorage a propósito — indexado por la ruta actual:
+//   - Sobrevive una navegación LiveView (push_navigate/<.link navigate>)
+//     porque esas NO recargan la página de verdad; el módulo de JS sigue
+//     vivo en memoria, solo se re-monta el hook con el mismo estado.
+//   - Se borra solo con un refresh real del navegador (F5/Ctrl+R), que
+//     reinicia todo el runtime de JS — exactamente el comportamiento
+//     pedido: "momentáneo", nunca localStorage.
+const memoriaColumnasOcultas = {}
+const memoriaOrdenColumnas = {}
+
+const SelectorCampos = {
+  mounted() {
+    this.tabla = document.getElementById(this.el.dataset.tabla)
+    this.clave = window.location.pathname
+    this.buscador = this.el.querySelector("[data-buscador-campo]")
+    this.lista = this.el.querySelector("[data-lista-campos]")
+
+    // Orden tal cual lo mandó el servidor (antes de restaurar nada) — es
+    // lo que "Limpiar filtro de campos" restaura, y lo que guardarOrden/1
+    // usa para decidir si hay override que guardar o no.
+    this.ordenOriginal = this.ordenActual()
+
+    const ordenGuardado = memoriaOrdenColumnas[this.clave]
+    if (ordenGuardado) this.reordenarLista(ordenGuardado)
+
+    const ocultos = memoriaColumnasOcultas[this.clave] || []
+    this.casillas().forEach((cb) => { cb.checked = !ocultos.includes(cb.dataset.campo) })
+
+    this.aplicar()
+    this.aplicarOrden()
+
+    this.el.addEventListener("change", (e) => {
+      if (!e.target.matches("input[type=checkbox][data-campo]")) return
+      this.aplicar()
+      this.guardar()
+    })
+
+    this.el.addEventListener("click", (e) => {
+      const boton = e.target.closest("[data-accion]")
+      if (!boton) return
+
+      if (boton.dataset.accion === "seleccionar-todos") this.casillas().forEach((cb) => (cb.checked = true))
+      if (boton.dataset.accion === "deseleccionar-todos") this.casillas().forEach((cb) => (cb.checked = false))
+
+      if (boton.dataset.accion === "limpiar") {
+        this.casillas().forEach((cb) => (cb.checked = true))
+        this.reordenarLista(this.ordenOriginal)
+        if (this.buscador) this.buscador.value = ""
+        this.filtrarLista("")
+      }
+
+      this.aplicar()
+      this.aplicarOrden()
+      this.guardar()
+      this.guardarOrden()
+    })
+
+    this.buscador?.addEventListener("input", (e) => this.filtrarLista(e.target.value))
+
+    if (this.lista) {
+      this.sortable = new Sortable(this.lista, {
+        animation: 120,
+        handle: ".jal-manija",
+        ghostClass: "jal-fantasma",
+        onEnd: () => {
+          this.aplicarOrden()
+          this.guardarOrden()
+        },
+      })
+    }
+  },
+
+  destroyed() {
+    this.sortable?.destroy()
+  },
+
+  casillas() {
+    return this.el.querySelectorAll("input[type=checkbox][data-campo]")
+  },
+
+  ordenActual() {
+    return Array.from(this.casillas()).map((cb) => cb.dataset.campo)
+  },
+
+  // Reordena las filas [data-fila-campo] del popover (no la tabla) según
+  // una lista de claves — mueve cada <div> a su posición vía appendChild
+  // repetido, el mismo truco que usa aplicarOrden/reordenarFila para las
+  // celdas de la tabla.
+  reordenarLista(ordenClaves) {
+    if (!this.lista) return
+    const filas = Array.from(this.lista.querySelectorAll("[data-fila-campo]"))
+    const mapa = new Map(filas.map((fila) => [fila.querySelector("input[data-campo]")?.dataset.campo, fila]))
+    ordenClaves.forEach((clave) => {
+      const fila = mapa.get(clave)
+      if (fila) this.lista.appendChild(fila)
+    })
+  },
+
+  filtrarLista(texto) {
+    const q = texto.toLowerCase()
+    this.el.querySelectorAll("[data-fila-campo]").forEach((fila) => {
+      const etiqueta = (fila.dataset.etiqueta || "").toLowerCase()
+      fila.style.display = etiqueta.includes(q) ? "" : "none"
+    })
+  },
+
+  aplicar() {
+    if (!this.tabla) return
+    this.casillas().forEach((cb) => {
+      const visible = cb.checked
+      this.tabla.querySelectorAll(`[data-col="${CSS.escape(cb.dataset.campo)}"]`).forEach((celda) => {
+        celda.style.display = visible ? "" : "none"
+      })
+    })
+  },
+
+  // Reordena las celdas [data-col] de CADA fila de la tabla (thead/tbody/
+  // tfoot por igual, misma consulta genérica) según el orden actual del
+  // popover — las celdas SIN data-col (la columna de Acciones al final)
+  // se dejan tal cual, al final, en su lugar de siempre.
+  aplicarOrden() {
+    if (!this.tabla) return
+    const orden = this.ordenActual()
+    this.tabla.querySelectorAll("tr").forEach((fila) => this.reordenarFila(fila, orden))
+  },
+
+  reordenarFila(fila, orden) {
+    const celdas = Array.from(fila.children)
+    const conCol = celdas.filter((c) => c.dataset.col)
+    const sinCol = celdas.filter((c) => !c.dataset.col)
+    const mapa = new Map(conCol.map((c) => [c.dataset.col, c]))
+    const ordenadas = orden.map((clave) => mapa.get(clave)).filter(Boolean)
+    const faltantes = conCol.filter((c) => !orden.includes(c.dataset.col))
+
+    ;[...ordenadas, ...faltantes, ...sinCol].forEach((c) => fila.appendChild(c))
+  },
+
+  guardar() {
+    const ocultos = Array.from(this.casillas())
+      .filter((cb) => !cb.checked)
+      .map((cb) => cb.dataset.campo)
+
+    if (ocultos.length === 0) delete memoriaColumnasOcultas[this.clave]
+    else memoriaColumnasOcultas[this.clave] = ocultos
+  },
+
+  guardarOrden() {
+    const actual = this.ordenActual()
+    const esOriginal =
+      actual.length === this.ordenOriginal.length && actual.every((clave, i) => clave === this.ordenOriginal[i])
+
+    if (esOriginal) delete memoriaOrdenColumnas[this.clave]
+    else memoriaOrdenColumnas[this.clave] = actual
+  },
+}
+
 // Copia el contenido de un <textarea> al portapapeles — usado en el editor
 // de reglas PRE/POST de BcMotorLive (panel_reglas), para poder trabajar la
 // regla en otro editor y volver a pegarla acá antes de "Compilar". Lee
@@ -473,7 +634,7 @@ const AbrirVistaPrevia = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, CopiarRuta, CopiarTextarea, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, CopiarRuta, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable},
 })
 
 // Show progress bar on live navigation and form submits
