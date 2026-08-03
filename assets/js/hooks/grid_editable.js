@@ -1,41 +1,29 @@
-// Grid Editable Empresarial — motor de captura tipo Excel para renglones de
-// catálogos maestro-detalle. El estado real de la grilla vive acá
-// (this.rows), separado de cómo se pinta (render()) — teclado, pegado y
-// validación operan siempre sobre this.rows/índices, nunca sobre el DOM
-// directo, así la Fase 2 (virtualización, ver más abajo) solo reemplaza el
-// CUERPO de render() sin tocar el resto.
+// Grid Editable Empresarial — vista de renglones de catálogos
+// maestro-detalle. La grilla es de SOLO LECTURA (ver/seleccionar filas) —
+// toda la edición (tipear, elegir de un desplegable) pasa por el
+// formulario de arriba (FichaLive.formulario_renglon/1); acá solo se
+// pinta el estado actual de this.rows y un clic en cualquier parte de una
+// fila la selecciona para editarla ahí. El estado real de la grilla vive
+// en this.rows (nunca en el DOM), separado de cómo se pinta (render()).
 //
 // El elemento raíz tiene phx-update="ignore" (ver GridEditableComponents) —
 // LiveView nunca vuelve a tocar este <tbody> después del primer render, este
 // hook es el único dueño de ese DOM. Actualizaciones del servidor después de
-// eso (guardar, transición de un renglón) llegan por push_event, nunca por
-// un re-render de LiveView.
+// eso (guardar, transición de un renglón, edición desde el formulario)
+// llegan por push_event, nunca por un re-render de LiveView.
 //
-// Fase 2 — virtualización: con pocas filas (<= VIRTUALIZAR_DESDE) se pinta
-// todo el <tbody> de una, igual que la Fase 1 (sin altura fija, sin scroll
-// propio — la tabla crece con el contenido, como cualquier tabla HTML de
-// siempre). Por arriba de ese umbral, el contenedor `.ge-scroll` pasa a
-// tener altura fija + `overflow-y: auto`, y el <tbody> solo materializa la
-// ventana de filas visible (+ buffer) — el resto del alto se simula con dos
-// filas espaciadoras (altura = filas fuera de la ventana × ROW_H), técnica
+// Virtualización: con pocas filas (<= VIRTUALIZAR_DESDE) se pinta todo el
+// <tbody> de una (sin altura fija, sin scroll propio). Por arriba de ese
+// umbral, el contenedor `.ge-scroll` pasa a tener altura fija +
+// `overflow-y: auto`, y el <tbody> solo materializa la ventana de filas
+// visible (+ buffer) — el resto del alto se simula con dos filas
+// espaciadoras (altura = filas fuera de la ventana × ROW_H), técnica
 // estándar para virtualizar sobre un <table> real sin pelearse con
-// `position: absolute` en `<tr>` (que las tablas no soportan bien). Nunca
-// se crean/destruyen más de ~30-40 nodos `<tr>` a la vez, sin importar si
-// hay 100 o 10.000 filas cargadas en this.rows.
-const ROW_H = 33
+// `position: absolute` en `<tr>` (que las tablas no soportan bien).
+const ROW_H = 26
 const VIRTUALIZAR_DESDE = 50
 const FILAS_EN_VENTANA = 15
 const BUFFER_FILAS = 8
-
-// Fase 3 (asistencia con IA, Nivel A) — nada de esto llama al servidor ni
-// necesita infraestructura nueva: autocompletar por columna con lo que ya
-// se tipeó en ESTA sesión de captura (vía <datalist> nativo del navegador,
-// se actualiza al salir de cada celda, no en cada tecla) y aviso suave de
-// filas que podrían ser duplicadas (nunca bloquea guardar — hay duplicados
-// legítimos de verdad). El Nivel B (aprendizaje entre sesiones, correcciones
-// automáticas con un modelo real) sigue explícitamente fuera de alcance —
-// ver docs/catalogo-maestro-detalle-requerimientos.md Fase 7.
-const MAX_VALORES_RECIENTES = 20
 
 const TIPOS_NUMERICOS = ["integer", "decimal"]
 
@@ -43,33 +31,23 @@ function celdaVacia(valor) {
   return valor === undefined || valor === null || valor === "" || valor === "false"
 }
 
-function filaVacia(values, columns) {
-  return columns.every((c) => celdaVacia(values[c.campo]))
+function filaVacia(values) {
+  return Object.values(values).every((v) => celdaVacia(v))
 }
 
 function escaparHtml(valor) {
   return String(valor).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]))
 }
 
-// Fase 2 (virtualización): qué rango [inicio, fin) de filas materializar en
-// el DOM dado el scroll actual — la única cuenta con riesgo real de bug
-// (off-by-one, ventana vacía, etc.), separada de render() para poder
-// probarla sin DOM (ver assets/js/hooks/__tests__/grid_editable.test.mjs).
-// `total` ya viene recortado a lo que hay de verdad (this.filasVisibles().length).
+// Qué rango [inicio, fin) de filas materializar en el DOM dado el scroll
+// actual — la única cuenta con riesgo real de bug (off-by-one, ventana
+// vacía, etc.), separada de render() para poder probarla sin DOM (ver
+// assets/js/hooks/__tests__/grid_editable.test.mjs). `total` ya viene
+// recortado a lo que hay de verdad (this.rows.length).
 export function calcularVentana(scrollTop, altoContenedor, total) {
   const inicio = Math.max(0, Math.floor(scrollTop / ROW_H) - BUFFER_FILAS)
   const fin = Math.min(total, Math.ceil((scrollTop + altoContenedor) / ROW_H) + BUFFER_FILAS)
   return {inicio, fin: Math.max(inicio, fin)}
-}
-
-// Formato estándar de pegado de Excel/Sheets: filas separadas por salto de
-// línea, columnas por tab. Se descarta una última línea vacía (lo que deja
-// un "\n" final del portapapeles, muy común). Exportado para poder probarlo
-// sin DOM (ver assets/js/hooks/__tests__/grid_editable.test.mjs).
-export function parsePaste(texto) {
-  const lineas = texto.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n")
-  if (lineas.length > 1 && lineas[lineas.length - 1] === "") lineas.pop()
-  return lineas.map((linea) => linea.split("\t"))
 }
 
 // nueva/modificada/error/sin_cambios se derivan, nunca se guardan aparte —
@@ -82,22 +60,12 @@ export function computeStatus(row) {
   return "sin_cambios"
 }
 
-// Lista de valores recientes de UNA columna, más reciente primero, sin
-// repetidos, recortada a `max` — la sugerencia "el último valor tipeado"
-// (estilo Excel) es simplemente el primero de esta lista; el resto alimenta
-// el <datalist> de esa columna. Pura y exportada para probarla sin DOM.
-export function actualizarValoresRecientes(valores, valorNuevo, max = MAX_VALORES_RECIENTES) {
-  const limpio = (valorNuevo || "").trim()
-  if (!limpio) return valores
-  return [limpio, ...valores.filter((v) => v !== limpio)].slice(0, max)
-}
-
 // Firma de una fila para detectar posibles duplicados: valores recortados y
 // en minúscula (case-insensitive) de las columnas de la grilla — barato y
 // suficiente para "podría ser la misma fila dos veces", no pretende ser una
 // comparación semántica.
 export function firmaFila(values, columns) {
-  return columns.map((c) => String(values[c.campo] ?? "").trim().toLowerCase()).join("")
+  return columns.map((c) => String(values[c.campo] ?? "").trim().toLowerCase()).join("")
 }
 
 // Índices (dentro de `filas`) que comparten firma con al menos otra fila no
@@ -108,7 +76,7 @@ export function detectarDuplicados(filas, columns) {
   const duplicados = new Set()
 
   filas.forEach((fila, i) => {
-    if (filaVacia(fila.values, columns)) return
+    if (filaVacia(fila.values)) return
     const firma = firmaFila(fila.values, columns)
     if (vistos.has(firma)) {
       duplicados.add(i)
@@ -121,10 +89,10 @@ export function detectarDuplicados(filas, columns) {
   return duplicados
 }
 
-// Validación síncrona, solo con lo que ya existe en schema_context_properties
-// (tipo/opcional/longitud/valores) — cubre requerido, tipo, y enum. Lo que
-// esto no puede ver (existencia de FK, reglas del changeset) viaja al
-// servidor por separado (ver programarValidacionServidor).
+// Validación síncrona de lo que llega del formulario (setCelda) — cubre
+// requerido, tipo, y enum. Lo que esto no puede ver (existencia de FK,
+// reglas del changeset) viaja al servidor por separado (ver
+// programarValidacionServidor).
 function validarCelda(valor, columna) {
   const vacio = celdaVacia(valor)
 
@@ -143,6 +111,23 @@ function validarCelda(valor, columna) {
   }
 
   return []
+}
+
+// Texto legible de una celda de solo lectura — para "referencia" resuelve
+// la etiqueta ya armada por el servidor (CatalogoGenerico.opciones_referencia/1,
+// mismo picker que usa el formulario) en vez del id crudo; para "boolean"
+// muestra Sí/No en vez de "true"/"false".
+function textoCelda(col, valor) {
+  if (celdaVacia(valor)) return ""
+
+  if (col.tipo === "referencia" && Array.isArray(col.opciones)) {
+    const opcion = col.opciones.find((o) => String(o.id) === valor)
+    if (opcion) return opcion.etiqueta
+  }
+
+  if (col.tipo === "boolean") return valor === "true" ? "Sí" : "No"
+
+  return valor
 }
 
 let contadorClientId = 0
@@ -182,37 +167,16 @@ export default {
     this.ventanaInicio = null
     this.ventanaFin = null
     this.scrollRaf = null
-    // Layout 2 columnas (formulario izq. + grilla der.): clientId de la
-    // fila "activa" — el formulario de FichaLive.formulario_renglon/1
-    // muestra/edita SIEMPRE esta fila (nunca un modal). null = ninguna
+    // clientId de la fila "activa" — el formulario de
+    // FichaLive.formulario_renglon/1 muestra/edita SIEMPRE esta fila (nunca
+    // un modal; la grilla ya no edita nada por su cuenta). null = ninguna
     // seleccionada todavía.
     this.filaSeleccionadaClientId = null
 
-    // Fase 3, Nivel A: arranca con lo que ya está persistido (si el
-    // catálogo ya tenía renglones) como base de "valores recientes" — no
-    // hace falta esperar a que el usuario tipee algo en esta sesión para
-    // que la sugerencia sirva de algo.
-    this.valoresRecientes = {}
-    this.rows.forEach((fila) => {
-      this.columns.forEach((col) => {
-        this.valoresRecientes[col.campo] = actualizarValoresRecientes(this.valoresRecientes[col.campo] || [], fila.values[col.campo])
-      })
-    })
-    this.crearDatalists()
-
-    this.el.addEventListener("keydown", (e) => this.alTecla(e))
-    this.el.addEventListener("paste", (e) => this.alPegar(e))
-    this.el.addEventListener("input", (e) => this.alEscribir(e))
-    this.el.addEventListener("click", (e) => this.alClicAccion(e))
-    // "Aprende" el valor recién tipeado al SALIR de la celda, no en cada
-    // tecla — si no, un valor a medio escribir ("Ju", "Jua", "Juan")
-    // ensuciaría la lista de sugerencias con basura intermedia.
-    this.el.addEventListener("focusout", (e) => this.alSalirCelda(e))
-    // Selección de fila (layout 2 columnas): CUALQUIER forma de llegar el
-    // foco a una celda (clic, Tab, flechas, enfocarCelda programático)
-    // pasa por acá — un solo lugar, en vez de repetir la lógica en cada
-    // manejador de teclado/clic.
-    this.el.addEventListener("focusin", (e) => this.alEnfocarCelda(e))
+    // Único listener de interacción: un clic en cualquier parte de una fila
+    // la selecciona — la grilla es de solo lectura, no hay teclado/pegado
+    // que atender acá.
+    this.el.addEventListener("click", (e) => this.alClicFila(e))
 
     // Throttleado con requestAnimationFrame — el scroll dispara muchos
     // eventos por segundo, pero repintar la ventana en cada uno es
@@ -263,12 +227,9 @@ export default {
       this.render()
     })
 
-    // --- Layout 2 columnas: eventos del formulario izquierdo -------------
+    // --- Toda la edición viaja desde el formulario de arriba ---------------
 
-    // El formulario editó un campo de la fila seleccionada — se aplica acá
-    // exactamente igual que si se hubiese tipeado en la celda (misma
-    // validación/sync debounced), así las dos vistas de la fila nunca se
-    // desincronizan.
+    // El formulario editó un campo de la fila seleccionada.
     this.handleEvent("grid_actualizar_fila", ({catalogo, client_id, valores}) => {
       if (catalogo !== this.catalogo) return
       const idx = this.rows.findIndex((r) => r.clientId === client_id)
@@ -279,22 +240,21 @@ export default {
       this.programarSync()
     })
 
-    // "+ Nueva línea" del formulario: crea una fila real en blanco (no la
-    // fantasma efímera de filasVisibles/2, que cambia de clientId en cada
-    // llamada) y la enfoca — enfocarCelda dispara "focusin", que reporta
-    // la selección real (con su clientId verdadero) de vuelta al servidor.
+    // "+ Nueva línea" del formulario: crea una fila real en blanco y la
+    // selecciona, trayéndola a la vista si está virtualizada.
     this.handleEvent("grid_nueva_fila", ({catalogo}) => {
       if (catalogo !== this.catalogo) return
       const idx = this.rows.length
-      this.asegurarFila(idx)
+      this.rows.push(filaNueva())
       this.render()
-      this.enfocarCelda(idx, 0)
+      this.pararEnFila(idx)
     })
 
-    // "Eliminar línea" del formulario — solo para filas TODAVÍA sin
-    // renglon_id (mismo criterio que borrarFilaNueva/ge-quitar; el
-    // servidor ya lo garantiza del otro lado, esto es defensa en
-    // profundidad, nunca borra un renglón persistido).
+    // "Eliminar línea" del formulario, para una fila TODAVÍA sin
+    // renglon_id — se saca del array entero, nunca existió en la base.
+    // Para un renglón YA persistido, el mismo botón manda
+    // grid_marcar_eliminar en cambio (ver más abajo) — un soft-delete NO
+    // es lo mismo que "nunca llegó a existir".
     this.handleEvent("grid_quitar_fila", ({catalogo, client_id}) => {
       if (catalogo !== this.catalogo) return
       const idx = this.rows.findIndex((r) => r.clientId === client_id)
@@ -305,15 +265,35 @@ export default {
       this.programarSync()
     })
 
+    // "Eliminar línea" del formulario, para un renglón YA PERSISTIDO — a
+    // diferencia de una fila nueva (se saca del array entero), acá solo
+    // se TOGGLEA una marca: tiene que seguir existiendo en this.rows para
+    // poder sincronizarse al servidor como "eliminadas" (ver
+    // sincronizarAhora). El soft-delete real ocurre recién al guardar
+    // (MetadataApp.Renglones.eliminar_todos/3), nunca al tocar este botón
+    // — un renglón no tiene estado propio (R3), así que "eliminarlo" no
+    // mueve nada del encabezado, a diferencia de una transición real.
+    // Identificado por renglon_id (no client_id): la navegación
+    // anterior/siguiente del formulario (detalle_navegar) selecciona un
+    // renglón sin conocer su client_id del lado del hook.
+    this.handleEvent("grid_marcar_eliminar", ({catalogo, renglon_id}) => {
+      if (catalogo !== this.catalogo) return
+      const fila = this.rows.find((f) => f.renglonId === renglon_id)
+      if (!fila) return
+      fila.marcadaEliminar = !fila.marcadaEliminar
+      this.render()
+      this.programarSync()
+    })
+
     // Navegación anterior/siguiente del formulario, entre renglones YA
     // persistidos — el servidor ya resolvió cuál es y actualizó el
-    // formulario con sus valores; acá solo hace falta resaltar/enfocar esa
-    // fila (enfocarCelda ya sabe traerla a la vista si está virtualizada).
+    // formulario con sus valores; acá solo hace falta resaltar/traer a la
+    // vista esa fila.
     this.handleEvent("grid_resaltar_fila", ({catalogo, renglon_id}) => {
       if (catalogo !== this.catalogo) return
-      const idx = this.filasVisibles().findIndex((f) => f.renglonId === renglon_id)
+      const idx = this.rows.findIndex((f) => f.renglonId === renglon_id)
       if (idx === -1) return
-      this.enfocarCelda(idx, 0)
+      this.pararEnFila(idx)
     })
 
     this.render()
@@ -325,22 +305,8 @@ export default {
     Object.values(this.validarTimers).forEach(clearTimeout)
   },
 
-  // --- Filas a mostrar: this.rows + una fantasma en blanco al final ------
-  // La fantasma NO vive en this.rows hasta que se empieza a tipear en ella
-  // (ver alEscribir/asegurarFila) — así this.rows nunca acumula filas
-  // vacías, ni una por cada tecla.
-  filasVisibles() {
-    const ultima = this.rows[this.rows.length - 1]
-    if (!ultima || !filaVacia(ultima.values, this.columns)) return [...this.rows, filaNueva()]
-    return this.rows
-  },
-
-  asegurarFila(rowIdx) {
-    while (this.rows.length <= rowIdx) this.rows.push(filaNueva())
-  },
-
   setCelda(rowIdx, campo, valor) {
-    this.asegurarFila(rowIdx)
+    while (this.rows.length <= rowIdx) this.rows.push(filaNueva())
     const fila = this.rows[rowIdx]
     fila.values[campo] = valor
     if (fila.renglonId != null && valor !== fila.original[campo]) fila.dirty.add(campo)
@@ -348,51 +314,27 @@ export default {
     fila.errors[campo] = col ? validarCelda(valor, col) : []
   },
 
-  // --- Fase 3, Nivel A: autocompletar por columna (<datalist> nativo) ------
-  // Un <datalist> por columna, fuera del <tbody> (no lo toca render()) —
-  // cada input de esa columna lo referencia con list="...", el navegador
-  // se encarga de mostrar el desplegable de sugerencias solo.
-  crearDatalists() {
-    this.datalistIds = {}
-    this.columns.forEach((col) => {
-      const id = `${this.el.id}-dl-${col.campo}`
-      this.datalistIds[col.campo] = id
-      const datalist = document.createElement("datalist")
-      datalist.id = id
-      this.el.appendChild(datalist)
-      this.actualizarDatalist(col.campo)
-    })
+  // --- Selección de fila (única interacción propia de la grilla) -----------
+  alClicFila(e) {
+    const tr = e.target.closest("tr[data-row]")
+    if (!tr) return
+    this.pararEnFila(parseInt(tr.dataset.row, 10))
   },
 
-  actualizarDatalist(campo) {
-    const id = this.datalistIds && this.datalistIds[campo]
-    const datalist = id && document.getElementById(id)
-    if (!datalist) return
-    const valores = this.valoresRecientes[campo] || []
-    datalist.innerHTML = valores.map((v) => `<option value="${escaparHtml(v)}"></option>`).join("")
+  // Si la fila no está materializada (fuera de la ventana actual, solo pasa
+  // cuando se virtualiza), primero la trae a la vista.
+  pararEnFila(row) {
+    if (this.virtualizando && (row < this.ventanaInicio || row >= this.ventanaFin)) {
+      this.scrollBox.scrollTop = Math.max(0, row * ROW_H - this.scrollBox.clientHeight / 2)
+      this.actualizarVentana()
+    }
+    this.seleccionarFila(row)
   },
 
-  alSalirCelda(e) {
-    const input = e.target.closest(".ge-input")
-    if (!input || !input.value.trim()) return
-    const campo = input.dataset.campo
-    this.valoresRecientes[campo] = actualizarValoresRecientes(this.valoresRecientes[campo] || [], input.value)
-    this.actualizarDatalist(campo)
-  },
-
-  // --- Layout 2 columnas: selección de fila ---------------------------------
-  alEnfocarCelda(e) {
-    const input = e.target.closest(".ge-input")
-    if (!input) return
-    this.seleccionarFila(parseInt(input.dataset.row, 10))
-  },
-
-  // Promueve la fila a "real" (asegurarFila — si era la fantasma efímera,
-  // ahora vive en this.rows con un clientId estable) y le avisa al
-  // formulario de FichaLive cuál es el renglón activo, con los valores que
-  // la grilla YA tiene en memoria (incluye tipeo todavía sin sincronizar).
+  // Le avisa al formulario de FichaLive cuál es el renglón activo, con los
+  // valores que la grilla YA tiene en memoria (incluye edición del
+  // formulario todavía sin sincronizar).
   seleccionarFila(rowIdx) {
-    this.asegurarFila(rowIdx)
     const fila = this.rows[rowIdx]
     if (!fila || fila.clientId === this.filaSeleccionadaClientId) return
     this.filaSeleccionadaClientId = fila.clientId
@@ -406,12 +348,12 @@ export default {
   },
 
   render() {
-    const filas = this.filasVisibles()
+    const filas = this.rows
     const total = filas.length
     this.virtualizando = total > VIRTUALIZAR_DESDE
     this.actualizarModoScroll()
-    // Fase 3, Nivel A: aviso suave de posibles duplicados — se recalcula en
-    // cada render, es una comparación barata incluso con miles de filas.
+    // Aviso suave de posibles duplicados — se recalcula en cada render, es
+    // una comparación barata incluso con miles de filas.
     this.duplicados = detectarDuplicados(filas, this.columns)
 
     if (!this.virtualizando) {
@@ -427,7 +369,7 @@ export default {
 
     const inicio = Math.max(0, Math.min(this.ventanaInicio, total))
     const fin = Math.max(inicio, Math.min(this.ventanaFin, total))
-    const colspan = this.columns.length + 3
+    const colspan = this.columns.length + 2
     const altoArriba = inicio * ROW_H
     const altoAbajo = (total - fin) * ROW_H
 
@@ -444,8 +386,7 @@ export default {
 
   // Fija la altura del contenedor de scroll solo cuando hay filas de sobra
   // como para justificarlo — con pocas filas la tabla se comporta como
-  // cualquier tabla HTML normal, sin caja de scroll propia (Fase 1, sin
-  // cambios de comportamiento para el caso común).
+  // cualquier tabla HTML normal, sin caja de scroll propia.
   actualizarModoScroll() {
     if (this.virtualizando) {
       this.scrollBox.style.maxHeight = `${ROW_H * FILAS_EN_VENTANA}px`
@@ -460,7 +401,7 @@ export default {
   // vuelve a pintar SOLO si la ventana realmente cambió (evita re-renders
   // de sobra en scrolls chiquitos que no cruzan el buffer).
   actualizarVentana() {
-    const total = this.filasVisibles().length
+    const total = this.rows.length
     const {inicio, fin} = calcularVentana(this.scrollBox.scrollTop, this.scrollBox.clientHeight, total)
 
     if (inicio === this.ventanaInicio && fin === this.ventanaFin) return
@@ -488,13 +429,13 @@ export default {
       sin_cambios: "bg-transparent",
     }[status]
 
-    // Layout 2 columnas: la fila que el formulario de la izquierda está
-    // mostrando/editando ahora mismo — un ring en vez de tocar el fondo,
-    // así convive sin pelearse con los colores de status de arriba.
+    // La fila que el formulario de arriba está mostrando/editando ahora
+    // mismo — un ring en vez de tocar el fondo, así convive sin pelearse
+    // con los colores de status de arriba.
     const claseSeleccionada = fila.clientId === this.filaSeleccionadaClientId ? "ring-1 ring-inset ring-purple-400" : ""
 
-    // Fase 3, Nivel A: aviso suave (nunca bloquea) cuando esta fila parece
-    // repetida de otra ya cargada.
+    // Aviso suave (nunca bloquea) cuando esta fila parece repetida de otra
+    // ya cargada.
     const avisoDuplicado = esDuplicado
       ? `<span class="ml-0.5 text-amber-500 text-[10px]" title="Podría ser un duplicado de otra fila">⚠</span>`
       : ""
@@ -503,249 +444,31 @@ export default {
       .map((col) => {
         const valor = fila.values[col.campo] ?? ""
         const errores = (fila.errors && fila.errors[col.campo]) || []
-        const claseInput = errores.length > 0 ? "border-red-400 focus:border-red-500" : "border-gray-300 focus:border-purple-500"
-        const claseTachado = fila.marcadaEliminar ? "line-through text-gray-400" : ""
-        const listaId = (this.datalistIds && this.datalistIds[col.campo]) || ""
+        const claseTachado = fila.marcadaEliminar ? "line-through" : ""
+        const claseTexto = errores.length > 0 ? "text-red-600" : fila.marcadaEliminar ? "text-gray-400" : "text-gray-700"
+        const texto = escaparHtml(textoCelda(col, valor))
 
-        return `<td class="px-2 py-1 align-top">
-          <input type="text" class="ge-input w-full border ${claseInput} ${claseTachado} rounded text-gray-900 px-2 py-1.5 text-xs outline-none"
-            value="${escaparHtml(valor)}" data-row="${i}" data-campo="${col.campo}" list="${listaId}"
-            ${fila.marcadaEliminar ? "readonly" : ""}
-            title="${errores.length ? escaparHtml(errores.join("; ")) : ""}" />
-        </td>`
+        return `<td class="px-1.5 py-1 align-top text-xs ${claseTexto} ${claseTachado} truncate max-w-[16rem]"
+          title="${errores.length ? escaparHtml(errores.join("; ")) : ""}">${texto === "" ? "&nbsp;" : texto}</td>`
       })
       .join("")
 
-    // Renglón NUEVO (sin persistir): "✕" lo saca directo de this.rows (ver
-    // borrarFilaNueva). Renglón YA PERSISTIDO: "✕" solo TOGGLEA una marca
-    // (ver toggleEliminarPersistida) — al guardar, se soft-borra directo
-    // (MetadataApp.Renglones.eliminar_todos/3, sin transición: un renglón
-    // no tiene estado propio, R3, así que "eliminarlo" no mueve nada del
-    // encabezado). Antes acá NO había botón para filas persistidas —
-    // mostrar una transición del encabezado por fila era engañoso (movía
-    // el estado_id del encabezado completo, ver R3) — pero un soft-delete
-    // directo no tiene ese problema, así que ahora sí se ofrece.
-    const acciones = fila.marcadaEliminar
-      ? `<button type="button" class="ge-quitar text-gray-500 hover:text-gray-700 text-[11px] font-semibold" data-row="${i}" title="Deshacer">↺ deshacer</button>`
-      : `<button type="button" class="ge-quitar text-red-500 hover:text-red-700 font-bold" data-row="${i}" title="${fila.renglonId != null ? "Eliminar renglón" : "Quitar fila"}">✕</button>`
 
     // Altura fija solo mientras se virtualiza — tiene que coincidir con
     // ROW_H, si no el cálculo de los espaciadores de arriba se desalinea
     // del contenido real y el scroll salta.
     const estilo = alturaFija ? ` style="height:${ROW_H}px"` : ""
 
-    return `<tr class="${filaClases} ${claseSeleccionada}" data-row="${i}"${estilo}>
-      <td class="px-2 py-1 text-gray-400 align-top pt-2 text-[10px]">${i + 1}</td>
-      <td class="px-1 py-1 align-top pt-2.5" title="${status}"><span class="inline-block w-1.5 h-1.5 rounded-full ${puntoClase}"></span>${avisoDuplicado}</td>
+    return `<tr class="cursor-pointer hover:bg-purple-50/60 ${filaClases} ${claseSeleccionada}" data-row="${i}"${estilo}>
+      <td class="px-1.5 py-1 text-gray-400 align-top text-[10px]">${i + 1}</td>
+      <td class="px-1 py-1 align-top" title="${status}"><span class="inline-block w-1.5 h-1.5 rounded-full ${puntoClase}"></span>${avisoDuplicado}</td>
       ${celdas}
-      <td class="px-2 py-1 text-right align-top pt-2 whitespace-nowrap">${acciones}</td>
     </tr>`
-  },
-
-  // --- Navegación ----------------------------------------------------------
-  // Si la fila destino no está materializada (fuera de la ventana actual,
-  // solo pasa cuando se virtualiza — Fase 2), primero hay que llevarla a la
-  // ventana: mover el scroll y recalcular la ventana ANTES de buscar el
-  // input en el DOM, si no `querySelector` no la va a encontrar todavía.
-  enfocarCelda(row, colIdx) {
-    const col = this.columns[colIdx]
-    if (!col) return
-
-    if (this.virtualizando && (row < this.ventanaInicio || row >= this.ventanaFin)) {
-      this.scrollBox.scrollTop = Math.max(0, row * ROW_H - this.scrollBox.clientHeight / 2)
-      this.actualizarVentana()
-    }
-
-    const el = this.tbody.querySelector(`input[data-row="${row}"][data-campo="${col.campo}"]`)
-    if (el) {
-      el.focus()
-      el.select()
-    }
-  },
-
-  reenfocar(row, campo) {
-    requestAnimationFrame(() => {
-      const el = this.tbody.querySelector(`input[data-row="${row}"][data-campo="${campo}"]`)
-      if (!el) return
-      el.focus()
-      const pos = el.value.length
-      el.setSelectionRange(pos, pos)
-    })
-  },
-
-  moverA(row, col, wrap = false) {
-    let r = row
-    let c = col
-    if (wrap) {
-      if (c >= this.columns.length) {
-        c = 0
-        r += 1
-      } else if (c < 0) {
-        c = this.columns.length - 1
-        r -= 1
-      }
-    }
-    if (r < 0 || c < 0 || c >= this.columns.length) return
-    if (r >= this.filasVisibles().length) return
-    this.enfocarCelda(r, c)
-  },
-
-  // --- Estructura: insertar/duplicar/borrar filas ---------------------------
-  insertarFila(idx) {
-    this.rows.splice(idx, 0, filaNueva())
-    this.render()
-    this.enfocarCelda(idx, 0)
-  },
-
-  duplicarFila(row) {
-    const fila = this.filasVisibles()[row]
-    if (!fila || filaVacia(fila.values, this.columns)) return
-    const copia = filaNueva()
-    copia.values = {...fila.values}
-    copia.dirty = new Set(Object.keys(fila.values))
-    this.asegurarFila(row)
-    this.rows.splice(row + 1, 0, copia)
-    this.render()
-    this.programarSync()
-  },
-
-  // Solo filas NUEVAS (todavía sin renglon_id) se sacan del array acá — un
-  // renglón ya persistido se marca en vez de splicearse, ver
-  // toggleEliminarPersistida.
-  borrarFilaNueva(row) {
-    const fila = this.rows[row]
-    if (!fila || fila.renglonId != null) return
-    this.rows.splice(row, 1)
-    this.render()
-    this.programarSync()
-  },
-
-  // Renglón YA PERSISTIDO: a diferencia de una fila nueva (se saca del
-  // array entero), acá solo se TOGGLEA una marca — tiene que seguir
-  // existiendo en this.rows para poder sincronizarse al servidor como
-  // "eliminadas" (ver sincronizarAhora). El soft-delete real ocurre recién
-  // al guardar (Renglones.eliminar_todos/3), nunca al tocar este botón.
-  toggleEliminarPersistida(row) {
-    const fila = this.rows[row]
-    if (!fila || fila.renglonId == null) return
-    fila.marcadaEliminar = !fila.marcadaEliminar
-    this.render()
-    this.programarSync()
-  },
-
-  // --- Eventos de teclado/mouse ---------------------------------------------
-  alTecla(e) {
-    const input = e.target.closest(".ge-input")
-    if (!input) return
-    const row = parseInt(input.dataset.row, 10)
-    const campoIdx = this.columns.findIndex((c) => c.campo === input.dataset.campo)
-
-    if (e.key === "Tab") {
-      e.preventDefault()
-      this.moverA(row, campoIdx + (e.shiftKey ? -1 : 1), true)
-    } else if (e.key === "Enter") {
-      e.preventDefault()
-      if (e.ctrlKey) this.insertarFila(row + 1)
-      else this.moverA(row + (e.shiftKey ? -1 : 1), campoIdx)
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault()
-      this.moverA(row + 1, campoIdx)
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault()
-      this.moverA(row - 1, campoIdx)
-    } else if (e.key === "ArrowRight" && input.selectionStart === input.value.length) {
-      e.preventDefault()
-      this.moverA(row, campoIdx + 1)
-    } else if (e.key === "ArrowLeft" && input.selectionStart === 0) {
-      e.preventDefault()
-      this.moverA(row, campoIdx - 1)
-    } else if (e.key === "Escape") {
-      e.preventDefault()
-      const original = (this.rows[row] && this.rows[row].values[input.dataset.campo]) || ""
-      input.value = original
-    } else if (e.key === "Delete" && input.value === "") {
-      e.preventDefault()
-      this.borrarFilaNueva(row)
-    } else if ((e.key === "d" || e.key === "D") && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault()
-      this.duplicarFila(row)
-    }
-  },
-
-  alEscribir(e) {
-    const input = e.target.closest(".ge-input")
-    if (!input) return
-    const row = parseInt(input.dataset.row, 10)
-    const campo = input.dataset.campo
-    const eraUltimaFantasma = row === this.rows.length
-
-    this.setCelda(row, campo, input.value)
-
-    if (eraUltimaFantasma) {
-      // La fila fantasma acaba de volverse real — hace falta una nueva
-      // fantasma debajo, lo que exige un render completo (y recuperar foco).
-      this.render()
-      this.reenfocar(row, campo)
-    } else {
-      const errores = this.rows[row].errors[campo] || []
-      const td = input.closest("td")
-      input.classList.toggle("border-red-400", errores.length > 0)
-      input.classList.toggle("border-gray-300", errores.length === 0)
-      input.title = errores.join("; ")
-      void td
-    }
-
-    this.programarValidacionServidor(row)
-    this.programarSync()
-  },
-
-  alPegar(e) {
-    const input = e.target.closest(".ge-input")
-    if (!input) return
-    const texto = (e.clipboardData || window.clipboardData).getData("text/plain")
-    if (!texto) return
-    e.preventDefault()
-
-    const filas = parsePaste(texto)
-    const rowInicio = parseInt(input.dataset.row, 10)
-    const colInicio = this.columns.findIndex((c) => c.campo === input.dataset.campo)
-
-    filas.forEach((valores, dr) => {
-      const rowIdx = rowInicio + dr
-      this.asegurarFila(rowIdx)
-      valores.forEach((valor, dc) => {
-        const col = this.columns[colInicio + dc]
-        if (col) this.setCelda(rowIdx, col.campo, valor)
-      })
-    })
-
-    this.render()
-    this.programarSync()
-  },
-
-  alClicAccion(e) {
-    const quitar = e.target.closest(".ge-quitar")
-    if (quitar) {
-      const row = parseInt(quitar.dataset.row, 10)
-      const fila = this.rows[row]
-      if (fila && fila.renglonId != null) this.toggleEliminarPersistida(row)
-      else this.borrarFilaNueva(row)
-      return
-    }
-
-    const accion = e.target.closest(".ge-accion")
-    if (accion) {
-      const row = parseInt(accion.dataset.row, 10)
-      const fila = this.filasVisibles()[row]
-      if (!fila || fila.renglonId == null) return
-      this.pushEvent("renglon_transicion", {catalogo: this.catalogo, renglon_id: fila.renglonId, accion: accion.dataset.accion})
-    }
   },
 
   // --- Sincronización con el servidor ---------------------------------------
   // Validación de servidor (FK, reglas del changeset): solo lo que JS no
-  // puede resolver por sí solo, con debounce por fila para no mandar una
-  // petición por cada tecla.
+  // puede resolver por sí solo, con debounce por fila.
   programarValidacionServidor(row) {
     clearTimeout(this.validarTimers[row])
     this.validarTimers[row] = setTimeout(() => {
@@ -765,21 +488,13 @@ export default {
     this.syncTimer = setTimeout(() => this.sincronizarAhora(), 500)
   },
 
-  // Filas vacías (incluida la fantasma) nunca se mandan. "nuevas" son las
-  // que todavía no tienen renglon_id; "editadas" son renglones YA
-  // persistidos con al menos un campo tocado (dirty); "eliminadas" son
-  // renglones YA persistidos marcados con toggleEliminarPersistida — ver
-  // FichaLive.handle_event("grid_sync", ...). Una fila marcada para
-  // eliminar se manda SOLO como "eliminadas" (aunque tenga campos dirty)
-  // — no tiene sentido persistir ediciones de una fila que se va a borrar.
-  //
-  // Ojo: la vaciedad acá se mide sobre TODO fila.values, no solo
-  // this.columns (columnas curadas de la grilla, ver
-  // MetaSchemaContext.mostrar_en_grilla?/1) — un campo cargado SOLO desde
-  // el formulario de arriba (grid_actualizar_fila) puede no estar entre
-  // las columnas visibles de la grilla; si se midiera solo contra
-  // this.columns, una fila con datos reales pero "vacía" a los ojos de la
-  // grilla se descartaría en silencio acá.
+  // Filas vacías nunca se mandan. "nuevas" son las que todavía no tienen
+  // renglon_id; "editadas" son renglones YA persistidos con al menos un
+  // campo tocado (dirty); "eliminadas" son renglones YA persistidos
+  // marcados vía grid_marcar_eliminar (botón "×" del formulario, ver
+  // FichaLive.handle_event("detalle_eliminar_linea", ...)) — se mandan
+  // SOLO como "eliminadas" (aunque también tengan campos dirty), no tiene
+  // sentido persistir ediciones de una fila que se va a borrar.
   sincronizarAhora() {
     clearTimeout(this.syncTimer)
     const nuevas = []
@@ -791,7 +506,7 @@ export default {
         eliminadas.push(fila.renglonId)
         return
       }
-      if (!Object.values(fila.values).some((v) => !celdaVacia(v))) return
+      if (filaVacia(fila.values)) return
       if (fila.renglonId == null) nuevas.push(fila.values)
       else if (fila.dirty.size > 0) editadas.push({renglon_id: fila.renglonId, campos: fila.values})
     })
