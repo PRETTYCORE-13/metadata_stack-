@@ -45,6 +45,8 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
   ]
 
   def mount(_params, _session, socket) do
+    usuario = socket.assigns.current_scope.usuario
+
     {:ok,
      socket
      |> assign(:current_page, "usuarios_empresa")
@@ -63,8 +65,41 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
      |> assign(:bcs_lectura, [])
      |> assign(:alias_form, nil)
      |> assign(:crear_usuario_error, nil)
+     # empresa_en_foco: cuál empresa está gestionando esta pantalla (usuarios/
+     # roles/BC listados) — DISTINTA de current_scope.empresa_activa (la
+     # empresa real de la sesión, la que ve el resto de la app). Para un
+     # admin normal siempre son la misma. Para super_admin, un <select>
+     # (ver render) la cambia sin tocar la sesión — así puede gestionar
+     # CUALQUIER empresa sin el rodeo de unirse+activar cada vez.
+     |> assign(:empresa_en_foco, socket.assigns.current_scope.empresa_activa)
+     |> assign(:todas_las_empresas, if(usuario.super_admin, do: Autenticacion.listar_empresas(), else: []))
      |> assign(:usuarios_sin_empresa, Autenticacion.listar_usuarios_sin_empresa())
      |> cargar_usuarios()}
+  end
+
+  # Solo super_admin puede cambiar qué empresa gestiona esta pantalla — el
+  # <select> del render ya está oculto para cualquier otro, pero el
+  # handler se defiende igual del lado servidor (nunca confiar solo en
+  # que el cliente no mande el evento).
+  def handle_event("cambiar_empresa_en_foco", %{"empresa_id" => empresa_id}, socket) do
+    if socket.assigns.current_scope.usuario.super_admin do
+      empresa = Enum.find(socket.assigns.todas_las_empresas, &(&1.id == String.to_integer(empresa_id)))
+
+      {:noreply,
+       socket
+       |> assign(:empresa_en_foco, empresa)
+       |> assign(
+         usuario_seleccionado: nil,
+         roles_concedidos: [],
+         busqueda_rol: "",
+         roles_busqueda_resultado: [],
+         empresas_estado: [],
+         bcs_lectura: []
+       )
+       |> cargar_usuarios()}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_event("change_page", %{"id" => id}, socket) do
@@ -87,7 +122,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
 
     case Autenticacion.change_usuario_email(%Usuario{}, %{"email" => email}, validate_unique: false) do
       %{valid?: true} ->
-        empresa_id = socket.assigns.current_scope.empresa_activa.id
+        empresa_id = socket.assigns.empresa_en_foco.id
         # agregar_usuario_a_empresa/2 no devuelve consistentemente el
         # %Usuario{} (según la rama interna, puede devolver el
         # %UsuarioEmpresa{} recién insertado) — se vuelve a buscar por
@@ -115,7 +150,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
   # admin pueda inventar cuentas nuevas acá; solo elige entre las que YA
   # se registraron y todavía no tienen empresa.
   def handle_event("agregar_usuario_sin_empresa", %{"id" => id}, socket) do
-    empresa_id = socket.assigns.current_scope.empresa_activa.id
+    empresa_id = socket.assigns.empresa_en_foco.id
     usuario = Enum.find(socket.assigns.usuarios_sin_empresa, &(&1.id == String.to_integer(id)))
 
     Autenticacion.agregar_usuario_a_empresa(usuario.email, empresa_id)
@@ -183,13 +218,13 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
   end
 
   def handle_event("quitar_rol_de_usuario", %{"rol_id" => rol_id}, socket) do
-    %{usuario_seleccionado: usuario, current_scope: %{empresa_activa: empresa}} = socket.assigns
+    %{usuario_seleccionado: usuario, empresa_en_foco: empresa} = socket.assigns
     Permissions.revocar_rol(usuario.id, String.to_integer(rol_id), empresa.id)
     {:noreply, cargar_detalle_usuario(socket)}
   end
 
   def handle_event("buscar_rol", %{"value" => texto}, socket) do
-    %{current_scope: %{empresa_activa: empresa}} = socket.assigns
+    %{empresa_en_foco: empresa} = socket.assigns
     concedidos_ids = MapSet.new(socket.assigns.roles_concedidos, & &1.id)
 
     resultado =
@@ -201,7 +236,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
   end
 
   def handle_event("agregar_rol_a_usuario", %{"rol_id" => rol_id}, socket) do
-    %{usuario_seleccionado: usuario, current_scope: %{empresa_activa: empresa}} = socket.assigns
+    %{usuario_seleccionado: usuario, empresa_en_foco: empresa} = socket.assigns
     Permissions.asignar_rol(usuario.id, String.to_integer(rol_id), empresa.id)
     {:noreply, socket |> assign(busqueda_rol: "", roles_busqueda_resultado: []) |> cargar_detalle_usuario()}
   end
@@ -226,17 +261,17 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     {:noreply, socket}
   end
 
-  # Quitar la empresa ACTIVA (la misma que arma la lista de la izquierda)
+  # Quitar la empresa EN FOCO (la misma que arma la lista de la izquierda)
   # deja al usuario seleccionado fuera de esa lista — a diferencia de
   # cualquier otra empresa (donde solo se refresca su pestaña Empresas).
   def handle_event("quitar_empresa_de_usuario", %{"empresa_id" => empresa_id}, socket) do
-    %{usuario_seleccionado: usuario, current_scope: %{empresa_activa: empresa_activa}} = socket.assigns
+    %{usuario_seleccionado: usuario, empresa_en_foco: empresa_en_foco} = socket.assigns
     empresa_id = String.to_integer(empresa_id)
 
     Autenticacion.remover_usuario_de_empresa(usuario.id, empresa_id)
     socket = assign(socket, :usuarios_sin_empresa, Autenticacion.listar_usuarios_sin_empresa())
 
-    if empresa_id == empresa_activa.id do
+    if empresa_id == empresa_en_foco.id do
       {:noreply,
        socket
        |> assign(
@@ -254,12 +289,12 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
   end
 
   defp cargar_usuarios(socket) do
-    empresa_id = socket.assigns.current_scope.empresa_activa.id
+    empresa_id = socket.assigns.empresa_en_foco.id
     assign(socket, :usuarios, Autenticacion.listar_usuarios_de_empresa(empresa_id))
   end
 
   defp cargar_detalle_usuario(socket) do
-    %{usuario_seleccionado: usuario, current_scope: %{empresa_activa: empresa}} = socket.assigns
+    %{usuario_seleccionado: usuario, empresa_en_foco: empresa} = socket.assigns
 
     roles_concedidos = Permissions.roles_de_usuario(usuario.id, empresa.id)
 
@@ -306,8 +341,23 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
         </.link>
         <div>
           <h1 class="text-2xl font-bold">Administrador de usuarios</h1>
-          <p class="text-xs text-gray-400">{@current_scope.empresa_activa.nombre}</p>
+          <p class="text-xs text-gray-400">{@empresa_en_foco.nombre}</p>
         </div>
+      </div>
+
+      <!-- Selector de empresa gestionada — solo super_admin, y sin tocar
+           la empresa ACTIVA de la sesión (esa la cambia el selector de
+           siempre en el topbar). Sin esto, gestionar otra empresa exigía
+           unirse+activar antes de poder ver sus usuarios. -->
+      <div :if={@current_scope.usuario.super_admin} class="mb-4">
+        <label class="text-xs font-semibold text-gray-500 mr-2">Gestionando:</label>
+        <form phx-change="cambiar_empresa_en_foco" class="inline">
+          <select name="empresa_id" class="border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900">
+            <option :for={empresa <- @todas_las_empresas} value={empresa.id} selected={empresa.id == @empresa_en_foco.id}>
+              {empresa.nombre}
+            </option>
+          </select>
+        </form>
       </div>
 
       <div class="flex gap-4 items-start">
@@ -472,7 +522,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
             </div>
 
             <div id="usuario-detalle-panel-roles" class="hidden">
-              <p class="text-xs text-gray-400 mb-2">Roles en {@current_scope.empresa_activa.nombre}.</p>
+              <p class="text-xs text-gray-400 mb-2">Roles en {@empresa_en_foco.nombre}.</p>
 
               <ul class="divide-y divide-gray-100 border border-gray-100 rounded-lg mb-3">
                 <li :for={rol <- @roles_concedidos} class="flex items-center justify-between px-3 py-2 text-sm">
@@ -510,7 +560,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
             </div>
 
             <div id="usuario-detalle-panel-bc" class="hidden">
-              <p class="text-xs text-gray-400 mb-2">Catálogos que puede leer en {@current_scope.empresa_activa.nombre}, por herencia de sus roles — de solo lectura.</p>
+              <p class="text-xs text-gray-400 mb-2">Catálogos que puede leer en {@empresa_en_foco.nombre}, por herencia de sus roles — de solo lectura.</p>
               <ul class="divide-y divide-gray-100 border border-gray-100 rounded-lg">
                 <li :for={header <- @bcs_lectura} class="px-3 py-2 text-sm text-gray-800 flex items-center justify-between">
                   <span>{header.schema_context_label}</span>

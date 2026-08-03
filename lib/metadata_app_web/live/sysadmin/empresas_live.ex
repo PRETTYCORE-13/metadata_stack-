@@ -115,21 +115,40 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
     end
   end
 
+  # Bloqueado del lado del context si igual llega el evento con usuarios
+  # asociados (ej. otra pestaña agregó uno mientras esta estaba abierta)
+  # — el botón ya viene oculto en ese caso, esto es la defensa por si acaso.
+  def handle_event("eliminar_empresa", %{"id" => id}, socket) do
+    empresa = Enum.find(socket.assigns.empresas, &(&1.id == String.to_integer(id)))
+
+    case Autenticacion.eliminar_empresa(empresa) do
+      {:ok, _} ->
+        {:noreply, cargar_empresas(socket)}
+
+      {:error, :tiene_usuarios} ->
+        {:noreply, put_flash(socket, :error, "No se puede eliminar \"#{empresa.nombre}\": todavía tiene usuarios asociados.")}
+    end
+  end
+
   defp cargar_empresas(socket) do
     usuario = socket.assigns.current_scope.usuario
     mis_empresas = Autenticacion.empresas_de_usuario(usuario.id)
 
-    if usuario.super_admin do
-      mis_ids = MapSet.new(mis_empresas, & &1.id)
+    socket =
+      if usuario.super_admin do
+        mis_ids = MapSet.new(mis_empresas, & &1.id)
 
-      socket
-      |> assign(:empresas, Autenticacion.listar_empresas())
-      |> assign(:mis_empresas_ids, mis_ids)
-    else
-      socket
-      |> assign(:empresas, mis_empresas)
-      |> assign(:mis_empresas_ids, MapSet.new(mis_empresas, & &1.id))
-    end
+        socket
+        |> assign(:empresas, Autenticacion.listar_empresas())
+        |> assign(:mis_empresas_ids, mis_ids)
+      else
+        socket
+        |> assign(:empresas, mis_empresas)
+        |> assign(:mis_empresas_ids, MapSet.new(mis_empresas, & &1.id))
+      end
+
+    empresa_ids = Enum.map(socket.assigns.empresas, & &1.id)
+    assign(socket, :usuarios_por_empresa, Autenticacion.contar_usuarios_por_empresa(empresa_ids))
   end
 
   def render(assigns) do
@@ -188,8 +207,18 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
                 >
                   Unirme como admin
                 </button>
-                <button type="button" phx-click="abrir_editar" phx-value-id={empresa.id} class="text-xs text-purple-700 hover:underline">
+                <button type="button" phx-click="abrir_editar" phx-value-id={empresa.id} class="text-xs text-purple-700 hover:underline mr-3">
                   Renombrar
+                </button>
+                <button
+                  :if={Map.get(@usuarios_por_empresa, empresa.id, 0) == 0}
+                  type="button"
+                  phx-click="eliminar_empresa"
+                  phx-value-id={empresa.id}
+                  data-confirm={"¿Eliminar \"#{empresa.nombre}\"? No se puede deshacer."}
+                  class="text-xs text-red-600 hover:underline"
+                >
+                  Eliminar
                 </button>
               </td>
             </tr>

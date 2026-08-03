@@ -97,6 +97,43 @@ defmodule MetadataApp.Autenticacion do
     end
   end
 
+  @doc """
+  Mapa `%{empresa_id => cantidad}` de usuarios activos por empresa, para
+  que la UI decida si puede ofrecer "Eliminar" sin una query por fila
+  (N+1) — empresas sin ninguna fila acá simplemente no aparecen en el
+  mapa (tratar como 0 con `Map.get/3`).
+  """
+  def contar_usuarios_por_empresa(empresa_ids) do
+    from(ue in UsuarioEmpresa,
+      where: ue.empresa_id in ^empresa_ids and is_nil(ue.delete_guid),
+      group_by: ue.empresa_id,
+      select: {ue.empresa_id, count(ue.id)}
+    )
+    |> Repo.all()
+    |> Map.new()
+  end
+
+  @doc """
+  Soft-delete de una empresa — bloqueado si todavía tiene algún usuario
+  asociado (mismo criterio que `MetaEstadosAdmin.eliminar_estado/1`:
+  mejor un mensaje claro acá que dejar usuarios con un `empresa_id`
+  huérfano). No hace falta revisar roles/permisos por separado: sin
+  usuarios ya no hay a quién le apliquen.
+  """
+  def eliminar_empresa(%Empresa{} = empresa) do
+    if tiene_usuarios?(empresa.id) do
+      {:error, :tiene_usuarios}
+    else
+      empresa
+      |> Ecto.Changeset.change(%{delete_guid: generar_guid()})
+      |> Repo.update()
+    end
+  end
+
+  defp tiene_usuarios?(empresa_id) do
+    Repo.exists?(from ue in UsuarioEmpresa, where: ue.empresa_id == ^empresa_id and is_nil(ue.delete_guid))
+  end
+
   @doc "Solo el nombre por ahora — crear/editar más campos de empresa queda para cuando haga falta."
   def actualizar_empresa(empresa, attrs) do
     empresa

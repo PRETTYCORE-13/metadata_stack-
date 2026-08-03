@@ -109,6 +109,39 @@ docker exec <container_id> /app/bin/seed_sysadmin
 ```
 **Requiere que el servicio de Swarm tenga configuradas `SYSADMIN_EMAIL`/`SYSADMIN_PASSWORD` en su entorno** (mismo lugar donde ya viven las credenciales de DB/SMTP del servicio — no en este repo ni en los secrets del workflow, que solo tiene acceso SSH). Si faltan, el comando falla fuerte con un mensaje explícito en vez de arrancar con una contraseña adivinable. Entra por contraseña (no magic-link — no depende de que haya SMTP configurado todavía), es idempotente (correrlo de nuevo con las mismas credenciales no rompe nada, y cambiar `SYSADMIN_PASSWORD` + re-correr es la forma de rotarla).
 
+**No existe ninguna pantalla para marcar/desmarcar `super_admin` en un usuario** — a propósito: es el flag de mayor privilegio del sistema (ver/crear/unirse a CUALQUIER empresa), y dejarlo como un toggle de UI abre la puerta a otorgarlo por error. Hoy el único camino es este bootstrap, que además es idempotente: busca primero la fila que YA tiene `super_admin: true` y la actualiza (nunca crea una segunda) — así que sirve tanto para el alta inicial como para rotar el email/contraseña de esa misma cuenta más adelante.
+
+#### Paso a paso — producción
+1. Conectarte por SSH al servidor (`ssh <usuario>@reiayanami.mine.nu`).
+2. Configurar las variables en el servicio de Swarm (dispara un reinicio del contenedor para tomarlas):
+   ```
+   docker service update \
+     --env-add SYSADMIN_EMAIL=<email> \
+     --env-add SYSADMIN_PASSWORD='<contraseña-fuerte>' \
+     metadata_stack_app
+   ```
+3. Esperar a que el servicio converja (`docker service ls --filter name=metadata_stack_app`, `1/1`).
+4. Correr el seed en el contenedor ya actualizado:
+   ```
+   docker exec <container_id> /app/bin/seed_sysadmin
+   ```
+   (`<container_id>`: `docker ps -q --filter "name=metadata_stack_app" | head -n1`). Si el push a `main` ya disparó un deploy después del paso 2, este paso ya corrió solo — no hace falta repetirlo salvo que quieras rotar la contraseña.
+5. Entrar a `/meta_schema_usuario/log-in`, usar el formulario de **contraseña** (no el de magic-link) con el email/contraseña del paso 2.
+
+#### Paso a paso — dev local
+1. Exportar las mismas dos variables (además de las de `DB_*` de siempre):
+   ```
+   export SYSADMIN_EMAIL=sysadmin@metadata.local
+   export SYSADMIN_PASSWORD='una-clave-de-al-menos-12-caracteres'
+   ```
+2. Correr el seed directo con `mix` (no hace falta un release compilado en dev):
+   ```
+   mix run -e "MetadataApp.Release.seed_sysadmin()"
+   ```
+3. Entrar a `http://localhost:4000/meta_schema_usuario/log-in`, formulario de contraseña, mismo email/contraseña.
+
+**Para rotar la contraseña** (dev o prod): cambiar `SYSADMIN_PASSWORD` en el entorno y repetir el paso del seed — la cuenta se actualiza in place, nunca se duplica.
+
 ### Setup del job `deploy` (una sola vez)
 El job usa `appleboy/ssh-action` con 3 secrets del repo (**Settings → Secrets and variables → Actions**, nunca en archivos versionados):
 - `DEPLOY_HOST` — el hostname del servidor.
