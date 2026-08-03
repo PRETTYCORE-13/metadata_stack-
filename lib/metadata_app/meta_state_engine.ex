@@ -410,26 +410,30 @@ defmodule MetadataApp.MetaStateEngine do
     end
   end
 
-  # Permisos de detalle por estado (insertar/actualizar/borrar renglones,
-  # ver MetaEstadosAdmin.permiso_detalle/2) — capa nueva e independiente
-  # del permiso RBAC de transición (verificar_permiso_transicion/3, más
-  # abajo, que sigue validando solo los campos que puede modificar el
-  # ENCABEZADO). Self-loop (mismo estado origen/destino, ej. "guardar") =
-  # ACTUALIZAR: el renglón no cambia de estado, solo (opcionalmente)
-  # campos. Transición real (cambia de estado, ej. "baja") = BORRAR: el
-  # renglón sale del estado actual, sin importar si de paso también edita
-  # campos vía campos_editables — eso lo sigue controlando esa whitelist,
-  # no se suma acá una tercera condición mixta.
+  # Permisos de detalle por estado (ver MetaEstadosAdmin.permiso_detalle/2)
+  # — capa nueva e independiente del permiso RBAC de transición
+  # (verificar_permiso_transicion/3, más abajo, que sigue validando solo
+  # los campos que puede modificar el ENCABEZADO). Solo aplica acá
+  # `permite_actualizar`, y solo en el self-loop (mismo estado origen/
+  # destino, ej. "guardar" — edición de campos sin mover de estado).
+  # `permite_borrar` NO se chequea acá: "eliminar un renglón" no es una
+  # transición (un renglón no tiene estado propio, ver R3 — el estado_id
+  # que tiene es un espejo del maestro) sino un soft-delete DIRECTO desde
+  # el mismo "Guardar", ver Renglones.eliminar_todos/3. Una transición
+  # real (ej. "baja", mueve encabezado + renglones juntos a otro estado)
+  # queda gobernada solo por el permiso RBAC de transición de siempre,
+  # sin capa extra acá.
   defp verificar_permiso_detalle(registro, transicion, header_detalle) do
-    self_loop? = transicion.estado_origen_id == transicion.estado_destino_id
-    permiso = MetaEstadosAdmin.permiso_detalle(registro.estado_id, header_detalle.id)
-    permitido? = if self_loop?, do: permiso.permite_actualizar, else: permiso.permite_borrar
+    if transicion.estado_origen_id == transicion.estado_destino_id do
+      permiso = MetaEstadosAdmin.permiso_detalle(registro.estado_id, header_detalle.id)
 
-    if permitido? do
-      :ok
+      if permiso.permite_actualizar do
+        :ok
+      else
+        {:error, "el estado actual de '#{header_detalle.schema_context_name}' no permite actualizar este renglón"}
+      end
     else
-      accion_bloqueada = if self_loop?, do: "actualizar", else: "borrar"
-      {:error, "el estado actual de '#{header_detalle.schema_context_name}' no permite #{accion_bloqueada} este renglón"}
+      :ok
     end
   end
 

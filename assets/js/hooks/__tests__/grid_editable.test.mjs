@@ -100,6 +100,16 @@ test("computeStatus: un campo con lista de errores vacía no cuenta como error",
   assert.equal(computeStatus(fila), "sin_cambios")
 })
 
+test("computeStatus: fila marcada para eliminar es 'eliminar'", () => {
+  const fila = {renglonId: 3, dirty: new Set(), errors: {}, marcadaEliminar: true}
+  assert.equal(computeStatus(fila), "eliminar")
+})
+
+test("computeStatus: marcada para eliminar gana incluso sobre un error", () => {
+  const fila = {renglonId: 3, dirty: new Set(), errors: {contacto: ["obligatorio"]}, marcadaEliminar: true}
+  assert.equal(computeStatus(fila), "eliminar")
+})
+
 test("actualizarValoresRecientes: agrega el valor nuevo adelante", () => {
   assert.deepEqual(actualizarValoresRecientes(["a", "b"], "c"), ["c", "a", "b"])
 })

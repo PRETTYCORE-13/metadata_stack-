@@ -75,6 +75,7 @@ export function parsePaste(texto) {
 // nueva/modificada/error/sin_cambios se derivan, nunca se guardan aparte —
 // así no hay forma de que queden desincronizados de los datos reales.
 export function computeStatus(row) {
+  if (row.marcadaEliminar) return "eliminar"
   if (row.errors && Object.keys(row.errors).some((k) => (row.errors[k] || []).length > 0)) return "error"
   if (row.renglonId == null) return "nueva"
   if (row.dirty && row.dirty.size > 0) return "modificada"
@@ -163,6 +164,7 @@ function filaDesdeServidor(f) {
     original: {...f.values},
     dirty: new Set(),
     errors: {},
+    marcadaEliminar: false,
   }
 }
 
@@ -474,6 +476,7 @@ export default {
       nueva: "bg-green-50/40 border-l-2 border-l-green-400",
       modificada: "bg-amber-50/40 border-l-2 border-l-amber-400",
       error: "bg-red-50/60 border-l-2 border-l-red-500",
+      eliminar: "bg-gray-100/70 border-l-2 border-l-gray-400",
       sin_cambios: "border-l-2 border-l-transparent",
     }[status]
 
@@ -481,6 +484,7 @@ export default {
       nueva: "bg-green-500",
       modificada: "bg-amber-500",
       error: "bg-red-500",
+      eliminar: "bg-gray-400",
       sin_cambios: "bg-transparent",
     }[status]
 
@@ -500,31 +504,30 @@ export default {
         const valor = fila.values[col.campo] ?? ""
         const errores = (fila.errors && fila.errors[col.campo]) || []
         const claseInput = errores.length > 0 ? "border-red-400 focus:border-red-500" : "border-gray-300 focus:border-purple-500"
+        const claseTachado = fila.marcadaEliminar ? "line-through text-gray-400" : ""
         const listaId = (this.datalistIds && this.datalistIds[col.campo]) || ""
 
         return `<td class="px-2 py-1 align-top">
-          <input type="text" class="ge-input w-full border ${claseInput} rounded text-gray-900 px-2 py-1.5 text-xs outline-none"
+          <input type="text" class="ge-input w-full border ${claseInput} ${claseTachado} rounded text-gray-900 px-2 py-1.5 text-xs outline-none"
             value="${escaparHtml(valor)}" data-row="${i}" data-campo="${col.campo}" list="${listaId}"
+            ${fila.marcadaEliminar ? "readonly" : ""}
             title="${errores.length ? escaparHtml(errores.join("; ")) : ""}" />
         </td>`
       })
       .join("")
 
-    // Por ahora, sin botón de acción para filas ya persistidas: mostrar acá
-    // CUALQUIER transición disponible del encabezado (@otras_transiciones)
-    // era engañoso — como el autómata es compartido (R3), ejecutarla desde
-    // una fila puntual mueve TAMBIÉN el estado_id de todo el encabezado
-    // (ej. "Suspender Cliente" por fila suspendía el cliente completo, no
-    // solo ese renglón), sin ninguna transición pensada de verdad para
-    // renglones que lo aclare. Se deja la plumbing intacta (this.transiciones,
-    // el handler "renglon_transicion" en el servidor) para el día que un
-    // catálogo configure una transición pensada específicamente para esto —
-    // mientras tanto, mover/suspender el registro completo se sigue haciendo
-    // con los botones del encabezado, no desde acá.
-    const acciones =
-      fila.renglonId != null
-        ? ""
-        : `<button type="button" class="ge-quitar text-red-500 hover:text-red-700 font-bold" data-row="${i}" title="Quitar fila">✕</button>`
+    // Renglón NUEVO (sin persistir): "✕" lo saca directo de this.rows (ver
+    // borrarFilaNueva). Renglón YA PERSISTIDO: "✕" solo TOGGLEA una marca
+    // (ver toggleEliminarPersistida) — al guardar, se soft-borra directo
+    // (MetadataApp.Renglones.eliminar_todos/3, sin transición: un renglón
+    // no tiene estado propio, R3, así que "eliminarlo" no mueve nada del
+    // encabezado). Antes acá NO había botón para filas persistidas —
+    // mostrar una transición del encabezado por fila era engañoso (movía
+    // el estado_id del encabezado completo, ver R3) — pero un soft-delete
+    // directo no tiene ese problema, así que ahora sí se ofrece.
+    const acciones = fila.marcadaEliminar
+      ? `<button type="button" class="ge-quitar text-gray-500 hover:text-gray-700 text-[11px] font-semibold" data-row="${i}" title="Deshacer">↺ deshacer</button>`
+      : `<button type="button" class="ge-quitar text-red-500 hover:text-red-700 font-bold" data-row="${i}" title="${fila.renglonId != null ? "Eliminar renglón" : "Quitar fila"}">✕</button>`
 
     // Altura fija solo mientras se virtualiza — tiene que coincidir con
     // ROW_H, si no el cálculo de los espaciadores de arriba se desalinea
@@ -606,13 +609,26 @@ export default {
     this.programarSync()
   },
 
-  // Solo filas NUEVAS (todavía sin renglon_id) se pueden borrar acá — un
-  // renglón ya persistido se "quita" con una transición real del maestro
-  // (R12), ver alClicAccion/ge-accion más abajo.
+  // Solo filas NUEVAS (todavía sin renglon_id) se sacan del array acá — un
+  // renglón ya persistido se marca en vez de splicearse, ver
+  // toggleEliminarPersistida.
   borrarFilaNueva(row) {
     const fila = this.rows[row]
     if (!fila || fila.renglonId != null) return
     this.rows.splice(row, 1)
+    this.render()
+    this.programarSync()
+  },
+
+  // Renglón YA PERSISTIDO: a diferencia de una fila nueva (se saca del
+  // array entero), acá solo se TOGGLEA una marca — tiene que seguir
+  // existiendo en this.rows para poder sincronizarse al servidor como
+  // "eliminadas" (ver sincronizarAhora). El soft-delete real ocurre recién
+  // al guardar (Renglones.eliminar_todos/3), nunca al tocar este botón.
+  toggleEliminarPersistida(row) {
+    const fila = this.rows[row]
+    if (!fila || fila.renglonId == null) return
+    fila.marcadaEliminar = !fila.marcadaEliminar
     this.render()
     this.programarSync()
   },
@@ -710,7 +726,10 @@ export default {
   alClicAccion(e) {
     const quitar = e.target.closest(".ge-quitar")
     if (quitar) {
-      this.borrarFilaNueva(parseInt(quitar.dataset.row, 10))
+      const row = parseInt(quitar.dataset.row, 10)
+      const fila = this.rows[row]
+      if (fila && fila.renglonId != null) this.toggleEliminarPersistida(row)
+      else this.borrarFilaNueva(row)
       return
     }
 
@@ -748,8 +767,11 @@ export default {
 
   // Filas vacías (incluida la fantasma) nunca se mandan. "nuevas" son las
   // que todavía no tienen renglon_id; "editadas" son renglones YA
-  // persistidos con al menos un campo tocado (dirty) — ver
-  // FichaLive.handle_event("grid_sync", ...).
+  // persistidos con al menos un campo tocado (dirty); "eliminadas" son
+  // renglones YA persistidos marcados con toggleEliminarPersistida — ver
+  // FichaLive.handle_event("grid_sync", ...). Una fila marcada para
+  // eliminar se manda SOLO como "eliminadas" (aunque tenga campos dirty)
+  // — no tiene sentido persistir ediciones de una fila que se va a borrar.
   //
   // Ojo: la vaciedad acá se mide sobre TODO fila.values, no solo
   // this.columns (columnas curadas de la grilla, ver
@@ -762,13 +784,18 @@ export default {
     clearTimeout(this.syncTimer)
     const nuevas = []
     const editadas = []
+    const eliminadas = []
 
     this.rows.forEach((fila) => {
+      if (fila.renglonId != null && fila.marcadaEliminar) {
+        eliminadas.push(fila.renglonId)
+        return
+      }
       if (!Object.values(fila.values).some((v) => !celdaVacia(v))) return
       if (fila.renglonId == null) nuevas.push(fila.values)
       else if (fila.dirty.size > 0) editadas.push({renglon_id: fila.renglonId, campos: fila.values})
     })
 
-    this.pushEvent("grid_sync", {catalogo: this.catalogo, nuevas, editadas})
+    this.pushEvent("grid_sync", {catalogo: this.catalogo, nuevas, editadas, eliminadas})
   },
 }

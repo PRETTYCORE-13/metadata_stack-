@@ -30,6 +30,7 @@ defmodule MetadataAppWeb.FichaLive do
   alias MetadataApp.Autenticacion.Scope
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerico}
   alias MetadataApp.MetaStateEngine
+  alias MetadataApp.Renglones
   alias MetadataApp.Permissions
   alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaPlantillas.Formula
@@ -148,6 +149,7 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:detalle_renglones, %{})
          |> assign(:detalle_renglones_nuevos, %{})
          |> assign(:detalle_renglones_editados, %{})
+         |> assign(:detalle_renglones_eliminados, %{})
          |> assign(:detalle_seleccion, %{})
          |> assign(:detalle_form_error, nil)}
     end
@@ -243,14 +245,19 @@ defmodule MetadataAppWeb.FichaLive do
   #   con al menos un campo tocado) van a :detalle_renglones_editados, ya en
   #   la forma exacta que espera `opciones[:renglones]` de
   #   MetaStateEngine.ejecutar_transicion/4 (R4): una lista de mapas planos
-  #   %{"renglon_id" => N, "<campo>" => valor}.
-  def handle_event("grid_sync", %{"catalogo" => catalogo, "nuevas" => nuevas, "editadas" => editadas}, socket) do
+  #   %{"renglon_id" => N, "<campo>" => valor}. Las eliminadas (renglones YA
+  #   persistidos marcados con el botón "✕" del grid) van a
+  #   :detalle_renglones_eliminados — soft-delete DIRECTO al guardar, sin
+  #   transición (ver Renglones.eliminar_todos/3), nunca se mezclan con
+  #   "editadas" aunque también tuvieran campos tocados.
+  def handle_event("grid_sync", %{"catalogo" => catalogo, "nuevas" => nuevas, "editadas" => editadas, "eliminadas" => eliminadas}, socket) do
     items_editados = Enum.map(editadas, fn %{"renglon_id" => id, "campos" => campos} -> Map.put(campos, "renglon_id", id) end)
 
     {:noreply,
      socket
      |> assign(:detalle_renglones_nuevos, Map.put(socket.assigns.detalle_renglones_nuevos, catalogo, limpiar_renglones_vacios(nuevas)))
-     |> assign(:detalle_renglones_editados, Map.put(socket.assigns.detalle_renglones_editados, catalogo, items_editados))}
+     |> assign(:detalle_renglones_editados, Map.put(socket.assigns.detalle_renglones_editados, catalogo, items_editados))
+     |> assign(:detalle_renglones_eliminados, Map.put(socket.assigns.detalle_renglones_eliminados, catalogo, eliminadas))}
   end
 
   # - "grid_validar_fila": validación de servidor con debounce (lo que JS no
@@ -457,17 +464,20 @@ defmodule MetadataAppWeb.FichaLive do
       form_values: attrs,
       detalle_renglones_nuevos: renglones_nuevos_grilla,
       detalle_renglones_editados: renglones_editados_grilla,
+      detalle_renglones_eliminados: renglones_eliminados_grilla,
       transicion_edicion: transicion_edicion
     } = socket.assigns
 
     renglones_nuevos = Map.new(renglones_nuevos_grilla, fn {catalogo, filas} -> {catalogo, limpiar_renglones_vacios(filas)} end)
     renglones_editados = Map.filter(renglones_editados_grilla, fn {_catalogo, filas} -> filas != [] end)
+    renglones_eliminados = Map.filter(renglones_eliminados_grilla, fn {_catalogo, ids} -> ids != [] end)
 
     hay_renglones_nuevos? = Enum.any?(renglones_nuevos, fn {_catalogo, filas} -> filas != [] end)
     hay_renglones_editados? = map_size(renglones_editados) > 0
+    hay_renglones_eliminados? = map_size(renglones_eliminados) > 0
 
     cond do
-      map_size(attrs) == 0 and not hay_renglones_nuevos? and not hay_renglones_editados? ->
+      map_size(attrs) == 0 and not hay_renglones_nuevos? and not hay_renglones_editados? and not hay_renglones_eliminados? ->
         {:noreply, socket}
 
       hay_renglones_editados? and is_nil(transicion_edicion) ->
@@ -481,15 +491,16 @@ defmodule MetadataAppWeb.FichaLive do
       # Sin renglones EDITADOS, aplicar_encabezado/5 NUNCA pasa por
       # ejecutar_transicion/4 (cae a actualizar_si_hay_cambios, un simple
       # UPDATE sin ningún concepto de transición) — y crear_renglones_nuevos/3
-      # tampoco pasa por ahí. Sin este chequeo, ni editar campos del
-      # encabezado ni insertar renglones nuevos exigía el permiso "guardar"
-      # del rol (encontrado real, dos veces: primero con renglones nuevos,
-      # después renglones editados vía "guardar" mostrando "Baja" disponible
-      # sin permiso — ver el fix de contexto_confiable en
-      # ejecutar_transicion/renglon_transicion/aplicar_encabezado). Cuando SÍ
-      # hay renglones editados, este chequeo es redundante mansamente: ya lo
-      # hace verificar_permiso_transicion/3 dentro de ejecutar_transicion/4.
-      (map_size(attrs) > 0 or hay_renglones_nuevos?) and not hay_renglones_editados? and
+      # ni Renglones.eliminar_todos/3 tampoco pasan por ahí. Sin este
+      # chequeo, ni editar campos del encabezado ni insertar/eliminar
+      # renglones exigía el permiso "guardar" del rol (encontrado real, dos
+      # veces: primero con renglones nuevos, después renglones editados vía
+      # "guardar" mostrando "Baja" disponible sin permiso — ver el fix de
+      # contexto_confiable en ejecutar_transicion/renglon_transicion/
+      # aplicar_encabezado). Cuando SÍ hay renglones editados, este chequeo
+      # es redundante mansamente: ya lo hace verificar_permiso_transicion/3
+      # dentro de ejecutar_transicion/4.
+      (map_size(attrs) > 0 or hay_renglones_nuevos? or hay_renglones_eliminados?) and not hay_renglones_editados? and
           not Permissions.can?(socket.assigns.current_scope, "guardar", socket.assigns.header.schema_context_name) ->
         {:noreply,
          assign(socket, :error_guardado, "No tenés permiso para guardar cambios en este catálogo.")}
@@ -507,6 +518,7 @@ defmodule MetadataAppWeb.FichaLive do
           attrs,
           renglones_nuevos,
           renglones_editados,
+          renglones_eliminados,
           transicion_edicion,
           socket.assigns.current_scope
         )
@@ -553,27 +565,31 @@ defmodule MetadataAppWeb.FichaLive do
 
   # Un solo clic, un solo resultado: el cambio de campos del encabezado
   # (junto con los renglones EDITADOS, si hay — R4, vía la transición
-  # "guardar") y la creación de los renglones NUEVOS en staging viajan en
-  # la MISMA Repo.transaction — todo o nada. La creación de renglones
-  # nuevos sigue sin pasar por MetaStateEngine.ejecutar_transicion/4
-  # porque esa opción solo mueve/edita renglones que YA EXISTEN — no sabe
-  # crear ninguno, y tocar el motor para que lo supiera hacer es un cambio
-  # más grande que el usuario pidió dejar para después (ver plan). Por eso
-  # las reglas PRE/POST de "guardar" ven los renglones EDITADOS (van
-  # dentro de la misma transición), pero no los renglones NUEVOS.
+  # "guardar"), la creación de los renglones NUEVOS en staging, y el
+  # soft-delete de los renglones ELIMINADOS viajan en la MISMA
+  # Repo.transaction — todo o nada. Tanto crear como eliminar renglones
+  # siguen sin pasar por MetaStateEngine.ejecutar_transicion/4 — esa
+  # opción solo mueve/edita renglones que YA EXISTEN, no sabe crear ni
+  # borrar ninguno (un renglón no tiene estado propio, R3, así que
+  # "eliminarlo" no es una transición — ver Renglones.eliminar_todos/3).
+  # Por eso las reglas PRE/POST de "guardar" ven los renglones EDITADOS
+  # (van dentro de la misma transición), pero no los NUEVOS ni los
+  # ELIMINADOS.
   #
   # contexto_auditoria (roadmap #6, ver AuditoriaContexto.desde_socket/1 en
   # mount/3) viaja a CatalogoGenerico.actualizar/3 y .crear_muchos/3 —
   # ejecutar_transicion/4 (R4, renglones editados) no lo necesita, ese
   # camino ya queda registrado por su propio TransicionEvento.
-  defp guardar_cambios(socket, registro_actual, attrs, renglones_nuevos, renglones_editados, transicion_edicion, current_scope) do
+  defp guardar_cambios(socket, registro_actual, attrs, renglones_nuevos, renglones_editados, renglones_eliminados, transicion_edicion, current_scope) do
     contexto_auditoria = socket.assigns.contexto_auditoria
+    catalogo_maestro = registro_actual.__struct__.__schema__(:source)
 
     resultado =
       Repo.transaction(fn ->
         with {:ok, actualizado} <-
                aplicar_encabezado(registro_actual, attrs, renglones_editados, transicion_edicion, contexto_auditoria, current_scope),
-             {:ok, _creados} <- crear_renglones_nuevos(registro_actual.id, renglones_nuevos, contexto_auditoria) do
+             {:ok, _creados} <- crear_renglones_nuevos(registro_actual.id, renglones_nuevos, contexto_auditoria),
+             {:ok, _eliminados} <- Renglones.eliminar_todos(catalogo_maestro, registro_actual.id, renglones_eliminados) do
           actualizado
         else
           {:error, motivo} -> Repo.rollback(motivo)
@@ -652,12 +668,13 @@ defmodule MetadataAppWeb.FichaLive do
     Enum.reject(filas, fn fila -> fila == %{} or Enum.all?(Map.values(fila), &(&1 in [nil, "", "false"])) end)
   end
 
-  # Cuenta renglones nuevos + editados en staging — usado para el badge del
-  # tab "Detalle" y para habilitar el botón "Guardar".
-  defp contar_cambios_detalle(renglones_nuevos, renglones_editados) do
+  # Cuenta renglones nuevos + editados + eliminados en staging — usado
+  # para el badge del tab "Detalle" y para habilitar el botón "Guardar".
+  defp contar_cambios_detalle(renglones_nuevos, renglones_editados, renglones_eliminados) do
     nuevos = renglones_nuevos |> Map.values() |> Enum.map(&length(limpiar_renglones_vacios(&1))) |> Enum.sum()
     editados = renglones_editados |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
-    nuevos + editados
+    eliminados = renglones_eliminados |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
+    nuevos + editados + eliminados
   end
 
   # Chequeo de concurrencia best-effort a nivel de esta pantalla — el motor
@@ -772,6 +789,7 @@ defmodule MetadataAppWeb.FichaLive do
     |> assign(:detalle_renglones, detalle_renglones)
     |> assign(:detalle_renglones_nuevos, %{})
     |> assign(:detalle_renglones_editados, %{})
+    |> assign(:detalle_renglones_eliminados, %{})
     |> assign(:detalle_seleccion, %{})
     |> assign(:detalle_form_error, nil)
   end
@@ -1005,7 +1023,7 @@ defmodule MetadataAppWeb.FichaLive do
       assigns
       |> assign(
         :renglones_nuevos_count,
-        contar_cambios_detalle(assigns.detalle_renglones_nuevos, assigns.detalle_renglones_editados)
+        contar_cambios_detalle(assigns.detalle_renglones_nuevos, assigns.detalle_renglones_editados, assigns.detalle_renglones_eliminados)
       )
       |> assign(:contexto_formula, contexto_formula)
       |> assign(

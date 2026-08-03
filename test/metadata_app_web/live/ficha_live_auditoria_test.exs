@@ -70,4 +70,35 @@ defmodule MetadataAppWeb.FichaLiveAuditoriaTest do
     assert fila.user_agent == "prueba-auditoria-e2e"
     assert fila.datos["despues"]["meta_fixture_cliente_nombre"] == "Aud E2E"
   end
+
+  # Regresión real: cargar_registro/2 (llamada al VER un registro YA
+  # persistido, a diferencia de "/nuevo" arriba) se quedó sin el assign
+  # :detalle_renglones_eliminados al agregar el soft-delete directo de
+  # renglones — KeyError en cualquier ficha existente, encontrado en vivo
+  # por el usuario. LiveViewTest simula el mismo protocolo que un browser
+  # real, así que este mount es la forma correcta de agarrar este tipo de
+  # bug (el suite completo no lo detectaba porque no había ningún test
+  # que viera un registro EXISTENTE, solo "/nuevo").
+  test "ver un registro ya persistido no explota (KeyError detalle_renglones_eliminados)", %{conn: conn} do
+    campos = %{
+      "meta_fixture_cliente_nombre" => "Ver Existente",
+      "meta_fixture_cliente_edad" => "40",
+      "meta_fixture_cliente_venta" => "10.00"
+    }
+
+    {:ok, view, _html} = live(conn, "/registro/meta_fixture_cliente/nuevo")
+    render_change(view, "validar", %{"campos" => campos})
+    view |> form("#form-ficha-datos", %{"campos" => campos}) |> render_submit()
+    assert_redirect(view)
+
+    registro =
+      MetadataApp.MetaBusinessProcess.Catalogos.MetaFixtureCliente
+      |> where([r], r.meta_fixture_cliente_nombre == "Ver Existente")
+      |> order_by(desc: :id)
+      |> limit(1)
+      |> Repo.one!()
+
+    assert {:ok, _view, html} = live(conn, "/registro/meta_fixture_cliente/#{registro.id}")
+    assert html =~ "Ver Existente"
+  end
 end
