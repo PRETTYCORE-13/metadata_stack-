@@ -234,7 +234,7 @@ defmodule MetadataApp.Permissions do
     end
   end
 
-  @doc "Bloqueado si el rol es de sistema — administrador/consulta no se editan desde la API."
+  @doc "Bloqueado si el rol es de sistema — hoy solo \"administrador\" (\"consulta\" se dio de baja, ver migración 20260803210418)."
   def actualizar_rol(%Rol{es_sistema: true}, _attrs), do: {:error, :rol_de_sistema}
 
   def actualizar_rol(rol, attrs) do
