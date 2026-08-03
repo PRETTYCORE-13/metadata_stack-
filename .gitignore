@@ -36,14 +36,20 @@ metadata_app-*.tar
 npm-debug.log
 /assets/node_modules/
 
-# BCs generados con el BPB (pty_*): son micro-apps que ADN arma localmente
-# a partir del motor, no código de la plataforma. Nunca van a este repo,
-# ni de prueba ni reales — se recrean con "mix gen.catalogos" a partir de
-# meta_schema_* o se despliegan aparte a producción.
+# BCs generados con el BPB (pty_*, demo100_*): son micro-apps que ADN arma
+# localmente a partir del motor, no código de la plataforma. Nunca van a
+# este repo, ni de prueba ni reales — se recrean con "mix gen.catalogos"
+# a partir de meta_schema_* o se despliegan aparte a producción. Cada
+# desarrollador genera su propio set local; commitearlos causa conflictos
+# de versión entre máquinas que no tienen los mismos catálogos armados.
 lib/metadata_app/meta_business_process/catalogos/pty_*.ex
+lib/metadata_app/meta_business_process/catalogos/demo100_*.ex
 lib/metadata_app/meta_business_process/reglas/pty_*/
+lib/metadata_app/meta_business_process/reglas/demo100_*/
 priv/repo/catalogos/pty_*.json
+priv/repo/catalogos/demo100_*.json
 priv/repo/migrations/*pty_*.exs
+priv/repo/migrations/*demo100_*.exs
 
 # Bundle temporal de MetaPublicador.armar_bundle/1 -- se arma en la raíz
 # del proyecto (nombre relativo, para que tar nunca vea una ruta con
