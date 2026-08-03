@@ -195,3 +195,4 @@ jobs:
               exit 1
             fi
             docker exec "$CONTAINER_ID" /app/bin/migrate
+            docker exec "$CONTAINER_ID" /app/bin/seed_sysadmin

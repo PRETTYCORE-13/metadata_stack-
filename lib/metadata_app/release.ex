@@ -46,6 +46,32 @@ defmodule MetadataApp.Release do
     Enum.each(mensajes, &IO.puts/1)
   end
 
+  # Bootstrap del usuario SYSADMIN (cross-empresa, ver Usuario.super_admin
+  # y Autenticacion.upsert_sysadmin/2) — SYSADMIN_EMAIL/SYSADMIN_PASSWORD
+  # SIEMPRE vienen del entorno de cada despliegue, nunca hardcodeados acá
+  # ni en una migración (mismo criterio que Oracle: SYS/SYSTEM es un
+  # nombre fijo, pero la contraseña se define al crear la instancia, no
+  # viene de fábrica). Falla fuerte si faltan — mejor un deploy que avisa
+  # "falta configurar" que uno que arranca con una contraseña adivinable.
+  # Corre después de migrate/0 (necesita la columna super_admin ya creada)
+  # — llamado desde bin/seed_sysadmin, mismo patrón que bin/migrate.
+  def seed_sysadmin do
+    load_app()
+
+    email = System.get_env("SYSADMIN_EMAIL") || raise "Falta la variable de entorno SYSADMIN_EMAIL"
+    password = System.get_env("SYSADMIN_PASSWORD") || raise "Falta la variable de entorno SYSADMIN_PASSWORD"
+
+    {:ok, resultado, _apps} =
+      Ecto.Migrator.with_repo(MetadataApp.Repo, fn _repo ->
+        MetadataApp.Autenticacion.upsert_sysadmin(email, password)
+      end)
+
+    case resultado do
+      {:ok, _usuario} -> IO.puts("SYSADMIN listo: #{email}")
+      {:error, changeset} -> raise "No se pudo sembrar SYSADMIN: #{inspect(changeset.errors)}"
+    end
+  end
+
   defp repos do
     Application.fetch_env!(@app, :ecto_repos)
   end

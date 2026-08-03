@@ -102,6 +102,13 @@ El release incluye un script propio (generado a partir de `rel/overlays/bin/migr
 docker exec <container_id> /app/bin/migrate
 ```
 
+### Usuario SYSADMIN (automático desde el job `deploy`, después de migrar)
+Bootstrap del usuario administrador cross-empresa (`Usuario.super_admin`) — mismo criterio que Oracle con `SYS`/`SYSTEM`: el nombre/identidad es fijo pero la contraseña se define en el momento de desplegar, nunca hardcodeada en código ni en una migración (`MetadataApp.Release.seed_sysadmin/0`, corrido vía `rel/overlays/bin/seed_sysadmin`):
+```
+docker exec <container_id> /app/bin/seed_sysadmin
+```
+**Requiere que el servicio de Swarm tenga configuradas `SYSADMIN_EMAIL`/`SYSADMIN_PASSWORD` en su entorno** (mismo lugar donde ya viven las credenciales de DB/SMTP del servicio — no en este repo ni en los secrets del workflow, que solo tiene acceso SSH). Si faltan, el comando falla fuerte con un mensaje explícito en vez de arrancar con una contraseña adivinable. Entra por contraseña (no magic-link — no depende de que haya SMTP configurado todavía), es idempotente (correrlo de nuevo con las mismas credenciales no rompe nada, y cambiar `SYSADMIN_PASSWORD` + re-correr es la forma de rotarla).
+
 ### Setup del job `deploy` (una sola vez)
 El job usa `appleboy/ssh-action` con 3 secrets del repo (**Settings → Secrets and variables → Actions**, nunca en archivos versionados):
 - `DEPLOY_HOST` — el hostname del servidor.
