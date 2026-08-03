@@ -425,7 +425,7 @@ defmodule MetadataAppWeb.CatalogoLive do
           </span>
         </div>
 
-        <div class="flex items-center gap-2 mb-4">
+        <div class="flex items-center gap-2 flex-wrap mb-4">
           <div class="relative flex-1">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
               <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -471,14 +471,15 @@ defmodule MetadataAppWeb.CatalogoLive do
               busqueda_campo_filtro={@busqueda_campo_filtro}
             />
           </div>
+          <.panel_campos campos={campos_selector(@columnas)} tabla_id="tabla-catalogo" />
         </div>
 
         <div class="overflow-x-auto rounded-xl border border-gray-200">
-          <table class="min-w-full divide-y divide-gray-200 text-xs">
+          <table id="tabla-catalogo" class="min-w-full divide-y divide-gray-200 text-xs">
             <thead class="bg-gray-50">
               <tr>
                 <%= for columna <- @columnas do %>
-                  <th class={["px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide", alineacion_columna(columna)]}>
+                  <th data-col={col_key(columna)} class={["px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide", alineacion_columna(columna)]}>
                     {columna.schema_context_properties["etiqueta"]}
                     <span :if={@consulta.joins != []} class="block text-[9px] font-normal normal-case text-gray-400">{columna.catalogo}</span>
                   </th>
@@ -490,7 +491,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <tr class="hover:bg-purple-50/60 transition-colors">
                   <%= for columna <- @columnas do %>
                     <% valor = Map.get(fila, columna.clave) %>
-                    <td class={[
+                    <td data-col={col_key(columna)} class={[
                       "px-4 py-1.5 text-[10px] text-gray-700",
                       alineacion_columna(columna)
                     ]}>
@@ -510,7 +511,7 @@ defmodule MetadataAppWeb.CatalogoLive do
             <tfoot :if={@totales != %{}} class="bg-purple-50 border-t-2 border-purple-200 font-bold">
               <tr>
                 <%= for columna <- @columnas do %>
-                  <td class={["px-4 py-2 text-[10px] text-purple-900", alineacion_columna(columna)]}>
+                  <td data-col={col_key(columna)} class={["px-4 py-2 text-[10px] text-purple-900", alineacion_columna(columna)]}>
                     <%= if Map.get(columna, :totalizar) do %>
                       {formatear_celda(Map.get(@totales, columna.clave))}
                     <% end %>
@@ -571,7 +572,7 @@ defmodule MetadataAppWeb.CatalogoLive do
           </div>
         </div>
 
-        <div class="flex items-center gap-2 mb-4">
+        <div class="flex items-center gap-2 flex-wrap mb-4">
           <div class="relative flex-1">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
               <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -617,15 +618,16 @@ defmodule MetadataAppWeb.CatalogoLive do
               busqueda_campo_filtro={@busqueda_campo_filtro}
             />
           </div>
+          <.panel_campos campos={campos_selector(@columnas, @mostrar_estado?, @mostrar_trn?)} tabla_id="tabla-catalogo" />
         </div>
 
         <div class="overflow-x-auto rounded-xl border border-gray-200">
-          <table class="min-w-full divide-y divide-gray-200 text-xs">
+          <table id="tabla-catalogo" class="min-w-full divide-y divide-gray-200 text-xs">
             <thead class="bg-gray-50">
               <tr>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">ID</th>
+                <th data-col="id" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">ID</th>
                 <%= for columna <- @columnas do %>
-                  <th class={[
+                  <th data-col={col_key(columna)} class={[
                     "px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide",
                     alineacion_columna(columna)
                   ]}>
@@ -638,10 +640,10 @@ defmodule MetadataAppWeb.CatalogoLive do
                   </th>
                 <% end %>
                 <%= if @mostrar_estado? do %>
-                  <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Estado</th>
+                  <th data-col="estado" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Estado</th>
                 <% end %>
                 <%= if @mostrar_trn? do %>
-                  <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">TRN</th>
+                  <th data-col="trn" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">TRN</th>
                 <% end %>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide"></th>
               </tr>
@@ -650,12 +652,12 @@ defmodule MetadataAppWeb.CatalogoLive do
               <%= for fila <- @filas do %>
                 <tr class="hover:bg-purple-50/60 transition-colors cursor-pointer"
                   ondblclick={"window.location='/registro/#{@current_page}/#{fila.id}'"}>
-                  <td class="px-4 py-1.5 text-[10px] text-gray-700">
+                  <td data-col="id" class="px-4 py-1.5 text-[10px] text-gray-700">
                     {fila.id}
                   </td>
                   <%= for columna <- @columnas do %>
                     <% valor = Map.get(fila, String.to_existing_atom(columna.schema_context_field)) %>
-                    <td class={[
+                    <td data-col={col_key(columna)} class={[
                       "px-4 py-1.5 text-[10px]",
                       alineacion_columna(columna),
                       if(is_map(valor) and not is_struct(valor), do: "text-blue-700 font-medium", else: "text-gray-700")
@@ -664,10 +666,10 @@ defmodule MetadataAppWeb.CatalogoLive do
                     </td>
                   <% end %>
                   <%= if @mostrar_estado? do %>
-                    <td class="px-4 py-1.5 text-[10px] text-gray-700">{Map.get(fila, :estado_nombre)}</td>
+                    <td data-col="estado" class="px-4 py-1.5 text-[10px] text-gray-700">{Map.get(fila, :estado_nombre)}</td>
                   <% end %>
                   <%= if @mostrar_trn? do %>
-                    <td class="px-4 py-1.5 text-[10px] text-gray-700 font-mono" title={Map.get(fila, :ulid)}>{Map.get(fila, :trn)}</td>
+                    <td data-col="trn" class="px-4 py-1.5 text-[10px] text-gray-700 font-mono" title={Map.get(fila, :ulid)}>{Map.get(fila, :trn)}</td>
                   <% end %>
                   <td class="px-4 py-1.5 text-xs text-right">
                     <.link navigate={"/registro/#{@current_page}/#{fila.id}"}
@@ -706,6 +708,34 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   defp alineacion_columna(_columna), do: "text-left"
 
+  # Identificador de columna para el selector de campos (data-col en
+  # <th>/<td>, ver panel_campos/1 y el hook SelectorCampos en app.js).
+  # Una consulta con JOIN puede repetir el mismo schema_context_field en
+  # más de un catálogo (ej. "nombre" en dos tablas distintas) — ahí hace
+  # falta la clave namespaced (:clave, ver columna_desde_campo_consulta/1)
+  # para no confundir/ocultar la columna equivocada; un catálogo normal no
+  # tiene :clave y usa el campo crudo, que ya es único.
+  defp col_key(columna), do: Map.get(columna, :clave) || columna.schema_context_field
+
+  # Lista %{clave:, etiqueta:} para el selector de campos (panel_campos/1)
+  # — SOLO los campos de negocio (meta_schema_detail). La variante /3 le
+  # suma ID/Estado/TRN, las columnas "estructurales" que arma esta misma
+  # vista (no vienen de meta_schema_detail, así que col_key/1 no las
+  # conoce) — en el mismo orden en que aparecen en la tabla, para que la
+  # lista del popover se lea igual que las columnas de izquierda a
+  # derecha. La columna de Acciones (el link a la Ficha 360°) queda
+  # afuera a propósito: no es un campo, es un botón.
+  defp campos_selector(columnas) do
+    Enum.map(columnas, &%{clave: col_key(&1), etiqueta: &1.schema_context_properties["etiqueta"]})
+  end
+
+  defp campos_selector(columnas, mostrar_estado?, mostrar_trn?) do
+    [%{clave: "id", etiqueta: "ID"}] ++
+      campos_selector(columnas) ++
+      (if mostrar_estado?, do: [%{clave: "estado", etiqueta: "Estado"}], else: []) ++
+      (if mostrar_trn?, do: [%{clave: "trn", etiqueta: "TRN"}], else: [])
+  end
+
   # Un campo tipo "referencia" con campos de acompañamiento configurados
   # llega acá como objeto anidado (%{id: 1, razon_social: "..."}), no como
   # escalar — se muestra el resumen legible (sin el id), no el mapa crudo.
@@ -721,6 +751,106 @@ defmodule MetadataAppWeb.CatalogoLive do
   end
 
   defp formatear_celda(valor), do: valor
+
+  # Selector de columnas visibles ("Campos") — a propósito 100% del lado
+  # del cliente (JS puro, ver hook SelectorCampos en app.js), sin un solo
+  # phx-click al servidor: es puramente visual (oculta/muestra <th>/<td>
+  # por CSS), no cambia @columnas ni la query real, así que no tiene
+  # sentido pagar un roundtrip por cada tilde. phx-update="ignore" porque
+  # @columnas no cambia durante la vida del mount (filtros/búsqueda/
+  # paginación no la tocan) — sin esto, cualquier re-render de LiveView
+  # pisaría el estado de los checkboxes que ya sincronizó el hook.
+  # `campos` es una lista %{clave:, etiqueta:} ya armada por
+  # campos_selector/1-3 — incluye tanto las columnas de negocio como,
+  # cuando aplica, las estructurales (ID/Estado/TRN), en el mismo orden
+  # en que aparecen en la tabla.
+  attr :campos, :list, required: true
+  attr :tabla_id, :string, required: true
+
+  defp panel_campos(assigns) do
+    ~H"""
+    <div class="relative" id={"selector-campos-" <> @tabla_id} phx-hook="SelectorCampos" phx-update="ignore" data-tabla={@tabla_id}>
+      <button
+        type="button"
+        phx-click={JS.toggle(to: "#campos-popover-" <> @tabla_id)}
+        class="flex items-center gap-1.5 border border-gray-300 rounded-lg px-3 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 whitespace-nowrap"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="4" y1="6" x2="20" y2="6" /><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none" />
+          <line x1="4" y1="12" x2="20" y2="12" /><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none" />
+          <line x1="4" y1="18" x2="20" y2="18" /><circle cx="11" cy="18" r="2" fill="currentColor" stroke="none" />
+        </svg>
+        Campos
+      </button>
+
+      <div
+        id={"campos-popover-" <> @tabla_id}
+        class="hidden absolute right-0 top-full mt-2 w-72 max-h-[70vh] bg-white rounded-xl shadow-xl border border-gray-200 z-50 flex flex-col"
+        phx-click-away={JS.hide()}
+      >
+        <div class="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
+          <h2 class="text-sm font-bold text-gray-900">Campos</h2>
+          <button
+            type="button"
+            phx-click={JS.hide(to: "#campos-popover-" <> @tabla_id)}
+            aria-label="Cerrar selector de campos"
+            class="w-6 h-6 flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="px-4 py-2 border-b border-gray-200">
+          <input
+            type="text"
+            data-buscador-campo
+            placeholder="Buscar campo..."
+            class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500"
+          />
+        </div>
+
+        <div class="flex items-center gap-2 px-4 py-2 border-b border-gray-200">
+          <button type="button" data-accion="seleccionar-todos" class="text-xs font-semibold text-purple-700 hover:underline">
+            Seleccionar todos
+          </button>
+          <span class="text-gray-300">·</span>
+          <button type="button" data-accion="deseleccionar-todos" class="text-xs font-semibold text-purple-700 hover:underline">
+            Deseleccionar todos
+          </button>
+        </div>
+
+        <div class="overflow-y-auto py-1 flex-1" data-lista-campos>
+          <%= for campo <- @campos do %>
+            <div data-fila-campo data-etiqueta={campo.etiqueta} class="flex items-center gap-1.5 px-2 py-1.5 text-xs text-gray-700 hover:bg-gray-50">
+              <span class="jal-manija flex-shrink-0 flex items-center justify-center w-4 h-4 text-gray-300 hover:text-gray-500 cursor-grab active:cursor-grabbing" title="Arrastrar para reordenar">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="8" cy="6" r="1.6" /><circle cx="16" cy="6" r="1.6" />
+                  <circle cx="8" cy="12" r="1.6" /><circle cx="16" cy="12" r="1.6" />
+                  <circle cx="8" cy="18" r="1.6" /><circle cx="16" cy="18" r="1.6" />
+                </svg>
+              </span>
+              <label class="flex items-center gap-2 flex-1 min-w-0 cursor-pointer">
+                <input type="checkbox" checked data-campo={campo.clave} class="accent-purple-600 flex-shrink-0" />
+                <span class="truncate">{campo.etiqueta}</span>
+              </label>
+            </div>
+          <% end %>
+          <%= if @campos == [] do %>
+            <p class="px-4 py-3 text-xs text-gray-400">No hay campos.</p>
+          <% end %>
+        </div>
+
+        <div class="px-4 py-2.5 border-t border-gray-200">
+          <button type="button" data-accion="limpiar" class="w-full text-xs font-semibold text-gray-500 hover:text-gray-800 px-2 py-1">
+            Limpiar filtro de campos (mostrar todos)
+          </button>
+        </div>
+      </div>
+    </div>
+    """
+  end
 
   # Popover compacto anclado al botón "Filtros" (en vez del drawer de
   # pantalla completa de antes, que se sentía como una ventana aparte para
