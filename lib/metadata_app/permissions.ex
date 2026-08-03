@@ -201,6 +201,31 @@ defmodule MetadataApp.Permissions do
     )
   end
 
+  @doc """
+  Búsqueda acotada de roles por nombre (empresa + sistema), mismo criterio
+  de escala que buscar_catalogos/2 — pensado para empresas con cientos de
+  roles, donde listar_roles/1 completo ya no es una lista razonable de
+  mostrar entera en una UI (ej. selector de roles a agregar a un usuario).
+  Sin texto, no devuelve nada (evita mostrar los primeros N sin que el
+  admin haya pedido nada puntual).
+  """
+  def buscar_roles(empresa_id, query, limite \\ 20)
+
+  def buscar_roles(_empresa_id, "", _limite), do: []
+
+  def buscar_roles(empresa_id, query, limite) do
+    texto = "%#{query}%"
+
+    Repo.all(
+      from r in Rol,
+        where:
+          is_nil(r.delete_guid) and (r.empresa_id == ^empresa_id or is_nil(r.empresa_id)) and
+            ilike(r.nombre, ^texto),
+        order_by: r.nombre,
+        limit: ^limite
+    )
+  end
+
   def obtener_rol(id) do
     case Repo.get(Rol, id) do
       nil -> {:error, :no_encontrado}
@@ -230,6 +255,11 @@ defmodule MetadataApp.Permissions do
 
   def listar_permisos do
     Repo.all(from p in Permiso, where: is_nil(p.delete_guid))
+  end
+
+  @doc "true si ya existe una fila de permiso para {recurso, accion} — usado para saber si una transición ya es discoverable/ejecutable por alguien (ver el aviso inline en BcMotorLive)."
+  def permiso_existe?(recurso, accion) do
+    Repo.exists?(from p in Permiso, where: p.recurso == ^recurso and p.accion == ^accion and is_nil(p.delete_guid))
   end
 
   @doc """
@@ -493,7 +523,12 @@ defmodule MetadataApp.Permissions do
     Repo.one(
       from h in Header,
         where: h.schema_context_name == ^recurso and is_nil(h.delete_guid),
-        select: %{recurso: h.schema_context_name, label: h.schema_context_label, es_consulta: h.schema_context_type == 3}
+        select: %{
+          recurso: h.schema_context_name,
+          label: h.schema_context_label,
+          es_consulta: h.schema_context_type == 3,
+          es_detalle: not is_nil(h.schema_encabezado_id)
+        }
     )
   end
 

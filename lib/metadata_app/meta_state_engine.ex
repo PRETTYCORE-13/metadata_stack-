@@ -15,6 +15,7 @@ defmodule MetadataApp.MetaStateEngine do
   alias MetadataApp.Repo
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
+  alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.MetaSchema.{Estado, Transicion, TransicionEvento}
   alias MetadataApp.MetaStateEngine.Reglas
 
@@ -382,31 +383,53 @@ defmodule MetadataApp.MetaStateEngine do
     Enum.reduce_while(items, {:ok, []}, fn item, {:ok, acc} ->
       {renglon_id, campos_attrs} = normalizar_item_renglon(item)
 
-      case Repo.get_by(modulo, encabezado_id: encabezado_id, renglon_id: renglon_id) do
+      with registro when not is_nil(registro) <-
+             Repo.get_by(modulo, encabezado_id: encabezado_id, renglon_id: renglon_id),
+           :ok <- verificar_permiso_detalle(registro, transicion, header_detalle),
+           {:ok, changeset} <- construir_changeset_transicion(registro, transicion, campos_attrs) do
+        participante = %{
+          modulo: modulo,
+          changeset: changeset,
+          estado_leido: registro.estado_id,
+          header_id: header_detalle.id
+        }
+
+        {:cont, {:ok, [participante | acc]}}
+      else
         nil ->
           {:halt,
            {:error, "renglón #{renglon_id} de '#{header_detalle.schema_context_name}' no existe para este encabezado"}}
 
-        registro ->
-          case construir_changeset_transicion(registro, transicion, campos_attrs) do
-            {:ok, changeset} ->
-              participante = %{
-                modulo: modulo,
-                changeset: changeset,
-                estado_leido: registro.estado_id,
-                header_id: header_detalle.id
-              }
-
-              {:cont, {:ok, [participante | acc]}}
-
-            {:error, _changeset} = error ->
-              {:halt, error}
-          end
+        {:error, _motivo} = error ->
+          {:halt, error}
       end
     end)
     |> case do
       {:ok, lista} -> {:ok, Enum.reverse(lista)}
       error -> error
+    end
+  end
+
+  # Permisos de detalle por estado (insertar/actualizar/borrar renglones,
+  # ver MetaEstadosAdmin.permiso_detalle/2) — capa nueva e independiente
+  # del permiso RBAC de transición (verificar_permiso_transicion/3, más
+  # abajo, que sigue validando solo los campos que puede modificar el
+  # ENCABEZADO). Self-loop (mismo estado origen/destino, ej. "guardar") =
+  # ACTUALIZAR: el renglón no cambia de estado, solo (opcionalmente)
+  # campos. Transición real (cambia de estado, ej. "baja") = BORRAR: el
+  # renglón sale del estado actual, sin importar si de paso también edita
+  # campos vía campos_editables — eso lo sigue controlando esa whitelist,
+  # no se suma acá una tercera condición mixta.
+  defp verificar_permiso_detalle(registro, transicion, header_detalle) do
+    self_loop? = transicion.estado_origen_id == transicion.estado_destino_id
+    permiso = MetaEstadosAdmin.permiso_detalle(registro.estado_id, header_detalle.id)
+    permitido? = if self_loop?, do: permiso.permite_actualizar, else: permiso.permite_borrar
+
+    if permitido? do
+      :ok
+    else
+      accion_bloqueada = if self_loop?, do: "actualizar", else: "borrar"
+      {:error, "el estado actual de '#{header_detalle.schema_context_name}' no permite #{accion_bloqueada} este renglón"}
     end
   end
 

@@ -145,7 +145,20 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     # ningún código que los consulte para este recurso (ni siquiera existe
     # un módulo Ecto real detrás, ver CatalogoController.resolver/1), así
     # que ni se ofrecen acá para no sugerir una capacidad que no existe.
-    acciones_crud = if socket.assigns.catalogo.es_consulta, do: ~w(leer), else: @acciones_crud
+    #
+    # Un catálogo DETALLE: "eliminar" (DELETE /api/:tabla/:id) siempre
+    # rechaza para un renglón — CatalogoGenerico.eliminar/2 tiene el
+    # mensaje "los renglones de un catálogo detalle no se borran, use una
+    # transición" hardcodeado. Conceder ese permiso ahí no habilita nada;
+    # se saca del todo para no sugerir una capacidad que nunca funciona
+    # (hallazgo 2026-08-03, ver docs/roadmap.md #15 — "editar" tiene el
+    # mismo problema pero se deja por ahora, no se pidió tocarlo).
+    acciones_crud =
+      cond do
+        socket.assigns.catalogo.es_consulta -> ~w(leer)
+        socket.assigns.catalogo.es_detalle -> @acciones_crud -- ~w(eliminar)
+        true -> @acciones_crud
+      end
     acciones_transiciones = Enum.map(socket.assigns.transiciones, & &1.accion)
     rol_ids = Enum.map(roles, & &1.id)
     estado = Permissions.estado_permisos_para_roles(recurso, rol_ids, acciones_crud ++ acciones_transiciones)

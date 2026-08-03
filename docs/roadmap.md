@@ -102,3 +102,14 @@ Distinto del ítem 6 (que es sobre **datos** — quién cambió un registro de n
 4. **Manejo de conflictos** (a diseñar, no trivial): qué pasa si quien importa ya tiene un catálogo con ese mismo nombre; qué pasa al reimportar una versión actualizada del mismo tepache (la migración de `create table` chocaría porque la tabla ya existe — falta decidir si se borra y recrea, o si el bundle debería traer un diff/migración incremental).
 
 5. **Firma (integridad + autoría)** — pendiente, no urgente para uso interno del equipo (el repo ya es privado y el acceso lo controla GitHub). Si esto algún día sale del equipo/org, evaluar publicar un checksum SHA256 junto al release (patrón `SHA256SUMS`/`SHA256SUMS.sig` de HashiCorp) o firma real vía Sigstore/cosign — no vale la pena para compartir entre compañeros del mismo repo privado hoy.
+
+## 15 — `CatalogoGenerico.eliminar/2` (borrado de encabezado vía API) no cascadea a sus renglones detalle
+
+Encontrado 2026-08-03, discutiendo el permiso "Eliminar" en Permission Sets. `CatalogoGenerico.eliminar/2` es un camino **totalmente aparte** del autómata (baja/reactivar vía transición) — solo accesible por `DELETE /api/:tabla/:id`, nunca desde la Ficha:
+
+- Para un renglón de detalle: siempre rechaza ("los renglones de un catálogo detalle no se borran — use una transición"). Confirmado que el permiso "Eliminar" en Permission Sets no habilita nada ahí — **por ahora se dejó el chip bloqueado/deshabilitado en la UI para catálogos detalle**, sin tocar la función en sí (sigue existiendo el soft-delete real para encabezados, no se quiere perder esa funcionalidad).
+- Para un encabezado: hace un soft-delete real (`delete_guid`), sin pasar por el autómata (no mira `estado_id`, no valida transición ni permiso de transición) y **sin cascadear ese `delete_guid` a sus propias filas de tabla(s) detalle**.
+
+**Consecuencia** (no es un problema de integridad referencial — la FK `encabezado_id -> maestro.id` sigue intacta porque nunca hay un DELETE real, solo un UPDATE): un encabezado "eliminado" por esta vía desaparece de cualquier listado que lo consulte directo (`is_nil(delete_guid)`), pero sus renglones detalle siguen con `delete_guid: nil` — visibles en cualquier vista que consulte la tabla detalle sin además chequear el `delete_guid` del padre. Inconsistencia de visibilidad entre vistas, no corrupción de datos.
+
+**Pendiente, sin diseñar todavía**: decidir si `eliminar/2` debería cascadear el `delete_guid` a los renglones detalle del encabezado que borra (mismo GUID o uno propio por fila), o si alcanza con documentar que este camino es de uso aislado (solo integraciones externas vía API, nunca la Ficha) y no vale la pena la complejidad de la cascada todavía.

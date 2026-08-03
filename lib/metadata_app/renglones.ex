@@ -22,6 +22,11 @@ defmodule MetadataApp.Renglones do
   carrera de renglon_id) — así ya puede participar de la próxima transición
   que el maestro ejecute, sin quedar en `estado_id: nil`.
 
+  Antes de asignar nada, valida el permiso de detalle por estado
+  (`MetaEstadosAdmin.permiso_detalle/2`, deny-by-default) — si el estado
+  actual del maestro no tiene `permite_insertar` para este catálogo, se
+  rechaza acá con un error de changeset, igual que "encabezado no existe".
+
   `crear_todos/3` (R6, alta atómica): crea los renglones iniciales de un
   maestro recién dado de alta, en el MISMO `Ecto.Multi` que su propio
   registro (llamado desde `MetaStateEngine.ejecutar_nucleo_alta/4` y
@@ -49,13 +54,13 @@ defmodule MetadataApp.Renglones do
 
     if header && header.schema_encabezado_id do
       maestro = MetaSchemaContext.obtener_header!(header.schema_encabezado_id)
-      resolver(changeset, catalogo, maestro, attrs)
+      resolver(changeset, catalogo, header, maestro, attrs)
     else
       changeset
     end
   end
 
-  defp resolver(changeset, catalogo, maestro, attrs) do
+  defp resolver(changeset, catalogo, header, maestro, attrs) do
     case Map.get(attrs, "encabezado_id") || Map.get(attrs, :encabezado_id) do
       nil ->
         Ecto.Changeset.add_error(changeset, :encabezado_id, "es obligatorio para un catálogo detalle")
@@ -63,17 +68,31 @@ defmodule MetadataApp.Renglones do
       encabezado_id ->
         case lockear_maestro(maestro.schema_context_name, encabezado_id) do
           {:ok, estado_maestro} ->
-            renglon_id = siguiente_renglon(catalogo, encabezado_id)
-
-            Ecto.Changeset.change(changeset, %{
-              encabezado_id: encabezado_id,
-              renglon_id: renglon_id,
-              estado_id: estado_maestro
-            })
+            asignar_o_rechazar(changeset, catalogo, header, encabezado_id, estado_maestro)
 
           :error ->
             Ecto.Changeset.add_error(changeset, :encabezado_id, "el encabezado #{encabezado_id} no existe")
         end
+    end
+  end
+
+  # Permisos de detalle por estado (insertar/actualizar/borrar renglones,
+  # ver MetaEstadosAdmin.permiso_detalle/2): deny-by-default, gatea acá
+  # porque este es el ÚNICO lugar donde se resuelve un renglón NUEVO, sin
+  # importar si viene de CatalogoGenerico.crear_muchos/3 (grilla de la
+  # Ficha) o del alta atómica de encabezado+renglones iniciales
+  # (crear_todos/3, más abajo).
+  defp asignar_o_rechazar(changeset, catalogo, header, encabezado_id, estado_maestro) do
+    if MetadataApp.MetaEstadosAdmin.permiso_detalle(estado_maestro, header.id).permite_insertar do
+      renglon_id = siguiente_renglon(catalogo, encabezado_id)
+
+      Ecto.Changeset.change(changeset, %{
+        encabezado_id: encabezado_id,
+        renglon_id: renglon_id,
+        estado_id: estado_maestro
+      })
+    else
+      Ecto.Changeset.add_error(changeset, :encabezado_id, "el estado actual no permite insertar renglones en '#{catalogo}'")
     end
   end
 
