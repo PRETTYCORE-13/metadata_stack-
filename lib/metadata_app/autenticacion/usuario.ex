@@ -9,6 +9,13 @@ defmodule MetadataApp.Autenticacion.Usuario do
     field :hashed_password, :string, redact: true
     field :confirmed_at, :utc_datetime
     field :authenticated_at, :utc_datetime, virtual: true
+    # Cross-empresa, fuera del RBAC normal (que siempre gira alrededor de
+    # una empresa activa) — desbloquea ÚNICAMENTE ver/crear/unirse a
+    # CUALQUIER empresa (EmpresasLive), nada de saltar permisos de
+    # catálogos dentro de cada tenant. No es un rol de meta_schema_rol a
+    # propósito: ese modelo asume {usuario, rol, empresa}, y esto es
+    # deliberadamente independiente de cualquier empresa.
+    field :super_admin, :boolean, default: false
 
     timestamps(type: :utc_datetime)
   end

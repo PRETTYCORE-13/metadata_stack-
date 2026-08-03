@@ -72,7 +72,7 @@ config :metadata_app, dev_routes: true
 # arranque local. Compile-time (Application.compile_env/3, mismo
 # criterio que dev_routes/bpb_habilitado de arriba): no existe en un
 # release compilado con MIX_ENV=prod ni :test, sin importar runtime env.
-config :metadata_app, auto_login_demo_dev: true
+config :metadata_app, auto_login_demo_dev: false
 
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"

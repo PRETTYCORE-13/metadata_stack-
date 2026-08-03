@@ -105,7 +105,6 @@ defmodule MetadataAppWeb.Router do
 
     live_session :current_usuario,
       on_mount: [{MetadataAppWeb.UsuarioAuth, :mount_current_scope}] do
-      live "/meta_schema_usuario/register", UsuarioLive.Registration, :new
       live "/meta_schema_usuario/log-in", UsuarioLive.Login, :new
       live "/meta_schema_usuario/log-in/:token", UsuarioLive.Confirmation, :new
     end

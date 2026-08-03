@@ -1,10 +1,15 @@
 defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
   @moduledoc """
-  Empresas (tenants) a las que pertenece el usuario actual — listar,
-  crear, renombrar. Crear una empresa te deja adentro como `administrador`
-  automáticamente (ver `Autenticacion.crear_empresa_para_usuario/2`); no
-  hay todavía un "super admin" cross-empresa, así que la lista acá es
-  siempre "las mías", no todas las que existan en el sistema.
+  Empresas (tenants) — listar, crear, renombrar. Crear una empresa te deja
+  adentro como `administrador` automáticamente (ver
+  `Autenticacion.crear_empresa_para_usuario/2`).
+
+  Para un usuario normal, la lista es siempre "las mías". Para un
+  `usuario.super_admin` (cross-empresa, ver el campo en
+  `Autenticacion.Usuario`), la lista pasa a ser TODAS las empresas del
+  sistema, con un botón "Unirme como admin" en las que todavía no
+  pertenece (`Autenticacion.unirse_como_admin/2`) — la puerta de rescate
+  que antes no existía para un tenant huérfano.
   """
 
   use MetadataAppWeb, :live_view_admin
@@ -84,6 +89,12 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
     end
   end
 
+  def handle_event("unirse_empresa", %{"id" => id}, socket) do
+    usuario_id = socket.assigns.current_scope.usuario.id
+    Autenticacion.unirse_como_admin(usuario_id, String.to_integer(id))
+    {:noreply, cargar_empresas(socket)}
+  end
+
   def handle_event("abrir_editar", %{"id" => id}, socket) do
     empresa = Enum.find(socket.assigns.empresas, &(&1.id == String.to_integer(id)))
     {:noreply, assign(socket, empresa_editando: empresa, error_form: nil)}
@@ -105,8 +116,20 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
   end
 
   defp cargar_empresas(socket) do
-    usuario_id = socket.assigns.current_scope.usuario.id
-    assign(socket, :empresas, Autenticacion.empresas_de_usuario(usuario_id))
+    usuario = socket.assigns.current_scope.usuario
+    mis_empresas = Autenticacion.empresas_de_usuario(usuario.id)
+
+    if usuario.super_admin do
+      mis_ids = MapSet.new(mis_empresas, & &1.id)
+
+      socket
+      |> assign(:empresas, Autenticacion.listar_empresas())
+      |> assign(:mis_empresas_ids, mis_ids)
+    else
+      socket
+      |> assign(:empresas, mis_empresas)
+      |> assign(:mis_empresas_ids, MapSet.new(mis_empresas, & &1.id))
+    end
   end
 
   def render(assigns) do
@@ -128,7 +151,13 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
           + Nueva empresa
         </button>
       </div>
-      <p class="text-sm text-gray-500 mb-6">Las empresas a las que pertenecés — crear una te deja adentro como administrador.</p>
+      <p class="text-sm text-gray-500 mb-6">
+        <%= if @current_scope.usuario.super_admin do %>
+          Todas las empresas del sistema (sos super admin) — crear una, o unirte como administrador a una que ya existe.
+        <% else %>
+          Las empresas a las que pertenecés — crear una te deja adentro como administrador.
+        <% end %>
+      </p>
 
       <div class="overflow-x-auto rounded-xl border border-gray-200">
         <table class="min-w-full divide-y divide-gray-200">
@@ -149,7 +178,16 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
                   Activa
                 </span>
               </td>
-              <td class="px-4 py-2 text-right">
+              <td class="px-4 py-2 text-right whitespace-nowrap">
+                <button
+                  :if={!MapSet.member?(@mis_empresas_ids, empresa.id)}
+                  type="button"
+                  phx-click="unirse_empresa"
+                  phx-value-id={empresa.id}
+                  class="text-xs text-purple-700 font-semibold hover:underline mr-3"
+                >
+                  Unirme como admin
+                </button>
                 <button type="button" phx-click="abrir_editar" phx-value-id={empresa.id} class="text-xs text-purple-700 hover:underline">
                   Renombrar
                 </button>
