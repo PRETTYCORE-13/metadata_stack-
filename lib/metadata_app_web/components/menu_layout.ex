@@ -34,7 +34,7 @@ defmodule MetadataAppWeb.MenuLayout do
     assigns =
       assigns
       |> assign(:nodo_actual, buscar_nodo_actual(assigns.menu_items, assigns.current_page))
-      |> assign(:nombre_empresa, Application.get_env(:metadata_app, :nombre_empresa, "Prettycore"))
+      |> assign(:nombre_empresa, nombre_empresa_activa(assigns[:current_scope]))
       |> assign(:anio_actual, Date.utc_today().year)
       |> assign(:bpb_habilitado, Application.get_env(:metadata_app, :bpb_habilitado, false))
       |> asignar_datos_usuario()
@@ -509,6 +509,18 @@ defmodule MetadataAppWeb.MenuLayout do
   # quedaban siempre nil), se derivan acá directo del Scope. Alias si lo
   # eligió, si no la parte del email antes de la @ (nunca "Usuario" a secas
   # mientras haya sesión real).
+  # El nombre de la topbar reflejaba un valor fijo de config
+  # (:nombre_empresa), NUNCA la empresa activa real de la sesión — con
+  # varias empresas de prueba en la misma base, mostraba siempre lo mismo
+  # sin importar en cuál estuviera parado el usuario (confusión real:
+  # "estoy en DemoCore" cuando en realidad la sesión tenía otra empresa
+  # activa). Ahora usa `current_scope.empresa_activa.nombre`; el config
+  # fijo queda solo como fallback para cuando todavía no hay scope
+  # resuelto (ej. login/register, donde este layout no se usa igual, pero
+  # por las dudas).
+  defp nombre_empresa_activa(%MetadataApp.Autenticacion.Scope{empresa_activa: %{nombre: nombre}}), do: nombre
+  defp nombre_empresa_activa(_), do: Application.get_env(:metadata_app, :nombre_empresa, "Prettycore")
+
   defp asignar_datos_usuario(assigns) do
     case assigns[:current_scope] do
       %MetadataApp.Autenticacion.Scope{usuario: %MetadataApp.Autenticacion.Usuario{} = usuario} ->

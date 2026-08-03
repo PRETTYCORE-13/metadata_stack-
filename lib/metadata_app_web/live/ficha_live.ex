@@ -197,7 +197,9 @@ defmodule MetadataAppWeb.FichaLive do
   # (LiveView lo lleva a la próxima página), así el listado igual muestra
   # la confirmación.
   def handle_event("ejecutar_transicion", %{"accion" => accion}, socket) do
-    case MetaStateEngine.ejecutar_transicion(socket.assigns.registro, accion, %{}) do
+    contexto = Permissions.contexto_confiable(socket.assigns.current_scope)
+
+    case MetaStateEngine.ejecutar_transicion(socket.assigns.registro, accion, contexto) do
       {:ok, _actualizado} ->
         {:noreply,
          socket
@@ -293,7 +295,9 @@ defmodule MetadataAppWeb.FichaLive do
   #   CatalogoLive.detalle_modal (checkbox + botón de transición), acá
   #   aplicada a un solo renglón desde la grilla.
   def handle_event("renglon_transicion", %{"catalogo" => catalogo, "renglon_id" => renglon_id, "accion" => accion}, socket) do
-    case MetaStateEngine.ejecutar_transicion(socket.assigns.registro, accion, %{}, renglones: %{catalogo => [renglon_id]}) do
+    contexto = Permissions.contexto_confiable(socket.assigns.current_scope)
+
+    case MetaStateEngine.ejecutar_transicion(socket.assigns.registro, accion, contexto, renglones: %{catalogo => [renglon_id]}) do
       {:ok, actualizado} ->
         socket = cargar_registro(socket, actualizado)
 
@@ -474,16 +478,21 @@ defmodule MetadataAppWeb.FichaLive do
            "Este catálogo no tiene una transición \"guardar\" configurada — no se pueden editar renglones existentes sin pasar por una transición del encabezado."
          )}
 
-      # Sin renglones EDITADOS (solo nuevos), aplicar_encabezado/5 nunca pasa
-      # por ejecutar_transicion/4 (ver esa función) — y crear_renglones_nuevos/3
-      # tampoco lo hace, así que sin este chequeo el permiso de "guardar" del
-      # rol quedaba sin exigirse para renglones NUEVOS (encontrado real: se
-      # podía insertar sin tener concedida la transición). Mismo permiso que
-      # ya se usa para editar el encabezado — no uno nuevo por diseño.
-      hay_renglones_nuevos? and
+      # Sin renglones EDITADOS, aplicar_encabezado/5 NUNCA pasa por
+      # ejecutar_transicion/4 (cae a actualizar_si_hay_cambios, un simple
+      # UPDATE sin ningún concepto de transición) — y crear_renglones_nuevos/3
+      # tampoco pasa por ahí. Sin este chequeo, ni editar campos del
+      # encabezado ni insertar renglones nuevos exigía el permiso "guardar"
+      # del rol (encontrado real, dos veces: primero con renglones nuevos,
+      # después renglones editados vía "guardar" mostrando "Baja" disponible
+      # sin permiso — ver el fix de contexto_confiable en
+      # ejecutar_transicion/renglon_transicion/aplicar_encabezado). Cuando SÍ
+      # hay renglones editados, este chequeo es redundante mansamente: ya lo
+      # hace verificar_permiso_transicion/3 dentro de ejecutar_transicion/4.
+      (map_size(attrs) > 0 or hay_renglones_nuevos?) and not hay_renglones_editados? and
           not Permissions.can?(socket.assigns.current_scope, "guardar", socket.assigns.header.schema_context_name) ->
         {:noreply,
-         assign(socket, :error_guardado, "No tenés permiso para agregar renglones a este catálogo.")}
+         assign(socket, :error_guardado, "No tenés permiso para guardar cambios en este catálogo.")}
 
       registro_cambio_de_estado?(schema_mod, registro) ->
         {:noreply,
@@ -491,7 +500,16 @@ defmodule MetadataAppWeb.FichaLive do
 
       true ->
         registro_actual = CatalogoGenerico.obtener!(schema_mod, registro.id)
-        guardar_cambios(socket, registro_actual, attrs, renglones_nuevos, renglones_editados, transicion_edicion)
+
+        guardar_cambios(
+          socket,
+          registro_actual,
+          attrs,
+          renglones_nuevos,
+          renglones_editados,
+          transicion_edicion,
+          socket.assigns.current_scope
+        )
     end
   end
 
@@ -548,13 +566,13 @@ defmodule MetadataAppWeb.FichaLive do
   # mount/3) viaja a CatalogoGenerico.actualizar/3 y .crear_muchos/3 —
   # ejecutar_transicion/4 (R4, renglones editados) no lo necesita, ese
   # camino ya queda registrado por su propio TransicionEvento.
-  defp guardar_cambios(socket, registro_actual, attrs, renglones_nuevos, renglones_editados, transicion_edicion) do
+  defp guardar_cambios(socket, registro_actual, attrs, renglones_nuevos, renglones_editados, transicion_edicion, current_scope) do
     contexto_auditoria = socket.assigns.contexto_auditoria
 
     resultado =
       Repo.transaction(fn ->
         with {:ok, actualizado} <-
-               aplicar_encabezado(registro_actual, attrs, renglones_editados, transicion_edicion, contexto_auditoria),
+               aplicar_encabezado(registro_actual, attrs, renglones_editados, transicion_edicion, contexto_auditoria, current_scope),
              {:ok, _creados} <- crear_renglones_nuevos(registro_actual.id, renglones_nuevos, contexto_auditoria) do
           actualizado
         else
@@ -588,13 +606,14 @@ defmodule MetadataAppWeb.FichaLive do
   # Con renglones editados: tiene que pasar por la transición "guardar"
   # (R4) sí o sí, aunque @form_values venga vacío — es la única forma que
   # el motor conoce de tocar un campo de un renglón ya persistido.
-  defp aplicar_encabezado(registro, attrs, renglones_editados, _transicion, contexto_auditoria)
+  defp aplicar_encabezado(registro, attrs, renglones_editados, _transicion, contexto_auditoria, _current_scope)
        when map_size(renglones_editados) == 0 do
     actualizar_si_hay_cambios(registro, attrs, contexto_auditoria)
   end
 
-  defp aplicar_encabezado(registro, attrs, renglones_editados, transicion, _contexto_auditoria) do
-    MetaStateEngine.ejecutar_transicion(registro, transicion.accion, attrs, renglones: renglones_editados)
+  defp aplicar_encabezado(registro, attrs, renglones_editados, transicion, _contexto_auditoria, current_scope) do
+    contexto = Map.merge(attrs, Permissions.contexto_confiable(current_scope))
+    MetaStateEngine.ejecutar_transicion(registro, transicion.accion, contexto, renglones: renglones_editados)
   end
 
   defp actualizar_si_hay_cambios(registro, attrs, _contexto_auditoria) when map_size(attrs) == 0, do: {:ok, registro}
@@ -720,8 +739,10 @@ defmodule MetadataAppWeb.FichaLive do
       if es_detalle? or is_nil(registro.estado_id) do
         []
       else
+        contexto = Permissions.contexto_confiable(socket.assigns.current_scope)
+
         registro
-        |> MetaStateEngine.transiciones_disponibles(%{})
+        |> MetaStateEngine.transiciones_disponibles(contexto)
         |> Enum.reject(&(&1.accion == "guardar"))
       end
 
