@@ -130,6 +130,36 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     {:noreply, cargar_matriz(socket)}
   end
 
+  # Conceder/revocar TODAS las acciones (CRUD + transiciones) de este
+  # catálogo para un rol en un solo click — agilizar la selección cuando
+  # un rol necesita quedar con acceso total (o ninguno) a un catálogo,
+  # sin tildar botón por botón. Salta las que ya están en el estado
+  # deseado (no reintenta conceder lo ya concedido ni revocar lo ya
+  # revocado) — mismo criterio idempotente que toggle_permiso.
+  def handle_event("conceder_todos", %{"rol_id" => rol_id}, socket) do
+    rol_id = String.to_integer(rol_id)
+    recurso = socket.assigns.catalogo.recurso
+
+    todas_las_acciones(socket)
+    |> Enum.reject(&Map.get(socket.assigns.estado, {rol_id, &1}, %{concedido: false}).concedido)
+    |> Enum.each(&Permissions.conceder_permiso_catalogo(rol_id, recurso, &1))
+
+    {:noreply, cargar_matriz(socket)}
+  end
+
+  def handle_event("revocar_todos", %{"rol_id" => rol_id}, socket) do
+    rol_id = String.to_integer(rol_id)
+
+    todas_las_acciones(socket)
+    |> Enum.map(&Map.get(socket.assigns.estado, {rol_id, &1}, %{concedido: false, permiso_id: nil}))
+    |> Enum.filter(& &1.concedido)
+    |> Enum.each(&Permissions.revocar_permiso_de_rol(rol_id, &1.permiso_id))
+
+    {:noreply, cargar_matriz(socket)}
+  end
+
+  defp todas_las_acciones(socket), do: socket.assigns.acciones_crud ++ Enum.map(socket.assigns.transiciones, & &1.accion)
+
   defp cargar_matriz(socket) do
     empresa_id = socket.assigns.current_scope.empresa_activa.id
     recurso = socket.assigns.catalogo.recurso
@@ -270,6 +300,24 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
                 <td class="px-4 py-2">
                   <div class="flex flex-wrap items-center gap-1">
                     <button
+                      :if={rol.nombre != "administrador"}
+                      type="button"
+                      phx-click="conceder_todos"
+                      phx-value-rol_id={rol.id}
+                      class="text-[11px] text-purple-700 font-semibold hover:underline mr-1"
+                    >
+                      Todos
+                    </button>
+                    <button
+                      :if={rol.nombre != "administrador"}
+                      type="button"
+                      phx-click="revocar_todos"
+                      phx-value-rol_id={rol.id}
+                      class="text-[11px] text-gray-500 hover:underline mr-2"
+                    >
+                      Ninguno
+                    </button>
+                    <button
                       :for={accion <- @acciones_crud}
                       type="button"
                       disabled={rol.nombre == "administrador"}
@@ -299,7 +347,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
                         "px-2 py-0.5 rounded-full text-xs font-medium border",
                         cond do
                           rol.nombre == "administrador" -> "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
-                          Map.get(@estado, {rol.id, transicion.accion}, %{concedido: false}).concedido -> "bg-purple-50 text-purple-700 border-purple-200"
+                          Map.get(@estado, {rol.id, transicion.accion}, %{concedido: false}).concedido -> "bg-purple-600 text-white border-purple-600"
                           true -> "bg-white text-gray-500 border-gray-300 hover:bg-gray-50"
                         end
                       ]}
