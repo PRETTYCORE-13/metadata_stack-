@@ -117,21 +117,26 @@ defmodule MetadataApp.MetaPublicador do
   después. {:ok, [tags]} | {:error, mensaje}
   """
   def persistir_bundle(nombres_raiz, bundle_path) do
+    # OJO: "local_path#texto" en `gh release upload` NO renombra el asset
+    # remoto -- ese "#texto" es solo un LABEL cosmético que gh muestra en
+    # la UI; el nombre real que GitHub guarda es siempre el basename del
+    # archivo LOCAL (confirmado en vivo: con "#bundle.tar.gz" el asset
+    # subido terminó llamándose igual que el temporal de
+    # armar_bundle/1, ej. "bc-bundle-1541.tar.gz"). Por eso "--clobber"
+    # nunca encontraba un asset con el mismo nombre para reemplazar y cada
+    # publicación se iba ACUMULANDO (encontrado real: ci.yml empezó a
+    # fallar con "unable to write more than one asset" apenas hubo unas
+    # cuantas publicaciones). La única forma de fijar el nombre remoto es
+    # que el archivo LOCAL ya se llame así -- de ahí la copia acá.
+    bundle_nombre_fijo = Path.join(Path.dirname(bundle_path), "bundle.tar.gz")
+    File.cp!(bundle_path, bundle_nombre_fijo)
+
     nombres_raiz
     |> Enum.reduce_while({:ok, []}, fn nombre, {:ok, acc} ->
       tag = "bc-#{nombre}"
       asegurar_release(tag, nombre)
 
-      # "local_path#nombre_remoto": sin esto, cada publicación sube el
-      # asset con el nombre de archivo temporal de armar_bundle/1 (único
-      # por corrida, ej. "bc-bundle-1541.tar.gz") -- "--clobber" solo
-      # reemplaza un asset con el MISMO nombre, así que cada publicación
-      # se iba ACUMULANDO como un asset nuevo en vez de reemplazar el
-      # anterior (encontrado real: ci.yml empezó a fallar con "unable to
-      # write more than one asset" en cuanto hubo una segunda publicación).
-      # Con un nombre remoto fijo, "--clobber" reemplaza siempre el mismo
-      # asset -- el release nunca acumula más de uno.
-      case ejecutar("gh", ["release", "upload", tag, "#{bundle_path}#bundle.tar.gz", "--clobber"]) do
+      case ejecutar("gh", ["release", "upload", tag, bundle_nombre_fijo, "--clobber"]) do
         {:ok, {_salida, 0}} -> {:cont, {:ok, [tag | acc]}}
         {:ok, {salida, status}} -> {:halt, {:error, "gh release upload #{tag} falló (status #{status}):\n#{salida}"}}
         {:error, mensaje} -> {:halt, {:error, mensaje}}
