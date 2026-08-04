@@ -533,6 +533,22 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
+  # "Recomendado" de un campo numérico (entero/decimal) — badge clickeable
+  # en el Get View (ver panel_get_view/1 abajo) que marca si ese campo
+  # muestra el selector de cálculo (Suma/Promedio/Mínimo/Máximo/Conteo) en
+  # la fila de Resumen de CatalogoLive (celdas_resumen/1 ahí respeta este
+  # flag). Guardado inmediato, mismo criterio que cambiar_categoria/2 y
+  # cambiar_mostrar_en_grilla/2 arriba.
+  def handle_event("cambiar_agregacion_recomendada", %{"campo" => campo, "recomendado" => recomendado}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "agregacion_recomendada", recomendado == "true")
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar el recomendado de \"#{campo}\".")}
+    end
+  end
+
   # --- Get View: qué campos ve el usuario final en la tabla del catálogo ------
 
   def handle_event("guardar_get_view", params, socket) do
@@ -1617,8 +1633,25 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
               <tbody>
                 <%= for c <- @campos do %>
                   <% props = c.schema_context_properties || %{} %>
+                  <% recomendado? = Map.get(props, "agregacion_recomendada") == true %>
                   <tr class="border-b border-gray-100 hover:bg-gray-50">
-                    <td class="px-1.5 py-1 text-gray-900 font-mono">{c.schema_context_field}</td>
+                    <td class="px-1.5 py-1 text-gray-900 font-mono">
+                      {c.schema_context_field}
+                      <%= if Map.get(props, "tipo") in ["integer", "decimal"] do %>
+                        <button type="button"
+                          phx-click="cambiar_agregacion_recomendada"
+                          phx-value-campo={c.schema_context_field}
+                          phx-value-recomendado={to_string(!recomendado?)}
+                          title="Mostrar el selector de cálculo (Suma/Promedio/Mínimo/Máximo/Conteo) en la fila de Resumen del catálogo"
+                          class={[
+                            "ml-1.5 text-[9px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 align-middle transition-colors",
+                            if(recomendado?, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+                          ]}
+                        >
+                          Recomendado
+                        </button>
+                      <% end %>
+                    </td>
                     <td class="px-1.5 py-1 text-gray-700">{Map.get(props, "etiqueta")}</td>
                     <td class="px-1.5 py-1 text-gray-600">{Map.get(props, "tipo")}</td>
                     <td class="px-1.5 py-1 text-center">

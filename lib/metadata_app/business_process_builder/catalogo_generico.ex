@@ -47,6 +47,21 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     |> Repo.aggregate(:count)
   end
 
+  # Agregación (suma/promedio/mínimo/máximo/conteo) de una columna
+  # numérica sobre TODAS las filas que matchean filtros/búsqueda — no
+  # solo la página actual (ver "Resumen" en CatalogoLive). `funcion` es
+  # uno de :sum/:avg/:min/:max/:count, el mismo vocabulario que acepta
+  # Repo.aggregate/3 nativo — sin reinventar nada acá, solo reusar el
+  # mismo filtrado que ya usan listar/3 y contar/3.
+  def agregar(schema_mod, campo, funcion, filtros \\ %{}, busqueda \\ nil) do
+    campo_atom = String.to_existing_atom(to_string(campo))
+
+    from(r in schema_mod, where: is_nil(r.delete_guid))
+    |> aplicar_filtros(filtros)
+    |> aplicar_busqueda(busqueda)
+    |> Repo.aggregate(funcion, campo_atom)
+  end
+
   # Público (no defp) — MetaConsultas.ejecutar/3 reusa exactamente esta
   # misma semántica de filtros para las Consultas Ecto (banda de filtros
   # idéntica a la de cualquier catálogo, en vez de reinventarla).
