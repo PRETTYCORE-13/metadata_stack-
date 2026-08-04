@@ -108,6 +108,7 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:agregaciones, %{})
      |> assign(:agregaciones_valores, %{})
      |> assign(:minmax_valores, %{})
+     |> assign(:cargar_todos_por_default?, header.cargar_todos_por_default)
      |> cargar_filas()}
   end
 
@@ -145,6 +146,7 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:agregaciones, %{})
      |> assign(:agregaciones_valores, %{})
      |> assign(:minmax_valores, %{})
+     |> assign(:cargar_todos_por_default?, false)
      |> cargar_filas()}
   end
 
@@ -278,7 +280,9 @@ defmodule MetadataAppWeb.CatalogoLive do
   end
 
   defp datos_solicitados?(socket) do
-    contar_filtros_activos(socket.assigns.filtros) > 0 or String.trim(socket.assigns.busqueda_general) != ""
+    socket.assigns.cargar_todos_por_default? or
+      contar_filtros_activos(socket.assigns.filtros) > 0 or
+      String.trim(socket.assigns.busqueda_general) != ""
   end
 
   defp cargar_filas_real(%{assigns: %{es_consulta?: true}} = socket), do: cargar_filas_consulta(socket)

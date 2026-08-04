@@ -12,6 +12,14 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :schema_set_permissions, :map
     field :schema_profiles, :map
 
+    # Get View → Filtros (bc_motor_live.ex): si está en true, la tabla del
+    # catálogo (CatalogoLive) trae TODOS los registros y columnas apenas
+    # se abre, sin esperar que el usuario final aplique un filtro/búsqueda
+    # primero — ver datos_solicitados?/1 en catalogo_live.ex. El usuario
+    # final igual puede seguir filtrando después con los filtros normales,
+    # esto solo cambia el estado inicial.
+    field :cargar_todos_por_default, :boolean, default: false
+
     # PrettyCore TRN (Transaction Reference Number) — separado a propósito
     # de schema_context_type (que ya usa 2 para "carpeta", una dimensión
     # distinta a "es transaccional"). codigo_trn (ej. "VENT") solo es
@@ -51,7 +59,20 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
 
   def changeset(header, attrs) do
     header
-    |> cast(attrs, @requeridos ++ [:schema_context_icono, :schema_set_permissions, :schema_profiles, :schema_es_transaccional, :codigo_trn, :schema_encabezado_id, :orden])
+    |> cast(
+      attrs,
+      @requeridos ++
+        [
+          :schema_context_icono,
+          :schema_set_permissions,
+          :schema_profiles,
+          :schema_es_transaccional,
+          :codigo_trn,
+          :schema_encabezado_id,
+          :orden,
+          :cargar_todos_por_default
+        ]
+    )
     |> validate_required(@requeridos)
     |> update_change(:codigo_trn, &nil_si_vacio_o_mayusculas/1)
     |> validar_codigo_trn()

@@ -613,6 +613,24 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
+  # "Mostrar todos los registros por default" — a diferencia de los
+  # filtros de arriba (calculan Suma/Promedio/Conteo sobre un CAMPO), esto
+  # es a nivel de todo el catálogo: si está prendido, CatalogoLive trae
+  # todos los registros y columnas apenas se abre la tabla, sin esperar
+  # que el usuario final aplique un filtro/búsqueda primero (ver
+  # datos_solicitados?/1 en catalogo_live.ex). El usuario final igual
+  # puede seguir filtrando después con los filtros normales de la tabla —
+  # esto solo cambia si arranca vacía o ya cargada.
+  def handle_event("toggle_cargar_todos_por_default", _params, socket) do
+    header = socket.assigns.header
+    valor = !header.cargar_todos_por_default
+
+    case MetaSchemaContext.actualizar_header(header, %{"cargar_todos_por_default" => valor}) do
+      {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Mostrar todos los registros\".")}
+    end
+  end
+
   # "Recomendado" de un filtro ya agregado — extra Mín/Máx: si está
   # prendido, CatalogoLive lo muestra siempre junto al cálculo principal
   # en la fila de Resumen (celdas_resumen/1 ahí respeta este flag), no es
@@ -1283,7 +1301,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       <div id="motor-panel-getview" class="hidden">
         <.panel_get_view campos={@campos} />
-        <.panel_filtros_resumen campos={@campos} />
+        <.panel_filtros_resumen campos={@campos} cargar_todos_por_default={@header.cargar_todos_por_default} />
       </div>
 
       <div id="motor-panel-get" class="hidden">
@@ -1831,8 +1849,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     """
   end
 
-  attr :campos, :list, required: true
-
   # "Filtros": qué campos numéricos calculan Suma/Promedio/Conteo (fila de
   # Resumen de CatalogoLive) — sección aparte de la tabla de Get View de
   # arriba, a propósito: un campo real (ej. "cantidad", con su Nombre/
@@ -1841,6 +1857,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # numéricos del catálogo, cuáles participan del Resumen ("+ Agregar
   # filtro") y cuáles de esos además muestran mínimo/máximo
   # ("Recomendado").
+  attr :campos, :list, required: true
+  attr :cargar_todos_por_default, :boolean, required: true
+
   defp panel_filtros_resumen(assigns) do
     numericos = Enum.filter(assigns.campos, &(get_in(&1.schema_context_properties, ["tipo"]) in ["integer", "decimal"]))
     activos = Enum.filter(numericos, &(get_in(&1.schema_context_properties, ["agregacion_activa"]) == true))
@@ -1927,6 +1946,25 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         <% else %>
           <p :if={@filtros_activos != []} class="text-gray-400">Ya agregaste todos los campos numéricos disponibles.</p>
         <% end %>
+
+        <hr class="border-gray-200 my-3" />
+
+        <p class="text-gray-500 mb-2">
+          Traer todos los registros y columnas apenas se abre la tabla, sin esperar un filtro o búsqueda primero. El usuario final igual puede filtrar después con los filtros normales de la tabla.
+        </p>
+        <button type="button"
+          phx-click="toggle_cargar_todos_por_default"
+          class={[
+            "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors",
+            if(@cargar_todos_por_default, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+          ]}
+        >
+          <%= if @cargar_todos_por_default do %>
+            ✓ Mostrando todos los registros por default — Quitar
+          <% else %>
+            + Agregar todos los registros
+          <% end %>
+        </button>
       </div>
     </div>
     """
