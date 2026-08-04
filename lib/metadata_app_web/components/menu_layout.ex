@@ -238,9 +238,16 @@ defmodule MetadataAppWeb.MenuLayout do
                 )
               }
             >
-              <div class="pc-user-menu-avatar">
-                {((@current_user_name && String.first(@current_user_name)) || "?") |> String.upcase()}
-              </div>
+              <%= if @current_scope && @current_scope.usuario do %>
+                <img
+                  src={MetadataApp.Autenticacion.Usuario.avatar_url(@current_scope.usuario, 56)}
+                  class="pc-user-menu-avatar pc-user-menu-avatar-img"
+                />
+              <% else %>
+                <div class="pc-user-menu-avatar">
+                  {((@current_user_name && String.first(@current_user_name)) || "?") |> String.upcase()}
+                </div>
+              <% end %>
               <span class="pc-user-menu-label">{@current_user_name || "Usuario"}</span>
             </button>
             <div
@@ -269,9 +276,16 @@ defmodule MetadataAppWeb.MenuLayout do
                   Permission Sets
                 </.link>
               </details>
-              <.link navigate="/meta_schema_usuario/settings" class="pc-user-menu-item">
+              <button
+                type="button"
+                class="pc-user-menu-item"
+                phx-click={
+                  JS.hide(to: "#user-menu-dropdown")
+                  |> JS.push("abrir", target: "#config-cuenta-modal")
+                }
+              >
                 Configuración de cuenta
-              </.link>
+              </button>
               <.link
                 href="/meta_schema_usuario/log-out"
                 method="delete"
@@ -284,6 +298,7 @@ defmodule MetadataAppWeb.MenuLayout do
           </div>
         </div>
       </div>
+      <.live_component module={MetadataAppWeb.ConfiguracionCuentaModal} id="config-cuenta-modal" current_scope={@current_scope} />
       <!-- CONTENIDO -->
       <main class="pc-platform-main">
           <%!-- Banda de publicidad (valores por defecto, sin backend todavía)

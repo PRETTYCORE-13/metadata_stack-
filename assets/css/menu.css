@@ -261,6 +261,13 @@
   flex-shrink: 0;
 }
 
+/* Avatar real (DiceBear) en vez de la inicial — mismo tamaño/redondeo que
+   el div de fallback de arriba, solo cambia object-fit para que el SVG no
+   se deforme. */
+.pc-user-menu-avatar-img {
+  object-fit: cover;
+}
+
 .pc-user-menu-label {
   font-size: 12px;
   font-weight: 600;

@@ -5,6 +5,7 @@ defmodule MetadataApp.Autenticacion.Usuario do
   schema "meta_schema_usuario" do
     field :email, :string
     field :alias, :string
+    field :avatar_seed, :string
     field :password, :string, virtual: true, redact: true
     field :hashed_password, :string, redact: true
     field :confirmed_at, :utc_datetime
@@ -37,6 +38,34 @@ defmodule MetadataApp.Autenticacion.Usuario do
       "" -> email |> String.split("@") |> hd()
       valor -> valor
     end
+  end
+
+  @doc "Changeset para que el usuario elija su avatar (semilla de DiceBear) — nunca requerido."
+  def avatar_changeset(usuario, attrs) do
+    usuario
+    |> cast(attrs, [:avatar_seed])
+    |> validate_length(:avatar_seed, max: 100)
+  end
+
+  @avatar_estilo "critters"
+
+  @doc """
+  URL del avatar del usuario (DiceBear, SVG) — usa `avatar_seed` si lo
+  eligió, si no el email como semilla determinística (mismo usuario
+  siempre da el mismo avatar por default, sin elegir nada).
+  """
+  def avatar_url(%__MODULE__{avatar_seed: seed, email: email}, size \\ 64) do
+    avatar_url_desde_semilla(seed || email, size)
+  end
+
+  @doc "URL de avatar para una semilla cualquiera — usado también por el selector (opciones sin guardar todavía)."
+  def avatar_url_desde_semilla(semilla, size \\ 64) do
+    "https://api.dicebear.com/10.x/#{@avatar_estilo}/svg?seed=#{URI.encode_www_form(to_string(semilla))}&size=#{size}"
+  end
+
+  @doc "N semillas al azar para mostrar como opciones en el selector de avatar."
+  def semillas_avatar_al_azar(cantidad \\ 8) do
+    for _ <- 1..cantidad, do: Ecto.UUID.generate()
   end
 
   @doc """

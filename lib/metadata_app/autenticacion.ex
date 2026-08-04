@@ -406,6 +406,13 @@ defmodule MetadataApp.Autenticacion do
     |> Repo.update()
   end
 
+  @doc "Actualiza el avatar (semilla de DiceBear) del usuario — sin sudo mode, no es un dato sensible."
+  def update_usuario_avatar(usuario, attrs) do
+    usuario
+    |> Usuario.avatar_changeset(attrs)
+    |> Repo.update()
+  end
+
   @doc """
   Elimina la cuenta directo — Usuario no tiene delete_guid, no hay soft-
   delete acá como en el resto del RBAC. Pensado para "rechazar" a alguien
