@@ -2,6 +2,7 @@ defmodule MetadataAppWeb.ConfiguracionCuentaModal do
   use MetadataAppWeb, :live_component
 
   alias MetadataApp.Autenticacion
+  alias MetadataApp.Notificaciones
 
   # Estilos explícitos (no clases de daisyUI tipo "input"/"btn-primary",
   # que dependen del theme activo — data-theme="dark" en la página de
@@ -68,6 +69,8 @@ defmodule MetadataAppWeb.ConfiguracionCuentaModal do
   def handle_event("elegir_avatar", %{"seed" => seed}, socket) do
     case Autenticacion.update_usuario_avatar(socket.assigns.current_scope.usuario, %{"avatar_seed" => seed}) do
       {:ok, usuario} ->
+        Notificaciones.crear(usuario.id, "Actualizaste tu avatar.")
+
         {:noreply,
          socket
          |> assign(:current_scope, %{socket.assigns.current_scope | usuario: usuario})
@@ -91,6 +94,8 @@ defmodule MetadataAppWeb.ConfiguracionCuentaModal do
   def handle_event("update_alias", %{"usuario" => usuario_params}, socket) do
     case Autenticacion.update_usuario_alias(socket.assigns.current_scope.usuario, usuario_params) do
       {:ok, usuario} ->
+        Notificaciones.crear(usuario.id, "Actualizaste tu alias a \"#{usuario.alias}\".")
+
         {:noreply,
          socket
          |> assign(:current_scope, %{socket.assigns.current_scope | usuario: usuario})

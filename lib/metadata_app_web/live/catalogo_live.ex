@@ -976,7 +976,7 @@ defmodule MetadataAppWeb.CatalogoLive do
 
       <div
         id={"campos-popover-" <> @tabla_id}
-        class="hidden absolute right-0 top-full mt-2 w-72 max-h-[70vh] bg-white rounded-xl shadow-xl border border-gray-200 z-50 flex flex-col"
+        class="hidden fixed inset-x-4 top-24 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 w-auto sm:w-72 max-h-[70vh] bg-white rounded-xl shadow-xl border border-gray-200 z-50 flex flex-col"
         phx-click-away={JS.hide()}
       >
         <div class="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
@@ -1128,7 +1128,7 @@ defmodule MetadataAppWeb.CatalogoLive do
 
     ~H"""
     <div class="fixed inset-0 z-40" phx-click="cerrar_filtros"></div>
-    <div class="absolute right-0 top-full mt-2 w-80 max-h-[70vh] bg-white rounded-xl shadow-xl border border-gray-200 z-50 flex flex-col">
+    <div class="fixed inset-x-4 top-24 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 w-auto sm:w-80 max-h-[70vh] bg-white rounded-xl shadow-xl border border-gray-200 z-50 flex flex-col">
       <div class="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
         <h2 class="text-sm font-bold text-gray-900">Filtros</h2>
         <button
