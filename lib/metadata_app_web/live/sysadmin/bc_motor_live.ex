@@ -555,19 +555,52 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # "Recomendado" de un campo numérico (entero/decimal) — badge clickeable
-  # en el Get View (ver panel_get_view/1 abajo) que marca si ese campo
-  # muestra el selector de cálculo (Suma/Promedio/Mínimo/Máximo/Conteo) en
-  # la fila de Resumen de CatalogoLive (celdas_resumen/1 ahí respeta este
-  # flag). Guardado inmediato, mismo criterio que cambiar_categoria/2 y
-  # cambiar_mostrar_en_grilla/2 arriba.
-  def handle_event("cambiar_agregacion_recomendada", %{"campo" => campo, "recomendado" => recomendado}, socket) do
+  # --- Filtros: qué campos numéricos calculan Suma/Promedio/Conteo (y --------
+  # opcionalmente Mín/Máx) en la fila de Resumen del catálogo — sección
+  # aparte de la tabla de campos de arriba, "cantidad" (el campo real, con
+  # su Nombre/Etiqueta/Tipo/Visible) no tiene nada que ver con esto: acá
+  # solo se elige, de la lista de campos numéricos del catálogo, cuáles
+  # participan del Resumen. Guardado inmediato, mismo criterio que
+  # cambiar_categoria/2 y cambiar_mostrar_en_tabla/2 arriba.
+  def handle_event("agregar_filtro_resumen", %{"campo" => campo} = params, socket) do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
-    props = Map.put(detalle.schema_context_properties, "agregacion_recomendada", recomendado == "true")
+
+    props =
+      detalle.schema_context_properties
+      |> Map.put("agregacion_activa", true)
+      |> Map.put("minmax_recomendado", params["recomendado"] == "true")
 
     case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
       {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
-      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar el recomendado de \"#{campo}\".")}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo agregar el filtro de \"#{campo}\".")}
+    end
+  end
+
+  def handle_event("quitar_filtro_resumen", %{"campo" => campo}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+
+    props =
+      detalle.schema_context_properties
+      |> Map.put("agregacion_activa", false)
+      |> Map.put("minmax_recomendado", false)
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo quitar el filtro de \"#{campo}\".")}
+    end
+  end
+
+  # "Recomendado" de un filtro ya agregado — extra Mín/Máx: si está
+  # prendido, CatalogoLive lo muestra siempre junto al cálculo principal
+  # en la fila de Resumen (celdas_resumen/1 ahí respeta este flag), no es
+  # una elección del usuario final, es on/off.
+  def handle_event("cambiar_minmax_recomendado", %{"campo" => campo, "recomendado" => recomendado}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "minmax_recomendado", recomendado == "true")
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Recomendado\" de \"#{campo}\".")}
     end
   end
 
@@ -1227,6 +1260,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       <div id="motor-panel-getview" class="hidden">
         <.panel_get_view campos={@campos} />
+        <.panel_filtros_resumen campos={@campos} />
       </div>
 
       <div id="motor-panel-get" class="hidden">
@@ -1749,25 +1783,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
               <tbody>
                 <%= for c <- @campos do %>
                   <% props = c.schema_context_properties || %{} %>
-                  <% recomendado? = Map.get(props, "agregacion_recomendada") == true %>
                   <tr class="border-b border-gray-100 hover:bg-gray-50">
-                    <td class="px-1.5 py-1 text-gray-900 font-mono">
-                      {c.schema_context_field}
-                      <%= if Map.get(props, "tipo") in ["integer", "decimal"] do %>
-                        <button type="button"
-                          phx-click="cambiar_agregacion_recomendada"
-                          phx-value-campo={c.schema_context_field}
-                          phx-value-recomendado={to_string(!recomendado?)}
-                          title="Mostrar el selector de cálculo (Suma/Promedio/Mínimo/Máximo/Conteo) en la fila de Resumen del catálogo"
-                          class={[
-                            "ml-1.5 text-[9px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 align-middle transition-colors",
-                            if(recomendado?, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
-                          ]}
-                        >
-                          Recomendado
-                        </button>
-                      <% end %>
-                    </td>
+                    <td class="px-1.5 py-1 text-gray-900 font-mono">{c.schema_context_field}</td>
                     <td class="px-1.5 py-1 text-gray-700">{Map.get(props, "etiqueta")}</td>
                     <td class="px-1.5 py-1 text-gray-600">{Map.get(props, "tipo")}</td>
                     <td class="px-1.5 py-1 text-center">
@@ -1778,10 +1795,108 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <% end %>
               </tbody>
             </table>
+          </form>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  attr :campos, :list, required: true
+
+  # "Filtros": qué campos numéricos calculan Suma/Promedio/Conteo (fila de
+  # Resumen de CatalogoLive) — sección aparte de la tabla de Get View de
+  # arriba, a propósito: un campo real (ej. "cantidad", con su Nombre/
+  # Etiqueta/Tipo/Visible) es simplemente un dato de la tabla, no tiene
+  # nada que ver con esto. Acá se arma una lista aparte: de los campos
+  # numéricos del catálogo, cuáles participan del Resumen ("+ Agregar
+  # filtro") y cuáles de esos además muestran mínimo/máximo
+  # ("Recomendado").
+  defp panel_filtros_resumen(assigns) do
+    numericos = Enum.filter(assigns.campos, &(get_in(&1.schema_context_properties, ["tipo"]) in ["integer", "decimal"]))
+    activos = Enum.filter(numericos, &(get_in(&1.schema_context_properties, ["agregacion_activa"]) == true))
+    disponibles = numericos -- activos
+
+    assigns =
+      assigns
+      |> assign(:filtros_activos, activos)
+      |> assign(:campos_disponibles, disponibles)
+
+    ~H"""
+    <div class="border border-gray-200 rounded-lg mt-4">
+      <div class="px-1.5 ml-2 -mb-2 relative">
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Filtros</span>
+      </div>
+      <div class="p-3 pt-4 overflow-x-auto">
+        <p class="text-gray-500 mb-2">
+          Qué campos numéricos calculan Suma/Promedio/Conteo en la fila de Resumen del catálogo. "Recomendado" además muestra siempre el mínimo y el máximo.
+        </p>
+
+        <%= if @filtros_activos == [] do %>
+          <p class="text-gray-400 mb-2">Todavía no agregaste ningún filtro.</p>
+        <% else %>
+          <table class="min-w-full mb-3">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campo</th>
+                <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Recomendado</th>
+                <th class="px-1.5 py-1 border-b border-gray-200"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <%= for c <- @filtros_activos do %>
+                <% props = c.schema_context_properties || %{} %>
+                <% recomendado? = Map.get(props, "minmax_recomendado") == true %>
+                <tr class="border-b border-gray-100 hover:bg-gray-50">
+                  <td class="px-1.5 py-1 text-gray-900">{Map.get(props, "etiqueta") || c.schema_context_field}</td>
+                  <td class="px-1.5 py-1 text-center">
+                    <button type="button"
+                      phx-click="cambiar_minmax_recomendado"
+                      phx-value-campo={c.schema_context_field}
+                      phx-value-recomendado={to_string(!recomendado?)}
+                      title="Mostrar siempre el mínimo y el máximo en la fila de Resumen del catálogo"
+                      class={[
+                        "text-[9px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 transition-colors",
+                        if(recomendado?, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+                      ]}
+                    >
+                      Recomendado
+                    </button>
+                  </td>
+                  <td class="px-1.5 py-1 text-center">
+                    <button type="button"
+                      phx-click="quitar_filtro_resumen"
+                      phx-value-campo={c.schema_context_field}
+                      class="text-red-600 hover:text-red-800 text-[11px] font-semibold"
+                    >
+                      Quitar
+                    </button>
+                  </td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        <% end %>
+
+        <%= if @campos_disponibles != [] do %>
+          <form phx-submit="agregar_filtro_resumen" class="flex items-center gap-2">
+            <select name="campo" class="border border-gray-300 rounded-lg px-2 py-1.5">
+              <%= for c <- @campos_disponibles do %>
+                <option value={c.schema_context_field}>{Map.get(c.schema_context_properties, "etiqueta") || c.schema_context_field}</option>
+              <% end %>
+            </select>
+            <label class="cursor-pointer select-none">
+              <input type="checkbox" name="recomendado" value="true" class="peer sr-only" />
+              <span class="text-[9px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 transition-colors bg-purple-100 text-purple-700 peer-checked:bg-purple-600 peer-checked:text-white">
+                Recomendado
+              </span>
+            </label>
             <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
-              Guardar Get View
+              + Agregar filtro
             </button>
           </form>
+        <% else %>
+          <p :if={@filtros_activos != []} class="text-gray-400">Ya agregaste todos los campos numéricos disponibles.</p>
         <% end %>
       </div>
     </div>

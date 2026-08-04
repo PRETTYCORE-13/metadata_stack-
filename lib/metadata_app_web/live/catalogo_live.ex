@@ -107,6 +107,7 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:mostrar_filtros, false)
      |> assign(:agregaciones, %{})
      |> assign(:agregaciones_valores, %{})
+     |> assign(:minmax_valores, %{})
      |> cargar_filas()}
   end
 
@@ -143,6 +144,7 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:totales, %{})
      |> assign(:agregaciones, %{})
      |> assign(:agregaciones_valores, %{})
+     |> assign(:minmax_valores, %{})
      |> cargar_filas()}
   end
 
@@ -260,8 +262,17 @@ defmodule MetadataAppWeb.CatalogoLive do
   # cortar en el LiveView) — a diferencia de BcListLive, que pagina en
   # memoria porque ahí son decenas de Business Contexts, no potencialmente
   # miles de filas de datos de un catálogo real.
-  defp cargar_filas(%{assigns: %{es_consulta?: true}} = socket), do: socket |> cargar_filas_consulta() |> recalcular_agregaciones()
-  defp cargar_filas(socket), do: socket |> cargar_filas_catalogo() |> recalcular_agregaciones()
+  defp cargar_filas(%{assigns: %{es_consulta?: true}} = socket),
+    do: socket |> cargar_filas_consulta() |> recalcular_agregaciones() |> recalcular_minmax()
+
+  defp cargar_filas(socket), do: socket |> cargar_filas_catalogo() |> recalcular_agregaciones() |> recalcular_minmax()
+
+  defp filtros_y_busqueda(socket) do
+    %{filtros: filtros, columnas: columnas, busqueda_general: busqueda_general} = socket.assigns
+    filtros_ecto = construir_filtros_ecto(filtros, columnas)
+    campos_busqueda = Enum.map(columnas, & &1.schema_context_field)
+    {filtros_ecto, {busqueda_general, campos_busqueda}}
+  end
 
   # Recalcula el VALOR de cada columna con una función de agregación
   # elegida (ver @agregaciones) contra los filtros/búsqueda ACTUALES —
@@ -271,18 +282,37 @@ defmodule MetadataAppWeb.CatalogoLive do
   # No cuesta nada si @agregaciones está vacío (nadie eligió ninguna
   # todavía) — Map.new de un mapa vacío es instantáneo, cero queries.
   defp recalcular_agregaciones(socket) do
-    %{agregaciones: agregaciones, filtros: filtros, columnas: columnas, busqueda_general: busqueda_general} = socket.assigns
-
-    filtros_ecto = construir_filtros_ecto(filtros, columnas)
-    campos_busqueda = Enum.map(columnas, & &1.schema_context_field)
-    busqueda = {busqueda_general, campos_busqueda}
+    {filtros_ecto, busqueda} = filtros_y_busqueda(socket)
 
     valores =
-      Map.new(agregaciones, fn {campo, funcion} ->
+      Map.new(socket.assigns.agregaciones, fn {campo, funcion} ->
         {campo, calcular_agregacion(socket, campo, funcion, filtros_ecto, busqueda)}
       end)
 
     assign(socket, :agregaciones_valores, valores)
+  end
+
+  # Mismo criterio que recalcular_agregaciones/1 pero para "Filtros Min."
+  # (ver celdas_resumen/1) — a diferencia de @agregaciones, que el usuario
+  # final elige por columna, acá no hay elección: cada columna con
+  # "minmax_recomendado" en el Get View (ver panel_get_view/1 en
+  # bc_motor_live.ex) SIEMPRE muestra su {mínimo, máximo}, calculado de
+  # una.
+  defp recalcular_minmax(socket) do
+    {filtros_ecto, busqueda} = filtros_y_busqueda(socket)
+
+    columnas_minmax =
+      Enum.filter(socket.assigns.columnas, &(&1.schema_context_properties["minmax_recomendado"] == true))
+
+    valores =
+      Map.new(columnas_minmax, fn columna ->
+        clave = col_key(columna)
+        minimo = calcular_agregacion(socket, clave, "minimo", filtros_ecto, busqueda)
+        maximo = calcular_agregacion(socket, clave, "maximo", filtros_ecto, busqueda)
+        {clave, {minimo, maximo}}
+      end)
+
+    assign(socket, :minmax_valores, valores)
   end
 
   defp calcular_agregacion(%{assigns: %{es_consulta?: true, consulta: consulta}}, campo, funcion, filtros_ecto, busqueda) do
@@ -586,7 +616,12 @@ defmodule MetadataAppWeb.CatalogoLive do
             </tfoot>
             <tfoot class="bg-gray-50 border-t-2 border-gray-300">
               <tr>
-                <.celdas_resumen columnas={@columnas} agregaciones={@agregaciones} valores={@agregaciones_valores} />
+                <.celdas_resumen
+                  columnas={@columnas}
+                  agregaciones={@agregaciones}
+                  valores={@agregaciones_valores}
+                  minmax_valores={@minmax_valores}
+                />
               </tr>
             </tfoot>
           </table>
@@ -766,7 +801,12 @@ defmodule MetadataAppWeb.CatalogoLive do
             <tfoot class="bg-gray-50 border-t-2 border-gray-300">
               <tr>
                 <td class="px-4 py-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 whitespace-nowrap">Resumen</td>
-                <.celdas_resumen columnas={@columnas} agregaciones={@agregaciones} valores={@agregaciones_valores} />
+                <.celdas_resumen
+                  columnas={@columnas}
+                  agregaciones={@agregaciones}
+                  valores={@agregaciones_valores}
+                  minmax_valores={@minmax_valores}
+                />
                 <td :if={@mostrar_estado?}></td>
                 <td :if={@mostrar_trn?}></td>
                 <td></td>
@@ -975,15 +1015,20 @@ defmodule MetadataAppWeb.CatalogoLive do
   attr :columnas, :list, required: true
   attr :agregaciones, :map, required: true
   attr :valores, :map, required: true
+  attr :minmax_valores, :map, required: true
 
   defp celdas_resumen(assigns) do
     ~H"""
     <%= for columna <- @columnas do %>
       <% clave = col_key(columna) %>
       <% activo? = Map.has_key?(@agregaciones, clave) %>
+      <% props = columna.schema_context_properties %>
+      <% numerico? = props["tipo"] in ["integer", "decimal"] %>
+      <% agregacion_activa? = numerico? and props["agregacion_activa"] == true %>
+      <% minmax_recomendado? = numerico? and props["minmax_recomendado"] == true %>
       <td data-col={clave} class={["px-4 py-2 align-top", alineacion_columna(columna)]}>
-        <%= if columna.schema_context_properties["tipo"] in ["integer", "decimal"] and columna.schema_context_properties["agregacion_recomendada"] == true do %>
-          <div class={["flex gap-1.5", if(alineacion_columna(columna) == "text-right", do: "flex-row-reverse", else: "flex-col")]}>
+        <%= if agregacion_activa? do %>
+          <div class={["flex items-center gap-1.5 flex-wrap", if(alineacion_columna(columna) == "text-right", do: "flex-row-reverse", else: "")]}>
             <form phx-change="cambiar_agregacion">
               <input type="hidden" name="campo" value={clave} />
               <select
@@ -993,13 +1038,16 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <option value="" selected={!activo?}>—</option>
                 <option value="suma" selected={@agregaciones[clave] == "suma"}>Suma</option>
                 <option value="promedio" selected={@agregaciones[clave] == "promedio"}>Promedio</option>
-                <option value="minimo" selected={@agregaciones[clave] == "minimo"}>Mínimo</option>
-                <option value="maximo" selected={@agregaciones[clave] == "maximo"}>Máximo</option>
                 <option value="conteo" selected={@agregaciones[clave] == "conteo"}>Conteo</option>
               </select>
             </form>
             <span :if={activo?} class="text-sm font-bold text-gray-900 tabular-nums whitespace-nowrap">
               {formatear_agregacion(@valores[clave])}
+            </span>
+
+            <% {minimo, maximo} = @minmax_valores[clave] || {nil, nil} %>
+            <span :if={minmax_recomendado?} class="text-[11px] font-bold text-gray-700 tabular-nums whitespace-nowrap">
+              Mín {formatear_agregacion(minimo)} / Máx {formatear_agregacion(maximo)}
             </span>
           </div>
         <% end %>
