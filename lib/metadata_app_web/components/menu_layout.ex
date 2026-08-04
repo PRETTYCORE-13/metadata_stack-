@@ -335,8 +335,10 @@ defmodule MetadataAppWeb.MenuLayout do
              LiveView — navega directo a BuscadorTrnLive con ?query=...
              así funciona igual desde CUALQUIER pantalla que use este
              layout compartido, sin que cada LiveView tenga que
-             implementar un handle_event en común. -->
-        <form :if={@bpb_habilitado} action="/sysadmin/buscar-trn" method="get" class="pc-footer-buscar-trn">
+             implementar un handle_event en común. Siempre visible (a
+             diferencia del resto del BPB): 2026-08-04, a pedido explícito
+             — la ruta ya no depende de bpb_habilitado, ver router.ex. -->
+        <form action="/sysadmin/buscar-trn" method="get" class="pc-footer-buscar-trn">
           <label for="footer-buscar-trn" class="pc-footer-buscar-trn-label">TRN:</label>
           <input type="text" name="query" id="footer-buscar-trn" autocomplete="off" class="pc-footer-buscar-trn-input" />
           <button type="submit" class="pc-footer-buscar-trn-btn" title="Buscar">

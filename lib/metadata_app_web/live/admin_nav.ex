@@ -15,14 +15,20 @@ defmodule MetadataAppWeb.AdminNav do
     "usuarios"  => "/"
   }
 
-  @ids_solo_bpb ["bc_list", "buscar_trn", "tepache"]
+  @ids_solo_bpb ["bc_list", "tepache"]
 
   @doc """
   Quita del menú lateral las entradas que dependen del Business Process
   Builder (no existe en producción, ver `bpb_habilitado`) cuando ese flag
   está apagado. Las pantallas de RBAC comparten el mismo `@menu` hardcodeado
   que las de BPB, así que sin este filtro sus sidebars mostrarían links a
-  rutas que en un release de producción no existen.
+  rutas que en un release de producción no existen. "Buscar TRN" quedó
+  afuera de esta lista (2026-08-04, a pedido explícito): a diferencia del
+  resto del BPB, no depende de ningún catálogo generado en caliente ni de
+  código que no exista en un release — solo lee `meta_schema_transaction_registry`
+  y los módulos de catálogo YA compilados, así que también vive en
+  producción (ver la ruta correspondiente en el router, movida fuera del
+  bloque `bpb_habilitado`).
   """
   def filtrar_menu(menu) do
     if Application.get_env(:metadata_app, :bpb_habilitado, false) do

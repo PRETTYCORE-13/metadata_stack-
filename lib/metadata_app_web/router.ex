@@ -136,9 +136,15 @@ defmodule MetadataAppWeb.Router do
         live "/sysadmin/bc-list/:nombre/motor", Sysadmin.BcMotorLive
         live "/sysadmin/bc-list/:nombre/consulta", Sysadmin.ConsultaEditorLive
         live "/sysadmin/bc-list/:nombre/plantilla", Sysadmin.PlantillaConstructorLive
-        live "/sysadmin/buscar-trn", Sysadmin.BuscadorTrnLive
         live "/sysadmin/tepache", Sysadmin.TepacheLive
       end
+
+      # Buscar TRN: siempre disponible (2026-08-04, a pedido explícito) —
+      # a diferencia del resto del BPB de arriba, no depende de código que
+      # no exista en un release de producción (solo lee
+      # meta_schema_transaction_registry + módulos de catálogo ya
+      # compilados), así que no hace falta el gate de bpb_habilitado.
+      live "/sysadmin/buscar-trn", Sysadmin.BuscadorTrnLive
 
       # Administración de RBAC: siempre disponible (a diferencia del BPB de
       # arriba, esto no es una herramienta de desarrollador — administradores
