@@ -555,6 +555,29 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
+  # Etiqueta de un campo ya existente (2026-08-04, a pedido explícito) —
+  # mismo criterio inmediato que cambiar_categoria/cambiar_mostrar_en_tabla
+  # de arriba: sin modal, guarda directo al perder foco (evento "change"
+  # nativo de un <input type="text">, no dispara por cada tecla). Antes
+  # solo se podía definir al crear el campo — ver
+  # MetaImportExport.sincronizar_etiquetas_campos/2 para la otra mitad
+  # (que esto también se propague al publicar a un catálogo ya existente).
+  def handle_event("cambiar_etiqueta_campo", %{"campo" => campo, "etiqueta" => etiqueta}, socket) do
+    etiqueta = String.trim(etiqueta)
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+
+    if etiqueta == "" do
+      {:noreply, put_flash(socket, :error, "La etiqueta no puede quedar vacía.")}
+    else
+      props = Map.put(detalle.schema_context_properties, "etiqueta", etiqueta)
+
+      case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+        {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+        {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la etiqueta de \"#{campo}\".")}
+      end
+    end
+  end
+
   # --- Get View: qué campos ve el usuario final en la tabla del catálogo ------
 
   def handle_event("guardar_get_view", params, socket) do
@@ -1569,7 +1592,13 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <% props = c.schema_context_properties || %{} %>
                 <tr class="border-b border-gray-100 hover:bg-gray-50">
                   <td class="px-1.5 py-1 text-gray-900 font-mono">{c.schema_context_field}</td>
-                  <td class="px-1.5 py-1 text-gray-700">{Map.get(props, "etiqueta")}</td>
+                  <td class="px-1.5 py-1">
+                    <form phx-change="cambiar_etiqueta_campo">
+                      <input type="hidden" name="campo" value={c.schema_context_field} />
+                      <input type="text" name="etiqueta" value={Map.get(props, "etiqueta")} maxlength="100" required
+                        class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] text-gray-700 w-full min-w-[110px]" />
+                    </form>
+                  </td>
                   <td class="px-1.5 py-1 text-gray-600">
                     <%= if Map.get(props, "tipo") == "referencia" do %>
                       <span class="inline-flex items-center gap-0.5 bg-blue-50 text-blue-700 rounded-full px-1.5 py-0.5 font-semibold" title={"Relación con #{Map.get(props, "catalogo")}"}>

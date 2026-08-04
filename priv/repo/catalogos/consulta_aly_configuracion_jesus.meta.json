@@ -1,0 +1,12 @@
+{
+  "schema_context_name": "consulta_aly_configuracion_jesus",
+  "schema_context_label": "Jesus",
+  "schema_context_type": 3,
+  "schema_context_nav": "/aly/configuracion/jesus",
+  "schema_context_icono": null,
+  "schema_visible": true,
+  "schema_set_permissions": null,
+  "schema_profiles": null,
+  "detalles": [],
+  "schema_encabezado_catalogo": null
+}

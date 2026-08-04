@@ -7,7 +7,7 @@ defmodule MetadataAppWeb.Hooks.Autorizacion do
   para que `@current_scope` ya esté armado cuando esto corre.
 
   No autenticado -> a login. Autenticado pero sin el permiso -> a home con
-  flash (nunca revela más que "no tenés permiso").
+  flash (nunca revela más que "no tienes permiso").
   """
 
   import Phoenix.LiveView
@@ -24,14 +24,14 @@ defmodule MetadataAppWeb.Hooks.Autorizacion do
         else
           {:halt,
            socket
-           |> put_flash(:error, "No tenés permiso para acceder a esto.")
+           |> put_flash(:error, "No tienes permiso para acceder a esto.")
            |> redirect(to: ~p"/")}
         end
 
       _ ->
         {:halt,
          socket
-         |> put_flash(:error, "Tenés que iniciar sesión para acceder a esto.")
+         |> put_flash(:error, "Tienes que iniciar sesión para acceder a esto.")
          |> redirect(to: ~p"/meta_schema_usuario/log-in")}
     end
   end
