@@ -61,7 +61,18 @@ defmodule MetadataApp.MetaImportExport do
               case sincronizar_etiquetas_campos(existente, contexto["detalles"] || []) do
                 [] -> nil
                 campos -> "etiqueta(s) actualizada(s): #{Enum.join(campos, ", ")}"
-              end
+              end,
+              if(sincronizar_cargar_todos_por_default(existente, contexto["cargar_todos_por_default"]),
+                do: "\"traer todo por default\" actualizado"
+              ),
+              if(
+                sincronizar_transaccional(
+                  existente,
+                  contexto["schema_es_transaccional"],
+                  contexto["codigo_trn"]
+                ),
+                do: "TRN activado (código #{contexto["codigo_trn"]})"
+              )
             ],
             &is_nil/1
           )
@@ -89,6 +100,51 @@ defmodule MetadataApp.MetaImportExport do
 
       {:error, changeset} ->
         raise "Error sincronizando ícono de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+    end
+  end
+
+  # "Traer todos los registros y columnas apenas se abre la tabla" (2026-08-04)
+  # -- mismo criterio que sincronizar_icono/2: es un flag que sólo cambia
+  # cómo arranca el GET genérico, no toca estructura ni datos, así que es
+  # seguro sobreescribirlo con lo que diga el bundle. `nil` cubre bundles
+  # exportados antes de que este campo existiera.
+  defp sincronizar_cargar_todos_por_default(_header, nil), do: false
+
+  defp sincronizar_cargar_todos_por_default(%{cargar_todos_por_default: mismo}, mismo), do: false
+
+  defp sincronizar_cargar_todos_por_default(header, nuevo_valor) do
+    case MetaSchemaContext.actualizar_header(header, %{"cargar_todos_por_default" => nuevo_valor}) do
+      {:ok, _header} ->
+        true
+
+      {:error, changeset} ->
+        raise "Error sincronizando \"cargar_todos_por_default\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+    end
+  end
+
+  # TRN (schema_es_transaccional + codigo_trn) -- bug real encontrado en
+  # pty_gasto_diario y corregido ahí a mano vía migración porque el bundle
+  # nunca los traía. A diferencia de los demás sync, nunca se "apaga": no
+  # hay UI para desmarcar un catálogo como transaccional, y si el destino
+  # ya tiene filas con trn/ulid asignado, revertir sería destructivo. Sólo
+  # activa (false/nil -> true), nunca al revés.
+  defp sincronizar_transaccional(%{schema_es_transaccional: true}, _es_transaccional_nuevo, _codigo_nuevo),
+    do: false
+
+  defp sincronizar_transaccional(_header, es_transaccional_nuevo, _codigo_nuevo)
+       when es_transaccional_nuevo != true,
+       do: false
+
+  defp sincronizar_transaccional(header, true, codigo_nuevo) do
+    case MetaSchemaContext.actualizar_header(header, %{
+           "schema_es_transaccional" => true,
+           "codigo_trn" => codigo_nuevo
+         }) do
+      {:ok, _header} ->
+        true
+
+      {:error, changeset} ->
+        raise "Error sincronizando TRN de #{header.schema_context_name}: #{inspect(changeset.errors)}"
     end
   end
 
