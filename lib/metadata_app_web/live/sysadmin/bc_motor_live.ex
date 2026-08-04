@@ -13,6 +13,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador, CatalogoGenerico}
   alias MetadataApp.MetaEstadosAdmin
+  alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaReglasCodigo
   alias MetadataApp.Permissions
   alias MetadataAppWeb.AdminNav
@@ -540,13 +541,13 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # "En grilla" de un campo — si aparece como columna en la grilla del tab
+  # "En tabla" de un campo — si aparece como columna en la tabla del tab
   # Detalle de la Ficha 360° (catálogos con muchos campos quieren mostrar
   # solo un subconjunto ahí; el formulario de al lado siempre muestra
   # todos). Mismo criterio inmediato que cambiar_categoria/2 arriba.
-  def handle_event("cambiar_mostrar_en_grilla", %{"campo" => campo, "mostrar_en_grilla" => valor}, socket) do
+  def handle_event("cambiar_mostrar_en_tabla", %{"campo" => campo, "mostrar_en_tabla" => valor}, socket) do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
-    props = Map.put(detalle.schema_context_properties, "mostrar_en_grilla", valor == "true")
+    props = Map.put(detalle.schema_context_properties, "mostrar_en_tabla", valor == "true")
 
     case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
       {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
@@ -1166,7 +1167,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         </p>
       </div>
 
-      <.motor_stepper pasos={pasos_motor(@completitud, @transiciones, @es_detalle?)} />
+      <.motor_stepper pasos={pasos_motor(@completitud, @transiciones, @es_detalle?, @header, @campos)} />
       <.panel_problemas :if={@validacion.problemas != []} problemas={@validacion.problemas} />
 
       <.tabs_motor id="motor" tabs={
@@ -1174,11 +1175,18 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           %{key: "config", label: "Configuración"},
           %{key: "reglas", label: "Reglas"}
         ] ++
-          if(@es_detalle?, do: [], else: [%{key: "diagrama", label: "Diagrama"}, %{key: "api", label: "Contrato"}]) ++
+          if(@es_detalle?,
+            do: [],
+            else: [
+              %{key: "diagrama", label: "Diagrama"},
+              %{key: "api", label: "Contrato"},
+              %{key: "permisos", label: "Permisos"}
+            ]
+          ) ++
           [
             %{key: "get", label: "Relaciones"},
-            %{key: "getview", label: "Get View"},
-            %{key: "postview", label: "PostView"}
+            %{key: "getview", label: "Vista Get"},
+            %{key: "postview", label: "Vista Post"}
           ]
       } />
 
@@ -1193,7 +1201,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           <.tabla_estados estados={@estados} transiciones={@transiciones} puede_agregar={@completitud.tiene_campos} />
           <.tabla_transiciones transiciones={@transiciones} estados_por_id={@estados_por_id} catalogo={@header.schema_context_name}
             puede_agregar={@completitud.tiene_estados and @completitud.tiene_alta_o_inicial} />
-          <.tabla_permisos_detalle :if={@catalogos_detalle != []} estados={@estados} catalogos_detalle={@catalogos_detalle} permisos_detalle={@permisos_detalle} />
         <% end %>
       </div>
 
@@ -1217,6 +1224,21 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
         <div id="motor-panel-api" class="hidden">
           <.panel_api header={@header} campos={@campos} estados={@estados} transiciones={@transiciones} />
+        </div>
+
+        <!-- Embebido como LiveView hijo (live_render/3), mismo criterio que
+             "PostView" más abajo — antes era el link "Permisos" en BcListLive
+             que navegaba a /sysadmin/catalogos/:recurso/permisos; ahora vive
+             como tab acá, sin saltar de página. El recurso viaja por
+             session (un hijo montado por live_render nunca recibe params
+             reales del router) — ver la cláusula de mount/3 en
+             CatalogoPermisosLive que matchea session %{"recurso" => ...}. -->
+        <div id="motor-panel-permisos" class="hidden space-y-4">
+          {live_render(@socket, MetadataAppWeb.Sysadmin.CatalogoPermisosLive,
+            id: "permisos-embebido-#{@header.schema_context_name}",
+            session: %{"recurso" => @header.schema_context_name}
+          )}
+          <.tabla_permisos_detalle :if={@catalogos_detalle != []} estados={@estados} catalogos_detalle={@catalogos_detalle} permisos_detalle={@permisos_detalle} />
         </div>
       <% end %>
 
@@ -1319,16 +1341,19 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # Catálogo Maestro-Detalle (R3): sin pasos de autómata — un catálogo
   # detalle nunca tiene estados/transiciones propias, mostrarlos como
   # "pendientes" para siempre sería engañoso (nunca se van a completar,
-  # ni hace falta que lo hagan).
-  defp pasos_motor(completitud, _transiciones, true) do
-    [
-      {"Campos", completitud.tiene_campos},
-      {"Reglas", not completitud.reglas.pre_pendiente and not completitud.reglas.post_pendiente}
-    ]
+  # ni hace falta que lo hagan). Sí tiene Relaciones/Vista Get/Vista Post
+  # (campos propios, get view propio) — Permisos no, un detalle nunca
+  # tiene permisos aparte (los de la fila los da su maestro), mismo
+  # criterio que ya regía el viejo link "Permisos" de BcListLive.
+  defp pasos_motor(completitud, _transiciones, true, header, campos) do
+    ([
+       {"Campos", completitud.tiene_campos},
+       {"Reglas", not completitud.reglas.pre_pendiente and not completitud.reglas.post_pendiente}
+     ] ++ pasos_opcionales(header, campos, incluir_permisos?: false))
     |> marcar_estado_pasos()
   end
 
-  defp pasos_motor(completitud, transiciones, false) do
+  defp pasos_motor(completitud, transiciones, false, header, campos) do
     tiene_transiciones? = transiciones != [] and completitud.transiciones_self_loop_sin_campos_editables == 0
 
     # "Estado inicial" antes que "Estados" (invertido 2026-07-21, a pedido
@@ -1337,14 +1362,49 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     # MetaEstadosAdmin.crear_estado/1) — el orden nuevo refleja que
     # establecer el inicial es lo que de verdad importa primero, no una
     # etapa separada que viene después de tener "estados" en plural.
-    [
-      {"Campos", completitud.tiene_campos},
-      {"Estado inicial", completitud.tiene_alta_o_inicial},
-      {"Estados", completitud.tiene_estados},
-      {"Transiciones", tiene_transiciones?},
-      {"Reglas", not completitud.reglas.pre_pendiente and not completitud.reglas.post_pendiente}
-    ]
+    ([
+       {"Campos", completitud.tiene_campos},
+       {"Estado inicial", completitud.tiene_alta_o_inicial},
+       {"Estados", completitud.tiene_estados},
+       {"Transiciones", tiene_transiciones?},
+       {"Reglas", not completitud.reglas.pre_pendiente and not completitud.reglas.post_pendiente}
+     ] ++ pasos_opcionales(header, campos, incluir_permisos?: true))
     |> marcar_estado_pasos()
+  end
+
+  # Permisos/Relaciones/Vista Get/Vista Post (2026-08-04, a pedido
+  # explícito): a diferencia de los pasos de arriba, estos NO son
+  # obligatorios para que el catálogo funcione — son configuración
+  # opcional que, si nadie la tocó todavía, no debería bloquear ni
+  # ensuciar el stepper. Por eso cada uno se OMITE del todo (no aparece
+  # en la lista) mientras no aplique, en vez de contar como "pendiente"
+  # — mismo criterio que ya usa pasos_motor/5 para un catálogo detalle
+  # (arriba: Estado inicial/Estados/Transiciones directamente no
+  # existen ahí). Permisos/Vista Get/Vista Post se muestran ya
+  # completos apenas hay algo configurado (no hay un estado intermedio
+  # "a medias" para ellos); Relaciones es la excepción — se muestra
+  # justo cuando FALTA algo (al menos un campo referencia sin
+  # campo_visualizacion ni campos_acompanamiento), y desaparece solo
+  # cuando ya no queda ninguno sin configurar.
+  defp pasos_opcionales(header, campos, incluir_permisos?: incluir_permisos?) do
+    referencias_sin_configurar = Enum.count(campos, &(campo_referencia?(&1) and not campo_referencia_configurado?(&1)))
+    tiene_algo_oculto? = Enum.any?(campos, &(get_in(&1.schema_context_properties, ["visible"]) == false))
+    tiene_plantilla? = MetaPlantillas.listar_plantillas(header.id) != []
+
+    (if incluir_permisos? and Permissions.tiene_permisos_concedidos?(header.schema_context_name),
+       do: [{"Permisos", true}],
+       else: []) ++
+      (if referencias_sin_configurar > 0, do: [{"Relaciones", false}], else: []) ++
+      (if tiene_algo_oculto?, do: [{"Vista Get", true}], else: []) ++
+      (if tiene_plantilla?, do: [{"Vista Post", true}], else: [])
+  end
+
+  defp campo_referencia?(campo), do: get_in(campo.schema_context_properties, ["tipo"]) == "referencia"
+
+  defp campo_referencia_configurado?(campo) do
+    props = campo.schema_context_properties
+    (is_map(props["campo_visualizacion"]) and props["campo_visualizacion"] != %{}) or
+      (is_list(props["campos_acompanamiento"]) and props["campos_acompanamiento"] != [])
   end
 
   # El primer paso todavía no completo es "donde estás parado" (:actual) —
@@ -1500,7 +1560,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Opcional</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Categoría (Ficha → Detalle)</th>
-                <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si aparece como columna en la grilla del tab Detalle de la Ficha 360° — el formulario de al lado siempre muestra todos los campos, esto es solo la tabla">En grilla</th>
+                <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si aparece como columna en la tabla del tab Detalle de la Ficha 360° — el formulario de al lado siempre muestra todos los campos, esto es solo la tabla">En tabla</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
             </thead>
@@ -1531,10 +1591,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                     </form>
                   </td>
                   <td class="px-1.5 py-1 text-center">
-                    <form phx-change="cambiar_mostrar_en_grilla">
+                    <form phx-change="cambiar_mostrar_en_tabla">
                       <input type="hidden" name="campo" value={c.schema_context_field} />
-                      <input type="hidden" name="mostrar_en_grilla" value="false" />
-                      <input type="checkbox" name="mostrar_en_grilla" value="true" checked={MetaSchemaContext.mostrar_en_grilla?(props)} class="accent-purple-600" />
+                      <input type="hidden" name="mostrar_en_tabla" value="false" />
+                      <input type="checkbox" name="mostrar_en_tabla" value="true" checked={MetaSchemaContext.mostrar_en_tabla?(props)} class="accent-purple-600" />
                     </form>
                   </td>
                   <td class="px-1.5 py-1">

@@ -1,9 +1,9 @@
 // Grid Editable Empresarial — vista de renglones de catálogos
-// maestro-detalle. La grilla es de SOLO LECTURA (ver/seleccionar filas) —
+// maestro-detalle. La tabla es de SOLO LECTURA (ver/seleccionar filas) —
 // toda la edición (tipear, elegir de un desplegable) pasa por el
 // formulario de arriba (FichaLive.formulario_renglon/1); acá solo se
 // pinta el estado actual de this.rows y un clic en cualquier parte de una
-// fila la selecciona para editarla ahí. El estado real de la grilla vive
+// fila la selecciona para editarla ahí. El estado real de la tabla vive
 // en this.rows (nunca en el DOM), separado de cómo se pinta (render()).
 //
 // El elemento raíz tiene phx-update="ignore" (ver GridEditableComponents) —
@@ -61,7 +61,7 @@ export function computeStatus(row) {
 }
 
 // Firma de una fila para detectar posibles duplicados: valores recortados y
-// en minúscula (case-insensitive) de las columnas de la grilla — barato y
+// en minúscula (case-insensitive) de las columnas de la tabla — barato y
 // suficiente para "podría ser la misma fila dos veces", no pretende ser una
 // comparación semántica.
 export function firmaFila(values, columns) {
@@ -169,12 +169,12 @@ export default {
     this.scrollRaf = null
     // clientId de la fila "activa" — el formulario de
     // FichaLive.formulario_renglon/1 muestra/edita SIEMPRE esta fila (nunca
-    // un modal; la grilla ya no edita nada por su cuenta). null = ninguna
+    // un modal; la tabla ya no edita nada por su cuenta). null = ninguna
     // seleccionada todavía.
     this.filaSeleccionadaClientId = null
 
     // Único listener de interacción: un clic en cualquier parte de una fila
-    // la selecciona — la grilla es de solo lectura, no hay teclado/pegado
+    // la selecciona — la tabla es de solo lectura, no hay teclado/pegado
     // que atender acá.
     this.el.addEventListener("click", (e) => this.alClicFila(e))
 
@@ -193,7 +193,7 @@ export default {
     // manejador de phx-click="guardar" de LiveView mande el evento
     // "guardar" al servidor, para que grid_sync llegue primero por el mismo
     // socket (los eventos de un mismo cliente se procesan en el orden en
-    // que se mandan) — así guardar_edicion/1 nunca ve datos de la grilla
+    // que se mandan) — así guardar_edicion/1 nunca ve datos de la tabla
     // desactualizados. La fase de captura del DOM siempre corre antes que
     // cualquier listener en fase de burbuja, sin importar el orden de
     // registro, así que esto es determinístico, no una carrera.
@@ -314,7 +314,7 @@ export default {
     fila.errors[campo] = col ? validarCelda(valor, col) : []
   },
 
-  // --- Selección de fila (única interacción propia de la grilla) -----------
+  // --- Selección de fila (única interacción propia de la tabla) -----------
   alClicFila(e) {
     const tr = e.target.closest("tr[data-row]")
     if (!tr) return
@@ -332,7 +332,7 @@ export default {
   },
 
   // Le avisa al formulario de FichaLive cuál es el renglón activo, con los
-  // valores que la grilla YA tiene en memoria (incluye edición del
+  // valores que la tabla YA tiene en memoria (incluye edición del
   // formulario todavía sin sincronizar).
   seleccionarFila(rowIdx) {
     const fila = this.rows[rowIdx]

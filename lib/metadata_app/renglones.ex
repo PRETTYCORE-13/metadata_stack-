@@ -79,7 +79,7 @@ defmodule MetadataApp.Renglones do
   # Permisos de detalle por estado (insertar/actualizar/borrar renglones,
   # ver MetaEstadosAdmin.permiso_detalle/2): deny-by-default, gatea acá
   # porque este es el ÚNICO lugar donde se resuelve un renglón NUEVO, sin
-  # importar si viene de CatalogoGenerico.crear_muchos/3 (grilla de la
+  # importar si viene de CatalogoGenerico.crear_muchos/3 (tabla de la
   # Ficha) o del alta atómica de encabezado+renglones iniciales
   # (crear_todos/3, más abajo).
   defp asignar_o_rechazar(changeset, catalogo, header, encabezado_id, estado_maestro) do

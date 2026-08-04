@@ -6,7 +6,7 @@ defmodule MetadataAppWeb.FichaLive do
 
   - Qué se puede CONSULTAR: todos los campos visibles del catálogo
     (`MetaSchemaContext.listar_detalles/1`), como ya hace `CatalogoLive` para
-    la grilla.
+    la tabla.
   - Qué se puede MODIFICAR: exclusivamente `MetaStateEngine.campos_editables/2`
     para la transición "guardar" resuelta (`MetaStateEngine.transicion_guardar/2`)
     en el estado actual — el drawer de edición nunca muestra un campo fuera
@@ -105,6 +105,7 @@ defmodule MetadataAppWeb.FichaLive do
           |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
           |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
           |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
+          |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1)))
 
         transicion_alta = if es_detalle?, do: nil, else: MetaStateEngine.transicion_alta(tabla)
 
@@ -232,7 +233,7 @@ defmodule MetadataAppWeb.FichaLive do
   end
 
   # --- Catálogo Maestro-Detalle: Grid Editable del tab "Detalle" ----------
-  # Todo el estado interactivo de la grilla (teclado, pegado, validación en
+  # Todo el estado interactivo de la tabla (teclado, pegado, validación en
   # vivo) vive en el hook JS GridEditable (assets/js/hooks/grid_editable.js)
   # — acá solo llegan 3 eventos, todos por lotes, nunca por tecla:
   #
@@ -295,12 +296,12 @@ defmodule MetadataAppWeb.FichaLive do
 
   # - "renglon_transicion": la única forma de "sacar"/mover un renglón YA
   #   persistido (R12 — nunca un DELETE real) — cada botón que ofrece la
-  #   grilla para una fila existente es una transición REAL ya configurada
+  #   tabla para una fila existente es una transición REAL ya configurada
   #   para este catálogo (@otras_transiciones, la misma lista que ya arma
   #   los botones del encabezado), nunca una acción hardcodeada tipo
   #   "cancelar". Es la misma operación que ya hace
   #   CatalogoLive.detalle_modal (checkbox + botón de transición), acá
-  #   aplicada a un solo renglón desde la grilla.
+  #   aplicada a un solo renglón desde la tabla.
   def handle_event("renglon_transicion", %{"catalogo" => catalogo, "renglon_id" => renglon_id, "accion" => accion}, socket) do
     contexto = Permissions.contexto_confiable(socket.assigns.current_scope)
 
@@ -308,14 +309,14 @@ defmodule MetadataAppWeb.FichaLive do
       {:ok, actualizado} ->
         socket = cargar_registro(socket, actualizado)
 
-        # columnas_grilla (subset curado), no columnas (completo) — el hook
+        # columnas_tabla (subset curado), no columnas (completo) — el hook
         # JS se montó con ese mismo subset (ver panel_detalle_catalogo/1),
         # así que grid_recargar tiene que reconstruir "values" con las
         # mismas columnas o quedan desalineadas con this.columns del hook.
         columnas =
           socket.assigns.catalogos_detalle
-          |> Enum.find(%{columnas_grilla: []}, &(&1.nombre == catalogo))
-          |> Map.get(:columnas_grilla)
+          |> Enum.find(%{columnas_tabla: []}, &(&1.nombre == catalogo))
+          |> Map.get(:columnas_tabla)
 
         filas = Map.get(socket.assigns.detalle_renglones, catalogo, [])
 
@@ -332,8 +333,8 @@ defmodule MetadataAppWeb.FichaLive do
   end
 
   # --- Layout de 2 columnas del tab Detalle: formulario fijo (izq, 1/3) +
-  # grilla (der, 2/3) — el formulario muestra/edita SIEMPRE el renglón
-  # "seleccionado" en la grilla (@detalle_seleccion, por catálogo), nunca
+  # tabla (der, 2/3) — el formulario muestra/edita SIEMPRE el renglón
+  # "seleccionado" en la tabla (@detalle_seleccion, por catálogo), nunca
   # un modal ni una fila expandida. El dueño de los DATOS de una fila
   # sigue siendo el hook JS (this.rows, igual que antes) — el formulario
   # es una vista alternativa de ESA misma fila, sincronizada en las dos
@@ -343,7 +344,7 @@ defmodule MetadataAppWeb.FichaLive do
 
   # El hook manda esto cada vez que la fila "activa" cambia (click,
   # flechas, Tab, foco programático) — nunca por tecla dentro de la MISMA
-  # fila. `valores` son los que la grilla YA tiene en memoria para esa fila
+  # fila. `valores` son los que la tabla YA tiene en memoria para esa fila
   # (incluye tipeo sin sincronizar todavía), así el formulario arranca
   # siempre con el dato más fresco, no con lo último persistido.
   def handle_event(
@@ -356,7 +357,7 @@ defmodule MetadataAppWeb.FichaLive do
   end
 
   # Edición en el formulario izquierdo — refleja de inmediato en la fila
-  # correspondiente de la grilla (grid_actualizar_fila), que corre el mismo
+  # correspondiente de la tabla (grid_actualizar_fila), que corre el mismo
   # camino de siempre ahí (setCelda/validación/sync debounced) como si el
   # usuario hubiese tipeado directo en la celda.
   def handle_event("detalle_form_cambiar", %{"catalogo" => catalogo, "renglon" => campos}, socket) do
@@ -374,8 +375,8 @@ defmodule MetadataAppWeb.FichaLive do
     end
   end
 
-  # Limpia el formulario y le pide a la grilla una fila nueva en blanco —
-  # la grilla la crea, la enfoca (arranca a escribir de una) y reporta su
+  # Limpia el formulario y le pide a la tabla una fila nueva en blanco —
+  # la tabla la crea, la enfoca (arranca a escribir de una) y reporta su
   # client_id real vía "detalle_seleccionar_fila", cerrando el círculo.
   def handle_event("detalle_nueva_linea", %{"catalogo" => catalogo}, socket) do
     seleccion = %{client_id: nil, renglon_id: nil, valores: %{}}
@@ -411,7 +412,7 @@ defmodule MetadataAppWeb.FichaLive do
   end
 
   # Prev/Next entre renglones YA persistidos (@detalle_renglones — los
-  # todavía sin guardar solo existen en la grilla, no acá). Los valores del
+  # todavía sin guardar solo existen en la tabla, no acá). Los valores del
   # formulario salen directo de ahí, sin ida y vuelta al hook — solo se le
   # pide que resalte/enfoque esa fila (grid_resaltar_fila), que de paso
   # confirma el client_id real al reportar la selección de nuevo.
@@ -469,15 +470,15 @@ defmodule MetadataAppWeb.FichaLive do
       schema_mod: schema_mod,
       registro: registro,
       form_values: attrs,
-      detalle_renglones_nuevos: renglones_nuevos_grilla,
-      detalle_renglones_editados: renglones_editados_grilla,
-      detalle_renglones_eliminados: renglones_eliminados_grilla,
+      detalle_renglones_nuevos: renglones_nuevos_tabla,
+      detalle_renglones_editados: renglones_editados_tabla,
+      detalle_renglones_eliminados: renglones_eliminados_tabla,
       transicion_edicion: transicion_edicion
     } = socket.assigns
 
-    renglones_nuevos = Map.new(renglones_nuevos_grilla, fn {catalogo, filas} -> {catalogo, limpiar_renglones_vacios(filas)} end)
-    renglones_editados = Map.filter(renglones_editados_grilla, fn {_catalogo, filas} -> filas != [] end)
-    renglones_eliminados = Map.filter(renglones_eliminados_grilla, fn {_catalogo, ids} -> ids != [] end)
+    renglones_nuevos = Map.new(renglones_nuevos_tabla, fn {catalogo, filas} -> {catalogo, limpiar_renglones_vacios(filas)} end)
+    renglones_editados = Map.filter(renglones_editados_tabla, fn {_catalogo, filas} -> filas != [] end)
+    renglones_eliminados = Map.filter(renglones_eliminados_tabla, fn {_catalogo, ids} -> ids != [] end)
 
     hay_renglones_nuevos? = Enum.any?(renglones_nuevos, fn {_catalogo, filas} -> filas != [] end)
     hay_renglones_editados? = map_size(renglones_editados) > 0
@@ -541,13 +542,13 @@ defmodule MetadataAppWeb.FichaLive do
       schema_mod: schema_mod,
       header: header,
       form_values: attrs,
-      detalle_renglones_nuevos: renglones_grilla
+      detalle_renglones_nuevos: renglones_tabla
     } = socket.assigns
 
     # El hook GridEditable ya descarta filas vacías antes de sincronizar
     # (sincronizarAhora en grid_editable.js) — esto es la misma limpieza
     # defensiva del lado servidor, antes de mandarlo al motor.
-    renglones = Map.new(renglones_grilla, fn {catalogo, filas} -> {catalogo, limpiar_renglones_vacios(filas)} end)
+    renglones = Map.new(renglones_tabla, fn {catalogo, filas} -> {catalogo, limpiar_renglones_vacios(filas)} end)
 
     case CatalogoGenerico.crear(schema_mod, attrs, renglones: renglones, contexto: socket.assigns.contexto_auditoria) do
       {:ok, _nuevo} ->
@@ -664,8 +665,8 @@ defmodule MetadataAppWeb.FichaLive do
 
   # Plug decodifica "renglones[0][x]=a&renglones[1][x]=b" como un MAPA con
   # claves "0"/"1" (no una lista) — se reordena acá una sola vez, en el
-  # único lugar donde el phx-change de la grilla entra al server.
-  # Una fila "vacía" es la fila en blanco que la grilla siempre deja al
+  # único lugar donde el phx-change de la tabla entra al server.
+  # Una fila "vacía" es la fila en blanco que la tabla siempre deja al
   # final (nunca tipeada) o cualquier otra que el usuario vació de vuelta —
   # "false" cuenta como vacío acá porque es lo que manda un checkbox sin
   # marcar, no una respuesta real. El hook GridEditable ya filtra esto de
@@ -742,6 +743,7 @@ defmodule MetadataAppWeb.FichaLive do
       |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
       |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
       |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
+      |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1)))
 
     estados_por_id = MetaStateEngine.mapa_nombres_estados(tabla)
 
@@ -774,7 +776,7 @@ defmodule MetadataAppWeb.FichaLive do
 
     # Catálogo Maestro-Detalle: mismo criterio que ya usa CatalogoLive
     # (catalogos_detalle + detalle_renglones) — antes solo se podía
-    # agregar un renglón volviendo a la grilla y abriendo el modal viejo;
+    # agregar un renglón volviendo a la tabla y abriendo el modal viejo;
     # acá la Ficha 360° ya tiene el id real del maestro, así que se
     # resuelve en el lugar, sin ese viaje de ida y vuelta.
     catalogos_detalle = cargar_catalogos_detalle(header.id)
@@ -811,15 +813,16 @@ defmodule MetadataAppWeb.FichaLive do
         |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
         |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
         |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
+        |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1)))
 
-      # :columnas_grilla — subconjunto curado (BcMotorLive → Campos → "En
-      # grilla") para catálogos con muchos campos, donde mostrar TODOS como
+      # :columnas_tabla — subconjunto curado (BcMotorLive → Campos → "En
+      # tabla") para catálogos con muchos campos, donde mostrar TODOS como
       # columna en la tabla ancha es inusable. :columnas (completo) sigue
       # siendo lo que usa el formulario de al lado (formulario_renglon/1) —
       # ahí sí entra cualquier campo visible, sin curar.
-      columnas_grilla = Enum.filter(columnas_detalle, &MetaSchemaContext.mostrar_en_grilla?(&1.schema_context_properties))
+      columnas_tabla = Enum.filter(columnas_detalle, &MetaSchemaContext.mostrar_en_tabla?(&1.schema_context_properties))
 
-      %{nombre: h.schema_context_name, etiqueta: h.schema_context_label, columnas: columnas_detalle, columnas_grilla: columnas_grilla}
+      %{nombre: h.schema_context_name, etiqueta: h.schema_context_label, columnas: columnas_detalle, columnas_tabla: columnas_tabla}
     end)
   end
 
@@ -1710,11 +1713,12 @@ defmodule MetadataAppWeb.FichaLive do
     errores_campo = Map.get(assigns.edicion.errores, campo_atom)
 
     # Referencia: mismo picker/etiqueta tanto editable como de solo lectura
-    # (CatalogoGenerico.opciones_referencia/1, que ya resuelve "campos de
-    # acompañamiento" configurados en BcMotorLive → Relaciones) — antes acá
-    # se mostraba el id crudo (editable, una caja de texto libre; solo
-    # lectura, el número pelado), sin ninguna pista de a qué apunta.
-    opciones_referencia = if props["tipo"] == "referencia", do: CatalogoGenerico.opciones_referencia(props), else: []
+    # (ya resuelve "campos de acompañamiento" configurados en BcMotorLive →
+    # Relaciones) — antes acá se mostraba el id crudo (editable, una caja
+    # de texto libre; solo lectura, el número pelado), sin ninguna pista de
+    # a qué apunta. Precalculado en cargar_catalogos_detalle/1 (col.opciones)
+    # — nunca se vuelve a consultar acá, esto corre en cada render.
+    opciones_referencia = Map.get(assigns.col, :opciones, [])
     valor_legible = if props["tipo"] == "referencia", do: etiqueta_opcion(opciones_referencia, valor_actual), else: valor_actual
 
     assigns =
@@ -1871,10 +1875,10 @@ defmodule MetadataAppWeb.FichaLive do
   attr :detalle_seleccion, :map, required: true
 
   # Layout tipo IDE (editor fijo + área de trabajo amplia): un catálogo
-  # detalle = un par formulario (1/3, izquierda) + grilla (2/3, derecha),
+  # detalle = un par formulario (1/3, izquierda) + tabla (2/3, derecha),
   # apilados verticalmente si hay más de un catálogo detalle. El
   # formulario nunca es un modal ni una fila expandida — siempre muestra
-  # el renglón "seleccionado" en la grilla de al lado (ver
+  # el renglón "seleccionado" en la tabla de al lado (ver
   # panel_detalle_catalogo/1).
   defp tab_detalle(assigns) do
     ~H"""
@@ -1906,7 +1910,7 @@ defmodule MetadataAppWeb.FichaLive do
       </div>
 
       <div class="overflow-x-auto">
-        <GridEditableComponents.grid id={"grid-#{@cat.nombre}"} catalogo={@cat.nombre} columnas={@cat.columnas_grilla}
+        <GridEditableComponents.grid id={"grid-#{@cat.nombre}"} catalogo={@cat.nombre} columnas={@cat.columnas_tabla}
           filas_existentes={@filas} transiciones_disponibles={@otras_transiciones} estados_por_id={@estados_por_id} />
       </div>
     </div>
@@ -2007,10 +2011,19 @@ defmodule MetadataAppWeb.FichaLive do
     |> Enum.reject(&(&1.campos == []))
   end
 
-  defp opciones_para_campo(%{schema_context_properties: %{"tipo" => "referencia"}} = campo),
+  # Consulta en vivo — solo se llama UNA VEZ por columna, al armar
+  # cargar_catalogos_detalle/1 (mount/reload), nunca durante un render. El
+  # resultado queda cacheado en `col.opciones` (ver opciones_para_campo/1
+  # y campo_row/1, que leen ese campo en vez de volver a golpear la DB) —
+  # antes esto corría en cada render de la Ficha 360° (cualquier evento:
+  # click en fila, guardar, transición), trayendo hasta 500 filas del
+  # catálogo referenciado cada vez.
+  defp opciones_para_columna(%{schema_context_properties: %{"tipo" => "referencia"}} = campo),
     do: CatalogoGenerico.opciones_referencia(campo.schema_context_properties)
 
-  defp opciones_para_campo(_campo), do: []
+  defp opciones_para_columna(_campo), do: []
+
+  defp opciones_para_campo(campo), do: Map.get(campo, :opciones, [])
 
   # El primer grupo (normalmente "Información general", el único abierto
   # por default) se pinta suelto, sin acordeón, con los botones +/× de

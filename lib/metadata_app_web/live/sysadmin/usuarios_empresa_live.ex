@@ -308,8 +308,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
       |> Enum.filter(&(&1.accion == "leer"))
       |> Enum.map(& &1.recurso)
       |> Enum.uniq()
-      |> Enum.map(&MetaSchemaContext.obtener_header_por_nombre/1)
-      |> Enum.reject(&is_nil/1)
+      |> MetaSchemaContext.obtener_headers_por_nombres()
       |> Enum.sort_by(& &1.schema_context_label)
 
     socket

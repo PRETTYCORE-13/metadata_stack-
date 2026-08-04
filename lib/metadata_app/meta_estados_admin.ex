@@ -535,26 +535,28 @@ defmodule MetadataApp.MetaEstadosAdmin do
   # test, ya compilado (en producción no hay compilador, sin_compilar?/1
   # da false ahí siempre).
   def puede_desplegar?(catalogo) do
-    case MetaSchemaContext.obtener_header_por_nombre(catalogo) do
-      nil ->
-        false
+    MetaReglasCodigo.with_cache(fn ->
+      case MetaSchemaContext.obtener_header_por_nombre(catalogo) do
+        nil ->
+          false
 
-      header ->
-        # Transparente a ediciones directas del .ex en un editor de texto
-        # (en vez de la pestaña Reglas del Builder) — sin esto, ese tipo de
-        # edición deja el candado de sin_compilar?/1 trabado hasta que
-        # alguien se acuerde de resincronizar a mano.
-        :ok = MetaReglasCodigo.resincronizar_si_hace_falta(header)
+        header ->
+          # Transparente a ediciones directas del .ex en un editor de texto
+          # (en vez de la pestaña Reglas del Builder) — sin esto, ese tipo de
+          # edición deja el candado de sin_compilar?/1 trabado hasta que
+          # alguien se acuerde de resincronizar a mano.
+          :ok = MetaReglasCodigo.resincronizar_si_hace_falta(header)
 
-        with {:ok, completitud} <- completitud(catalogo),
-             {:ok, validacion} <- validar_motor(catalogo) do
-          completitud.completo? and validacion.valido? and
-            not MetaReglasCodigo.con_error_sintaxis?(header) and
-            not MetaReglasCodigo.sin_compilar?(header)
-        else
-          _ -> false
-        end
-    end
+          with {:ok, completitud} <- completitud(catalogo),
+               {:ok, validacion} <- validar_motor(catalogo) do
+            completitud.completo? and validacion.valido? and
+              not MetaReglasCodigo.con_error_sintaxis?(header) and
+              not MetaReglasCodigo.sin_compilar?(header)
+          else
+            _ -> false
+          end
+      end
+    end)
   end
 
   # --- Validación estructural del autómata ("¿esto va a funcionar?") -----------

@@ -6,7 +6,7 @@ defmodule MetadataAppWeb.GridEditableComponents do
   Fase 6/Fase 1 del Grid Editable). Reemplaza al viejo `renglones_grid/1` de
   `FichaLive`.
 
-  La grilla en sí es de SOLO LECTURA — un clic en una fila la selecciona
+  La tabla en sí es de SOLO LECTURA — un clic en una fila la selecciona
   para editarla en `FichaLive.formulario_renglon/1` (al lado), que es donde
   vive toda la captura/edición real. El estado (selección, filas en
   staging) vive en el hook JS `GridEditable`
@@ -81,7 +81,7 @@ defmodule MetadataAppWeb.GridEditableComponents do
       opcional: props["opcional"] == true,
       longitud: props["longitud"],
       valores: props["valores"],
-      opciones: opciones_columna(props)
+      opciones: opciones_columna(col)
     }
   end
 
@@ -90,13 +90,27 @@ defmodule MetadataAppWeb.GridEditableComponents do
   # con esto en vez de la caja de texto libre de siempre para una columna
   # tipo "referencia". Tupla -> mapa porque Jason no sabe serializar
   # tuplas de Elixir.
-  defp opciones_columna(%{"tipo" => "referencia"} = props) do
+  #
+  # `col.opciones` ya viene precalculado por el caller (ver
+  # FichaLive.cargar_catalogos_detalle/1) como tuplas {id, etiqueta} — el
+  # mismo formato que espera CampoInputComponents.campo_input/1 del lado
+  # de FichaLive. Acá igual hay que pasarlas a mapa (Jason no serializa
+  # tuplas). Este componente corre en cada render (el <tbody
+  # phx-update="ignore"> no evita que el server vuelva a armar los
+  # assigns), así que ir a buscar hasta 500 filas del catálogo
+  # referenciado acá adentro sería repetirlo por cada evento de la Ficha
+  # 360°. Fallback a la consulta en vivo solo por si algún caller nuevo
+  # todavía no manda columnas con :opciones ya resuelto.
+  defp opciones_columna(%{opciones: opciones}),
+    do: Enum.map(opciones, fn {id, etiqueta} -> %{id: id, etiqueta: etiqueta} end)
+
+  defp opciones_columna(%{schema_context_properties: %{"tipo" => "referencia"} = props}) do
     props
     |> MetadataApp.BusinessProcessBuilder.CatalogoGenerico.opciones_referencia()
     |> Enum.map(fn {id, etiqueta} -> %{id: id, etiqueta: etiqueta} end)
   end
 
-  defp opciones_columna(_props), do: []
+  defp opciones_columna(_col), do: []
 
   defp fila_meta(r, columnas, estados_por_id) do
     valores =
