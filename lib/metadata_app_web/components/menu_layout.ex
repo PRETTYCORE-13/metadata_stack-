@@ -92,6 +92,12 @@ defmodule MetadataAppWeb.MenuLayout do
               </svg>
             <% end %>
           </button>
+          <!-- Logo: en medio del toggle y los botones de tema (justify-
+               content: space-between en pc-sidebar-header, ver menu.css) —
+               antes vivía en la topbar, a pedido explícito se movió acá. -->
+          <div class="pc-sidebar-logo">
+            <img src="https://prettycore.xyz/IMAGENES/Logo%20Prettycore%20(8).png" alt="Prettycore" />
+          </div>
           <!-- Tema claro/oscuro — reusa "phx:set-theme" (ya escuchado en
                root.html.heex desde que existe la app, generado por
                mix phx.new; acá recién se agrega el botón que lo dispara).
@@ -208,11 +214,6 @@ defmodule MetadataAppWeb.MenuLayout do
           </svg>
         </button>
         <.link navigate="/" class="pc-topbar-brand">
-          <img
-            src="https://prettycore.xyz/IMAGENES/Logo%20Prettycore%20(8).png"
-            alt={@nombre_empresa}
-            class="pc-topbar-logo"
-          />
           <span class="pc-topbar-empresa">{@nombre_empresa}</span>
         </.link>
         <div class="pc-topbar-derecha">
@@ -549,6 +550,7 @@ defmodule MetadataAppWeb.MenuLayout do
         assigns
         |> assign(:current_user_name, MetadataApp.Autenticacion.Usuario.nombre_mostrar(usuario))
         |> assign(:current_user_email, usuario.email)
+        |> assign(:current_user_id, usuario.id)
 
       _ ->
         assigns

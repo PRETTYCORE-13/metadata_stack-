@@ -14,6 +14,8 @@ defmodule MetadataApp.MetaAuditoria do
   """
 
   alias MetadataApp.MetaSchema.Auditoria
+  alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
+  alias MetadataApp.Notificaciones
   alias MetadataApp.Repo
 
   @doc """
@@ -23,20 +25,46 @@ defmodule MetadataApp.MetaAuditoria do
   serializado (ver `CatalogoGenerico.serializar/1`), listo para jsonb.
   """
   def registrar(catalogo, operacion, guid, registro, datos, contexto \\ %{}) do
-    %Auditoria{}
-    |> Auditoria.changeset(%{
-      bc: catalogo,
-      operacion: operacion,
-      guid: guid,
-      trn: Map.get(registro, :trn),
-      entidad_id: registro.id,
-      datos: datos,
-      usuario_id: Map.get(contexto, :usuario_id),
-      usuario_email: Map.get(contexto, :usuario_email),
-      empresa_id: Map.get(contexto, :empresa_id),
-      ip: Map.get(contexto, :ip),
-      user_agent: Map.get(contexto, :user_agent)
-    })
-    |> Repo.insert!()
+    auditoria =
+      %Auditoria{}
+      |> Auditoria.changeset(%{
+        bc: catalogo,
+        operacion: operacion,
+        guid: guid,
+        trn: Map.get(registro, :trn),
+        entidad_id: registro.id,
+        datos: datos,
+        usuario_id: Map.get(contexto, :usuario_id),
+        usuario_email: Map.get(contexto, :usuario_email),
+        empresa_id: Map.get(contexto, :empresa_id),
+        ip: Map.get(contexto, :ip),
+        user_agent: Map.get(contexto, :user_agent)
+      })
+      |> Repo.insert!()
+
+    Notificaciones.crear(Map.get(contexto, :usuario_id), mensaje_notificacion(catalogo, operacion))
+
+    auditoria
+  end
+
+  defp mensaje_notificacion(catalogo, operacion) do
+    etiqueta = etiqueta_catalogo(catalogo)
+
+    case operacion do
+      "alta" -> "Se creó un registro en #{etiqueta}"
+      "edicion" -> "Se editó un registro en #{etiqueta}"
+      "baja" -> "Se eliminó un registro en #{etiqueta}"
+      "transicion:" <> accion -> "Se aplicó \"#{accion}\" a un registro en #{etiqueta}"
+      _ -> "Hubo un cambio en #{etiqueta}"
+    end
+  end
+
+  # Fail-open a mostrar el nombre crudo si no encuentra el header (nunca
+  # debería romper la escritura de auditoría por esto).
+  defp etiqueta_catalogo(catalogo) do
+    case MetaSchemaContext.obtener_header_por_nombre(catalogo) do
+      nil -> catalogo
+      header -> header.schema_context_label || catalogo
+    end
   end
 end

@@ -619,6 +619,20 @@
   margin: 0 auto;
 }
 
+/* ---- LOGO (dentro de pc-sidebar-header, entre el toggle y el tema) ---- */
+.pc-sidebar-logo {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.pc-sidebar-logo img {
+  height: 22px;
+  width: auto;
+  object-fit: contain;
+}
+
 /* ---- BODY ---- */
 .pc-sidebar-body {
   flex: 1;
@@ -1625,6 +1639,14 @@
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
+  }
+  /* El buscador del menú también se ocultaba con @sidebar_open=false (el
+     colapso del riel de escritorio es un estado de servidor que no sabe
+     en qué viewport está el cliente, ver comentario de la manija más
+     arriba) — sin esto, en móvil no había forma de buscar en el menú si
+     la última sesión de escritorio había dejado el riel colapsado. */
+  .pc-platform-sidebar.pc-sidebar-visible .pc-sidebar-search {
+    display: block;
   }
   .pc-platform-sidebar.pc-sidebar-visible .pc-nav-item {
     justify-content: flex-start;
