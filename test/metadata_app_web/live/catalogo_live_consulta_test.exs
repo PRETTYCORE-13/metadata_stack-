@@ -68,7 +68,7 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
     {header, consulta, nav}
   end
 
-  test "monta la consulta, lista filas reales y respeta filtro por campo", %{conn: conn} do
+  test "monta la consulta sin traer datos hasta que se aplique un filtro", %{conn: conn} do
     fixture_cliente(%{
       meta_fixture_cliente_nombre: "Cliente Uno #{unique()}",
       meta_fixture_cliente_edad: 30,
@@ -87,7 +87,8 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
     {:ok, view, html} = live(conn, nav)
 
     assert html =~ "Consulta fixture de prueba"
-    assert html =~ cliente_dos.meta_fixture_cliente_nombre
+    refute html =~ cliente_dos.meta_fixture_cliente_nombre
+    refute html =~ "Cliente Uno"
 
     html_filtrado =
       view
@@ -97,7 +98,7 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
     refute html_filtrado =~ "Cliente Uno"
   end
 
-  test "la banda de totales suma solo la columna marcada totalizar", %{conn: conn} do
+  test "la banda de totales suma solo la columna marcada totalizar, una vez que hay búsqueda activa", %{conn: conn} do
     fixture_cliente(%{meta_fixture_cliente_nombre: "A #{unique()}", meta_fixture_cliente_edad: 10, meta_fixture_cliente_venta: Decimal.new("1")})
     fixture_cliente(%{meta_fixture_cliente_nombre: "B #{unique()}", meta_fixture_cliente_edad: 20, meta_fixture_cliente_venta: Decimal.new("1")})
 
@@ -110,8 +111,10 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
 
     {:ok, _} = MetaConsultas.actualizar_campos(consulta, campos)
 
-    {:ok, _view, html} = live(conn, nav)
+    {:ok, view, _html} = live(conn, nav)
 
-    assert html =~ ~r/<tfoot.*?>.*?30.*?<\/tfoot>/s
+    html = view |> render_change("buscar_general", %{"value" => "A"})
+
+    assert html =~ ~r/<tfoot.*?>.*?10.*?<\/tfoot>/s
   end
 end

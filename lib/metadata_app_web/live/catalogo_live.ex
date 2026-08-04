@@ -262,10 +262,48 @@ defmodule MetadataAppWeb.CatalogoLive do
   # cortar en el LiveView) — a diferencia de BcListLive, que pagina en
   # memoria porque ahí son decenas de Business Contexts, no potencialmente
   # miles de filas de datos de un catálogo real.
-  defp cargar_filas(%{assigns: %{es_consulta?: true}} = socket),
-    do: socket |> cargar_filas_consulta() |> recalcular_agregaciones() |> recalcular_minmax()
+  #
+  # La tabla NO trae datos hasta que haya al menos un filtro de columna
+  # con valor real o texto en el buscador general — evita traer TODO el
+  # catálogo (potencialmente miles de filas) apenas se abre la página.
+  # Una vez que hay filtro/búsqueda, pagina normal sobre ESE subconjunto.
+  defp cargar_filas(socket) do
+    socket = assign(socket, :sin_filtro?, not datos_solicitados?(socket))
 
-  defp cargar_filas(socket), do: socket |> cargar_filas_catalogo() |> recalcular_agregaciones() |> recalcular_minmax()
+    if socket.assigns.sin_filtro? do
+      socket |> vaciar_filas() |> recalcular_agregaciones() |> recalcular_minmax()
+    else
+      socket |> cargar_filas_real() |> recalcular_agregaciones() |> recalcular_minmax()
+    end
+  end
+
+  defp datos_solicitados?(socket) do
+    contar_filtros_activos(socket.assigns.filtros) > 0 or String.trim(socket.assigns.busqueda_general) != ""
+  end
+
+  defp cargar_filas_real(%{assigns: %{es_consulta?: true}} = socket), do: cargar_filas_consulta(socket)
+  defp cargar_filas_real(socket), do: cargar_filas_catalogo(socket)
+
+  defp vaciar_filas(%{assigns: %{es_consulta?: true}} = socket) do
+    socket
+    |> assign(:filas, [])
+    |> assign(:totales, %{})
+    |> assign(:pagina, 1)
+    |> assign(:total_paginas, 1)
+    |> assign(:total_filas, 0)
+    |> assign(:inicio, 0)
+    |> assign(:fin, 0)
+  end
+
+  defp vaciar_filas(socket) do
+    socket
+    |> assign(:filas, [])
+    |> assign(:pagina, 1)
+    |> assign(:total_paginas, 1)
+    |> assign(:total_filas, 0)
+    |> assign(:inicio, 0)
+    |> assign(:fin, 0)
+  end
 
   defp filtros_y_busqueda(socket) do
     %{filtros: filtros, columnas: columnas, busqueda_general: busqueda_general} = socket.assigns
@@ -598,7 +636,11 @@ defmodule MetadataAppWeb.CatalogoLive do
               <%= if @filas == [] do %>
                 <tr>
                   <td class="px-4 py-10 text-center text-gray-400 text-sm" colspan={max(length(@columnas), 1)}>
-                    Sin registros todavía
+                    <%= if @sin_filtro? do %>
+                      Seleccioná un filtro o buscá algo para ver los datos.
+                    <% else %>
+                      Sin registros con ese filtro.
+                    <% end %>
                   </td>
                 </tr>
               <% end %>
@@ -793,7 +835,11 @@ defmodule MetadataAppWeb.CatalogoLive do
                     class="px-4 py-10 text-center text-gray-400 text-sm"
                     colspan={2 + (if @mostrar_trn?, do: 1, else: 0) + length(@columnas) + if @mostrar_estado?, do: 1, else: 0}
                   >
-                    Sin registros todavía
+                    <%= if @sin_filtro? do %>
+                      Seleccioná un filtro o buscá algo para ver los datos.
+                    <% else %>
+                      Sin registros con ese filtro.
+                    <% end %>
                   </td>
                 </tr>
               <% end %>
