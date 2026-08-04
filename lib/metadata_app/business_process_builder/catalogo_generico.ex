@@ -413,11 +413,18 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     |> agregar_acompanamiento(acompanamiento)
   end
 
-  # Arma, para cada campo tipo "referencia" con "campos_acompanamiento"
-  # configurado, un mapa %{id_referenciado => %{...}} usando SOLO los ids
-  # que de verdad aparecen en `filas` — una query batch por relación por
-  # página de resultados, nunca una query por fila (mismo espíritu que
-  # MetaStateEngine.mapa_nombres_estados/1 para estado_nombre).
+  # Arma, para cada campo tipo "referencia" con "campo_visualizacion" o
+  # "campos_acompanamiento" configurado, un mapa %{id_referenciado =>
+  # etiqueta} usando SOLO los ids que de verdad aparecen en `filas` — una
+  # query batch por relación por página de resultados, nunca una query
+  # por fila (mismo espíritu que MetaStateEngine.mapa_nombres_estados/1
+  # para estado_nombre). La etiqueta se arma con etiqueta_para_referencia/2
+  # — la misma función que ya usa opciones_referencia/1 para el picker de
+  # FichaLive — para que la tabla y el formulario muestren siempre lo
+  # mismo, sin un segundo mecanismo que se pueda desincronizar del
+  # primero (bug real: acá solo se chequeaba campos_acompanamiento, así
+  # que un campo configurado con el modo nuevo campo_visualizacion
+  # quedaba mostrando el id crudo solo en la tabla).
   def mapa_acompanamiento(catalogo, filas) do
     catalogo
     |> MetadataApp.BusinessProcessBuilder.MetaSchemaContext.listar_detalles()
@@ -433,13 +440,16 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
         |> Enum.reject(&is_nil/1)
         |> Enum.uniq()
 
-      {campo, resolver_acompanamiento(modulo_destino, ids, props["campos_acompanamiento"])}
+      {campo, resolver_acompanamiento(modulo_destino, ids, props)}
     end)
   end
 
   defp campo_con_acompanamiento?(detalle) do
     props = detalle.schema_context_properties || %{}
-    props["tipo"] == "referencia" and is_list(props["campos_acompanamiento"]) and props["campos_acompanamiento"] != []
+
+    props["tipo"] == "referencia" and
+      ((is_map(props["campo_visualizacion"]) and props["campo_visualizacion"] != %{}) or
+         (is_list(props["campos_acompanamiento"]) and props["campos_acompanamiento"] != []))
   end
 
   # Opciones para el <select> de un campo tipo "referencia" en
@@ -529,15 +539,18 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
 
   defp etiqueta_opcion_referencia(registro, _campos), do: "##{registro.id}"
 
-  defp resolver_acompanamiento(nil, _ids, _campos), do: %{}
-  defp resolver_acompanamiento(_modulo, [], _campos), do: %{}
+  defp resolver_acompanamiento(nil, _ids, _props), do: %{}
+  defp resolver_acompanamiento(_modulo, [], _props), do: %{}
 
-  defp resolver_acompanamiento(modulo, ids, campos) do
-    campos_atoms = Enum.map(["id" | campos], &String.to_existing_atom/1)
-
-    from(t in modulo, where: t.id in ^ids, select: map(t, ^campos_atoms))
+  # Trae la fila completa (no un `select: map(...)` acotado a
+  # campos_acompanamiento) porque etiqueta_para_referencia/2 con
+  # campo_visualizacion modo "calculado"/"plantilla" puede referenciar
+  # cualquier campo del registro, no solo los de una lista fija conocida
+  # de antemano.
+  defp resolver_acompanamiento(modulo, ids, props) do
+    from(t in modulo, where: t.id in ^ids)
     |> Repo.all()
-    |> Map.new(&{&1.id, &1})
+    |> Map.new(&{&1.id, etiqueta_para_referencia(&1, props)})
   end
 
   defp agregar_acompanamiento(mapa, acompanamiento) when acompanamiento == %{}, do: mapa

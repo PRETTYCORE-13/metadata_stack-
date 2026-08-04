@@ -389,59 +389,12 @@
   margin-left: auto;
 }
 
-/* Buscador TRN compacto (PrettyCore TRN, Fase 3) — a propósito sin
-   descripción ni placeholder largo, solo la etiqueta + input + botón. */
-.pc-topbar-buscar-trn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.pc-topbar-buscar-trn-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: #6b7280;
-  white-space: nowrap;
-}
-
-.pc-topbar-buscar-trn-input {
-  width: 190px;
-  padding: 5px 8px;
-  font-size: 12px;
-  font-family: monospace;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  color: #111827;
-}
-
-.pc-topbar-buscar-trn-input:focus {
-  outline: none;
-  border-color: #7c3aed;
-  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15);
-}
-
-.pc-topbar-buscar-trn-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 8px;
-  color: #6b7280;
-  background: transparent;
-  border: none;
-  border-radius: 12px;
-  cursor: pointer;
-  transition: color 0.15s ease, background 0.15s ease;
-}
-
-.pc-topbar-buscar-trn-btn:hover {
-  color: #1f2937;
-  background: #f3f4f6;
-}
-
-/* ---- FOOTER (copyright de la plataforma + ruta completa de la página
-   activa) — antes la ruta vivía arriba, se movió acá para dejar la topbar
-   solo con branding/acciones. Banda angosta estilo status bar de VS Code:
-   poca altura, texto chico, nada de aire de más. ---- */
+/* ---- FOOTER (copyright de la plataforma + botón de copiar ruta +
+   buscador TRN) — banda angosta estilo status bar de VS Code: poca
+   altura, texto chico, nada de aire de más. El buscador TRN vivía en la
+   topbar antes (ver arriba); se movió acá 2026-08-04 a pedido explícito,
+   mismo criterio de "topbar solo con branding/acciones" que ya motivó
+   mover la ruta para acá en su momento. ---- */
 .pc-footer {
   display: flex;
   align-items: center;
@@ -461,18 +414,61 @@
   font-weight: 500;
 }
 
-.pc-footer-separador {
-  color: #d1d5db;
+/* Buscador TRN compacto (PrettyCore TRN, Fase 3) — a propósito sin
+   descripción ni placeholder largo, solo la etiqueta + input + botón.
+   margin-left: auto lo empuja al extremo derecho de la banda, mismo
+   patrón que ya usaba .pc-topbar-derecha arriba. */
+.pc-footer-buscar-trn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
 }
 
-.pc-footer-ruta {
+.pc-footer-buscar-trn-label {
+  font-size: 12px;
+  font-weight: 600;
   color: #6b7280;
-  font-weight: 500;
-  text-decoration: none;
+  white-space: nowrap;
 }
 
-.pc-footer-ruta:hover {
+.pc-footer-buscar-trn-input {
+  width: 190px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-family: monospace;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
   color: #111827;
+}
+
+.pc-footer-buscar-trn-input:focus {
+  outline: none;
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15);
+}
+
+.pc-footer-buscar-trn-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  color: #6b7280;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.pc-footer-buscar-trn-btn:hover {
+  color: #1f2937;
+  background: #f3f4f6;
+}
+
+.pc-footer-buscar-trn-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* ---- COPIAR RUTA (botón al final de las migas de pan) ---- */
@@ -1543,27 +1539,32 @@
     row-gap: 6px;
   }
 
-  /* pc-topbar-derecha (buscador TRN + campana + usuario) es un solo item
-     de flex dentro de pc-topbar — el wrap de arriba lo manda entero a su
-     propia fila, pero SUS hijos seguían en una sola fila sin wrap propio.
-     El buscador TRN (input de ancho fijo 190px, pensado para desktop) no
-     entraba en pantallas angostas y se salía del viewport, generando
-     scroll horizontal en TODA la página. Acá se lo deja wrappear también,
-     y el input se angosta en vez de quedarse fijo. */
+  /* pc-topbar-derecha (campana + usuario) es un solo item de flex dentro
+     de pc-topbar — el wrap de arriba lo manda entero a su propia fila,
+     pero SUS hijos seguían en una sola fila sin wrap propio. */
   .pc-topbar-derecha {
     flex-wrap: wrap;
     row-gap: 6px;
     justify-content: flex-end;
   }
 
-  .pc-topbar-buscar-trn-input {
-    width: 120px;
-  }
-
+  /* El buscador TRN (ahora en el footer, input de ancho fijo 190px
+     pensado para desktop) no entraba en pantallas angostas y se salía
+     del viewport, generando scroll horizontal en TODA la página. Acá se
+     lo deja wrappear, y el input se angosta en vez de quedarse fijo. */
   .pc-footer {
     padding: 6px 12px;
     flex-wrap: wrap;
     row-gap: 4px;
+  }
+
+  .pc-footer-buscar-trn {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .pc-footer-buscar-trn-input {
+    width: 120px;
   }
 
   /* Show hamburger button inline en la topbar */

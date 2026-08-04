@@ -9,7 +9,6 @@ defmodule MetadataAppWeb.UsuarioLive.LoginTest do
       {:ok, _lv, html} = live(conn, ~p"/meta_schema_usuario/log-in")
 
       assert html =~ "Log in"
-      assert html =~ "Sign up"
       assert html =~ "Log in with email"
     end
   end
@@ -72,20 +71,6 @@ defmodule MetadataAppWeb.UsuarioLive.LoginTest do
       conn = follow_trigger_action(form, conn)
       assert Phoenix.Flash.get(conn.assigns.flash, :error) == "Invalid email or password"
       assert redirected_to(conn) == ~p"/meta_schema_usuario/log-in"
-    end
-  end
-
-  describe "login navigation" do
-    test "redirects to registration page when the Register button is clicked", %{conn: conn} do
-      {:ok, lv, _html} = live(conn, ~p"/meta_schema_usuario/log-in")
-
-      {:ok, _login_live, login_html} =
-        lv
-        |> element("main a", "Sign up")
-        |> render_click()
-        |> follow_redirect(conn, ~p"/meta_schema_usuario/register")
-
-      assert login_html =~ "Register"
     end
   end
 

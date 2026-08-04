@@ -34,7 +34,7 @@ defmodule MetadataAppWeb.MenuLayout do
     assigns =
       assigns
       |> assign(:nodo_actual, buscar_nodo_actual(assigns.menu_items, assigns.current_page))
-      |> assign(:nombre_empresa, Application.get_env(:metadata_app, :nombre_empresa, "Prettycore"))
+      |> assign(:nombre_empresa, nombre_empresa_activa(assigns[:current_scope]))
       |> assign(:anio_actual, Date.utc_today().year)
       |> assign(:bpb_habilitado, Application.get_env(:metadata_app, :bpb_habilitado, false))
       |> asignar_datos_usuario()
@@ -70,20 +70,6 @@ defmodule MetadataAppWeb.MenuLayout do
           <span class="pc-topbar-empresa">{@nombre_empresa}</span>
         </.link>
         <div class="pc-topbar-derecha">
-          <!-- Buscador TRN (PrettyCore TRN, Fase 3): form GET plano, no
-               LiveView — navega directo a BuscadorTrnLive con ?query=...
-               así funciona igual desde CUALQUIER pantalla que use este
-               layout compartido, sin que cada LiveView tenga que
-               implementar un handle_event en común. -->
-          <form :if={@bpb_habilitado} action="/sysadmin/buscar-trn" method="get" class="pc-topbar-buscar-trn">
-            <label for="topbar-buscar-trn" class="pc-topbar-buscar-trn-label">TRN:</label>
-            <input type="text" name="query" id="topbar-buscar-trn" autocomplete="off" class="pc-topbar-buscar-trn-input" />
-            <button type="submit" class="pc-topbar-buscar-trn-btn" title="Buscar">
-              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.803 5.803a7.5 7.5 0 0010 10z" />
-              </svg>
-            </button>
-          </form>
           <.live_component
             module={MetadataAppWeb.NotifBellComponent}
             id="notif-bell"
@@ -315,15 +301,17 @@ defmodule MetadataAppWeb.MenuLayout do
           {render_slot(@inner_block)}
         </main>
 
-      <!-- Footer: copyright de la plataforma + ruta completa de la página
-           activa con botón de copiar (copia la URL completa, ver
-           assets/js/app.js CopiarRuta) — antes vivía arriba, se movió acá
-           para dejar la topbar solo con branding/acciones. La esquina
-           derecha queda reservada para una función a futuro. -->
+      <!-- Footer: copyright de la plataforma + botón de copiar la ruta
+           actual (ver assets/js/app.js CopiarRuta) — antes vivía arriba,
+           se movió acá para dejar la topbar solo con branding/acciones.
+           La ruta en sí (texto) se sacó (2026-08-04, a pedido explícito):
+           el navegador ya la muestra en la URL, mostrarla de nuevo acá era
+           redundante — el botón de copiar sigue funcionando igual, solo
+           que ahora sin el texto al lado. El buscador TRN también se movió
+           acá (antes en la topbar) — misma razón que el resto de esta
+           banda: dejar la topbar solo con branding/acciones. -->
       <div class="pc-footer">
         <span class="pc-footer-copyright">Prettycore {@anio_actual}</span>
-        <span class="pc-footer-separador">·</span>
-        <.link navigate="/" class="pc-footer-ruta">{if @nodo_actual, do: @nodo_actual.nav, else: "/"}</.link>
         <%= if @nodo_actual do %>
           <button
             type="button"
@@ -342,6 +330,23 @@ defmodule MetadataAppWeb.MenuLayout do
             </svg>
           </button>
         <% end %>
+
+        <!-- Buscador TRN (PrettyCore TRN, Fase 3): form GET plano, no
+             LiveView — navega directo a BuscadorTrnLive con ?query=...
+             así funciona igual desde CUALQUIER pantalla que use este
+             layout compartido, sin que cada LiveView tenga que
+             implementar un handle_event en común. Siempre visible (a
+             diferencia del resto del BPB): 2026-08-04, a pedido explícito
+             — la ruta ya no depende de bpb_habilitado, ver router.ex. -->
+        <form action="/sysadmin/buscar-trn" method="get" class="pc-footer-buscar-trn">
+          <label for="footer-buscar-trn" class="pc-footer-buscar-trn-label">TRN:</label>
+          <input type="text" name="query" id="footer-buscar-trn" autocomplete="off" class="pc-footer-buscar-trn-input" />
+          <button type="submit" class="pc-footer-buscar-trn-btn" title="Buscar">
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.803 5.803a7.5 7.5 0 0010 10z" />
+            </svg>
+          </button>
+        </form>
       </div>
       </div>
       </div>
@@ -509,6 +514,18 @@ defmodule MetadataAppWeb.MenuLayout do
   # quedaban siempre nil), se derivan acá directo del Scope. Alias si lo
   # eligió, si no la parte del email antes de la @ (nunca "Usuario" a secas
   # mientras haya sesión real).
+  # El nombre de la topbar reflejaba un valor fijo de config
+  # (:nombre_empresa), NUNCA la empresa activa real de la sesión — con
+  # varias empresas de prueba en la misma base, mostraba siempre lo mismo
+  # sin importar en cuál estuviera parado el usuario (confusión real:
+  # "estoy en DemoCore" cuando en realidad la sesión tenía otra empresa
+  # activa). Ahora usa `current_scope.empresa_activa.nombre`; el config
+  # fijo queda solo como fallback para cuando todavía no hay scope
+  # resuelto (ej. login/register, donde este layout no se usa igual, pero
+  # por las dudas).
+  defp nombre_empresa_activa(%MetadataApp.Autenticacion.Scope{empresa_activa: %{nombre: nombre}}), do: nombre
+  defp nombre_empresa_activa(_), do: Application.get_env(:metadata_app, :nombre_empresa, "Prettycore")
+
   defp asignar_datos_usuario(assigns) do
     case assigns[:current_scope] do
       %MetadataApp.Autenticacion.Scope{usuario: %MetadataApp.Autenticacion.Usuario{} = usuario} ->

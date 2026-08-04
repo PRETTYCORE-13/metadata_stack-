@@ -10,10 +10,10 @@ defmodule MetadataAppWeb.CampoInputComponents do
   registro previo que mostrar). `mostrar_etiqueta` (default true) se apaga
   desde `FichaLive.campo_row/1`, que ya tiene su propia columna de
   etiqueta al lado — evita mostrarla duplicada. `name` (opcional) reemplaza
-  el `"campos[campo]"` de siempre — lo usa la grilla de renglones de
+  el `"campos[campo]"` de siempre — lo usa la tabla de renglones de
   `FichaLive` para nombrar cada celda como `"renglones[IDX][campo]"`, así
-  el `phx-change` de la grilla llega con el índice de fila incluido.
-  `required` (default true) lo apaga la misma grilla: por diseño siempre
+  el `phx-change` de la tabla llega con el índice de fila incluido.
+  `required` (default true) lo apaga la misma tabla: por diseño siempre
   deja una fila en blanco al final para seguir tipeando, y el HTML5
   `required` bloquearía cualquier submit nativo (incluido el Enter
   accidental) mientras esa fila exista a medio llenar.

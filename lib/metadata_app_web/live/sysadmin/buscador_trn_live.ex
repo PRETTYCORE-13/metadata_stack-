@@ -32,7 +32,7 @@ defmodule MetadataAppWeb.Sysadmin.BuscadorTrnLive do
     {:ok,
      socket
      |> assign(:current_page, "buscar_trn")
-     |> assign(:menu_items, @menu)
+     |> assign(:menu_items, AdminNav.filtrar_menu(@menu))
      |> assign(:sidebar_open, false)
      |> assign(:query, "")
      |> assign(:resultado, nil)

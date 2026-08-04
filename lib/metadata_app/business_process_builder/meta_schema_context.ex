@@ -365,6 +365,21 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     )
   end
 
+  @doc """
+  Igual que `obtener_header_por_nombre/1` pero para varios nombres a la
+  vez (`WHERE schema_context_name IN (...)`) — una sola query en vez de
+  una por nombre. Pensado para pantallas que resuelven una lista de
+  catálogos a partir de nombres ya conocidos (ver `UsuariosEmpresaLive`,
+  columna "BC" del detalle de usuario: un header por cada recurso con
+  permiso de lectura). Nombres sin header (o borrado) simplemente no
+  aparecen en el resultado, mismo criterio que la versión singular
+  devolviendo `nil`.
+  """
+  def obtener_headers_por_nombres(schema_context_names) do
+    from(h in Header, where: h.schema_context_name in ^schema_context_names and is_nil(h.delete_guid))
+    |> Repo.all()
+  end
+
   # Antes de dejar borrar una carpeta hay que confirmar que no tenga nada
   # colgando debajo (otra carpeta o un catálogo) — eliminar_header/1 hace un
   # DELETE físico, así que si se permitiera igual, esos hijos quedarían
@@ -432,16 +447,16 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     if codigo in Enum.map(@categorias_campo, &elem(&1, 0)), do: codigo, else: "info_general"
   end
 
-  # Columnas curadas de la grilla del tab Detalle (Ficha 360°) — con
+  # Columnas curadas de la tabla del tab Detalle (Ficha 360°) — con
   # catálogos de 30+ campos, mostrar TODOS como columna en una tabla ancha
   # es inusable; esto deja elegir por campo (BcMotorLive → Campos → "En
-  # grilla") cuáles se ven ahí. Opt-OUT (default true) a propósito, no
-  # opt-in: así ningún catálogo ya existente pierde columnas de la grilla
+  # tabla") cuáles se ven ahí. Opt-OUT (default true) a propósito, no
+  # opt-in: así ningún catálogo ya existente pierde columnas de la tabla
   # de un día para el otro sin que nadie lo haya configurado — el
   # formulario de al lado siempre sigue mostrando TODOS los campos
   # visibles, sin importar esto (ver FichaLive.formulario_renglon/1).
-  def mostrar_en_grilla?(%{schema_context_properties: props}), do: mostrar_en_grilla?(props)
-  def mostrar_en_grilla?(%{} = props), do: Map.get(props, "mostrar_en_grilla", true) != false
+  def mostrar_en_tabla?(%{schema_context_properties: props}), do: mostrar_en_tabla?(props)
+  def mostrar_en_tabla?(%{} = props), do: Map.get(props, "mostrar_en_tabla", true) != false
 
   def listar_detalles(schema_context_name) do
     from(d in Detail,
@@ -452,6 +467,49 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
       order_by: [asc: fragment("(?->>'orden')::integer", d.schema_context_properties), asc: d.id]
     )
     |> Repo.all()
+  end
+
+  @doc """
+  Igual que `listar_detalles/1` pero para TODOS los catálogos a la vez,
+  agrupados por `schema_context_name` — una sola query en vez de una por
+  catálogo. Pensado para pantallas que necesitan los detalles de todos los
+  catálogos del sistema (ver `PlantillaConstructorLive`, panel de "Campo
+  calculado": cualquier catálogo puede usarse en una fórmula, no solo los
+  relacionados). Un catálogo sin detalles simplemente no aparece como
+  llave — usar `Map.get(mapa, nombre, [])` del lado del caller.
+  """
+  def listar_detalles_de_todos_los_catalogos do
+    from(d in Detail,
+      join: h in assoc(d, :header),
+      where: is_nil(d.delete_guid),
+      where: is_nil(h.delete_guid),
+      order_by: [asc: fragment("(?->>'orden')::integer", d.schema_context_properties), asc: d.id],
+      select: {h.schema_context_name, d}
+    )
+    |> Repo.all()
+    |> Enum.group_by(fn {nombre, _detalle} -> nombre end, fn {_nombre, detalle} -> detalle end)
+  end
+
+  @doc """
+  Igual que `listar_detalles_de_todos_los_catalogos/0` pero acotado a una
+  lista de nombres puntual — una sola query para varios catálogos ya
+  conocidos, en vez de traer el universo entero cuando no hace falta (ver
+  `expandir_referencias/2` y `ordenar_por_dependencias/1`, que resuelven
+  la clausura de referencias de un paquete a publicar por niveles, no
+  cargando TODOS los catálogos del sistema — mismo criterio de escala que
+  el resto del BPB, pensado para +1000 catálogos posibles).
+  """
+  def listar_detalles_de_varios(schema_context_names) do
+    from(d in Detail,
+      join: h in assoc(d, :header),
+      where: h.schema_context_name in ^schema_context_names,
+      where: is_nil(d.delete_guid),
+      where: is_nil(h.delete_guid),
+      order_by: [asc: fragment("(?->>'orden')::integer", d.schema_context_properties), asc: d.id],
+      select: {h.schema_context_name, d}
+    )
+    |> Repo.all()
+    |> Enum.group_by(fn {nombre, _detalle} -> nombre end, fn {_nombre, detalle} -> detalle end)
   end
 
   # schema_context_name de todo catálogo que tenga un detalle tipo
@@ -502,9 +560,11 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   end
 
   defp expandir_referencias(pendientes, vistos) do
+    detalles_por_catalogo = listar_detalles_de_varios(pendientes)
+
     nuevos =
       pendientes
-      |> Enum.flat_map(&referencias_de/1)
+      |> Enum.flat_map(&referencias_de(&1, detalles_por_catalogo))
       |> Enum.uniq()
       |> Enum.reject(&MapSet.member?(vistos, &1))
 
@@ -514,9 +574,9 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     end
   end
 
-  defp referencias_de(catalogo) do
-    catalogo
-    |> listar_detalles()
+  defp referencias_de(catalogo, detalles_por_catalogo) do
+    detalles_por_catalogo
+    |> Map.get(catalogo, [])
     |> Enum.filter(&(&1.schema_context_properties["tipo"] == "referencia"))
     |> Enum.map(& &1.schema_context_properties["catalogo"])
   end
@@ -531,12 +591,13 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   """
   def ordenar_por_dependencias(nombres) do
     nombres_set = MapSet.new(nombres)
+    detalles_por_catalogo = listar_detalles_de_varios(nombres)
 
     dependencias =
       Map.new(nombres, fn nombre ->
         deps =
-          nombre
-          |> listar_detalles()
+          detalles_por_catalogo
+          |> Map.get(nombre, [])
           |> Enum.filter(&(Map.get(&1.schema_context_properties || %{}, "tipo") == "referencia"))
           |> Enum.map(&Map.fetch!(&1.schema_context_properties, "catalogo"))
           |> Enum.filter(&MapSet.member?(nombres_set, &1))
@@ -823,24 +884,37 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   Descarta cualquier `nil` en `claves` a propósito, para que esta función
   sea segura de usar sola sin depender de que el caller filtre primero.
   """
+  # Un solo drag-and-drop reordena hasta @por_pagina hermanos a la vez —
+  # antes esto era un insert/update_all POR hermano (hasta 30 queries por
+  # movimiento). Acá: un único insert_all (upsert por :ruta, on_conflict
+  # reemplaza solo :orden) para las carpetas implícitas, y un único UPDATE
+  # parametrizado con unnest (per-row, sin CASE dinámico armado a mano —
+  # nada de interpolar valores del cliente en el SQL) para los catálogos
+  # reales.
   def reordenar_hermanos(claves) do
-    claves
-    |> Enum.reject(&is_nil/1)
-    |> Enum.with_index()
-    |> Enum.each(fn {clave, indice} -> persistir_orden(clave, indice) end)
+    {rutas, nombres} =
+      claves
+      |> Enum.reject(&is_nil/1)
+      |> Enum.with_index()
+      |> Enum.split_with(fn {clave, _indice} -> match?("ruta:" <> _resto, clave) end)
+
+    if rutas != [] do
+      entradas = Enum.map(rutas, fn {"ruta:" <> ruta, indice} -> %{ruta: ruta, orden: indice} end)
+      Repo.insert_all(CarpetaOrden, entradas, on_conflict: {:replace, [:orden]}, conflict_target: :ruta)
+    end
+
+    if nombres != [] do
+      Repo.query!(
+        """
+        UPDATE meta_schema_header AS h SET orden = data.orden
+        FROM (SELECT unnest($1::text[]) AS schema_context_name, unnest($2::int[]) AS orden) AS data
+        WHERE h.schema_context_name = data.schema_context_name
+        """,
+        [Enum.map(nombres, &elem(&1, 0)), Enum.map(nombres, &elem(&1, 1))]
+      )
+    end
 
     :ok
-  end
-
-  defp persistir_orden("ruta:" <> ruta, indice) do
-    %CarpetaOrden{}
-    |> CarpetaOrden.changeset(%{ruta: ruta, orden: indice})
-    |> Repo.insert(on_conflict: [set: [orden: indice]], conflict_target: :ruta)
-  end
-
-  defp persistir_orden(nombre, indice) do
-    from(h in Header, where: h.schema_context_name == ^nombre)
-    |> Repo.update_all(set: [orden: indice])
   end
 
   # Borrado total (no soft-delete): al ser el Header dueño de la definición

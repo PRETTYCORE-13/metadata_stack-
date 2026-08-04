@@ -201,6 +201,31 @@ defmodule MetadataApp.Permissions do
     )
   end
 
+  @doc """
+  Búsqueda acotada de roles por nombre (empresa + sistema), mismo criterio
+  de escala que buscar_catalogos/2 — pensado para empresas con cientos de
+  roles, donde listar_roles/1 completo ya no es una lista razonable de
+  mostrar entera en una UI (ej. selector de roles a agregar a un usuario).
+  Sin texto, no devuelve nada (evita mostrar los primeros N sin que el
+  admin haya pedido nada puntual).
+  """
+  def buscar_roles(empresa_id, query, limite \\ 20)
+
+  def buscar_roles(_empresa_id, "", _limite), do: []
+
+  def buscar_roles(empresa_id, query, limite) do
+    texto = "%#{query}%"
+
+    Repo.all(
+      from r in Rol,
+        where:
+          is_nil(r.delete_guid) and (r.empresa_id == ^empresa_id or is_nil(r.empresa_id)) and
+            ilike(r.nombre, ^texto),
+        order_by: r.nombre,
+        limit: ^limite
+    )
+  end
+
   def obtener_rol(id) do
     case Repo.get(Rol, id) do
       nil -> {:error, :no_encontrado}
@@ -209,7 +234,7 @@ defmodule MetadataApp.Permissions do
     end
   end
 
-  @doc "Bloqueado si el rol es de sistema — administrador/consulta no se editan desde la API."
+  @doc "Bloqueado si el rol es de sistema — hoy solo \"administrador\" (\"consulta\" se dio de baja, ver migración 20260803210418)."
   def actualizar_rol(%Rol{es_sistema: true}, _attrs), do: {:error, :rol_de_sistema}
 
   def actualizar_rol(rol, attrs) do
@@ -230,6 +255,11 @@ defmodule MetadataApp.Permissions do
 
   def listar_permisos do
     Repo.all(from p in Permiso, where: is_nil(p.delete_guid))
+  end
+
+  @doc "true si ya existe una fila de permiso para {recurso, accion} — usado para saber si una transición ya es discoverable/ejecutable por alguien (ver el aviso inline en BcMotorLive)."
+  def permiso_existe?(recurso, accion) do
+    Repo.exists?(from p in Permiso, where: p.recurso == ^recurso and p.accion == ^accion and is_nil(p.delete_guid))
   end
 
   @doc """
@@ -389,6 +419,15 @@ defmodule MetadataApp.Permissions do
     |> Enum.group_by(& &1.recurso, &Map.take(&1, [:accion, :etiqueta]))
   end
 
+  @doc "true si el catálogo tiene al menos un permiso concedido a algún rol — usado por el paso \"Permisos\" del stepper de BcMotorLive (se omite el paso mientras no se concedió nada todavía)."
+  def tiene_permisos_concedidos?(recurso) do
+    Repo.exists?(
+      from rp in RolPermiso,
+        join: p in Permiso, on: p.id == rp.permiso_id and is_nil(p.delete_guid),
+        where: p.recurso == ^recurso and is_nil(rp.delete_guid)
+    )
+  end
+
   @doc """
   Concede un permiso de catálogo a un rol — da de alta el permiso si
   todavía no existe (CRUD manual, ver Paso 6) y lo vincula en el mismo
@@ -413,6 +452,46 @@ defmodule MetadataApp.Permissions do
     |> tap(fn _ -> invalidar_cache_de_rol(rol_id) end)
   end
 
+  @doc """
+  Igual que `conceder_permiso_catalogo/3` pero para varios pares
+  `{recurso, accion}` a la vez — usado por "Todos" en Permission Sets
+  (conceder_todos, CatalogoPermisosLive), antes N llamadas independientes
+  (2 queries + invalidar cache CADA UNA). Acá: una query para resolver
+  los `Permiso` ya existentes, una para ver cuáles ya están concedidos,
+  un solo `insert_all` para los que faltan, cache invalidado una sola vez
+  al final. Crear un `Permiso` que todavía no existe (acción nueva,
+  primera vez que se usa en todo el sistema) queda fuera del batch —
+  caso raro, no vale la pena complicar el insert_all por eso.
+  """
+  def conceder_permisos_catalogo(_rol_id, []), do: :ok
+
+  def conceder_permisos_catalogo(rol_id, pares) when is_list(pares) do
+    pares = Enum.uniq(pares)
+    permisos_por_clave = Map.new(pares, fn {recurso, accion} -> {{recurso, accion}, obtener_o_crear_permiso(recurso, accion)} end)
+    permiso_ids = Enum.map(pares, &Map.fetch!(permisos_por_clave, &1).id)
+
+    ya_concedidos =
+      from(rp in RolPermiso, where: rp.rol_id == ^rol_id and rp.permiso_id in ^permiso_ids and is_nil(rp.delete_guid), select: rp.permiso_id)
+      |> Repo.all()
+      |> MapSet.new()
+
+    faltantes = Enum.reject(permiso_ids, &MapSet.member?(ya_concedidos, &1))
+
+    if faltantes != [] do
+      Repo.insert_all(RolPermiso, Enum.map(faltantes, &%{rol_id: rol_id, permiso_id: &1, insert_guid: generar_guid()}))
+    end
+
+    invalidar_cache_de_rol(rol_id)
+    :ok
+  end
+
+  defp obtener_o_crear_permiso(recurso, accion) do
+    case Repo.get_by(Permiso, recurso: recurso, accion: accion) do
+      nil -> {:ok, permiso} = crear_permiso(%{recurso: recurso, accion: accion}); permiso
+      permiso -> permiso
+    end
+  end
+
   @doc "Revoca (borra el vínculo) un permiso puntual de un rol — el permiso en sí sigue existiendo para otros roles."
   def revocar_permiso_de_rol(rol_id, permiso_id) do
     resultado =
@@ -423,6 +502,32 @@ defmodule MetadataApp.Permissions do
 
     invalidar_cache_de_rol(rol_id)
     resultado
+  end
+
+  @doc """
+  Igual que `revocar_permiso_de_rol/2` pero para varios pares
+  `{recurso, accion}` a la vez — contraparte de
+  `conceder_permisos_catalogo/2` (revocar_todos, CatalogoPermisosLive):
+  un solo `delete_all` y un cache invalidado en vez de N.
+  """
+  def revocar_permisos_de_rol(_rol_id, []), do: :ok
+
+  def revocar_permisos_de_rol(rol_id, pares) when is_list(pares) do
+    recursos = pares |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
+    acciones = pares |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+
+    permiso_ids =
+      from(p in Permiso, where: p.recurso in ^recursos and p.accion in ^acciones and is_nil(p.delete_guid))
+      |> Repo.all()
+      |> Enum.filter(&({&1.recurso, &1.accion} in pares))
+      |> Enum.map(& &1.id)
+
+    if permiso_ids != [] do
+      Repo.delete_all(from rp in RolPermiso, where: rp.rol_id == ^rol_id and rp.permiso_id in ^permiso_ids)
+    end
+
+    invalidar_cache_de_rol(rol_id)
+    :ok
   end
 
   @doc "Usuarios que ya pertenecen a la empresa y matchean la búsqueda por email — tope 20."
@@ -465,35 +570,17 @@ defmodule MetadataApp.Permissions do
     )
   end
 
-  @doc """
-  De una lista de recursos, cuáles califican para tener permisos propios:
-  no son catálogo detalle (`schema_encabezado_id` nulo) y tienen al menos
-  una transición configurada — misma regla que `buscar_catalogos/2`, acá
-  en forma de `MapSet` para anotar filas ya cargadas (ej. `BcListLive`)
-  sin una query por fila.
-  """
-  def catalogos_con_permisos_habilitados(recursos) when is_list(recursos) do
-    Repo.all(
-      from h in Header,
-        as: :header,
-        where:
-          h.schema_context_name in ^recursos and is_nil(h.delete_guid) and is_nil(h.schema_encabezado_id) and
-            exists(
-              from t in "meta_schema_transiciones",
-                where: t.meta_schema_header_id == parent_as(:header).id and is_nil(t.delete_guid),
-                select: 1
-            ),
-        select: h.schema_context_name
-    )
-    |> MapSet.new()
-  end
-
   @doc "Un catálogo puntual por recurso, para encabezados (nil si no existe o está borrado)."
   def obtener_catalogo(recurso) do
     Repo.one(
       from h in Header,
         where: h.schema_context_name == ^recurso and is_nil(h.delete_guid),
-        select: %{recurso: h.schema_context_name, label: h.schema_context_label, es_consulta: h.schema_context_type == 3}
+        select: %{
+          recurso: h.schema_context_name,
+          label: h.schema_context_label,
+          es_consulta: h.schema_context_type == 3,
+          es_detalle: not is_nil(h.schema_encabezado_id)
+        }
     )
   end
 

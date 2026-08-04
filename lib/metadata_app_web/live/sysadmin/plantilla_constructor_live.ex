@@ -95,14 +95,19 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         # Para el panel de "Campo calculado" — CUALQUIER catálogo sirve para
         # SUM/COUNT/AVG/MIN/MAX o "{catalogo#id.campo}" (Formula.evaluar/2
         # no exige relación), así que acá se listan todos, no solo los
-        # relacionados a este.
+        # relacionados a este. Detalles de TODOS los catálogos en una sola
+        # query (listar_detalles_de_todos_los_catalogos/0) en vez de una
+        # query por catálogo — este mount corre seguido (ruta directa +
+        # embebido en el tab "PostView" de BcMotorLive).
+        detalles_por_catalogo = MetaSchemaContext.listar_detalles_de_todos_los_catalogos()
+
         catalogos_disponibles =
           MetaSchemaContext.listar_headers()
           |> Enum.reject(&(&1.schema_context_name == nombre))
           |> Enum.map(fn h ->
             campos_h =
-              h.schema_context_name
-              |> MetaSchemaContext.listar_detalles()
+              detalles_por_catalogo
+              |> Map.get(h.schema_context_name, [])
               |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
               |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
 

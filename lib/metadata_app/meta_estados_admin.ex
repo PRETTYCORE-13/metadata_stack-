@@ -16,7 +16,7 @@ defmodule MetadataApp.MetaEstadosAdmin do
   alias MetadataApp.Repo
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.{Header, Detail}
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
-  alias MetadataApp.MetaSchema.{Estado, Transicion, TransicionEvento}
+  alias MetadataApp.MetaSchema.{Estado, EstadoDetallePermiso, Transicion, TransicionEvento}
   alias MetadataApp.MetaReglasCodigo
 
   # --- Estados ---------------------------------------------------------------
@@ -207,6 +207,57 @@ defmodule MetadataApp.MetaEstadosAdmin do
     transicion
     |> Ecto.Changeset.change(%{delete_guid: generar_guid()})
     |> Repo.update()
+  end
+
+  # --- Permisos de detalle por estado (insertar/actualizar/borrar renglones) --
+  # Capa nueva e independiente del permiso RBAC de transición (que sigue
+  # validando solo los campos que puede modificar el ENCABEZADO) — esto
+  # restringe qué puede pasarle a los RENGLONES de una tabla detalle según el
+  # estado actual, deny-by-default (ver permiso_detalle/2). Un catálogo tiene
+  # tantas combinaciones (estado, tabla detalle) como estados × detalles
+  # tenga, cada una configurable por separado.
+
+  def listar_permisos_detalle(meta_schema_header_id) do
+    from(p in EstadoDetallePermiso,
+      join: e in Estado,
+      on: e.id == p.meta_schema_estado_id,
+      where: e.meta_schema_header_id == ^meta_schema_header_id and is_nil(e.delete_guid)
+    )
+    |> Repo.all()
+    |> Map.new(&{{&1.meta_schema_estado_id, &1.meta_schema_header_detalle_id}, &1})
+  end
+
+  # Deny-by-default real (no solo en la UI): sin fila, todo en false. Usado
+  # por el motor en tiempo de ejecución (MetadataApp.Renglones.resolver/4
+  # para insertar, MetaStateEngine.buscar_renglones/5 para
+  # actualizar/borrar).
+  def permiso_detalle(estado_id, header_detalle_id) do
+    case Repo.get_by(EstadoDetallePermiso,
+           meta_schema_estado_id: estado_id,
+           meta_schema_header_detalle_id: header_detalle_id
+         ) do
+      nil -> %{permite_insertar: false, permite_actualizar: false, permite_borrar: false}
+      permiso -> Map.take(permiso, [:permite_insertar, :permite_actualizar, :permite_borrar])
+    end
+  end
+
+  # Un click, un cambio inmediato (mismo criterio que
+  # CatalogoPermisosLive.toggle_permiso) — upsert-y-flip de un solo flag.
+  def toggle_permiso_detalle(estado_id, header_detalle_id, campo)
+      when campo in [:permite_insertar, :permite_actualizar, :permite_borrar] do
+    permiso =
+      Repo.get_by(EstadoDetallePermiso,
+        meta_schema_estado_id: estado_id,
+        meta_schema_header_detalle_id: header_detalle_id
+      ) || %EstadoDetallePermiso{meta_schema_estado_id: estado_id, meta_schema_header_detalle_id: header_detalle_id}
+
+    nuevo_valor = !Map.get(permiso, campo)
+    guid_attrs = if is_nil(permiso.id), do: %{insert_guid: generar_guid()}, else: %{update_guid: generar_guid()}
+
+    permiso
+    |> EstadoDetallePermiso.changeset(Map.put(%{}, campo, nuevo_valor))
+    |> Ecto.Changeset.change(guid_attrs)
+    |> Repo.insert_or_update()
   end
 
   # --- Creación atómica completa (wizard "Nuevo Business Process") -------------
@@ -484,26 +535,28 @@ defmodule MetadataApp.MetaEstadosAdmin do
   # test, ya compilado (en producción no hay compilador, sin_compilar?/1
   # da false ahí siempre).
   def puede_desplegar?(catalogo) do
-    case MetaSchemaContext.obtener_header_por_nombre(catalogo) do
-      nil ->
-        false
+    MetaReglasCodigo.with_cache(fn ->
+      case MetaSchemaContext.obtener_header_por_nombre(catalogo) do
+        nil ->
+          false
 
-      header ->
-        # Transparente a ediciones directas del .ex en un editor de texto
-        # (en vez de la pestaña Reglas del Builder) — sin esto, ese tipo de
-        # edición deja el candado de sin_compilar?/1 trabado hasta que
-        # alguien se acuerde de resincronizar a mano.
-        :ok = MetaReglasCodigo.resincronizar_si_hace_falta(header)
+        header ->
+          # Transparente a ediciones directas del .ex en un editor de texto
+          # (en vez de la pestaña Reglas del Builder) — sin esto, ese tipo de
+          # edición deja el candado de sin_compilar?/1 trabado hasta que
+          # alguien se acuerde de resincronizar a mano.
+          :ok = MetaReglasCodigo.resincronizar_si_hace_falta(header)
 
-        with {:ok, completitud} <- completitud(catalogo),
-             {:ok, validacion} <- validar_motor(catalogo) do
-          completitud.completo? and validacion.valido? and
-            not MetaReglasCodigo.con_error_sintaxis?(header) and
-            not MetaReglasCodigo.sin_compilar?(header)
-        else
-          _ -> false
-        end
-    end
+          with {:ok, completitud} <- completitud(catalogo),
+               {:ok, validacion} <- validar_motor(catalogo) do
+            completitud.completo? and validacion.valido? and
+              not MetaReglasCodigo.con_error_sintaxis?(header) and
+              not MetaReglasCodigo.sin_compilar?(header)
+          else
+            _ -> false
+          end
+      end
+    end)
   end
 
   # --- Validación estructural del autómata ("¿esto va a funcionar?") -----------

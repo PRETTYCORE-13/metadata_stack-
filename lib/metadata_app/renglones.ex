@@ -22,6 +22,11 @@ defmodule MetadataApp.Renglones do
   carrera de renglon_id) — así ya puede participar de la próxima transición
   que el maestro ejecute, sin quedar en `estado_id: nil`.
 
+  Antes de asignar nada, valida el permiso de detalle por estado
+  (`MetaEstadosAdmin.permiso_detalle/2`, deny-by-default) — si el estado
+  actual del maestro no tiene `permite_insertar` para este catálogo, se
+  rechaza acá con un error de changeset, igual que "encabezado no existe".
+
   `crear_todos/3` (R6, alta atómica): crea los renglones iniciales de un
   maestro recién dado de alta, en el MISMO `Ecto.Multi` que su propio
   registro (llamado desde `MetaStateEngine.ejecutar_nucleo_alta/4` y
@@ -49,13 +54,13 @@ defmodule MetadataApp.Renglones do
 
     if header && header.schema_encabezado_id do
       maestro = MetaSchemaContext.obtener_header!(header.schema_encabezado_id)
-      resolver(changeset, catalogo, maestro, attrs)
+      resolver(changeset, catalogo, header, maestro, attrs)
     else
       changeset
     end
   end
 
-  defp resolver(changeset, catalogo, maestro, attrs) do
+  defp resolver(changeset, catalogo, header, maestro, attrs) do
     case Map.get(attrs, "encabezado_id") || Map.get(attrs, :encabezado_id) do
       nil ->
         Ecto.Changeset.add_error(changeset, :encabezado_id, "es obligatorio para un catálogo detalle")
@@ -63,17 +68,31 @@ defmodule MetadataApp.Renglones do
       encabezado_id ->
         case lockear_maestro(maestro.schema_context_name, encabezado_id) do
           {:ok, estado_maestro} ->
-            renglon_id = siguiente_renglon(catalogo, encabezado_id)
-
-            Ecto.Changeset.change(changeset, %{
-              encabezado_id: encabezado_id,
-              renglon_id: renglon_id,
-              estado_id: estado_maestro
-            })
+            asignar_o_rechazar(changeset, catalogo, header, encabezado_id, estado_maestro)
 
           :error ->
             Ecto.Changeset.add_error(changeset, :encabezado_id, "el encabezado #{encabezado_id} no existe")
         end
+    end
+  end
+
+  # Permisos de detalle por estado (insertar/actualizar/borrar renglones,
+  # ver MetaEstadosAdmin.permiso_detalle/2): deny-by-default, gatea acá
+  # porque este es el ÚNICO lugar donde se resuelve un renglón NUEVO, sin
+  # importar si viene de CatalogoGenerico.crear_muchos/3 (tabla de la
+  # Ficha) o del alta atómica de encabezado+renglones iniciales
+  # (crear_todos/3, más abajo).
+  defp asignar_o_rechazar(changeset, catalogo, header, encabezado_id, estado_maestro) do
+    if MetadataApp.MetaEstadosAdmin.permiso_detalle(estado_maestro, header.id).permite_insertar do
+      renglon_id = siguiente_renglon(catalogo, encabezado_id)
+
+      Ecto.Changeset.change(changeset, %{
+        encabezado_id: encabezado_id,
+        renglon_id: renglon_id,
+        estado_id: estado_maestro
+      })
+    else
+      Ecto.Changeset.add_error(changeset, :encabezado_id, "el estado actual no permite insertar renglones en '#{catalogo}'")
     end
   end
 
@@ -148,5 +167,89 @@ defmodule MetadataApp.Renglones do
       {:ok, lista} -> {:ok, Enum.reverse(lista)}
       error -> error
     end
+  end
+
+  @doc """
+  Soft-delete DIRECTO de renglones YA PERSISTIDOS — distinto de "mover"
+  (R12, `MetaStateEngine.ejecutar_transicion/4`): el maestro NO cambia de
+  estado, ni corre ninguna transición del autómata. Un renglón no tiene
+  estado propio (R3 — el `estado_id` que tiene físicamente es un espejo
+  del maestro, nunca evoluciona solo), así que "eliminarlo" no es una
+  transición, es sacarlo de la vista — mismo `delete_guid` de siempre.
+
+  Gateado por `MetaEstadosAdmin.permiso_detalle/2.permite_borrar` del
+  estado ACTUAL de cada renglón — deny-by-default, mismo criterio que
+  `asignar_o_rechazar/5` ya usa para `permite_insertar`.
+
+  `renglones_spec`: `%{"catalogo_detalle" => [renglon_id, ...]}` —
+  mismo shape/estructura de validación que `crear_todos/3` (catálogo
+  existe, es detalle de ESTE maestro) y que
+  `MetaStateEngine.resolver_renglones/3` (resolución por
+  `encabezado_id`+`renglon_id`, todo o nada).
+  """
+  def eliminar_todos(_catalogo_maestro, _registro_id, renglones_spec) when map_size(renglones_spec) == 0,
+    do: {:ok, []}
+
+  def eliminar_todos(catalogo_maestro, registro_id, renglones_spec) do
+    header_maestro = MetaSchemaContext.obtener_header_por_nombre(catalogo_maestro)
+
+    Enum.reduce_while(renglones_spec, {:ok, []}, fn {catalogo, renglon_ids}, {:ok, acc} ->
+      case eliminar_renglones_de_catalogo(header_maestro, registro_id, catalogo, renglon_ids) do
+        {:ok, eliminados} -> {:cont, {:ok, acc ++ eliminados}}
+        {:error, _motivo} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp eliminar_renglones_de_catalogo(header_maestro, encabezado_id, catalogo, renglon_ids) do
+    modulo = MetaSchemaContext.modulo_por_nombre(catalogo)
+    header_detalle = MetaSchemaContext.obtener_header_por_nombre(catalogo)
+
+    cond do
+      is_nil(modulo) or is_nil(header_detalle) ->
+        {:error, "catálogo detalle '#{catalogo}' no existe"}
+
+      header_detalle.schema_encabezado_id != header_maestro.id ->
+        {:error, "'#{catalogo}' no es un catálogo detalle de este maestro"}
+
+      true ->
+        eliminar_cada_renglon(modulo, header_detalle, encabezado_id, renglon_ids)
+    end
+  end
+
+  defp eliminar_cada_renglon(modulo, header_detalle, encabezado_id, renglon_ids) do
+    Enum.reduce_while(renglon_ids, {:ok, []}, fn renglon_id, {:ok, acc} ->
+      case Repo.get_by(modulo, encabezado_id: encabezado_id, renglon_id: renglon_id) do
+        nil ->
+          {:halt,
+           {:error, "renglón #{renglon_id} de '#{header_detalle.schema_context_name}' no existe para este encabezado"}}
+
+        registro ->
+          case borrar_si_permitido(registro, header_detalle) do
+            {:ok, eliminado} -> {:cont, {:ok, [eliminado | acc]}}
+            {:error, _motivo} = error -> {:halt, error}
+          end
+      end
+    end)
+    |> case do
+      {:ok, lista} -> {:ok, Enum.reverse(lista)}
+      error -> error
+    end
+  end
+
+  defp borrar_si_permitido(registro, header_detalle) do
+    permiso = MetadataApp.MetaEstadosAdmin.permiso_detalle(registro.estado_id, header_detalle.id)
+
+    if permiso.permite_borrar do
+      registro
+      |> Ecto.Changeset.change(%{delete_guid: generar_guid()})
+      |> Repo.update()
+    else
+      {:error, "el estado actual de '#{header_detalle.schema_context_name}' no permite eliminar este renglón"}
+    end
+  end
+
+  defp generar_guid do
+    Ecto.UUID.generate() |> String.replace("-", "")
   end
 end

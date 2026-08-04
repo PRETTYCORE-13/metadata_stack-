@@ -35,50 +35,86 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"}
   ]
 
+  # Esta LiveView NUNCA define handle_params/3 — a propósito. También se
+  # usa embebida en el tab "Permisos" de BcMotorLive (live_render/3, mismo
+  # criterio que PlantillaConstructorLive en "PostView"), y un módulo
+  # montado como hijo tiene `socket.root_pid != self()` siempre, lo que
+  # hace que Phoenix.LiveView.Channel.maybe_call_mount_handle_params/4
+  # fuerce `router: nil` y reviente con "cannot invoke handle_params/3...
+  # because it is not mounted nor accessed through the router live/3
+  # macro" apenas conecta el WebSocket — pasa para CUALQUIER LiveView con
+  # handle_params/3 usado como hijo, no es un bug de esta pantalla. Por
+  # eso toda la resolución de "recurso" vive acá, en mount/3 (routeado
+  # con recurso en la URL, routeado sin recurso, o embebido con recurso
+  # por session — un hijo SIEMPRE recibe `params` fijo en el átomo
+  # `:not_mounted_at_router`, así que ahí el dato viaja por `session`) — y
+  # el picker de abajo usa push_navigate/2 (remonta entero) en vez de
+  # push_patch/2 (que dependía de handle_params para reaccionar).
+  def mount(%{"recurso" => recurso}, _session, socket) do
+    socket = socket |> montar_base() |> assign(:embebido?, false) |> montar_catalogo(recurso)
+
+    socket =
+      if socket.assigns.catalogo do
+        socket
+      else
+        socket
+        |> put_flash(:error, "Ese catálogo no existe.")
+        |> push_navigate(to: ~p"/sysadmin/catalogos/permisos")
+      end
+
+    {:ok, socket}
+  end
+
+  # Embebido en el tab "Permisos" de BcMotorLive — el catálogo queda FIJO
+  # (nunca cambia dentro de esta instancia), sin picker de la izquierda
+  # ni link "volver" (ver render/1, `@embebido?`), porque ya se está
+  # adentro de ese BC en BcMotorLive.
+  def mount(_params, %{"recurso" => recurso}, socket) do
+    {:ok, socket |> montar_base() |> assign(:embebido?, true) |> montar_catalogo(recurso)}
+  end
+
+  # Entrada directa "Permission Sets" del submenú (sin BC List de por
+  # medio, que no existe en producción) — sin recurso todavía, solo el
+  # buscador de la izquierda hasta que se elija uno.
   def mount(_params, _session, socket) do
     {:ok,
      socket
+     |> montar_base()
+     |> assign(:embebido?, false)
      |> assign(:current_page, "roles")
      |> assign(:menu_items, AdminNav.filtrar_menu(@menu))
      |> assign(:sidebar_open, false)
      |> assign(:show_programacion_children, false)
      |> assign(:show_clientes_children, false)
      |> assign(:show_prettycore_children, false)
-     |> assign(:acciones_crud, @acciones_crud)
-     |> assign(:busqueda_catalogo_picker, "")
-     |> assign(:resultados_catalogo_picker, [])
-     |> assign(:modo, :todos)
-     |> assign(:busqueda_usuario, "")
-     |> assign(:resultados_usuario, [])
-     |> assign(:usuario_seleccionado, nil)
      |> assign(:catalogo, nil)
-     |> assign(:transiciones, [])
-     |> assign(:roles, [])
-     |> assign(:estado, %{})}
+     |> assign(:transiciones, [])}
   end
 
-  def handle_params(%{"recurso" => recurso}, _uri, socket) do
+  defp montar_base(socket) do
+    socket
+    |> assign(:acciones_crud, @acciones_crud)
+    |> assign(:busqueda_catalogo_picker, "")
+    |> assign(:resultados_catalogo_picker, [])
+    |> assign(:modo, :todos)
+    |> assign(:busqueda_usuario, "")
+    |> assign(:resultados_usuario, [])
+    |> assign(:usuario_seleccionado, nil)
+    |> assign(:roles, [])
+    |> assign(:estado, %{})
+  end
+
+  defp montar_catalogo(socket, recurso) do
     case Permissions.obtener_catalogo(recurso) do
       nil ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "Ese catálogo no existe.")
-         |> push_patch(to: ~p"/sysadmin/catalogos/permisos")}
+        socket |> assign(:catalogo, nil) |> assign(:transiciones, [])
 
       catalogo ->
-        {:noreply,
-         socket
-         |> assign(:catalogo, catalogo)
-         |> assign(:transiciones, Permissions.transiciones_de_catalogos([recurso]) |> Map.get(recurso, []))
-         |> cargar_matriz()}
+        socket
+        |> assign(:catalogo, catalogo)
+        |> assign(:transiciones, Permissions.transiciones_de_catalogos([recurso]) |> Map.get(recurso, []))
+        |> cargar_matriz()
     end
-  end
-
-  # Entrada directa "Permission Sets" del submenú (sin BC List de por
-  # medio, que no existe en producción) — sin recurso todavía, solo el
-  # buscador de la izquierda hasta que se elija uno.
-  def handle_params(_params, _uri, socket) do
-    {:noreply, socket}
   end
 
   def handle_event("change_page", %{"id" => id}, socket) do
@@ -91,7 +127,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   end
 
   def handle_event("elegir_catalogo", %{"recurso" => recurso}, socket) do
-    {:noreply, push_patch(socket, to: ~p"/sysadmin/catalogos/#{recurso}/permisos")}
+    {:noreply, push_navigate(socket, to: ~p"/sysadmin/catalogos/#{recurso}/permisos")}
   end
 
   def handle_event("ver_todos_los_roles", _params, socket) do
@@ -130,6 +166,42 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     {:noreply, cargar_matriz(socket)}
   end
 
+  # Conceder/revocar TODAS las acciones (CRUD + transiciones) de este
+  # catálogo para un rol en un solo click — agilizar la selección cuando
+  # un rol necesita quedar con acceso total (o ninguno) a un catálogo,
+  # sin tildar botón por botón. Salta las que ya están en el estado
+  # deseado (no reintenta conceder lo ya concedido ni revocar lo ya
+  # revocado) — mismo criterio idempotente que toggle_permiso.
+  def handle_event("conceder_todos", %{"rol_id" => rol_id}, socket) do
+    rol_id = String.to_integer(rol_id)
+    recurso = socket.assigns.catalogo.recurso
+
+    pares =
+      todas_las_acciones(socket)
+      |> Enum.reject(&Map.get(socket.assigns.estado, {rol_id, &1}, %{concedido: false}).concedido)
+      |> Enum.map(&{recurso, &1})
+
+    Permissions.conceder_permisos_catalogo(rol_id, pares)
+
+    {:noreply, cargar_matriz(socket)}
+  end
+
+  def handle_event("revocar_todos", %{"rol_id" => rol_id}, socket) do
+    rol_id = String.to_integer(rol_id)
+    recurso = socket.assigns.catalogo.recurso
+
+    pares =
+      todas_las_acciones(socket)
+      |> Enum.filter(&Map.get(socket.assigns.estado, {rol_id, &1}, %{concedido: false}).concedido)
+      |> Enum.map(&{recurso, &1})
+
+    Permissions.revocar_permisos_de_rol(rol_id, pares)
+
+    {:noreply, cargar_matriz(socket)}
+  end
+
+  defp todas_las_acciones(socket), do: socket.assigns.acciones_crud ++ Enum.map(socket.assigns.transiciones, & &1.accion)
+
   defp cargar_matriz(socket) do
     empresa_id = socket.assigns.current_scope.empresa_activa.id
     recurso = socket.assigns.catalogo.recurso
@@ -145,7 +217,20 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     # ningún código que los consulte para este recurso (ni siquiera existe
     # un módulo Ecto real detrás, ver CatalogoController.resolver/1), así
     # que ni se ofrecen acá para no sugerir una capacidad que no existe.
-    acciones_crud = if socket.assigns.catalogo.es_consulta, do: ~w(leer), else: @acciones_crud
+    #
+    # Un catálogo DETALLE: "eliminar" (DELETE /api/:tabla/:id) siempre
+    # rechaza para un renglón — CatalogoGenerico.eliminar/2 tiene el
+    # mensaje "los renglones de un catálogo detalle no se borran, use una
+    # transición" hardcodeado. Conceder ese permiso ahí no habilita nada;
+    # se saca del todo para no sugerir una capacidad que nunca funciona
+    # (hallazgo 2026-08-03, ver docs/roadmap.md #15 — "editar" tiene el
+    # mismo problema pero se deja por ahora, no se pidió tocarlo).
+    acciones_crud =
+      cond do
+        socket.assigns.catalogo.es_consulta -> ~w(leer)
+        socket.assigns.catalogo.es_detalle -> @acciones_crud -- ~w(eliminar)
+        true -> @acciones_crud
+      end
     acciones_transiciones = Enum.map(socket.assigns.transiciones, & &1.accion)
     rol_ids = Enum.map(roles, & &1.id)
     estado = Permissions.estado_permisos_para_roles(recurso, rol_ids, acciones_crud ++ acciones_transiciones)
@@ -155,8 +240,8 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
 
   def render(assigns) do
     ~H"""
-    <div class="max-w-6xl mx-auto p-8">
-      <div class="flex items-center justify-between mb-4">
+    <div class={if @embebido?, do: "", else: "max-w-6xl mx-auto p-8"}>
+      <div :if={!@embebido?} class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-2">
           <.link navigate={~p"/sysadmin/bc-list"} title="Volver al listado de BC"
             class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors shrink-0">
@@ -204,8 +289,8 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
         Mostrando solo los roles de <strong class="text-gray-800">{@usuario_seleccionado.email}</strong>.
       </p>
 
-      <div class="grid grid-cols-1 sm:grid-cols-[220px_1fr] gap-4">
-        <div>
+      <div class={["grid grid-cols-1 gap-4", !@embebido? && "sm:grid-cols-[220px_1fr]"]}>
+        <div :if={!@embebido?}>
           <input
             type="text"
             value={@busqueda_catalogo_picker}
@@ -234,7 +319,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
           </ul>
         </div>
 
-        <div :if={!@catalogo} class="flex items-center justify-center rounded-xl border border-dashed border-gray-300 text-sm text-gray-400 p-12">
+        <div :if={!@catalogo and !@embebido?} class="flex items-center justify-center rounded-xl border border-dashed border-gray-300 text-sm text-gray-400 p-12">
           Elegí un catálogo de la izquierda para ver y editar sus permisos.
         </div>
 
@@ -256,6 +341,24 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
                 </td>
                 <td class="px-4 py-2">
                   <div class="flex flex-wrap items-center gap-1">
+                    <button
+                      :if={rol.nombre != "administrador"}
+                      type="button"
+                      phx-click="conceder_todos"
+                      phx-value-rol_id={rol.id}
+                      class="text-[11px] text-purple-700 font-semibold hover:underline mr-1"
+                    >
+                      Todos
+                    </button>
+                    <button
+                      :if={rol.nombre != "administrador"}
+                      type="button"
+                      phx-click="revocar_todos"
+                      phx-value-rol_id={rol.id}
+                      class="text-[11px] text-gray-500 hover:underline mr-2"
+                    >
+                      Ninguno
+                    </button>
                     <button
                       :for={accion <- @acciones_crud}
                       type="button"
@@ -286,7 +389,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
                         "px-2 py-0.5 rounded-full text-xs font-medium border",
                         cond do
                           rol.nombre == "administrador" -> "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed"
-                          Map.get(@estado, {rol.id, transicion.accion}, %{concedido: false}).concedido -> "bg-purple-50 text-purple-700 border-purple-200"
+                          Map.get(@estado, {rol.id, transicion.accion}, %{concedido: false}).concedido -> "bg-purple-600 text-white border-purple-600"
                           true -> "bg-white text-gray-500 border-gray-300 hover:bg-gray-50"
                         end
                       ]}

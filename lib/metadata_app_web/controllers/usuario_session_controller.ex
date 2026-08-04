@@ -49,14 +49,26 @@ defmodule MetadataAppWeb.UsuarioSessionController do
   def update_password(conn, %{"usuario" => usuario_params} = params) do
     usuario = conn.assigns.current_scope.usuario
     true = Autenticacion.sudo_mode?(usuario)
-    {:ok, {_usuario, expired_tokens}} = Autenticacion.update_usuario_password(usuario, usuario_params)
 
-    # disconnect all existing LiveViews with old sessions
-    UsuarioAuth.disconnect_sessions(expired_tokens)
+    # El submit final acá es un POST nativo del navegador (phx-trigger-action
+    # en UsuarioLive.Settings), no un evento LiveView — el LiveView ya validó
+    # antes de disparar el trigger, pero eso no es una garantía absoluta del
+    # lado servidor (ej. autofill del navegador puede no disparar phx-change
+    # a tiempo). Manejar {:error, _} acá evita un 500 crudo si igual llega
+    # algo inválido, en vez de asumir que siempre va a ser {:ok, _}.
+    case Autenticacion.update_usuario_password(usuario, usuario_params) do
+      {:ok, {_usuario, expired_tokens}} ->
+        UsuarioAuth.disconnect_sessions(expired_tokens)
 
-    conn
-    |> put_session(:usuario_return_to, ~p"/meta_schema_usuario/settings")
-    |> create(params, "Password updated successfully!")
+        conn
+        |> put_session(:usuario_return_to, ~p"/meta_schema_usuario/settings")
+        |> create(params, "Password updated successfully!")
+
+      {:error, _changeset} ->
+        conn
+        |> put_flash(:error, "No se pudo actualizar la contraseña — revisá que tenga al menos 12 caracteres y que la confirmación coincida.")
+        |> redirect(to: ~p"/meta_schema_usuario/settings")
+    end
   end
 
   def delete(conn, _params) do

@@ -23,6 +23,11 @@ defmodule MetadataApp.Autenticacion do
     |> Repo.all()
   end
 
+  @doc "Todas las empresas del sistema — a diferencia de empresas_de_usuario/1, sin filtrar por ningún usuario. Usado en la pantalla de administración de usuarios para poder agregar CUALQUIER empresa a alguien, no solo las del admin que la está usando."
+  def listar_empresas do
+    from(e in Empresa, where: is_nil(e.delete_guid), order_by: e.nombre) |> Repo.all()
+  end
+
   @doc "Confirma que el usuario tiene acceso a esa empresa antes de activarla en el Scope."
   def obtener_empresa_de_usuario(usuario_id, empresa_id) do
     from(e in Empresa,
@@ -36,8 +41,9 @@ defmodule MetadataApp.Autenticacion do
   @doc """
   Crea una empresa nueva y deja al usuario creador como miembro +
   `administrador` ahí, todo en la misma transacción — si no, quedaría un
-  tenant al que ni el creador podría entrar después (no hay todavía un
-  "super admin" cross-empresa que pueda rescatarlo).
+  tenant al que nadie podría entrar después (mismo motivo por el que
+  existe unirse_como_admin/2 — un usuario.super_admin siempre tiene esta
+  puerta de rescate para una empresa YA existente).
   """
   def crear_empresa_para_usuario(nombre, usuario_id) do
     Repo.transaction(fn ->
@@ -60,6 +66,74 @@ defmodule MetadataApp.Autenticacion do
     end)
   end
 
+  @doc """
+  Puerta de rescate para un usuario.super_admin: unirse como
+  `administrador` a una empresa YA EXISTENTE de la que todavía no es
+  miembro (a diferencia de crear_empresa_para_usuario/2, que crea el
+  tenant). Sin esto, un super_admin podía VER todas las empresas
+  (Autenticacion.listar_empresas/0) pero no entrar a ninguna que no
+  fuera propia — el mismo hueco que crear_empresa_para_usuario/2 ya
+  resuelve para una empresa nueva. No-op si ya era miembro.
+  """
+  def unirse_como_admin(usuario_id, empresa_id) do
+    case obtener_empresa_de_usuario(usuario_id, empresa_id) do
+      nil ->
+        Repo.transaction(fn ->
+          with {:ok, _} <-
+                 %UsuarioEmpresa{}
+                 |> UsuarioEmpresa.changeset(%{usuario_id: usuario_id, empresa_id: empresa_id})
+                 |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+                 |> Repo.insert(),
+               rol_admin <- Repo.get_by!(Rol, nombre: "administrador"),
+               {:ok, _} <- MetadataApp.Permissions.asignar_rol(usuario_id, rol_admin.id, empresa_id) do
+            :ok
+          else
+            {:error, changeset} -> Repo.rollback(changeset)
+          end
+        end)
+
+      _ya_miembro ->
+        {:ok, :ya_miembro}
+    end
+  end
+
+  @doc """
+  Mapa `%{empresa_id => cantidad}` de usuarios activos por empresa, para
+  que la UI decida si puede ofrecer "Eliminar" sin una query por fila
+  (N+1) — empresas sin ninguna fila acá simplemente no aparecen en el
+  mapa (tratar como 0 con `Map.get/3`).
+  """
+  def contar_usuarios_por_empresa(empresa_ids) do
+    from(ue in UsuarioEmpresa,
+      where: ue.empresa_id in ^empresa_ids and is_nil(ue.delete_guid),
+      group_by: ue.empresa_id,
+      select: {ue.empresa_id, count(ue.id)}
+    )
+    |> Repo.all()
+    |> Map.new()
+  end
+
+  @doc """
+  Soft-delete de una empresa — bloqueado si todavía tiene algún usuario
+  asociado (mismo criterio que `MetaEstadosAdmin.eliminar_estado/1`:
+  mejor un mensaje claro acá que dejar usuarios con un `empresa_id`
+  huérfano). No hace falta revisar roles/permisos por separado: sin
+  usuarios ya no hay a quién le apliquen.
+  """
+  def eliminar_empresa(%Empresa{} = empresa) do
+    if tiene_usuarios?(empresa.id) do
+      {:error, :tiene_usuarios}
+    else
+      empresa
+      |> Ecto.Changeset.change(%{delete_guid: generar_guid()})
+      |> Repo.update()
+    end
+  end
+
+  defp tiene_usuarios?(empresa_id) do
+    Repo.exists?(from ue in UsuarioEmpresa, where: ue.empresa_id == ^empresa_id and is_nil(ue.delete_guid))
+  end
+
   @doc "Solo el nombre por ahora — crear/editar más campos de empresa queda para cuando haga falta."
   def actualizar_empresa(empresa, attrs) do
     empresa
@@ -70,6 +144,29 @@ defmodule MetadataApp.Autenticacion do
 
   defp generar_guid do
     Ecto.UUID.generate() |> String.replace("-", "")
+  end
+
+  @doc """
+  Usuarios ya registrados (por magic-link/self-service) que todavía no
+  pertenecen a NINGUNA empresa — sin esto, el admin no tiene forma de
+  enterarse de que alguien se registró (nadie le avisa; ver discusión de
+  producto: reemplaza el alta "escribir cualquier email" en la pantalla
+  de administración de usuarios, que además creaba la cuenta desde cero
+  en vez de solo listar las que ya existen). Más recientes primero — son
+  las que un admin quiere ver primero para darles acceso. Acotado
+  (limite 50): mismo criterio de escala que buscar_roles/3/buscar_catalogos/2,
+  aunque acá es poco probable que se acumulen cientos sin que alguien note.
+  """
+  def listar_usuarios_sin_empresa(limite \\ 50) do
+    from(u in Usuario,
+      as: :usuario,
+      where:
+        not is_nil(u.confirmed_at) and
+          not exists(from ue in UsuarioEmpresa, where: ue.usuario_id == parent_as(:usuario).id and is_nil(ue.delete_guid)),
+      order_by: [desc: u.inserted_at],
+      limit: ^limite
+    )
+    |> Repo.all()
   end
 
   @doc "Usuarios que pertenecen a una empresa, con si su cuenta ya está confirmada."
@@ -209,6 +306,42 @@ defmodule MetadataApp.Autenticacion do
     |> Repo.insert()
   end
 
+  @doc """
+  Alta/actualización idempotente del usuario SYSADMIN — bootstrap de un
+  sistema nuevo (o rotación de credenciales en uno existente), a partir de
+  `email`/`password` que siempre vienen de variables de entorno del
+  despliegue (`SYSADMIN_EMAIL`/`SYSADMIN_PASSWORD`, ver
+  `MetadataApp.Release.seed_sysadmin/0`) — nunca hardcodeadas en código ni
+  en una migración. Login por contraseña (no magic-link: no hace falta que
+  el email sea real ni que haya SMTP configurado todavía para poder
+  entrar).
+
+  Busca primero por `super_admin: true` (identidad estable aunque
+  `SYSADMIN_EMAIL` cambie entre corridas — permite rotar el email sin
+  duplicar la cuenta), si no existe ninguna cae a buscar por el email
+  dado. Se puede correr en cada deploy sin efecto adverso: si las
+  credenciales no cambiaron, el resultado es el mismo usuario con los
+  mismos valores.
+  """
+  def upsert_sysadmin(email, password) do
+    usuario = Repo.get_by(Usuario, super_admin: true) || get_usuario_by_email(email) || %Usuario{}
+
+    usuario
+    |> Usuario.email_changeset(%{"email" => email}, validate_unique: false)
+    |> Usuario.password_changeset(%{"password" => password, "password_confirmation" => password})
+    |> Ecto.Changeset.change(%{super_admin: true})
+    |> confirmar_si_hace_falta()
+    |> Repo.insert_or_update()
+  end
+
+  defp confirmar_si_hace_falta(changeset) do
+    if is_nil(changeset.data.confirmed_at) do
+      Ecto.Changeset.change(changeset, confirmed_at: DateTime.utc_now() |> DateTime.truncate(:second))
+    else
+      changeset
+    end
+  end
+
   ## Settings
 
   @doc """
@@ -272,6 +405,16 @@ defmodule MetadataApp.Autenticacion do
     |> Usuario.alias_changeset(attrs)
     |> Repo.update()
   end
+
+  @doc """
+  Elimina la cuenta directo — Usuario no tiene delete_guid, no hay soft-
+  delete acá como en el resto del RBAC. Pensado para "rechazar" a alguien
+  que se registró y todavía no pertenece a ninguna empresa (ver
+  listar_usuarios_sin_empresa/1): sin ninguna fila en UsuarioEmpresa/
+  UsuarioRol que dependa de él, no hay nada que quede huérfano. Los
+  tokens de sesión cascadean solos (on_delete: :delete_all).
+  """
+  def eliminar_usuario(%Usuario{} = usuario), do: Repo.delete(usuario)
 
   @doc """
   Returns an `%Ecto.Changeset{}` for changing the usuario password.

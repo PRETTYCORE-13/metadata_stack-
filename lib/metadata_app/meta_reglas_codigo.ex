@@ -42,11 +42,65 @@ defmodule MetadataApp.MetaReglasCodigo do
 
   def marcador_stub, do: @marcador_stub
 
+  @cache_key :meta_reglas_codigo_cache
+
+  @doc """
+  Corre `fun` con un cache de `obtener/2` armado, por-llamada — no
+  persiste más allá de este bloque. Existe porque `puede_desplegar?/1`
+  (MetaEstadosAdmin) llama sola a `obtener/2` ~10 veces (sincronizado?,
+  pendiente?, transiciones_sin_case, con_error_sintaxis?, sin_compilar? —
+  cada una pre y post) para el MISMO header_id, cada llamada un
+  round-trip nuevo a Postgres. BcListLive corre eso por cada catálogo de
+  la lista (20+ en dev), así que sin este cache es un N+1 real: cientos
+  de queries redundantes en cada carga de pantalla.
+
+  `guardar/4` invalida (actualiza) la entrada del cache al escribir, así
+  que `resincronizar_si_hace_falta/1` — que lee sincronizado?, y si hace
+  falta escribe con guardar/4 en medio de un mismo `puede_desplegar?/1` —
+  no sirve datos viejos a las llamadas que vienen después en la misma
+  invocación.
+  """
+  def with_cache(fun) do
+    anterior = Process.get(@cache_key)
+    Process.put(@cache_key, %{})
+
+    try do
+      fun.()
+    after
+      if anterior, do: Process.put(@cache_key, anterior), else: Process.delete(@cache_key)
+    end
+  end
+
   def obtener(header_id, tipo) when tipo in @tipos do
+    case Process.get(@cache_key) do
+      nil ->
+        buscar_en_db(header_id, tipo)
+
+      cache ->
+        case Map.fetch(cache, {header_id, tipo}) do
+          {:ok, valor} ->
+            valor
+
+          :error ->
+            valor = buscar_en_db(header_id, tipo)
+            Process.put(@cache_key, Map.put(cache, {header_id, tipo}, valor))
+            valor
+        end
+    end
+  end
+
+  defp buscar_en_db(header_id, tipo) do
     Repo.one(
       from r in ReglaCodigo,
         where: r.meta_schema_header_id == ^header_id and r.tipo == ^tipo and is_nil(r.delete_guid)
     )
+  end
+
+  defp cachear(header_id, tipo, valor) do
+    case Process.get(@cache_key) do
+      nil -> :ok
+      cache -> Process.put(@cache_key, Map.put(cache, {header_id, tipo}, valor))
+    end
   end
 
   @doc """
@@ -161,24 +215,31 @@ defmodule MetadataApp.MetaReglasCodigo do
   todavía no hay nombre confiable que estampar).
   """
   def guardar(header, tipo, codigo_fuente, editado_por \\ nil) when tipo in @tipos do
-    case obtener(header.id, tipo) do
-      nil ->
-        %ReglaCodigo{}
-        |> ReglaCodigo.changeset(%{
-          meta_schema_header_id: header.id,
-          tipo: tipo,
-          codigo_fuente: codigo_fuente,
-          editado_por: editado_por
-        })
-        |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
-        |> Repo.insert()
+    resultado =
+      case obtener(header.id, tipo) do
+        nil ->
+          %ReglaCodigo{}
+          |> ReglaCodigo.changeset(%{
+            meta_schema_header_id: header.id,
+            tipo: tipo,
+            codigo_fuente: codigo_fuente,
+            editado_por: editado_por
+          })
+          |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+          |> Repo.insert()
 
-      regla_codigo ->
-        regla_codigo
-        |> ReglaCodigo.changeset(%{codigo_fuente: codigo_fuente, editado_por: editado_por})
-        |> Ecto.Changeset.change(%{update_guid: generar_guid()})
-        |> Repo.update()
+        regla_codigo ->
+          regla_codigo
+          |> ReglaCodigo.changeset(%{codigo_fuente: codigo_fuente, editado_por: editado_por})
+          |> Ecto.Changeset.change(%{update_guid: generar_guid()})
+          |> Repo.update()
+      end
+
+    with {:ok, regla_codigo} <- resultado do
+      cachear(header.id, tipo, regla_codigo)
     end
+
+    resultado
   end
 
   @doc "Solo parsea (AST) — no ejecuta nada. Atrapa typos, no atrapa código peligroso."

@@ -352,7 +352,10 @@ defmodule MetadataApp.AutenticacionTest do
 
     test "raises when unconfirmed usuario has password set" do
       usuario = unconfirmed_usuario_fixture()
-      {1, nil} = Repo.update_all(Usuario, set: [hashed_password: "hashed"])
+
+      {1, nil} =
+        Repo.update_all(from(u in Usuario, where: u.id == ^usuario.id), set: [hashed_password: "hashed"])
+
       {encoded_token, _hashed_token} = generate_usuario_magic_link_token(usuario)
 
       assert_raise RuntimeError, ~r/magic link log in is not allowed/, fn ->

@@ -6,7 +6,7 @@ defmodule MetadataAppWeb.FichaLive do
 
   - Qué se puede CONSULTAR: todos los campos visibles del catálogo
     (`MetaSchemaContext.listar_detalles/1`), como ya hace `CatalogoLive` para
-    la grilla.
+    la tabla.
   - Qué se puede MODIFICAR: exclusivamente `MetaStateEngine.campos_editables/2`
     para la transición "guardar" resuelta (`MetaStateEngine.transicion_guardar/2`)
     en el estado actual — el drawer de edición nunca muestra un campo fuera
@@ -30,6 +30,7 @@ defmodule MetadataAppWeb.FichaLive do
   alias MetadataApp.Autenticacion.Scope
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerico}
   alias MetadataApp.MetaStateEngine
+  alias MetadataApp.Renglones
   alias MetadataApp.Permissions
   alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaPlantillas.Formula
@@ -104,6 +105,7 @@ defmodule MetadataAppWeb.FichaLive do
           |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
           |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
           |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
+          |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1)))
 
         transicion_alta = if es_detalle?, do: nil, else: MetaStateEngine.transicion_alta(tabla)
 
@@ -148,6 +150,7 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:detalle_renglones, %{})
          |> assign(:detalle_renglones_nuevos, %{})
          |> assign(:detalle_renglones_editados, %{})
+         |> assign(:detalle_renglones_eliminados, %{})
          |> assign(:detalle_seleccion, %{})
          |> assign(:detalle_form_error, nil)}
     end
@@ -197,7 +200,9 @@ defmodule MetadataAppWeb.FichaLive do
   # (LiveView lo lleva a la próxima página), así el listado igual muestra
   # la confirmación.
   def handle_event("ejecutar_transicion", %{"accion" => accion}, socket) do
-    case MetaStateEngine.ejecutar_transicion(socket.assigns.registro, accion, %{}) do
+    contexto = Permissions.contexto_confiable(socket.assigns.current_scope)
+
+    case MetaStateEngine.ejecutar_transicion(socket.assigns.registro, accion, contexto) do
       {:ok, _actualizado} ->
         {:noreply,
          socket
@@ -228,7 +233,7 @@ defmodule MetadataAppWeb.FichaLive do
   end
 
   # --- Catálogo Maestro-Detalle: Grid Editable del tab "Detalle" ----------
-  # Todo el estado interactivo de la grilla (teclado, pegado, validación en
+  # Todo el estado interactivo de la tabla (teclado, pegado, validación en
   # vivo) vive en el hook JS GridEditable (assets/js/hooks/grid_editable.js)
   # — acá solo llegan 3 eventos, todos por lotes, nunca por tecla:
   #
@@ -241,14 +246,19 @@ defmodule MetadataAppWeb.FichaLive do
   #   con al menos un campo tocado) van a :detalle_renglones_editados, ya en
   #   la forma exacta que espera `opciones[:renglones]` de
   #   MetaStateEngine.ejecutar_transicion/4 (R4): una lista de mapas planos
-  #   %{"renglon_id" => N, "<campo>" => valor}.
-  def handle_event("grid_sync", %{"catalogo" => catalogo, "nuevas" => nuevas, "editadas" => editadas}, socket) do
+  #   %{"renglon_id" => N, "<campo>" => valor}. Las eliminadas (renglones YA
+  #   persistidos marcados con el botón "✕" del grid) van a
+  #   :detalle_renglones_eliminados — soft-delete DIRECTO al guardar, sin
+  #   transición (ver Renglones.eliminar_todos/3), nunca se mezclan con
+  #   "editadas" aunque también tuvieran campos tocados.
+  def handle_event("grid_sync", %{"catalogo" => catalogo, "nuevas" => nuevas, "editadas" => editadas, "eliminadas" => eliminadas}, socket) do
     items_editados = Enum.map(editadas, fn %{"renglon_id" => id, "campos" => campos} -> Map.put(campos, "renglon_id", id) end)
 
     {:noreply,
      socket
      |> assign(:detalle_renglones_nuevos, Map.put(socket.assigns.detalle_renglones_nuevos, catalogo, limpiar_renglones_vacios(nuevas)))
-     |> assign(:detalle_renglones_editados, Map.put(socket.assigns.detalle_renglones_editados, catalogo, items_editados))}
+     |> assign(:detalle_renglones_editados, Map.put(socket.assigns.detalle_renglones_editados, catalogo, items_editados))
+     |> assign(:detalle_renglones_eliminados, Map.put(socket.assigns.detalle_renglones_eliminados, catalogo, eliminadas))}
   end
 
   # - "grid_validar_fila": validación de servidor con debounce (lo que JS no
@@ -286,25 +296,27 @@ defmodule MetadataAppWeb.FichaLive do
 
   # - "renglon_transicion": la única forma de "sacar"/mover un renglón YA
   #   persistido (R12 — nunca un DELETE real) — cada botón que ofrece la
-  #   grilla para una fila existente es una transición REAL ya configurada
+  #   tabla para una fila existente es una transición REAL ya configurada
   #   para este catálogo (@otras_transiciones, la misma lista que ya arma
   #   los botones del encabezado), nunca una acción hardcodeada tipo
   #   "cancelar". Es la misma operación que ya hace
   #   CatalogoLive.detalle_modal (checkbox + botón de transición), acá
-  #   aplicada a un solo renglón desde la grilla.
+  #   aplicada a un solo renglón desde la tabla.
   def handle_event("renglon_transicion", %{"catalogo" => catalogo, "renglon_id" => renglon_id, "accion" => accion}, socket) do
-    case MetaStateEngine.ejecutar_transicion(socket.assigns.registro, accion, %{}, renglones: %{catalogo => [renglon_id]}) do
+    contexto = Permissions.contexto_confiable(socket.assigns.current_scope)
+
+    case MetaStateEngine.ejecutar_transicion(socket.assigns.registro, accion, contexto, renglones: %{catalogo => [renglon_id]}) do
       {:ok, actualizado} ->
         socket = cargar_registro(socket, actualizado)
 
-        # columnas_grilla (subset curado), no columnas (completo) — el hook
+        # columnas_tabla (subset curado), no columnas (completo) — el hook
         # JS se montó con ese mismo subset (ver panel_detalle_catalogo/1),
         # así que grid_recargar tiene que reconstruir "values" con las
         # mismas columnas o quedan desalineadas con this.columns del hook.
         columnas =
           socket.assigns.catalogos_detalle
-          |> Enum.find(%{columnas_grilla: []}, &(&1.nombre == catalogo))
-          |> Map.get(:columnas_grilla)
+          |> Enum.find(%{columnas_tabla: []}, &(&1.nombre == catalogo))
+          |> Map.get(:columnas_tabla)
 
         filas = Map.get(socket.assigns.detalle_renglones, catalogo, [])
 
@@ -321,8 +333,8 @@ defmodule MetadataAppWeb.FichaLive do
   end
 
   # --- Layout de 2 columnas del tab Detalle: formulario fijo (izq, 1/3) +
-  # grilla (der, 2/3) — el formulario muestra/edita SIEMPRE el renglón
-  # "seleccionado" en la grilla (@detalle_seleccion, por catálogo), nunca
+  # tabla (der, 2/3) — el formulario muestra/edita SIEMPRE el renglón
+  # "seleccionado" en la tabla (@detalle_seleccion, por catálogo), nunca
   # un modal ni una fila expandida. El dueño de los DATOS de una fila
   # sigue siendo el hook JS (this.rows, igual que antes) — el formulario
   # es una vista alternativa de ESA misma fila, sincronizada en las dos
@@ -332,7 +344,7 @@ defmodule MetadataAppWeb.FichaLive do
 
   # El hook manda esto cada vez que la fila "activa" cambia (click,
   # flechas, Tab, foco programático) — nunca por tecla dentro de la MISMA
-  # fila. `valores` son los que la grilla YA tiene en memoria para esa fila
+  # fila. `valores` son los que la tabla YA tiene en memoria para esa fila
   # (incluye tipeo sin sincronizar todavía), así el formulario arranca
   # siempre con el dato más fresco, no con lo último persistido.
   def handle_event(
@@ -345,7 +357,7 @@ defmodule MetadataAppWeb.FichaLive do
   end
 
   # Edición en el formulario izquierdo — refleja de inmediato en la fila
-  # correspondiente de la grilla (grid_actualizar_fila), que corre el mismo
+  # correspondiente de la tabla (grid_actualizar_fila), que corre el mismo
   # camino de siempre ahí (setCelda/validación/sync debounced) como si el
   # usuario hubiese tipeado directo en la celda.
   def handle_event("detalle_form_cambiar", %{"catalogo" => catalogo, "renglon" => campos}, socket) do
@@ -363,8 +375,8 @@ defmodule MetadataAppWeb.FichaLive do
     end
   end
 
-  # Limpia el formulario y le pide a la grilla una fila nueva en blanco —
-  # la grilla la crea, la enfoca (arranca a escribir de una) y reporta su
+  # Limpia el formulario y le pide a la tabla una fila nueva en blanco —
+  # la tabla la crea, la enfoca (arranca a escribir de una) y reporta su
   # client_id real vía "detalle_seleccionar_fila", cerrando el círculo.
   def handle_event("detalle_nueva_linea", %{"catalogo" => catalogo}, socket) do
     seleccion = %{client_id: nil, renglon_id: nil, valores: %{}}
@@ -375,10 +387,14 @@ defmodule MetadataAppWeb.FichaLive do
      |> push_event("grid_nueva_fila", %{catalogo: catalogo})}
   end
 
-  # Solo para una fila TODAVÍA no persistida (R12: un renglón ya guardado
-  # nunca se borra directo, solo por una transición real — ver
-  # "renglon_transicion" arriba). El botón ya viene disabled en ese caso
-  # (ver tab_detalle/1), esto es la defensa por si igual llega el evento.
+  # Fila TODAVÍA no persistida: se saca del array entero (nunca llegó a
+  # existir en la base) — "grid_quitar_fila". Renglón YA PERSISTIDO: un
+  # renglón no tiene estado propio (R3 — el estado_id que tiene
+  # físicamente es un espejo del maestro, nunca evoluciona solo), así que
+  # "eliminarlo" no es una transición — es un soft-delete DIRECTO al
+  # guardar (Renglones.eliminar_todos/3, ver guardar_cambios/8), disparado
+  # acá solo como una MARCA visual/de staging ("grid_marcar_eliminar") —
+  # el borrado real recién ocurre al hacer click en "Guardar".
   def handle_event("detalle_eliminar_linea", %{"catalogo" => catalogo}, socket) do
     case Map.get(socket.assigns.detalle_seleccion, catalogo) do
       %{renglon_id: nil, client_id: client_id} when not is_nil(client_id) ->
@@ -387,13 +403,16 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:detalle_seleccion, Map.delete(socket.assigns.detalle_seleccion, catalogo))
          |> push_event("grid_quitar_fila", %{catalogo: catalogo, client_id: client_id})}
 
+      %{renglon_id: renglon_id} when not is_nil(renglon_id) ->
+        {:noreply, push_event(socket, "grid_marcar_eliminar", %{catalogo: catalogo, renglon_id: renglon_id})}
+
       _ ->
         {:noreply, socket}
     end
   end
 
   # Prev/Next entre renglones YA persistidos (@detalle_renglones — los
-  # todavía sin guardar solo existen en la grilla, no acá). Los valores del
+  # todavía sin guardar solo existen en la tabla, no acá). Los valores del
   # formulario salen directo de ahí, sin ida y vuelta al hook — solo se le
   # pide que resalte/enfoque esa fila (grid_resaltar_fila), que de paso
   # confirma el client_id real al reportar la selección de nuevo.
@@ -451,19 +470,22 @@ defmodule MetadataAppWeb.FichaLive do
       schema_mod: schema_mod,
       registro: registro,
       form_values: attrs,
-      detalle_renglones_nuevos: renglones_nuevos_grilla,
-      detalle_renglones_editados: renglones_editados_grilla,
+      detalle_renglones_nuevos: renglones_nuevos_tabla,
+      detalle_renglones_editados: renglones_editados_tabla,
+      detalle_renglones_eliminados: renglones_eliminados_tabla,
       transicion_edicion: transicion_edicion
     } = socket.assigns
 
-    renglones_nuevos = Map.new(renglones_nuevos_grilla, fn {catalogo, filas} -> {catalogo, limpiar_renglones_vacios(filas)} end)
-    renglones_editados = Map.filter(renglones_editados_grilla, fn {_catalogo, filas} -> filas != [] end)
+    renglones_nuevos = Map.new(renglones_nuevos_tabla, fn {catalogo, filas} -> {catalogo, limpiar_renglones_vacios(filas)} end)
+    renglones_editados = Map.filter(renglones_editados_tabla, fn {_catalogo, filas} -> filas != [] end)
+    renglones_eliminados = Map.filter(renglones_eliminados_tabla, fn {_catalogo, ids} -> ids != [] end)
 
     hay_renglones_nuevos? = Enum.any?(renglones_nuevos, fn {_catalogo, filas} -> filas != [] end)
     hay_renglones_editados? = map_size(renglones_editados) > 0
+    hay_renglones_eliminados? = map_size(renglones_eliminados) > 0
 
     cond do
-      map_size(attrs) == 0 and not hay_renglones_nuevos? and not hay_renglones_editados? ->
+      map_size(attrs) == 0 and not hay_renglones_nuevos? and not hay_renglones_editados? and not hay_renglones_eliminados? ->
         {:noreply, socket}
 
       hay_renglones_editados? and is_nil(transicion_edicion) ->
@@ -474,16 +496,22 @@ defmodule MetadataAppWeb.FichaLive do
            "Este catálogo no tiene una transición \"guardar\" configurada — no se pueden editar renglones existentes sin pasar por una transición del encabezado."
          )}
 
-      # Sin renglones EDITADOS (solo nuevos), aplicar_encabezado/5 nunca pasa
-      # por ejecutar_transicion/4 (ver esa función) — y crear_renglones_nuevos/3
-      # tampoco lo hace, así que sin este chequeo el permiso de "guardar" del
-      # rol quedaba sin exigirse para renglones NUEVOS (encontrado real: se
-      # podía insertar sin tener concedida la transición). Mismo permiso que
-      # ya se usa para editar el encabezado — no uno nuevo por diseño.
-      hay_renglones_nuevos? and
+      # Sin renglones EDITADOS, aplicar_encabezado/5 NUNCA pasa por
+      # ejecutar_transicion/4 (cae a actualizar_si_hay_cambios, un simple
+      # UPDATE sin ningún concepto de transición) — y crear_renglones_nuevos/3
+      # ni Renglones.eliminar_todos/3 tampoco pasan por ahí. Sin este
+      # chequeo, ni editar campos del encabezado ni insertar/eliminar
+      # renglones exigía el permiso "guardar" del rol (encontrado real, dos
+      # veces: primero con renglones nuevos, después renglones editados vía
+      # "guardar" mostrando "Baja" disponible sin permiso — ver el fix de
+      # contexto_confiable en ejecutar_transicion/renglon_transicion/
+      # aplicar_encabezado). Cuando SÍ hay renglones editados, este chequeo
+      # es redundante mansamente: ya lo hace verificar_permiso_transicion/3
+      # dentro de ejecutar_transicion/4.
+      (map_size(attrs) > 0 or hay_renglones_nuevos? or hay_renglones_eliminados?) and not hay_renglones_editados? and
           not Permissions.can?(socket.assigns.current_scope, "guardar", socket.assigns.header.schema_context_name) ->
         {:noreply,
-         assign(socket, :error_guardado, "No tenés permiso para agregar renglones a este catálogo.")}
+         assign(socket, :error_guardado, "No tenés permiso para guardar cambios en este catálogo.")}
 
       registro_cambio_de_estado?(schema_mod, registro) ->
         {:noreply,
@@ -491,7 +519,17 @@ defmodule MetadataAppWeb.FichaLive do
 
       true ->
         registro_actual = CatalogoGenerico.obtener!(schema_mod, registro.id)
-        guardar_cambios(socket, registro_actual, attrs, renglones_nuevos, renglones_editados, transicion_edicion)
+
+        guardar_cambios(
+          socket,
+          registro_actual,
+          attrs,
+          renglones_nuevos,
+          renglones_editados,
+          renglones_eliminados,
+          transicion_edicion,
+          socket.assigns.current_scope
+        )
     end
   end
 
@@ -504,13 +542,13 @@ defmodule MetadataAppWeb.FichaLive do
       schema_mod: schema_mod,
       header: header,
       form_values: attrs,
-      detalle_renglones_nuevos: renglones_grilla
+      detalle_renglones_nuevos: renglones_tabla
     } = socket.assigns
 
     # El hook GridEditable ya descarta filas vacías antes de sincronizar
     # (sincronizarAhora en grid_editable.js) — esto es la misma limpieza
     # defensiva del lado servidor, antes de mandarlo al motor.
-    renglones = Map.new(renglones_grilla, fn {catalogo, filas} -> {catalogo, limpiar_renglones_vacios(filas)} end)
+    renglones = Map.new(renglones_tabla, fn {catalogo, filas} -> {catalogo, limpiar_renglones_vacios(filas)} end)
 
     case CatalogoGenerico.crear(schema_mod, attrs, renglones: renglones, contexto: socket.assigns.contexto_auditoria) do
       {:ok, _nuevo} ->
@@ -535,27 +573,31 @@ defmodule MetadataAppWeb.FichaLive do
 
   # Un solo clic, un solo resultado: el cambio de campos del encabezado
   # (junto con los renglones EDITADOS, si hay — R4, vía la transición
-  # "guardar") y la creación de los renglones NUEVOS en staging viajan en
-  # la MISMA Repo.transaction — todo o nada. La creación de renglones
-  # nuevos sigue sin pasar por MetaStateEngine.ejecutar_transicion/4
-  # porque esa opción solo mueve/edita renglones que YA EXISTEN — no sabe
-  # crear ninguno, y tocar el motor para que lo supiera hacer es un cambio
-  # más grande que el usuario pidió dejar para después (ver plan). Por eso
-  # las reglas PRE/POST de "guardar" ven los renglones EDITADOS (van
-  # dentro de la misma transición), pero no los renglones NUEVOS.
+  # "guardar"), la creación de los renglones NUEVOS en staging, y el
+  # soft-delete de los renglones ELIMINADOS viajan en la MISMA
+  # Repo.transaction — todo o nada. Tanto crear como eliminar renglones
+  # siguen sin pasar por MetaStateEngine.ejecutar_transicion/4 — esa
+  # opción solo mueve/edita renglones que YA EXISTEN, no sabe crear ni
+  # borrar ninguno (un renglón no tiene estado propio, R3, así que
+  # "eliminarlo" no es una transición — ver Renglones.eliminar_todos/3).
+  # Por eso las reglas PRE/POST de "guardar" ven los renglones EDITADOS
+  # (van dentro de la misma transición), pero no los NUEVOS ni los
+  # ELIMINADOS.
   #
   # contexto_auditoria (roadmap #6, ver AuditoriaContexto.desde_socket/1 en
   # mount/3) viaja a CatalogoGenerico.actualizar/3 y .crear_muchos/3 —
   # ejecutar_transicion/4 (R4, renglones editados) no lo necesita, ese
   # camino ya queda registrado por su propio TransicionEvento.
-  defp guardar_cambios(socket, registro_actual, attrs, renglones_nuevos, renglones_editados, transicion_edicion) do
+  defp guardar_cambios(socket, registro_actual, attrs, renglones_nuevos, renglones_editados, renglones_eliminados, transicion_edicion, current_scope) do
     contexto_auditoria = socket.assigns.contexto_auditoria
+    catalogo_maestro = registro_actual.__struct__.__schema__(:source)
 
     resultado =
       Repo.transaction(fn ->
         with {:ok, actualizado} <-
-               aplicar_encabezado(registro_actual, attrs, renglones_editados, transicion_edicion, contexto_auditoria),
-             {:ok, _creados} <- crear_renglones_nuevos(registro_actual.id, renglones_nuevos, contexto_auditoria) do
+               aplicar_encabezado(registro_actual, attrs, renglones_editados, transicion_edicion, contexto_auditoria, current_scope),
+             {:ok, _creados} <- crear_renglones_nuevos(registro_actual.id, renglones_nuevos, contexto_auditoria),
+             {:ok, _eliminados} <- Renglones.eliminar_todos(catalogo_maestro, registro_actual.id, renglones_eliminados) do
           actualizado
         else
           {:error, motivo} -> Repo.rollback(motivo)
@@ -588,13 +630,14 @@ defmodule MetadataAppWeb.FichaLive do
   # Con renglones editados: tiene que pasar por la transición "guardar"
   # (R4) sí o sí, aunque @form_values venga vacío — es la única forma que
   # el motor conoce de tocar un campo de un renglón ya persistido.
-  defp aplicar_encabezado(registro, attrs, renglones_editados, _transicion, contexto_auditoria)
+  defp aplicar_encabezado(registro, attrs, renglones_editados, _transicion, contexto_auditoria, _current_scope)
        when map_size(renglones_editados) == 0 do
     actualizar_si_hay_cambios(registro, attrs, contexto_auditoria)
   end
 
-  defp aplicar_encabezado(registro, attrs, renglones_editados, transicion, _contexto_auditoria) do
-    MetaStateEngine.ejecutar_transicion(registro, transicion.accion, attrs, renglones: renglones_editados)
+  defp aplicar_encabezado(registro, attrs, renglones_editados, transicion, _contexto_auditoria, current_scope) do
+    contexto = Map.merge(attrs, Permissions.contexto_confiable(current_scope))
+    MetaStateEngine.ejecutar_transicion(registro, transicion.accion, contexto, renglones: renglones_editados)
   end
 
   defp actualizar_si_hay_cambios(registro, attrs, _contexto_auditoria) when map_size(attrs) == 0, do: {:ok, registro}
@@ -622,8 +665,8 @@ defmodule MetadataAppWeb.FichaLive do
 
   # Plug decodifica "renglones[0][x]=a&renglones[1][x]=b" como un MAPA con
   # claves "0"/"1" (no una lista) — se reordena acá una sola vez, en el
-  # único lugar donde el phx-change de la grilla entra al server.
-  # Una fila "vacía" es la fila en blanco que la grilla siempre deja al
+  # único lugar donde el phx-change de la tabla entra al server.
+  # Una fila "vacía" es la fila en blanco que la tabla siempre deja al
   # final (nunca tipeada) o cualquier otra que el usuario vació de vuelta —
   # "false" cuenta como vacío acá porque es lo que manda un checkbox sin
   # marcar, no una respuesta real. El hook GridEditable ya filtra esto de
@@ -633,12 +676,13 @@ defmodule MetadataAppWeb.FichaLive do
     Enum.reject(filas, fn fila -> fila == %{} or Enum.all?(Map.values(fila), &(&1 in [nil, "", "false"])) end)
   end
 
-  # Cuenta renglones nuevos + editados en staging — usado para el badge del
-  # tab "Detalle" y para habilitar el botón "Guardar".
-  defp contar_cambios_detalle(renglones_nuevos, renglones_editados) do
+  # Cuenta renglones nuevos + editados + eliminados en staging — usado
+  # para el badge del tab "Detalle" y para habilitar el botón "Guardar".
+  defp contar_cambios_detalle(renglones_nuevos, renglones_editados, renglones_eliminados) do
     nuevos = renglones_nuevos |> Map.values() |> Enum.map(&length(limpiar_renglones_vacios(&1))) |> Enum.sum()
     editados = renglones_editados |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
-    nuevos + editados
+    eliminados = renglones_eliminados |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
+    nuevos + editados + eliminados
   end
 
   # Chequeo de concurrencia best-effort a nivel de esta pantalla — el motor
@@ -699,6 +743,7 @@ defmodule MetadataAppWeb.FichaLive do
       |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
       |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
       |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
+      |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1)))
 
     estados_por_id = MetaStateEngine.mapa_nombres_estados(tabla)
 
@@ -720,8 +765,10 @@ defmodule MetadataAppWeb.FichaLive do
       if es_detalle? or is_nil(registro.estado_id) do
         []
       else
+        contexto = Permissions.contexto_confiable(socket.assigns.current_scope)
+
         registro
-        |> MetaStateEngine.transiciones_disponibles(%{})
+        |> MetaStateEngine.transiciones_disponibles(contexto)
         |> Enum.reject(&(&1.accion == "guardar"))
       end
 
@@ -729,7 +776,7 @@ defmodule MetadataAppWeb.FichaLive do
 
     # Catálogo Maestro-Detalle: mismo criterio que ya usa CatalogoLive
     # (catalogos_detalle + detalle_renglones) — antes solo se podía
-    # agregar un renglón volviendo a la grilla y abriendo el modal viejo;
+    # agregar un renglón volviendo a la tabla y abriendo el modal viejo;
     # acá la Ficha 360° ya tiene el id real del maestro, así que se
     # resuelve en el lugar, sin ese viaje de ida y vuelta.
     catalogos_detalle = cargar_catalogos_detalle(header.id)
@@ -751,6 +798,7 @@ defmodule MetadataAppWeb.FichaLive do
     |> assign(:detalle_renglones, detalle_renglones)
     |> assign(:detalle_renglones_nuevos, %{})
     |> assign(:detalle_renglones_editados, %{})
+    |> assign(:detalle_renglones_eliminados, %{})
     |> assign(:detalle_seleccion, %{})
     |> assign(:detalle_form_error, nil)
   end
@@ -765,15 +813,16 @@ defmodule MetadataAppWeb.FichaLive do
         |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
         |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
         |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
+        |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1)))
 
-      # :columnas_grilla — subconjunto curado (BcMotorLive → Campos → "En
-      # grilla") para catálogos con muchos campos, donde mostrar TODOS como
+      # :columnas_tabla — subconjunto curado (BcMotorLive → Campos → "En
+      # tabla") para catálogos con muchos campos, donde mostrar TODOS como
       # columna en la tabla ancha es inusable. :columnas (completo) sigue
       # siendo lo que usa el formulario de al lado (formulario_renglon/1) —
       # ahí sí entra cualquier campo visible, sin curar.
-      columnas_grilla = Enum.filter(columnas_detalle, &MetaSchemaContext.mostrar_en_grilla?(&1.schema_context_properties))
+      columnas_tabla = Enum.filter(columnas_detalle, &MetaSchemaContext.mostrar_en_tabla?(&1.schema_context_properties))
 
-      %{nombre: h.schema_context_name, etiqueta: h.schema_context_label, columnas: columnas_detalle, columnas_grilla: columnas_grilla}
+      %{nombre: h.schema_context_name, etiqueta: h.schema_context_label, columnas: columnas_detalle, columnas_tabla: columnas_tabla}
     end)
   end
 
@@ -984,7 +1033,7 @@ defmodule MetadataAppWeb.FichaLive do
       assigns
       |> assign(
         :renglones_nuevos_count,
-        contar_cambios_detalle(assigns.detalle_renglones_nuevos, assigns.detalle_renglones_editados)
+        contar_cambios_detalle(assigns.detalle_renglones_nuevos, assigns.detalle_renglones_editados, assigns.detalle_renglones_eliminados)
       )
       |> assign(:contexto_formula, contexto_formula)
       |> assign(
@@ -1664,11 +1713,12 @@ defmodule MetadataAppWeb.FichaLive do
     errores_campo = Map.get(assigns.edicion.errores, campo_atom)
 
     # Referencia: mismo picker/etiqueta tanto editable como de solo lectura
-    # (CatalogoGenerico.opciones_referencia/1, que ya resuelve "campos de
-    # acompañamiento" configurados en BcMotorLive → Relaciones) — antes acá
-    # se mostraba el id crudo (editable, una caja de texto libre; solo
-    # lectura, el número pelado), sin ninguna pista de a qué apunta.
-    opciones_referencia = if props["tipo"] == "referencia", do: CatalogoGenerico.opciones_referencia(props), else: []
+    # (ya resuelve "campos de acompañamiento" configurados en BcMotorLive →
+    # Relaciones) — antes acá se mostraba el id crudo (editable, una caja
+    # de texto libre; solo lectura, el número pelado), sin ninguna pista de
+    # a qué apunta. Precalculado en cargar_catalogos_detalle/1 (col.opciones)
+    # — nunca se vuelve a consultar acá, esto corre en cada render.
+    opciones_referencia = Map.get(assigns.col, :opciones, [])
     valor_legible = if props["tipo"] == "referencia", do: etiqueta_opcion(opciones_referencia, valor_actual), else: valor_actual
 
     assigns =
@@ -1825,10 +1875,10 @@ defmodule MetadataAppWeb.FichaLive do
   attr :detalle_seleccion, :map, required: true
 
   # Layout tipo IDE (editor fijo + área de trabajo amplia): un catálogo
-  # detalle = un par formulario (1/3, izquierda) + grilla (2/3, derecha),
+  # detalle = un par formulario (1/3, izquierda) + tabla (2/3, derecha),
   # apilados verticalmente si hay más de un catálogo detalle. El
   # formulario nunca es un modal ni una fila expandida — siempre muestra
-  # el renglón "seleccionado" en la grilla de al lado (ver
+  # el renglón "seleccionado" en la tabla de al lado (ver
   # panel_detalle_catalogo/1).
   defp tab_detalle(assigns) do
     ~H"""
@@ -1860,7 +1910,7 @@ defmodule MetadataAppWeb.FichaLive do
       </div>
 
       <div class="overflow-x-auto">
-        <GridEditableComponents.grid id={"grid-#{@cat.nombre}"} catalogo={@cat.nombre} columnas={@cat.columnas_grilla}
+        <GridEditableComponents.grid id={"grid-#{@cat.nombre}"} catalogo={@cat.nombre} columnas={@cat.columnas_tabla}
           filas_existentes={@filas} transiciones_disponibles={@otras_transiciones} estados_por_id={@estados_por_id} />
       </div>
     </div>
@@ -1873,29 +1923,56 @@ defmodule MetadataAppWeb.FichaLive do
 
   defp formulario_renglon(assigns) do
     grupos = if assigns.seleccion, do: agrupar_por_categoria(assigns.cat.columnas), else: []
-    assigns = assign(assigns, :grupos, grupos)
+    {primer_grupo, resto_grupos} = separar_primer_grupo(grupos)
+    assigns = assigns |> assign(:primer_grupo, primer_grupo) |> assign(:resto_grupos, resto_grupos)
 
     ~H"""
     <div class="flex flex-col">
-      <div class="px-4 py-2 border-b border-gray-100 bg-gray-50 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+      <div class="px-4 py-2 border-b border-gray-100 bg-gray-50 text-[11px] font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
         <%= cond do %>
           <% is_nil(@seleccion) -> %>
-            Ningún renglón seleccionado
+            <span class="text-gray-300">–</span> Ningún renglón seleccionado
           <% is_nil(@seleccion.renglon_id) -> %>
-            Nueva línea
+            <span class="text-green-600 font-bold">+</span> Nueva línea
           <% true -> %>
-            Renglón #{@seleccion.renglon_id}
+            <span class="text-purple-600 font-bold">×</span> Renglón #{@seleccion.renglon_id}
         <% end %>
       </div>
 
       <%= if is_nil(@seleccion) do %>
-        <p class="px-4 py-6 text-center text-gray-400">
-          Hacé clic en una fila de la tabla, o en "+ Nueva línea" abajo, para capturar/editar acá.
-        </p>
+        <div class="px-4 py-6 flex items-center justify-center gap-2 text-gray-400">
+          <span>Hacé clic en una fila de la tabla, o</span>
+          <button type="button" phx-click="detalle_nueva_linea" phx-value-catalogo={@cat.nombre} title="Nueva línea"
+            class="w-6 h-6 rounded-lg bg-purple-600 text-white font-bold hover:bg-purple-700 flex-none">+</button>
+          <span>para capturar/editar acá.</span>
+        </div>
       <% else %>
         <form phx-change="detalle_form_cambiar">
           <input type="hidden" name="catalogo" value={@cat.nombre} />
-          <details :for={grupo <- @grupos} open={grupo.codigo == "info_general"} class="group border-b border-gray-100 last:border-b-0">
+
+          <div :if={@primer_grupo} class="border-b border-gray-100">
+            <div class="px-3 py-1.5 text-[11px] font-semibold text-gray-600">{@primer_grupo.etiqueta}</div>
+            <div class="px-3 pb-2 flex flex-wrap items-end gap-2">
+              <div :for={campo <- @primer_grupo.campos} class="flex-1 min-w-[120px]">
+                <.campo_input columna={campo} mostrar_etiqueta={true}
+                  valor={Map.get(@seleccion.valores, campo.schema_context_field, "")}
+                  name={"renglon[#{campo.schema_context_field}]"} opciones={opciones_para_campo(campo)} />
+              </div>
+              <div class="flex items-center gap-1.5 flex-none pb-0.5">
+                <button type="button" phx-click="detalle_nueva_linea" phx-value-catalogo={@cat.nombre} title="Nueva línea"
+                  class="w-6 h-6 rounded-lg bg-purple-600 text-white font-bold hover:bg-purple-700">+</button>
+                <button type="button" phx-click="detalle_eliminar_linea" phx-value-catalogo={@cat.nombre}
+                  title={
+                    if @seleccion.renglon_id,
+                      do: "Eliminar renglón (se aplica recién al Guardar)",
+                      else: "Eliminar línea"
+                  }
+                  class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 font-bold hover:bg-gray-50">×</button>
+              </div>
+            </div>
+          </div>
+
+          <details :for={grupo <- @resto_grupos} class="group border-b border-gray-100 last:border-b-0">
             <summary class="cursor-pointer select-none px-3 py-1.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 flex items-center justify-between">
               {grupo.etiqueta}
               <span class="text-gray-300 transition-transform group-open:rotate-180">⌄</span>
@@ -1909,25 +1986,13 @@ defmodule MetadataAppWeb.FichaLive do
         </form>
       <% end %>
 
-      <div class="border-t border-gray-100 px-4 py-2.5 flex items-center gap-1.5 flex-wrap">
-        <button type="button" phx-click="detalle_nueva_linea" phx-value-catalogo={@cat.nombre}
-          class="px-2 py-1 rounded-lg bg-purple-600 text-white text-[11px] font-semibold hover:bg-purple-700">
-          + Nueva línea
-        </button>
-        <button type="button" phx-click="detalle_eliminar_linea" phx-value-catalogo={@cat.nombre}
-          disabled={is_nil(@seleccion) or not is_nil(@seleccion.renglon_id)}
-          title={@seleccion && @seleccion.renglon_id && "Un renglón ya guardado se quita con una transición, no se borra directo"}
-          class="px-2 py-1 rounded-lg border border-gray-300 text-gray-600 text-[11px] font-semibold hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent">
-          Eliminar línea
-        </button>
-        <div class="ml-auto flex items-center gap-1">
-          <button type="button" phx-click="detalle_navegar" phx-value-catalogo={@cat.nombre} phx-value-direccion="anterior"
-            disabled={@total == 0} title="Renglón anterior"
-            class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">‹</button>
-          <button type="button" phx-click="detalle_navegar" phx-value-catalogo={@cat.nombre} phx-value-direccion="siguiente"
-            disabled={@total == 0} title="Renglón siguiente"
-            class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">›</button>
-        </div>
+      <div class="border-t border-gray-100 px-4 py-2.5 flex items-center justify-end gap-1">
+        <button type="button" phx-click="detalle_navegar" phx-value-catalogo={@cat.nombre} phx-value-direccion="anterior"
+          disabled={@total == 0} title="Renglón anterior"
+          class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">‹</button>
+        <button type="button" phx-click="detalle_navegar" phx-value-catalogo={@cat.nombre} phx-value-direccion="siguiente"
+          disabled={@total == 0} title="Renglón siguiente"
+          class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">›</button>
       </div>
     </div>
     """
@@ -1946,8 +2011,24 @@ defmodule MetadataAppWeb.FichaLive do
     |> Enum.reject(&(&1.campos == []))
   end
 
-  defp opciones_para_campo(%{schema_context_properties: %{"tipo" => "referencia"}} = campo),
+  # Consulta en vivo — solo se llama UNA VEZ por columna, al armar
+  # cargar_catalogos_detalle/1 (mount/reload), nunca durante un render. El
+  # resultado queda cacheado en `col.opciones` (ver opciones_para_campo/1
+  # y campo_row/1, que leen ese campo en vez de volver a golpear la DB) —
+  # antes esto corría en cada render de la Ficha 360° (cualquier evento:
+  # click en fila, guardar, transición), trayendo hasta 500 filas del
+  # catálogo referenciado cada vez.
+  defp opciones_para_columna(%{schema_context_properties: %{"tipo" => "referencia"}} = campo),
     do: CatalogoGenerico.opciones_referencia(campo.schema_context_properties)
 
-  defp opciones_para_campo(_campo), do: []
+  defp opciones_para_columna(_campo), do: []
+
+  defp opciones_para_campo(campo), do: Map.get(campo, :opciones, [])
+
+  # El primer grupo (normalmente "Información general", el único abierto
+  # por default) se pinta suelto, sin acordeón, con los botones +/× de
+  # nueva línea/eliminar pegados al final de su fila — el resto sigue
+  # colapsable como siempre.
+  defp separar_primer_grupo([primero | resto]), do: {primero, resto}
+  defp separar_primer_grupo([]), do: {nil, []}
 end

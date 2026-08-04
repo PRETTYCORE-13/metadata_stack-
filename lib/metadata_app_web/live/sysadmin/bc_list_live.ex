@@ -10,7 +10,6 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   alias MetadataApp.MetaConsultas
   alias MetadataApp.MetaPublicador
   alias MetadataApp.BorradoresMotor
-  alias MetadataApp.Permissions
   alias MetadataAppWeb.AdminNav
   alias Phoenix.LiveView.JS
 
@@ -132,9 +131,6 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # Igual que "abrir_editar_orden", pero acotado a UNA carpeta madre —
   # botón "Vista" propio en cada fila de carpeta raíz (ver filas_arbol/1).
   def handle_event("abrir_editar_orden_carpeta", %{"clave" => clave}, socket) do
-    # DIAGNÓSTICO TEMPORAL — sacar junto con el de admin_nav.ex.
-    require Logger
-    Logger.warning("BcListLive abrir_editar_orden_carpeta clave=#{inspect(clave)}")
     {:noreply, socket |> assign(:editando_orden, true) |> assign(:carpeta_editando_orden, clave)}
   end
 
@@ -880,13 +876,12 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
     raices_pagina = Enum.slice(arbol_completo, offset, @por_pagina)
 
-    # con_permisos/puede_desplegar siguen calculándose solo sobre lo que
-    # esta página realmente va a mostrar (nunca sobre @total_items) —
-    # mismo espíritu que antes, adaptado a que ahora "lo que se muestra"
-    # es el subárbol completo de cada carpeta raíz de esta página, no un
-    # slice plano de tamaño fijo.
-    con_permisos = Permissions.catalogos_con_permisos_habilitados(ids_no_carpeta(raices_pagina))
-    arbol = Enum.map(raices_pagina, &anotar_nodo(&1, con_permisos))
+    # puede_desplegar sigue calculándose solo sobre lo que esta página
+    # realmente va a mostrar (nunca sobre @total_items) — mismo espíritu
+    # que antes, adaptado a que ahora "lo que se muestra" es el subárbol
+    # completo de cada carpeta raíz de esta página, no un slice plano de
+    # tamaño fijo.
+    arbol = Enum.map(raices_pagina, &anotar_nodo/1)
 
     socket
     |> assign(:arbol, arbol)
@@ -897,28 +892,15 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     |> assign(:fin, min(offset + @por_pagina, total_items))
   end
 
-  # Recolecta, recursivamente, los ids de todos los nodos :pagina (no
-  # carpeta) dentro de un subárbol — sin importar la profundidad. Es el
-  # equivalente, post-árbol, del viejo `for item <- pagina_actual, !item.es_carpeta`
-  # que operaba sobre la lista plana.
-  defp ids_no_carpeta(nodos) do
-    Enum.flat_map(nodos, fn
-      %{tipo: :carpeta, hijos: hijos} -> ids_no_carpeta(hijos)
-      %{tipo: :pagina} = item -> [item.id]
-    end)
-  end
-
   # Camina el subárbol de una carpeta raíz de esta página, anotando cada
-  # nodo :pagina con puede_desplegar/permisos_habilitados — las carpetas
-  # en sí nunca se anotan (no tienen autómata propio), solo se recorren.
-  defp anotar_nodo(%{tipo: :carpeta, hijos: hijos} = nodo, con_permisos) do
-    %{nodo | hijos: Enum.map(hijos, &anotar_nodo(&1, con_permisos))}
+  # nodo :pagina con puede_desplegar — las carpetas en sí nunca se anotan
+  # (no tienen autómata propio), solo se recorren.
+  defp anotar_nodo(%{tipo: :carpeta, hijos: hijos} = nodo) do
+    %{nodo | hijos: Enum.map(hijos, &anotar_nodo/1)}
   end
 
-  defp anotar_nodo(%{tipo: :pagina} = nodo, con_permisos) do
-    nodo
-    |> adjuntar_puede_desplegar()
-    |> adjuntar_permisos_habilitados(con_permisos)
+  defp anotar_nodo(%{tipo: :pagina} = nodo) do
+    adjuntar_puede_desplegar(nodo)
   end
 
   # Catálogo Maestro-Detalle: un detalle nunca se publica por separado
@@ -939,16 +921,6 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   defp adjuntar_puede_desplegar(item),
     do: Map.put(item, :puede_desplegar, MetaEstadosAdmin.puede_desplegar?(item.id))
-
-  # El link "Permisos" (RBAC, ver Sysadmin.CatalogoPermisosLive) solo
-  # aplica a catálogos reales con motor de estados propio — un detalle no
-  # tiene permisos aparte (los de la fila los da su maestro) y un
-  # catálogo recién graduado sin transiciones todavía no tiene nada que
-  # conceder. Mismo criterio que Permissions.buscar_catalogos/2.
-  defp adjuntar_permisos_habilitados(%{es_carpeta: true} = item, _con_permisos), do: item
-
-  defp adjuntar_permisos_habilitados(item, con_permisos),
-    do: Map.put(item, :permisos_habilitados, MapSet.member?(con_permisos, item.id))
 
   # Orquesta el paquete completo desde la UI, sin pasar por ningún
   # Mix.Task (a diferencia de "mix motor.publicar", que sí puede) — esto
@@ -2277,13 +2249,6 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                 class="text-blue-600 hover:text-blue-800 text-xs font-semibold"
               >
                 Editar
-              </.link>
-              <.link
-                :if={Map.get(nodo, :permisos_habilitados, false)}
-                navigate={~p"/sysadmin/catalogos/#{nodo.id}/permisos"}
-                class="text-purple-600 hover:text-purple-800 text-xs font-semibold"
-              >
-                Permisos
               </.link>
               <button
                 :if={Map.get(nodo, :es_consulta, false)}

@@ -11,16 +11,8 @@ defmodule MetadataAppWeb.UsuarioLive.Login do
         <div class="text-center">
           <.header>
             <p>Log in</p>
-            <:subtitle>
-              <%= if @current_scope do %>
-                You need to reauthenticate to perform sensitive actions on your account.
-              <% else %>
-                Don't have an account? <.link
-                  navigate={~p"/meta_schema_usuario/register"}
-                  class="font-semibold text-brand hover:underline"
-                  phx-no-format
-                >Sign up</.link> for an account now.
-              <% end %>
+            <:subtitle :if={@current_scope}>
+              You need to reauthenticate to perform sensitive actions on your account.
             </:subtitle>
           </.header>
         </div>

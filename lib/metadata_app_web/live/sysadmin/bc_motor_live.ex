@@ -13,7 +13,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador, CatalogoGenerico}
   alias MetadataApp.MetaEstadosAdmin
+  alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaReglasCodigo
+  alias MetadataApp.Permissions
   alias MetadataAppWeb.AdminNav
   alias Phoenix.LiveView.JS
 
@@ -139,7 +141,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       header.id
       |> MetaSchemaContext.listar_catalogos_detalle()
       |> Enum.map(fn h ->
-        %{nombre: h.schema_context_name, etiqueta: h.schema_context_label, campos: MetaSchemaContext.listar_detalles(h.schema_context_name)}
+        %{id: h.id, nombre: h.schema_context_name, etiqueta: h.schema_context_label, campos: MetaSchemaContext.listar_detalles(h.schema_context_name)}
       end)
 
     # Catálogo Maestro-Detalle (R3): acá, no en completitud/1, es donde se
@@ -156,6 +158,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     |> assign(:estados, estados)
     |> assign(:estados_por_id, Map.new(estados, &{&1.id, &1}))
     |> assign(:transiciones, transiciones)
+    |> assign(:permisos_detalle, MetaEstadosAdmin.listar_permisos_detalle(header.id))
     |> assign(:diagrama, diagrama_mermaid(estados, transiciones))
     |> assign(:completitud, completitud)
     |> assign(:validacion, validacion)
@@ -172,6 +175,25 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       nil -> []
       cat -> cat.campos
     end
+  end
+
+  # Un renglón de un catálogo detalle corre la MISMA transición del maestro
+  # (R3), pero verificar_permiso_transicion/3 (MetaStateEngine) resuelve el
+  # "recurso" del permiso por el registro que de verdad se mueve — para un
+  # renglón, eso es la tabla DETALLE, no el encabezado. Sin una fila de
+  # permiso {recurso: <detalle>, accion} registrada, NADIE puede mover
+  # renglones de esa tabla en esa transición, ni el administrador — mismo
+  # motivo que ya justificaba el botón para el encabezado, extendido acá a
+  # cada catálogo detalle (encontrado real con pty_crac_clientes: "Activo"
+  # permitía borrar por MetaEstadosAdmin.permiso_detalle/2 pero la
+  # transición seguía rechazando porque esta fila nunca existió para
+  # 'pty_pty_crac_clientesdet').
+  defp permisos_transicion(header, catalogos_detalle, accion) do
+    recursos = [{header.schema_context_name, header.schema_context_label} | Enum.map(catalogos_detalle, &{&1.nombre, &1.etiqueta})]
+
+    Enum.map(recursos, fn {recurso, etiqueta} ->
+      %{recurso: recurso, etiqueta: etiqueta, existe: Permissions.permiso_existe?(recurso, accion)}
+    end)
   end
 
   # Bug real encontrado 2026-07-21: el botón de colapsar/expandir sidebar
@@ -519,13 +541,13 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # "En grilla" de un campo — si aparece como columna en la grilla del tab
+  # "En tabla" de un campo — si aparece como columna en la tabla del tab
   # Detalle de la Ficha 360° (catálogos con muchos campos quieren mostrar
   # solo un subconjunto ahí; el formulario de al lado siempre muestra
   # todos). Mismo criterio inmediato que cambiar_categoria/2 arriba.
-  def handle_event("cambiar_mostrar_en_grilla", %{"campo" => campo, "mostrar_en_grilla" => valor}, socket) do
+  def handle_event("cambiar_mostrar_en_tabla", %{"campo" => campo, "mostrar_en_tabla" => valor}, socket) do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
-    props = Map.put(detalle.schema_context_properties, "mostrar_en_grilla", valor == "true")
+    props = Map.put(detalle.schema_context_properties, "mostrar_en_tabla", valor == "true")
 
     case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
       {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
@@ -709,12 +731,33 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
        "estado_destino_id" => to_string(t.estado_destino_id),
        "campos_editables" => t.campos_editables,
        "busqueda_campos" => %{},
-       "error" => nil
+       "error" => nil,
+       "permisos" => permisos_transicion(socket.assigns.header, socket.assigns.catalogos_detalle, t.accion)
      })}
   end
 
   def handle_event("cerrar_form_transicion", _params, socket) do
     {:noreply, assign(socket, :transicion_form, nil)}
+  end
+
+  # Sin esto, una transición recién creada por la propia pantalla de
+  # Reglas/Transiciones queda invisible/inejecutable para TODOS (ni el
+  # administrador es un comodín, ver Permissions.can?/3) hasta que alguien
+  # se acuerde de ir a Roles/Permission Sets a darla de alta a mano —
+  # encontrado real con pty_crac_clientes (alta/baja/guardar/reactivar sin
+  # ningún permiso registrado). Un click acá mismo, sin salir del modal.
+  def handle_event("registrar_permiso_transicion", %{"recurso" => recurso}, socket) do
+    accion = socket.assigns.transicion_form["accion"]
+    # {:error, _} acá es casi siempre la unique_constraint (ya existe) —
+    # mismo criterio que antes: cualquier resultado deja la fila marcada
+    # "existe", el objetivo es que la fila esté, no reportar duplicados.
+    Permissions.crear_permiso(%{"recurso" => recurso, "accion" => accion})
+
+    {:noreply,
+     update(socket, :transicion_form, fn form ->
+       permisos = Enum.map(form["permisos"], &if(&1.recurso == recurso, do: %{&1 | existe: true}, else: &1))
+       Map.put(form, "permisos", permisos)
+     end)}
   end
 
   # --- Selector de campos editables por tab (Catálogo Maestro-Detalle) -----
@@ -797,6 +840,19 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       {:error, _motivo} ->
         {:noreply, put_flash(socket, :error, "No se pudo eliminar la transición.")}
     end
+  end
+
+  # --- Permisos de detalle por estado (insertar/actualizar/borrar renglones) --
+  # Un click, un cambio inmediato (mismo criterio que toggle_permiso en
+  # CatalogoPermisosLive) — sin form ni modal separado.
+  def handle_event("toggle_permiso_detalle", %{"estado_id" => estado_id, "header_detalle_id" => header_detalle_id, "campo" => campo}, socket) do
+    MetaEstadosAdmin.toggle_permiso_detalle(
+      String.to_integer(estado_id),
+      String.to_integer(header_detalle_id),
+      String.to_existing_atom(campo)
+    )
+
+    {:noreply, cargar_motor(socket)}
   end
 
   # --- Compilar motor completo (tabla + reglas, un solo paso en dev/test) -----
@@ -1127,7 +1183,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         </p>
       </div>
 
-      <.motor_stepper pasos={pasos_motor(@completitud, @transiciones, @es_detalle?)} />
+      <.motor_stepper pasos={pasos_motor(@completitud, @transiciones, @es_detalle?, @header, @campos)} />
       <.panel_problemas :if={@validacion.problemas != []} problemas={@validacion.problemas} />
 
       <.tabs_motor id="motor" tabs={
@@ -1135,11 +1191,18 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           %{key: "config", label: "Configuración"},
           %{key: "reglas", label: "Reglas"}
         ] ++
-          if(@es_detalle?, do: [], else: [%{key: "diagrama", label: "Diagrama"}, %{key: "api", label: "Contrato"}]) ++
+          if(@es_detalle?,
+            do: [],
+            else: [
+              %{key: "diagrama", label: "Diagrama"},
+              %{key: "api", label: "Contrato"},
+              %{key: "permisos", label: "Permisos"}
+            ]
+          ) ++
           [
             %{key: "get", label: "Relaciones"},
-            %{key: "getview", label: "Get View"},
-            %{key: "postview", label: "PostView"}
+            %{key: "getview", label: "Vista Get"},
+            %{key: "postview", label: "Vista Post"}
           ]
       } />
 
@@ -1177,6 +1240,21 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
         <div id="motor-panel-api" class="hidden">
           <.panel_api header={@header} campos={@campos} estados={@estados} transiciones={@transiciones} />
+        </div>
+
+        <!-- Embebido como LiveView hijo (live_render/3), mismo criterio que
+             "PostView" más abajo — antes era el link "Permisos" en BcListLive
+             que navegaba a /sysadmin/catalogos/:recurso/permisos; ahora vive
+             como tab acá, sin saltar de página. El recurso viaja por
+             session (un hijo montado por live_render nunca recibe params
+             reales del router) — ver la cláusula de mount/3 en
+             CatalogoPermisosLive que matchea session %{"recurso" => ...}. -->
+        <div id="motor-panel-permisos" class="hidden space-y-4">
+          {live_render(@socket, MetadataAppWeb.Sysadmin.CatalogoPermisosLive,
+            id: "permisos-embebido-#{@header.schema_context_name}",
+            session: %{"recurso" => @header.schema_context_name}
+          )}
+          <.tabla_permisos_detalle :if={@catalogos_detalle != []} estados={@estados} catalogos_detalle={@catalogos_detalle} permisos_detalle={@permisos_detalle} />
         </div>
       <% end %>
 
@@ -1279,16 +1357,19 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # Catálogo Maestro-Detalle (R3): sin pasos de autómata — un catálogo
   # detalle nunca tiene estados/transiciones propias, mostrarlos como
   # "pendientes" para siempre sería engañoso (nunca se van a completar,
-  # ni hace falta que lo hagan).
-  defp pasos_motor(completitud, _transiciones, true) do
-    [
-      {"Campos", completitud.tiene_campos},
-      {"Reglas", not completitud.reglas.pre_pendiente and not completitud.reglas.post_pendiente}
-    ]
+  # ni hace falta que lo hagan). Sí tiene Relaciones/Vista Get/Vista Post
+  # (campos propios, get view propio) — Permisos no, un detalle nunca
+  # tiene permisos aparte (los de la fila los da su maestro), mismo
+  # criterio que ya regía el viejo link "Permisos" de BcListLive.
+  defp pasos_motor(completitud, _transiciones, true, header, campos) do
+    ([
+       {"Campos", completitud.tiene_campos},
+       {"Reglas", not completitud.reglas.pre_pendiente and not completitud.reglas.post_pendiente}
+     ] ++ pasos_opcionales(header, campos, incluir_permisos?: false))
     |> marcar_estado_pasos()
   end
 
-  defp pasos_motor(completitud, transiciones, false) do
+  defp pasos_motor(completitud, transiciones, false, header, campos) do
     tiene_transiciones? = transiciones != [] and completitud.transiciones_self_loop_sin_campos_editables == 0
 
     # "Estado inicial" antes que "Estados" (invertido 2026-07-21, a pedido
@@ -1297,14 +1378,49 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     # MetaEstadosAdmin.crear_estado/1) — el orden nuevo refleja que
     # establecer el inicial es lo que de verdad importa primero, no una
     # etapa separada que viene después de tener "estados" en plural.
-    [
-      {"Campos", completitud.tiene_campos},
-      {"Estado inicial", completitud.tiene_alta_o_inicial},
-      {"Estados", completitud.tiene_estados},
-      {"Transiciones", tiene_transiciones?},
-      {"Reglas", not completitud.reglas.pre_pendiente and not completitud.reglas.post_pendiente}
-    ]
+    ([
+       {"Campos", completitud.tiene_campos},
+       {"Estado inicial", completitud.tiene_alta_o_inicial},
+       {"Estados", completitud.tiene_estados},
+       {"Transiciones", tiene_transiciones?},
+       {"Reglas", not completitud.reglas.pre_pendiente and not completitud.reglas.post_pendiente}
+     ] ++ pasos_opcionales(header, campos, incluir_permisos?: true))
     |> marcar_estado_pasos()
+  end
+
+  # Permisos/Relaciones/Vista Get/Vista Post (2026-08-04, a pedido
+  # explícito): a diferencia de los pasos de arriba, estos NO son
+  # obligatorios para que el catálogo funcione — son configuración
+  # opcional que, si nadie la tocó todavía, no debería bloquear ni
+  # ensuciar el stepper. Por eso cada uno se OMITE del todo (no aparece
+  # en la lista) mientras no aplique, en vez de contar como "pendiente"
+  # — mismo criterio que ya usa pasos_motor/5 para un catálogo detalle
+  # (arriba: Estado inicial/Estados/Transiciones directamente no
+  # existen ahí). Permisos/Vista Get/Vista Post se muestran ya
+  # completos apenas hay algo configurado (no hay un estado intermedio
+  # "a medias" para ellos); Relaciones es la excepción — se muestra
+  # justo cuando FALTA algo (al menos un campo referencia sin
+  # campo_visualizacion ni campos_acompanamiento), y desaparece solo
+  # cuando ya no queda ninguno sin configurar.
+  defp pasos_opcionales(header, campos, incluir_permisos?: incluir_permisos?) do
+    referencias_sin_configurar = Enum.count(campos, &(campo_referencia?(&1) and not campo_referencia_configurado?(&1)))
+    tiene_algo_oculto? = Enum.any?(campos, &(get_in(&1.schema_context_properties, ["visible"]) == false))
+    tiene_plantilla? = MetaPlantillas.listar_plantillas(header.id) != []
+
+    (if incluir_permisos? and Permissions.tiene_permisos_concedidos?(header.schema_context_name),
+       do: [{"Permisos", true}],
+       else: []) ++
+      (if referencias_sin_configurar > 0, do: [{"Relaciones", false}], else: []) ++
+      (if tiene_algo_oculto?, do: [{"Vista Get", true}], else: []) ++
+      (if tiene_plantilla?, do: [{"Vista Post", true}], else: [])
+  end
+
+  defp campo_referencia?(campo), do: get_in(campo.schema_context_properties, ["tipo"]) == "referencia"
+
+  defp campo_referencia_configurado?(campo) do
+    props = campo.schema_context_properties
+    (is_map(props["campo_visualizacion"]) and props["campo_visualizacion"] != %{}) or
+      (is_list(props["campos_acompanamiento"]) and props["campos_acompanamiento"] != [])
   end
 
   # El primer paso todavía no completo es "donde estás parado" (:actual) —
@@ -1460,7 +1576,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Opcional</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Categoría (Ficha → Detalle)</th>
-                <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si aparece como columna en la grilla del tab Detalle de la Ficha 360° — el formulario de al lado siempre muestra todos los campos, esto es solo la tabla">En grilla</th>
+                <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si aparece como columna en la tabla del tab Detalle de la Ficha 360° — el formulario de al lado siempre muestra todos los campos, esto es solo la tabla">En tabla</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
             </thead>
@@ -1491,10 +1607,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                     </form>
                   </td>
                   <td class="px-1.5 py-1 text-center">
-                    <form phx-change="cambiar_mostrar_en_grilla">
+                    <form phx-change="cambiar_mostrar_en_tabla">
                       <input type="hidden" name="campo" value={c.schema_context_field} />
-                      <input type="hidden" name="mostrar_en_grilla" value="false" />
-                      <input type="checkbox" name="mostrar_en_grilla" value="true" checked={MetaSchemaContext.mostrar_en_grilla?(props)} class="accent-purple-600" />
+                      <input type="hidden" name="mostrar_en_tabla" value="false" />
+                      <input type="checkbox" name="mostrar_en_tabla" value="true" checked={MetaSchemaContext.mostrar_en_tabla?(props)} class="accent-purple-600" />
                     </form>
                   </td>
                   <td class="px-1.5 py-1">
@@ -1830,6 +1946,78 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   defp nombre_estado(_mapa, nil), do: nil
   defp nombre_estado(mapa, id), do: Map.get(mapa, id, %{nombre: "?"}).nombre
+
+  # Permisos de detalle por estado (insertar/actualizar/borrar renglones):
+  # capa nueva e independiente del permiso RBAC de transición — una fila
+  # por Estado (igual que tabla_estados), y para cada catálogo detalle 3
+  # toggles (Insertar/Actualizar/Borrar). Deny-by-default: sin fila en
+  # @permisos_detalle, los 3 se muestran apagados (ver
+  # MetaEstadosAdmin.permiso_detalle/2, misma regla en tiempo de ejecución).
+  attr :estados, :list, required: true
+  attr :catalogos_detalle, :list, required: true
+  attr :permisos_detalle, :map, required: true
+
+  defp tabla_permisos_detalle(assigns) do
+    ~H"""
+    <div class="border border-gray-200 rounded-lg">
+      <div class="px-1.5 ml-2 -mb-2 relative">
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Permisos de detalle</span>
+      </div>
+      <div class="p-3 pt-4 overflow-x-auto">
+        <%= if @estados == [] do %>
+          <p class="text-gray-400">Definí estados primero.</p>
+        <% else %>
+          <table class="min-w-full">
+            <thead class="bg-gray-50">
+              <tr>
+                <th rowspan="2" class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200 align-bottom">Estado</th>
+                <th :for={detalle <- @catalogos_detalle} colspan="3" class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-l border-gray-200">
+                  {detalle.etiqueta}
+                </th>
+              </tr>
+              <tr>
+                <%= for _detalle <- @catalogos_detalle do %>
+                  <th class="px-1 py-1 text-center font-medium text-[10px] text-gray-400 border-b border-l border-gray-200">Insertar</th>
+                  <th class="px-1 py-1 text-center font-medium text-[10px] text-gray-400 border-b border-gray-200">Actualizar</th>
+                  <th class="px-1 py-1 text-center font-medium text-[10px] text-gray-400 border-b border-gray-200">Borrar</th>
+                <% end %>
+              </tr>
+            </thead>
+            <tbody>
+              <tr :for={estado <- @estados} class="border-b border-gray-100 hover:bg-gray-50">
+                <td class="px-1.5 py-1 text-gray-900 whitespace-nowrap">{estado.nombre}</td>
+                <%= for detalle <- @catalogos_detalle do %>
+                  <% permiso = Map.get(@permisos_detalle, {estado.id, detalle.id}, %{permite_insertar: false, permite_actualizar: false, permite_borrar: false}) %>
+                  <td class="px-1 py-1 text-center border-l border-gray-100"><.toggle_permiso_detalle estado_id={estado.id} header_detalle_id={detalle.id} campo="permite_insertar" concedido={permiso.permite_insertar} /></td>
+                  <td class="px-1 py-1 text-center"><.toggle_permiso_detalle estado_id={estado.id} header_detalle_id={detalle.id} campo="permite_actualizar" concedido={permiso.permite_actualizar} /></td>
+                  <td class="px-1 py-1 text-center"><.toggle_permiso_detalle estado_id={estado.id} header_detalle_id={detalle.id} campo="permite_borrar" concedido={permiso.permite_borrar} /></td>
+                <% end %>
+              </tr>
+            </tbody>
+          </table>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  attr :estado_id, :integer, required: true
+  attr :header_detalle_id, :integer, required: true
+  attr :campo, :string, required: true
+  attr :concedido, :boolean, required: true
+
+  defp toggle_permiso_detalle(assigns) do
+    ~H"""
+    <button type="button" phx-click="toggle_permiso_detalle" phx-value-estado_id={@estado_id} phx-value-header_detalle_id={@header_detalle_id} phx-value-campo={@campo}
+      class={[
+        "w-5 h-5 rounded border inline-flex items-center justify-center",
+        @concedido && "bg-purple-600 border-purple-600 text-white" || "bg-white border-gray-300 hover:bg-gray-50"
+      ]}
+    >
+      <span :if={@concedido} class="material-symbols-outlined" style="font-size: 13px">check</span>
+    </button>
+    """
+  end
 
   attr :diagrama, :string, required: true
 
@@ -2661,6 +2849,31 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             <label class="block text-gray-700 mb-0.5">Etiqueta</label>
             <input type="text" name="etiqueta" value={@form["etiqueta"]} placeholder="Activar" required maxlength="100"
               class="w-full border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
+          </div>
+
+          <%!-- Solo tiene sentido para una transición ya guardada (cada fila
+               de permiso se registra por {recurso, accion} — antes de
+               guardar no hay accion definitiva todavía). Sin la fila del
+               ENCABEZADO nadie ve/ejecuta la transición ahí; sin la fila de
+               un catálogo DETALLE, nadie puede mover renglones de esa tabla
+               en esta transición — ni el administrador (no es un comodín,
+               ver Permissions.can?/3), ambos casos encontrados reales con
+               pty_crac_clientes. Conceder a roles puntuales sigue siendo en
+               Roles/Permission Sets, esto solo asegura que la fila exista. --%>
+          <div :if={@form["id"]} class="rounded-lg border border-gray-200 divide-y divide-gray-100">
+            <div :for={p <- @form["permisos"]} class="px-2 py-1.5 flex items-center justify-between gap-2">
+              <span class={["font-semibold", if(p.existe, do: "text-green-700", else: "text-amber-700")]}>
+                <%= if p.existe do %>
+                  ✓ {p.etiqueta}
+                <% else %>
+                  ⚠ {p.etiqueta} — sin permiso registrado
+                <% end %>
+              </span>
+              <button :if={!p.existe} type="button" phx-click="registrar_permiso_transicion" phx-value-recurso={p.recurso}
+                class="px-2 py-1 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 whitespace-nowrap">
+                Registrar permiso
+              </button>
+            </div>
           </div>
 
           <div class="grid grid-cols-2 gap-2">

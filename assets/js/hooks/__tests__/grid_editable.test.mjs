@@ -1,8 +1,8 @@
 // Tests de las únicas funciones puras (sin DOM) del hook GridEditable —
-// las de mayor riesgo de bug silencioso (parseo de pegado, cálculo del
-// estado visual de una fila). Todo lo que depende del DOM (teclado, foco,
-// pegado real) no se puede probar acá sin navegador headless (no
-// disponible en este entorno, ver docs/catalogo-maestro-detalle-requerimientos.md
+// las de mayor riesgo de bug silencioso (ventana de virtualización, estado
+// visual de una fila, detección de duplicados). Todo lo que depende del DOM
+// (clic, foco) no se puede probar acá sin navegador headless (no disponible
+// en este entorno, ver docs/catalogo-maestro-detalle-requerimientos.md
 // Fase 7) — se verifica manualmente en un navegador real.
 //
 // Corre con el test runner nativo de Node (>= 18), sin dependencias
@@ -10,28 +10,21 @@
 
 import {test} from "node:test"
 import assert from "node:assert/strict"
-import {
-  parsePaste,
-  computeStatus,
-  calcularVentana,
-  actualizarValoresRecientes,
-  firmaFila,
-  detectarDuplicados,
-} from "../grid_editable.js"
+import {computeStatus, calcularVentana, firmaFila, detectarDuplicados} from "../grid_editable.js"
 
-// ROW_H=33, BUFFER_FILAS=8 (constantes internas de grid_editable.js) —
+// ROW_H=26, BUFFER_FILAS=8 (constantes internas de grid_editable.js) —
 // hardcodeados acá a propósito: si alguien los cambia sin darse cuenta de
 // que afectan la ventana visible, estos tests tienen que fallar.
 test("calcularVentana: arranque en el tope, con buffer hacia abajo", () => {
-  assert.deepEqual(calcularVentana(0, 495, 1000), {inicio: 0, fin: 23})
+  assert.deepEqual(calcularVentana(0, 495, 1000), {inicio: 0, fin: 28})
 })
 
 test("calcularVentana: scrolleado a la mitad, buffer para ambos lados", () => {
-  assert.deepEqual(calcularVentana(3300, 495, 1000), {inicio: 92, fin: 123})
+  assert.deepEqual(calcularVentana(3300, 495, 1000), {inicio: 118, fin: 154})
 })
 
 test("calcularVentana: cerca del final, el fin nunca pasa del total", () => {
-  assert.deepEqual(calcularVentana(32670, 495, 1000), {inicio: 982, fin: 1000})
+  assert.deepEqual(calcularVentana(25500, 495, 1000), {inicio: 972, fin: 1000})
 })
 
 test("calcularVentana: menos filas que el buffer, la ventana cubre todo sin pasarse", () => {
@@ -40,39 +33,6 @@ test("calcularVentana: menos filas que el buffer, la ventana cubre todo sin pasa
 
 test("calcularVentana: sin filas, ventana vacía sin romper (fin nunca queda antes que inicio)", () => {
   assert.deepEqual(calcularVentana(0, 495, 0), {inicio: 0, fin: 0})
-})
-
-test("parsePaste: una sola celda", () => {
-  assert.deepEqual(parsePaste("hola"), [["hola"]])
-})
-
-test("parsePaste: varias columnas separadas por tab", () => {
-  assert.deepEqual(parsePaste("Juan\t5555\tjuan@x.com"), [["Juan", "5555", "juan@x.com"]])
-})
-
-test("parsePaste: varias filas separadas por salto de línea", () => {
-  assert.deepEqual(parsePaste("a\tb\nc\td"), [
-    ["a", "b"],
-    ["c", "d"],
-  ])
-})
-
-test("parsePaste: descarta el último salto de línea sobrante (típico de Excel/Sheets)", () => {
-  assert.deepEqual(parsePaste("a\tb\nc\td\n"), [
-    ["a", "b"],
-    ["c", "d"],
-  ])
-})
-
-test("parsePaste: normaliza CRLF (Windows) igual que LF", () => {
-  assert.deepEqual(parsePaste("a\tb\r\nc\td\r\n"), [
-    ["a", "b"],
-    ["c", "d"],
-  ])
-})
-
-test("parsePaste: una línea vacía sola no se descarta (no hay 'sobrante' que recortar)", () => {
-  assert.deepEqual(parsePaste(""), [[""]])
 })
 
 test("computeStatus: fila sin renglon_id es 'nueva'", () => {
@@ -100,21 +60,14 @@ test("computeStatus: un campo con lista de errores vacía no cuenta como error",
   assert.equal(computeStatus(fila), "sin_cambios")
 })
 
-test("actualizarValoresRecientes: agrega el valor nuevo adelante", () => {
-  assert.deepEqual(actualizarValoresRecientes(["a", "b"], "c"), ["c", "a", "b"])
+test("computeStatus: fila marcada para eliminar es 'eliminar'", () => {
+  const fila = {renglonId: 3, dirty: new Set(), errors: {}, marcadaEliminar: true}
+  assert.equal(computeStatus(fila), "eliminar")
 })
 
-test("actualizarValoresRecientes: un valor repetido se mueve adelante, no se duplica", () => {
-  assert.deepEqual(actualizarValoresRecientes(["a", "b", "c"], "b"), ["b", "a", "c"])
-})
-
-test("actualizarValoresRecientes: recorta espacios y descarta vacíos", () => {
-  assert.deepEqual(actualizarValoresRecientes(["a"], "  "), ["a"])
-  assert.deepEqual(actualizarValoresRecientes(["a"], "  nuevo  "), ["nuevo", "a"])
-})
-
-test("actualizarValoresRecientes: respeta el máximo, descartando los más viejos", () => {
-  assert.deepEqual(actualizarValoresRecientes(["a", "b"], "c", 2), ["c", "a"])
+test("computeStatus: marcada para eliminar gana incluso sobre un error", () => {
+  const fila = {renglonId: 3, dirty: new Set(), errors: {contacto: ["obligatorio"]}, marcadaEliminar: true}
+  assert.equal(computeStatus(fila), "eliminar")
 })
 
 test("firmaFila: mismos valores en distinto caso/espacios dan la misma firma", () => {
