@@ -129,19 +129,24 @@ defmodule MetadataApp.MetaPublicador do
     # cuantas publicaciones). La única forma de fijar el nombre remoto es
     # que el archivo LOCAL ya se llame así -- de ahí la copia acá.
     bundle_nombre_fijo = Path.join(Path.dirname(bundle_path), "bundle.tar.gz")
-    File.cp!(bundle_path, bundle_nombre_fijo)
 
-    nombres_raiz
-    |> Enum.reduce_while({:ok, []}, fn nombre, {:ok, acc} ->
-      tag = "bc-#{nombre}"
-      asegurar_release(tag, nombre)
+    case File.cp(bundle_path, bundle_nombre_fijo) do
+      :ok ->
+        nombres_raiz
+        |> Enum.reduce_while({:ok, []}, fn nombre, {:ok, acc} ->
+          tag = "bc-#{nombre}"
+          asegurar_release(tag, nombre)
 
-      case ejecutar("gh", ["release", "upload", tag, bundle_nombre_fijo, "--clobber"]) do
-        {:ok, {_salida, 0}} -> {:cont, {:ok, [tag | acc]}}
-        {:ok, {salida, status}} -> {:halt, {:error, "gh release upload #{tag} falló (status #{status}):\n#{salida}"}}
-        {:error, mensaje} -> {:halt, {:error, mensaje}}
-      end
-    end)
+          case ejecutar("gh", ["release", "upload", tag, bundle_nombre_fijo, "--clobber"]) do
+            {:ok, {_salida, 0}} -> {:cont, {:ok, [tag | acc]}}
+            {:ok, {salida, status}} -> {:halt, {:error, "gh release upload #{tag} falló (status #{status}):\n#{salida}"}}
+            {:error, mensaje} -> {:halt, {:error, mensaje}}
+          end
+        end)
+
+      {:error, razon} ->
+        {:error, "No se pudo preparar \"#{bundle_nombre_fijo}\" a partir de \"#{bundle_path}\": #{:file.format_error(razon)}"}
+    end
     |> case do
       {:ok, tags} -> {:ok, Enum.reverse(tags)}
       error -> error
