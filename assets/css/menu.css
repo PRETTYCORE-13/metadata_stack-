@@ -194,31 +194,30 @@
   color: #6b7280 !important;
 }
 
-/* Layout: columna completa — topbar de ancho completo arriba (fila 1) y
-   abajo (fila 2, pc-platform-body) el riel + flyout + contenido, uno al
-   lado del otro. Antes la topbar vivía DENTRO de pc-platform-content
-   (a la derecha del riel, sin cubrir esa franja) — ahora es hermana de
-   pc-platform-body, así abarca TODO el ancho de la pantalla, riel
-   incluido. */
+/* Layout: una sola fila — riel (altura completa) + flyout + columna
+   derecha (topbar + contenido + footer). Antes la topbar vivía afuera de
+   esta fila, de ancho completo por encima del riel también; ahora el
+   riel llega hasta arriba de la pantalla (pedido explícito 2026-08-04) y
+   la topbar pasó a ser la primera fila de la columna derecha, ver
+   pc-platform-content abajo. */
 .pc-platform {
   display: flex;
-  flex-direction: column;
   height: 100vh;       /* fallback */
   height: 100dvh;      /* Safari iOS: excluye barra del browser */
   background: var(--pc-bg-secundario);
 }
 
-/* Fila 2: riel + flyout + contenido, ocupando el resto de la altura
-   debajo de la topbar. */
+/* Fila: riel + flyout + columna derecha, ocupando toda la altura. */
 .pc-platform-body {
   display: flex;
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 
-/* Columna derecha: contenido + footer, al lado del sidebar (la topbar ya
-   no vive acá, ver pc-platform arriba). */
+/* Columna derecha: topbar (primera fila, ver pc-topbar) + contenido +
+   footer, al lado del sidebar. */
 .pc-platform-content {
   display: flex;
   flex-direction: column;

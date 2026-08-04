@@ -46,103 +46,14 @@ defmodule MetadataAppWeb.MenuLayout do
         class="pc-sidebar-overlay"
         phx-click={mobile_toggle_js()}
       />
-      <!-- Topbar: FUERA de la fila riel+contenido (pc-platform-body de abajo)
-           a propósito — así la banda de arriba abarca TODO el ancho de la
-           pantalla, por encima del riel también, en vez de arrancar recién
-           después de él. -->
-      <div class="pc-topbar">
-        <!-- Hamburger: solo visible en móvil -->
-        <button
-          type="button"
-          class="pc-mobile-menu-btn"
-          phx-click={mobile_toggle_js()}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
-          </svg>
-        </button>
-        <.link navigate="/" class="pc-topbar-brand">
-          <img
-            src="https://prettycore.xyz/IMAGENES/Logo%20Prettycore%20(8).png"
-            alt={@nombre_empresa}
-            class="pc-topbar-logo"
-          />
-          <span class="pc-topbar-empresa">{@nombre_empresa}</span>
-        </.link>
-        <div class="pc-topbar-derecha">
-          <.live_component
-            module={MetadataAppWeb.NotifBellComponent}
-            id="notif-bell"
-            user_id={@current_user_id}
-            refresh={@notif_refresh}
-          />
-          <!-- Usuario: antes vivía abajo del todo en el sidebar (sección
-               "Cuenta"), ahora es un solo botón acá con menú desplegable —
-               reemplaza también al link viejo de "Iniciar sesión". -->
-          <div class="pc-user-menu">
-            <button
-              type="button"
-              class="pc-user-menu-btn"
-              phx-click={
-                JS.toggle(
-                  to: "#user-menu-dropdown",
-                  display: "flex",
-                  in: {"ease-out duration-150", "opacity-0 scale-95", "opacity-100 scale-100"},
-                  out: {"ease-in duration-100", "opacity-100 scale-100", "opacity-0 scale-95"}
-                )
-              }
-            >
-              <div class="pc-user-menu-avatar">
-                {((@current_user_name && String.first(@current_user_name)) || "?") |> String.upcase()}
-              </div>
-              <span class="pc-user-menu-label">{@current_user_name || "Usuario"}</span>
-            </button>
-            <div
-              id="user-menu-dropdown"
-              class="pc-user-menu-dropdown"
-              phx-click-away={JS.hide(to: "#user-menu-dropdown")}
-            >
-              <details class="pc-user-menu-submenu">
-                <summary class="pc-user-menu-item pc-user-menu-item-submenu">Sysadmin</summary>
-                <.link :if={@bpb_habilitado} navigate="/sysadmin/bc-list" class="pc-user-menu-item pc-user-menu-subitem">
-                  Business Process Builder
-                </.link>
-                <.link :if={@bpb_habilitado} navigate="/sysadmin/tepache" class="pc-user-menu-item pc-user-menu-subitem">
-                  Tepache Exp/Imp
-                </.link>
-                <.link navigate="/sysadmin/empresas" class="pc-user-menu-item pc-user-menu-subitem">
-                  Empresas
-                </.link>
-                <.link navigate="/sysadmin/usuarios" class="pc-user-menu-item pc-user-menu-subitem">
-                  Usuarios de la empresa
-                </.link>
-                <.link navigate="/sysadmin/roles" class="pc-user-menu-item pc-user-menu-subitem">
-                  Roles y Usuarios
-                </.link>
-                <.link navigate="/sysadmin/catalogos/permisos" class="pc-user-menu-item pc-user-menu-subitem">
-                  Permission Sets
-                </.link>
-              </details>
-              <.link navigate="/meta_schema_usuario/settings" class="pc-user-menu-item">
-                Configuración de cuenta
-              </.link>
-              <.link
-                href="/meta_schema_usuario/log-out"
-                method="delete"
-                class="pc-user-menu-item pc-user-menu-item-danger"
-                data-confirm="¿Cerrar sesión?"
-              >
-                Cerrar sesión
-              </.link>
-            </div>
-          </div>
-        </div>
-      </div>
-      <!-- Fila de abajo: riel + flyout + contenido, ocupando el resto de la
-           altura debajo de la topbar de arriba. -->
+      <!-- Fila principal: riel + flyout + columna derecha (topbar +
+           contenido), uno al lado del otro — el riel ocupa la altura
+           COMPLETA de la pantalla (pedido explícito 2026-08-04), la topbar
+           ya no vive afuera de esta fila: es la primera fila de la columna
+           derecha, así que solo abarca el ancho a la derecha del riel. -->
       <div class="pc-platform-body">
       <!-- Sidebar: hermano de pc-platform-content — así el riel del menú
-           ocupa todo el lado izquierdo debajo de la topbar. -->
+           ocupa todo el lado izquierdo, altura completa de la pantalla. -->
       <aside
         id="pc-sidebar"
         phx-hook="PersistirSidebarAbierto"
@@ -279,9 +190,100 @@ defmodule MetadataAppWeb.MenuLayout do
           </div>
         <% end %>
       </div>
-      <!-- Columna derecha: contenido + footer (la topbar ya se movió afuera
-           de pc-platform-body, ver arriba). -->
+      <!-- Columna derecha: topbar + contenido + footer, al lado del riel
+           (que ahora ocupa la altura completa — ver comentario en
+           pc-platform-body más arriba). La topbar es la primera fila de
+           esta columna, así que solo abarca este ancho, no el de la
+           pantalla completa. -->
       <div class="pc-platform-content">
+      <div class="pc-topbar">
+        <!-- Hamburger: solo visible en móvil -->
+        <button
+          type="button"
+          class="pc-mobile-menu-btn"
+          phx-click={mobile_toggle_js()}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
+        <.link navigate="/" class="pc-topbar-brand">
+          <img
+            src="https://prettycore.xyz/IMAGENES/Logo%20Prettycore%20(8).png"
+            alt={@nombre_empresa}
+            class="pc-topbar-logo"
+          />
+          <span class="pc-topbar-empresa">{@nombre_empresa}</span>
+        </.link>
+        <div class="pc-topbar-derecha">
+          <.live_component
+            module={MetadataAppWeb.NotifBellComponent}
+            id="notif-bell"
+            user_id={@current_user_id}
+            refresh={@notif_refresh}
+          />
+          <!-- Usuario: antes vivía abajo del todo en el sidebar (sección
+               "Cuenta"), ahora es un solo botón acá con menú desplegable —
+               reemplaza también al link viejo de "Iniciar sesión". -->
+          <div class="pc-user-menu">
+            <button
+              type="button"
+              class="pc-user-menu-btn"
+              phx-click={
+                JS.toggle(
+                  to: "#user-menu-dropdown",
+                  display: "flex",
+                  in: {"ease-out duration-150", "opacity-0 scale-95", "opacity-100 scale-100"},
+                  out: {"ease-in duration-100", "opacity-100 scale-100", "opacity-0 scale-95"}
+                )
+              }
+            >
+              <div class="pc-user-menu-avatar">
+                {((@current_user_name && String.first(@current_user_name)) || "?") |> String.upcase()}
+              </div>
+              <span class="pc-user-menu-label">{@current_user_name || "Usuario"}</span>
+            </button>
+            <div
+              id="user-menu-dropdown"
+              class="pc-user-menu-dropdown"
+              phx-click-away={JS.hide(to: "#user-menu-dropdown")}
+            >
+              <details class="pc-user-menu-submenu">
+                <summary class="pc-user-menu-item pc-user-menu-item-submenu">Sysadmin</summary>
+                <.link :if={@bpb_habilitado} navigate="/sysadmin/bc-list" class="pc-user-menu-item pc-user-menu-subitem">
+                  Business Process Builder
+                </.link>
+                <.link :if={@bpb_habilitado} navigate="/sysadmin/tepache" class="pc-user-menu-item pc-user-menu-subitem">
+                  Tepache Exp/Imp
+                </.link>
+                <.link navigate="/sysadmin/empresas" class="pc-user-menu-item pc-user-menu-subitem">
+                  Empresas
+                </.link>
+                <.link navigate="/sysadmin/usuarios" class="pc-user-menu-item pc-user-menu-subitem">
+                  Usuarios de la empresa
+                </.link>
+                <.link navigate="/sysadmin/roles" class="pc-user-menu-item pc-user-menu-subitem">
+                  Roles y Usuarios
+                </.link>
+                <.link navigate="/sysadmin/catalogos/permisos" class="pc-user-menu-item pc-user-menu-subitem">
+                  Permission Sets
+                </.link>
+              </details>
+              <.link navigate="/meta_schema_usuario/settings" class="pc-user-menu-item">
+                Configuración de cuenta
+              </.link>
+              <.link
+                href="/meta_schema_usuario/log-out"
+                method="delete"
+                class="pc-user-menu-item pc-user-menu-item-danger"
+                data-confirm="¿Cerrar sesión?"
+              >
+                Cerrar sesión
+              </.link>
+            </div>
+          </div>
+        </div>
+      </div>
       <!-- CONTENIDO -->
       <main class="pc-platform-main">
           <%!-- Banda de publicidad (valores por defecto, sin backend todavía)

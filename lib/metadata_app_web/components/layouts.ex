@@ -54,23 +54,7 @@ defmodule MetadataAppWeb.Layouts do
         <div class="min-w-0 sm:flex-none">
           <ul class="flex flex-wrap px-1 gap-4 items-center justify-end">
             <li>
-              <a href="https://phoenixframework.org/" class="btn btn-ghost text-white hover:bg-white/10">Website</a>
-            </li>
-            <li>
-              <a href="https://github.com/phoenixframework/phoenix" class="btn btn-ghost text-white hover:bg-white/10">
-                GitHub
-              </a>
-            </li>
-            <li>
               <.theme_toggle />
-            </li>
-            <li>
-              <a
-                href="https://hexdocs.pm/phoenix/overview.html"
-                class="btn bg-white text-black border-0 hover:bg-white/90"
-              >
-                Get Started <span aria-hidden="true">&rarr;</span>
-              </a>
             </li>
           </ul>
         </div>

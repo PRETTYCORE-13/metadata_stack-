@@ -1178,10 +1178,6 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     <div class="w-full p-4 sm:p-6 lg:p-8">
       <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div class="flex items-center gap-2">
-          <.link navigate={~p"/"} title="Volver al inicio"
-            class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors shrink-0">
-            <span class="material-symbols-outlined" style="font-size: 18px">arrow_back</span>
-          </.link>
           <h1 class="text-2xl font-bold">BC List</h1>
         </div>
         <div class="flex items-center gap-3 flex-wrap">
