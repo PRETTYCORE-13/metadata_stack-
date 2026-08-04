@@ -426,6 +426,40 @@ defmodule MetadataApp.MetaConsultas do
     end)
   end
 
+  @doc """
+  Igual que `CatalogoGenerico.agregar/5`, pero para una Consulta con JOIN
+  — `campo_clave` es la clave namespaced (ver `clave_campo/1`, como
+  string) porque acá puede haber más de una tabla y el campo crudo solo
+  identifica la columna dentro de SU catálogo, no en toda la consulta.
+  `funcion` es uno de :sum/:avg/:min/:max/:count. nil si `campo_clave` no
+  existe en la consulta (defensivo — no debería pasar desde la UI).
+  """
+  def agregar(%Consulta{} = consulta, campo_clave, funcion, filtros \\ %{}, busqueda \\ nil) do
+    case Enum.find(consulta.campos, &(to_string(clave_campo(&1)) == campo_clave)) do
+      nil ->
+        nil
+
+      campo ->
+        {base, alias_por_catalogo} = construir_query_base(consulta)
+        alias_tabla = Map.fetch!(alias_por_catalogo, campo["catalogo"])
+        campo_atom = String.to_existing_atom(campo["campo"])
+        expr = dynamic([{^alias_tabla, t}], field(t, ^campo_atom))
+
+        base
+        |> aplicar_filtros(filtros, consulta.campos, alias_por_catalogo)
+        |> aplicar_busqueda(busqueda, consulta.campos, alias_por_catalogo)
+        |> exclude(:order_by)
+        |> select(^aplicar_funcion_agregada(funcion, expr))
+        |> Repo.one()
+    end
+  end
+
+  defp aplicar_funcion_agregada(:sum, expr), do: dynamic(sum(^expr))
+  defp aplicar_funcion_agregada(:avg, expr), do: dynamic(avg(^expr))
+  defp aplicar_funcion_agregada(:min, expr), do: dynamic(min(^expr))
+  defp aplicar_funcion_agregada(:max, expr), do: dynamic(max(^expr))
+  defp aplicar_funcion_agregada(:count, expr), do: dynamic(count(^expr))
+
   defp generar_guid do
     Ecto.UUID.generate() |> String.replace("-", "")
   end

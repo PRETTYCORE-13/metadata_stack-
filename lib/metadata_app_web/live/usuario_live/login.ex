@@ -9,20 +9,26 @@ defmodule MetadataAppWeb.UsuarioLive.Login do
     <Layouts.app flash={@flash} current_scope={@current_scope}>
       <div class="mx-auto max-w-sm space-y-4">
         <div class="text-center">
+          <img
+            src="https://prettycore.xyz/IMAGENES/Logo%20Prettycore%20(8).png"
+            alt="Prettycore"
+            class="mx-auto mb-4 h-12 w-auto"
+          />
           <.header>
-            <p>Log in</p>
+            <p class="text-white">Log in</p>
             <:subtitle :if={@current_scope}>
-              You need to reauthenticate to perform sensitive actions on your account.
+              <span class="text-white/60">You need to reauthenticate to perform sensitive actions on your account.</span>
             </:subtitle>
           </.header>
         </div>
 
-        <div :if={local_mail_adapter?()} class="alert alert-info">
+        <div :if={local_mail_adapter?()} class="flex gap-3 rounded-lg border border-white/20 bg-white/5 p-4 text-white">
           <.icon name="hero-information-circle" class="size-6 shrink-0" />
           <div>
             <p>You are running the local mail adapter.</p>
             <p>
-              To see sent emails, visit <.link href="/dev/mailbox" class="underline">the mailbox page</.link>.
+              To see sent emails, visit
+              <.link href="/dev/mailbox" class="underline hover:text-white/80">the mailbox page</.link>.
             </p>
           </div>
         </div>
@@ -43,13 +49,14 @@ defmodule MetadataAppWeb.UsuarioLive.Login do
             spellcheck="false"
             required
             phx-mounted={JS.focus()}
+            class="w-full input bg-black border-white/25 text-white placeholder:text-white/40 focus:border-white focus:outline-none"
           />
-          <.button class="btn btn-primary w-full">
+          <.button class="btn w-full bg-white text-black border-0 hover:bg-white/90">
             Log in with email <span aria-hidden="true">→</span>
           </.button>
         </.form>
 
-        <div class="divider">or</div>
+        <div class="divider text-white/50 before:bg-white/15 after:bg-white/15">or</div>
 
         <.form
           :let={f}
@@ -67,6 +74,7 @@ defmodule MetadataAppWeb.UsuarioLive.Login do
             autocomplete="username"
             spellcheck="false"
             required
+            class="w-full input bg-black border-white/25 text-white placeholder:text-white/40 focus:border-white focus:outline-none"
           />
           <.input
             field={@form[:password]}
@@ -74,11 +82,16 @@ defmodule MetadataAppWeb.UsuarioLive.Login do
             label="Password"
             autocomplete="current-password"
             spellcheck="false"
+            class="w-full input bg-black border-white/25 text-white placeholder:text-white/40 focus:border-white focus:outline-none"
           />
-          <.button class="btn btn-primary w-full" name={@form[:remember_me].name} value="true">
+          <.button
+            class="btn w-full bg-white text-black border-0 hover:bg-white/90"
+            name={@form[:remember_me].name}
+            value="true"
+          >
             Log in and stay logged in <span aria-hidden="true">→</span>
           </.button>
-          <.button class="btn btn-primary btn-soft w-full mt-2">
+          <.button class="btn w-full mt-2 bg-transparent text-white border border-white/30 hover:bg-white/10">
             Log in only this time
           </.button>
         </.form>
