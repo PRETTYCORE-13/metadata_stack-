@@ -18,6 +18,15 @@ defmodule MetadataApp.Notificaciones do
 
   @maximo 30
 
+  @doc """
+  Topic de PubSub de la campanita de un usuario — UsuarioAuth.mount_current_scope/2
+  suscribe acá a CUALQUIER LiveView autenticado (todas comparten el mismo
+  MenuLayout/NotifBellComponent), así que un alta desde OTRO proceso/pestaña
+  (ej. otra LiveView creando un registro vía CatalogoGenerico) llega al
+  instante sin esperar a que esa pantalla se recargue sola.
+  """
+  def topic(usuario_id), do: "notificaciones:usuario:#{usuario_id}"
+
   @doc "Sin usuario real detrás (import/script/proceso interno) no hay a quién notificar — no es un error."
   def crear(usuario_id, mensaje, tipo \\ "info")
   def crear(nil, _mensaje, _tipo), do: :ok
@@ -26,6 +35,7 @@ defmodule MetadataApp.Notificaciones do
     case %Notificacion{} |> Notificacion.changeset(%{usuario_id: usuario_id, mensaje: mensaje, tipo: tipo}) |> Repo.insert() do
       {:ok, notificacion} ->
         podar(usuario_id)
+        Phoenix.PubSub.broadcast(MetadataApp.PubSub, topic(usuario_id), :nueva_notificacion)
         {:ok, notificacion}
 
       error ->
