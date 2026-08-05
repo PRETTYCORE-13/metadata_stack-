@@ -198,6 +198,29 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     end
   end
 
+  # Para catálogos generados ANTES de que este Constructor pasara a ser un
+  # grid: reconstruye el CONTENIDO de "Plantilla automática" con el
+  # formato actual (ver MetaPlantillas.regenerar_plantilla_automatica/1),
+  # sin tocar qué plantilla está publicada ahora mismo. Si la que se
+  # estaba viendo ERA la automática, se refresca en el lugar para ver el
+  # resultado de una; si no, solo se actualiza en la lista (@plantillas)
+  # sin cambiar la selección actual.
+  def handle_event("regenerar_automatica", _params, socket) do
+    case MetaPlantillas.regenerar_plantilla_automatica(socket.assigns.header) do
+      {:ok, plantilla} ->
+        socket =
+          socket
+          |> assign(:plantillas, MetaPlantillas.listar_plantillas(socket.assigns.header.id))
+          |> assign(:mensaje, {:ok, "\"Plantilla automática\" regenerada."})
+
+        socket = if socket.assigns.plantilla && socket.assigns.plantilla.id == plantilla.id, do: seleccionar(socket, plantilla), else: socket
+        {:noreply, socket}
+
+      {:error, _changeset} ->
+        {:noreply, assign(socket, :mensaje, {:error, "No se pudo regenerar la plantilla automática."})}
+    end
+  end
+
   def handle_event("seleccionar_plantilla", %{"id" => id}, socket) do
     plantilla = Enum.find(socket.assigns.plantillas, &(&1.id == String.to_integer(id)))
     {:noreply, seleccionar(socket, plantilla)}
@@ -282,6 +305,21 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   def handle_event("grid_duplicar_fila", _params, socket) do
     definicion = MetaPlantillas.duplicar_fila_grid(socket.assigns.definicion, socket.assigns.grid_editando_id, fila_referencia(socket))
     {:noreply, aplicar_cambio_grid(socket, definicion)}
+  end
+
+  # Suma como filas nuevas, al final de ESTE grid, los campos del catálogo
+  # que todavía no estén en ningún lado de la plantilla — nunca reemplaza
+  # nada de lo que ya había (a diferencia de "regenerar_automatica", que
+  # sí pisa el contenido entero). Útil después de agregar un campo nuevo
+  # en Configuración sobre una Vista Post que ya se armó/personalizó a mano.
+  def handle_event("agregar_campos_faltantes", _params, socket) do
+    {definicion, cantidad} = MetaPlantillas.agregar_campos_faltantes(socket.assigns.definicion, socket.assigns.header, socket.assigns.grid_editando_id)
+
+    if cantidad > 0 do
+      {:noreply, aplicar_cambio_grid(socket, definicion)}
+    else
+      {:noreply, assign(socket, :mensaje, {:ok, "No hay campos nuevos para agregar acá."})}
+    end
   end
 
   # Ancla = nodo ya seleccionado (@nodo_seleccionado_id); destino = celda
@@ -886,6 +924,11 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           <div class="w-px h-5 bg-gray-200 mx-1"></div>
           <button type="button" phx-click="nueva_plantilla" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50">
             + Nuevo PostView
+          </button>
+          <button type="button" phx-click="regenerar_automatica"
+            title={"Reconstruye 'Plantilla automática' (todos los campos, 1 columna × N filas) con el formato actual — para catálogos generados antes de que esto fuera un grid. No cambia qué plantilla está publicada."}
+            class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50">
+            ↻ Regenerar automática
           </button>
           <button :if={@plantilla} type="button" phx-click="vista_previa" phx-hook="AbrirVistaPrevia" id="btn-vista-previa"
             title="Abre la Ficha de un registro nuevo (en blanco) con este diseño — no hace falta tener ningún registro cargado todavía"
@@ -1794,6 +1837,9 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         <button type="button" phx-click="grid_eliminar_fila" disabled={@filas <= 1} title="Eliminar fila" class={@btn}>Eliminar fila</button>
         <button type="button" phx-click="grid_eliminar_columna" disabled={@columnas <= 1} title="Eliminar columna" class={@btn}>Eliminar columna</button>
         <button type="button" phx-click="grid_duplicar_fila" title="Duplicar fila" class={@btn}>Duplicar fila</button>
+        <button type="button" phx-click="agregar_campos_faltantes"
+          title="Suma como filas nuevas SOLO los campos que todavía no estén en ningún lado de esta plantilla — no toca lo que ya armaste"
+          class={@btn}>+ Campos faltantes</button>
         <div class="w-px h-5 bg-gray-200 mx-1"></div>
         <button type="button" phx-click="grid_combinar" disabled={!@puede_combinar?} title="Combinar celdas" class={@btn}>Combinar</button>
         <button type="button" phx-click="grid_separar" disabled={!@combinado?} title="Separar celda" class={@btn}>Separar</button>

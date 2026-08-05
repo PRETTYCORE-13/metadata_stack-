@@ -248,6 +248,108 @@ defmodule MetadataApp.MetaPlantillas do
   `CatalogoGenerador.generar/1` lo ignora.
   """
   def crear_plantilla_default(header) do
+    with {:ok, plantilla} <-
+           crear_plantilla(header.id, %{"nombre" => "Plantilla automática", "estado" => "borrador", "definicion" => definicion_automatica(header)}) do
+      publicar_plantilla(plantilla)
+    end
+  end
+
+  @doc """
+  Reconstruye el CONTENIDO de "Plantilla automática" de `header` con el
+  formato actual (grid 1 columna × N filas, ver `definicion_automatica/1`)
+  — pensado para catálogos que ya existían antes de que el Constructor
+  pasara a ser un grid (esos arrancaron con la Sección-lista de siempre,
+  ver `crear_plantilla_default/1` de aquel entonces).
+
+  Si el catálogo YA tiene una "Plantilla automática", solo le actualiza
+  `definicion` — nunca toca `estado` (si ya estaba publicada sigue
+  publicada, si era borrador sigue borrador), para no pisarle a nadie sin
+  avisar lo que tenga publicado ahora mismo. Si nunca tuvo una, la crea
+  como BORRADOR (a diferencia de `crear_plantilla_default/1`, acá
+  deliberadamente NO se publica sola — puede haber algo ya publicado a
+  mano que no conviene reemplazar sin que alguien lo revise primero en el
+  Constructor).
+  """
+  def regenerar_plantilla_automatica(header) do
+    definicion = definicion_automatica(header)
+
+    case Enum.find(listar_plantillas(header.id), &(&1.nombre == "Plantilla automática")) do
+      nil -> crear_plantilla(header.id, %{"nombre" => "Plantilla automática", "estado" => "borrador", "definicion" => definicion})
+      plantilla -> actualizar_definicion(plantilla, definicion)
+    end
+  end
+
+  @doc """
+  Suma, al final del grid `grid_id` (`nil` = raíz) de `definicion`, un
+  renglón nuevo por cada campo VISIBLE de `header` que todavía no esté
+  referenciado en NINGÚN lado de la plantilla — en cualquier profundidad
+  (una Sección, un Panel, una Pestaña; ver `nodos_de_tipo/2`), no solo en
+  ese grid puntual. A diferencia de `regenerar_plantilla_automatica/1`,
+  esto NUNCA reemplaza nada de lo que ya armaste a mano — solo agrega lo
+  que falta, como filas nuevas al final. Devuelve `{definicion_nueva,
+  cantidad_agregada}` (0 si no faltaba ningún campo).
+  """
+  def agregar_campos_faltantes(definicion, header, grid_id) do
+    ya_usados =
+      definicion
+      |> nodos_de_tipo("campo")
+      |> Enum.map(& &1["propiedades"]["campo"])
+      |> MapSet.new()
+
+    faltantes =
+      header.schema_context_name
+      |> MetaSchemaContext.listar_detalles()
+      |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
+      |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
+      |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
+      |> Enum.reject(&MapSet.member?(ya_usados, &1.schema_context_field))
+
+    grid_actual = grid_host(definicion, grid_id) || %{"hijos" => []}
+    fila_inicial = grid_actual["hijos"] |> Enum.map(&celda_de(&1)["fila"]) |> Enum.max(fn -> -1 end) |> Kernel.+(1)
+
+    definicion_nueva =
+      faltantes
+      |> Enum.with_index(fila_inicial)
+      |> Enum.reduce(definicion, fn {campo, fila}, acc ->
+        nodo =
+          campo.schema_context_properties["tipo"]
+          |> filtro_de_tipo()
+          |> nuevo_nodo_campo()
+          |> put_in(["propiedades", "campo"], campo.schema_context_field)
+
+        case colocar_en_celda(acc, grid_id, nodo, fila, 0) do
+          {:ok, def2} -> def2
+          {:error, _} -> acc
+        end
+      end)
+
+    {definicion_nueva, length(faltantes)}
+  end
+
+  @doc """
+  Igual que `regenerar_plantilla_automatica/1` pero para TODOS los
+  catálogos a la vez (ver `mix meta.plantillas.regenerar_automaticas`) —
+  devuelve `[{schema_context_name, {:ok, plantilla} | {:error, motivo}}, ...]`,
+  uno por catálogo, para poder listar qué salió bien y qué no sin que un
+  solo catálogo roto tire abajo el resto.
+  """
+  def regenerar_todas_las_automaticas do
+    MetaSchemaContext.listar_headers()
+    |> Enum.filter(&(MetaSchemaContext.listar_detalles(&1.schema_context_name) != []))
+    |> Enum.map(fn header -> {header.schema_context_name, regenerar_plantilla_automatica(header)} end)
+  end
+
+  defp filtro_de_tipo(tipo) do
+    Enum.find_value(@filtros_campo, "string", fn {filtro, tipos} -> tipo in tipos && filtro end)
+  end
+
+  # Contenido de la "Plantilla automática" de un catálogo: todos sus campos
+  # visibles, 1 columna × N filas, más una fila por cada catálogo que lo
+  # referencia (tabla relacionada) — usado tanto al generar un catálogo
+  # nuevo (crear_plantilla_default/1) como al regenerar uno viejo
+  # (regenerar_plantilla_automatica/1), así los dos caminos SIEMPRE
+  # producen exactamente el mismo resultado.
+  defp definicion_automatica(header) do
     campos =
       header.schema_context_name
       |> MetaSchemaContext.listar_detalles()
@@ -272,20 +374,11 @@ defmodule MetadataApp.MetaPlantillas do
 
     hijos = hijos_campo ++ hijos_tabla
 
-    definicion = %{
+    %{
       "tipo" => "raiz",
       "propiedades" => %{"filas" => max(length(hijos), 1), "columnas" => 1, "gap" => "normal"},
       "hijos" => hijos
     }
-
-    with {:ok, plantilla} <-
-           crear_plantilla(header.id, %{"nombre" => "Plantilla automática", "estado" => "borrador", "definicion" => definicion}) do
-      publicar_plantilla(plantilla)
-    end
-  end
-
-  defp filtro_de_tipo(tipo) do
-    Enum.find_value(@filtros_campo, "string", fn {filtro, tipos} -> tipo in tipos && filtro end)
   end
 
   # Compartido por crear_plantilla_default/1 (arma la raíz) y
