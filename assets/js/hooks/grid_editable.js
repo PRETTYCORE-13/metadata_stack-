@@ -89,6 +89,87 @@ export function detectarDuplicados(filas, columns) {
   return duplicados
 }
 
+// Fila de resumen configurable (pie fijo, siempre al fondo de la grilla) —
+// cálculo puro para poder probarlo sin DOM
+// (ver assets/js/hooks/__tests__/grid_editable.test.mjs). `ventana`, si no
+// es null, es {inicio, fin} (mismo shape que devuelve calcularVentana) —
+// solo se usa para columnas con alcance "visibles"; sin virtualizar, todas
+// las filas están "visibles" ya de por sí, así que null equivale a "todas".
+// `overrides` es un mapa {campo: operacion} elegido en runtime por clic
+// derecho — nunca se persiste (mismo criterio que @agregaciones del lado
+// servidor, ver docs de Get View), tiene prioridad sobre la metadata.
+const OPERACIONES_NUMERICAS = ["suma", "promedio", "minimo", "maximo"]
+const ETIQUETAS_OPERACION = {
+  suma: "Total",
+  promedio: "Prom.",
+  minimo: "Mín.",
+  maximo: "Máx.",
+  conteo: "Cant.",
+  conteo_distinto: "Cant. única",
+}
+
+function valoresNoVacios(filas, campo) {
+  return filas.map((f) => f.values[campo]).filter((v) => !celdaVacia(v))
+}
+
+function valoresNumericos(filas, campo) {
+  return valoresNoVacios(filas, campo)
+    .map((v) => Number(v))
+    .filter((v) => !Number.isNaN(v))
+}
+
+function aplicarOperacionResumen(operacion, filas, campo) {
+  if (operacion === "conteo") return valoresNoVacios(filas, campo).length
+  if (operacion === "conteo_distinto") return new Set(valoresNoVacios(filas, campo)).size
+
+  const valores = valoresNumericos(filas, campo)
+  if (valores.length === 0) return operacion === "suma" ? 0 : null
+
+  if (operacion === "suma") return valores.reduce((a, b) => a + b, 0)
+  if (operacion === "promedio") return valores.reduce((a, b) => a + b, 0) / valores.length
+  if (operacion === "minimo") return Math.min(...valores)
+  if (operacion === "maximo") return Math.max(...valores)
+  return null
+}
+
+function formatearResumen(valor, formato, decimales) {
+  if (valor == null) return "—"
+  const texto = valor.toFixed(decimales ?? 2)
+  return formato === "moneda" ? `$${texto}` : texto
+}
+
+export function calcularResumen(filas, columnas, ventana, overrides = {}) {
+  return columnas
+    .map((col) => {
+      const resumen = col.resumen
+      if (!resumen) return null
+
+      // Sin override: solo cuenta si la columna YA venía activa por
+      // default (hoy, columnas numéricas — ver resumen_estandar/1 del
+      // lado servidor). Con override (clic derecho), gana SIEMPRE, incluso
+      // en una columna que por default no muestra nada (ej. "Recuento" en
+      // una columna de texto) — si no, el clic derecho nunca podría
+      // prender algo que arrancó apagado.
+      const operacion = overrides[col.campo] || (resumen.activo ? resumen.operacion : "ninguno")
+      if (!operacion || operacion === "ninguno") return null
+
+      const base = resumen.alcance === "visibles" && ventana ? filas.slice(ventana.inicio, ventana.fin) : filas
+      const filasCalculo = base.filter((f) => !f.marcadaEliminar && !filaVacia(f.values))
+
+      const valor = aplicarOperacionResumen(operacion, filasCalculo, col.campo)
+      const esConteo = operacion === "conteo" || operacion === "conteo_distinto"
+
+      return {
+        campo: col.campo,
+        etiqueta: resumen.etiqueta || ETIQUETAS_OPERACION[operacion] || "",
+        texto: esConteo ? String(valor) : formatearResumen(valor, resumen.formato, resumen.decimales),
+        operacion,
+        editable: resumen.editable_runtime !== false,
+      }
+    })
+    .filter(Boolean)
+}
+
 // Validación síncrona de lo que llega del formulario (setCelda) — cubre
 // requerido, tipo, y enum. Lo que esto no puede ver (existencia de FK,
 // reglas del changeset) viaja al servidor por separado (ver
@@ -167,6 +248,16 @@ export default {
     this.ventanaInicio = null
     this.ventanaFin = null
     this.scrollRaf = null
+    // Fila de resumen (ver calcularResumen) — placeholder que ya viene en
+    // el HTML inicial (GridEditableComponents.grid/1, dentro del
+    // <tfoot>), el hook solo le arma/actualiza el innerHTML.
+    this.resumenRow = this.el.querySelector('[data-resumen-pos="abajo"]')
+    // Operación elegida en runtime por clic derecho — nunca persistida,
+    // se pierde si se recarga la página (mismo criterio que @agregaciones
+    // de Get View).
+    this.resumenOverrides = {}
+    this.menuResumenEl = null
+    this.el.addEventListener("contextmenu", (e) => this.alContextMenuResumen(e))
     // clientId de la fila "activa" — el formulario de
     // FichaLive.formulario_renglon/1 muestra/edita SIEMPRE esta fila (nunca
     // un modal; la tabla ya no edita nada por su cuenta). null = ninguna
@@ -321,6 +412,7 @@ export default {
     if (this.botonGuardar) this.botonGuardar.removeEventListener("click", this.alGuardarClick, true)
     clearTimeout(this.syncTimer)
     Object.values(this.validarTimers).forEach(clearTimeout)
+    this.cerrarMenuResumen()
   },
 
   // Crea una fila real en blanco y la selecciona, trayéndola a la vista si
@@ -387,6 +479,7 @@ export default {
 
     if (!this.virtualizando) {
       this.tbody.innerHTML = filas.map((fila, i) => this.filaHtml(fila, i, false, this.duplicados.has(i))).join("")
+      this.renderResumen()
       return
     }
 
@@ -411,6 +504,112 @@ export default {
       `<tr aria-hidden="true" style="height:${altoArriba}px"><td colspan="${colspan}" style="padding:0;border:0"></td></tr>` +
       filasHtml +
       `<tr aria-hidden="true" style="height:${altoAbajo}px"><td colspan="${colspan}" style="padding:0;border:0"></td></tr>`
+    this.renderResumen()
+  },
+
+  // Pinta las filas de resumen "arriba"/"abajo" (placeholders ya en el
+  // HTML, ver GridEditableComponents.grid/1) según calcularResumen — se
+  // llama al final de CADA render(), así que cubre todos los flujos que
+  // mutan this.rows (setCelda, iniciar/quitar/revertir fila, marcar
+  // eliminar, grid_recargar) sin duplicar lógica en cada handler, y
+  // también el caso "alcance: visibles" al scrollear (actualizarVentana
+  // llama a render() cuando la ventana cambió de verdad).
+  renderResumen() {
+    if (!this.resumenRow) return
+
+    const ventana = this.virtualizando ? {inicio: this.ventanaInicio ?? 0, fin: this.ventanaFin ?? this.rows.length} : null
+    const activos = calcularResumen(this.rows, this.columns, ventana, this.resumenOverrides)
+    const porCampo = new Map(activos.map((r) => [r.campo, r]))
+
+    this.resumenRow.style.display = activos.length > 0 ? "" : "none"
+    if (activos.length === 0) {
+      this.resumenRow.innerHTML = ""
+      return
+    }
+
+    const celdas = this.columns
+      .map((col) => {
+        const r = porCampo.get(col.campo)
+        if (!r) return `<td class="px-1.5 py-1" data-campo="${col.campo}"></td>`
+        return `<td class="px-1.5 py-1 text-right font-semibold text-gray-700 whitespace-nowrap" data-campo="${col.campo}" data-operacion="${r.operacion}" title="${escaparHtml(r.etiqueta)}">${escaparHtml(r.texto)}</td>`
+      })
+      .join("")
+    this.resumenRow.innerHTML = `<td class="px-1.5 py-1" colspan="2"></td>${celdas}`
+  },
+
+  // Clic derecho tipo hoja de cálculo sobre una celda de resumen —
+  // reemplaza la operación configurada en la metadata, solo en memoria
+  // (this.resumenOverrides), disponible en CUALQUIER columna (incluso las
+  // que no suman nada por default, ver resumen_estandar/1 del lado
+  // servidor) salvo que esa columna lo desactive explícitamente
+  // (resumen.editable_runtime === false).
+  alContextMenuResumen(e) {
+    const td = e.target.closest(".ge-resumen-fila td[data-campo]")
+    if (!td) return
+    const col = this.columns.find((c) => c.campo === td.dataset.campo)
+    if (!col || !col.resumen || col.resumen.editable_runtime === false) return
+
+    e.preventDefault()
+    this.abrirMenuResumen(e.clientX, e.clientY, col)
+  },
+
+  abrirMenuResumen(x, y, col) {
+    this.cerrarMenuResumen()
+
+    const actual = this.resumenOverrides[col.campo] || col.resumen.operacion || "ninguno"
+    // Columnas no numéricas: sumar/promediar/etc no tiene sentido — solo
+    // "Recuento" (cuántos renglones tienen algo cargado ahí) o nada.
+    const opciones = TIPOS_NUMERICOS.includes(col.tipo)
+      ? [...OPERACIONES_NUMERICAS, "conteo", "conteo_distinto", "ninguno"]
+      : ["conteo", "ninguno"]
+
+    const ul = document.createElement("ul")
+    ul.className = "ge-menu-resumen"
+    ul.style.cssText =
+      `position:fixed;left:${x}px;top:${y}px;z-index:9999;background:#fff;border:1px solid #e5e7eb;` +
+      `border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.15);padding:4px 0;min-width:170px;` +
+      `font-size:11px;font-family:inherit;list-style:none;margin:0`
+    ul.innerHTML = opciones
+      .map((op) => {
+        const activa = op === actual
+        const etiqueta = op === "ninguno" ? "Ninguno" : ETIQUETAS_OPERACION[op] || op
+        return `<li data-op="${op}" style="padding:5px 12px;cursor:pointer;${activa ? "font-weight:600;color:#7c3aed" : "color:#374151"}">${activa ? "✓ " : ""}${etiqueta}</li>`
+      })
+      .join("")
+
+    ul.addEventListener("mousedown", (e) => {
+      const li = e.target.closest("li[data-op]")
+      if (!li) return
+      e.preventDefault()
+      this.resumenOverrides[col.campo] = li.dataset.op
+      this.cerrarMenuResumen()
+      this.render()
+    })
+
+    document.body.appendChild(ul)
+    this.menuResumenEl = ul
+
+    this.alClickFueraMenuResumen = (ev) => {
+      if (!ul.contains(ev.target)) this.cerrarMenuResumen()
+    }
+    this.alEscMenuResumen = (ev) => {
+      if (ev.key === "Escape") this.cerrarMenuResumen()
+    }
+    // Un tick después: el mousedown que abrió el menú no debe cerrarlo de
+    // una por el listener "click afuera" recién agregado.
+    setTimeout(() => {
+      document.addEventListener("click", this.alClickFueraMenuResumen, true)
+      document.addEventListener("keydown", this.alEscMenuResumen, true)
+    }, 0)
+  },
+
+  cerrarMenuResumen() {
+    if (this.menuResumenEl) {
+      this.menuResumenEl.remove()
+      this.menuResumenEl = null
+    }
+    if (this.alClickFueraMenuResumen) document.removeEventListener("click", this.alClickFueraMenuResumen, true)
+    if (this.alEscMenuResumen) document.removeEventListener("keydown", this.alEscMenuResumen, true)
   },
 
   // Fija la altura del contenedor de scroll solo cuando hay filas de sobra

@@ -21,6 +21,8 @@ defmodule MetadataAppWeb.FichaLive do
 
   use MetadataAppWeb, :live_view_admin
 
+  require Logger
+
   on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
 
   import Ecto.Query
@@ -666,7 +668,10 @@ defmodule MetadataAppWeb.FichaLive do
       # Vuelve al listado en automático en vez de quedarse en la ficha —
       # mismo criterio que "ejecutar_transicion" (pedido explícito del
       # usuario, para "guardar", "baja", "cancelar", cualquier transición).
-      {:ok, _actualizado} ->
+      {:ok, actualizado} ->
+        catalogos_tocados = Enum.uniq(Map.keys(renglones_nuevos) ++ Map.keys(renglones_editados))
+        loguear_resumen_renglones(actualizado.id, socket.assigns.catalogos_detalle, catalogos_tocados)
+
         {:noreply,
          socket
          |> put_flash(:info, "Cambios guardados.")
@@ -719,6 +724,39 @@ defmodule MetadataAppWeb.FichaLive do
           end
       end
     end)
+  end
+
+  # Best-effort, no bloqueante: recalcula el resumen configurado (ver
+  # MetadataApp.ResumenRenglones, MetadataAppWeb.GridEditableComponents)
+  # de cada catálogo detalle recién tocado, contra lo que HAY en la base
+  # después de "Guardar" — misma semántica de operación que el cliente ya
+  # mostró en pantalla sin guardar (GridEditable.calcularResumen), pero
+  # sobre los renglones reales. Solo para tener un lugar central de verdad
+  # ante una futura discrepancia o un reporte/API que necesite lo mismo;
+  # no afecta la respuesta al usuario ni el resultado del guardado.
+  defp loguear_resumen_renglones(_registro_id, _catalogos_detalle, []), do: :ok
+
+  defp loguear_resumen_renglones(registro_id, catalogos_detalle, catalogos_tocados) do
+    Enum.each(catalogos_tocados, fn nombre ->
+      with %{columnas: columnas} <- Enum.find(catalogos_detalle, &(&1.nombre == nombre)),
+           true <- Enum.any?(columnas, &(get_in(&1.schema_context_properties, ["tipo"]) in ["integer", "decimal"])) do
+        detalle_modulo = MetaSchemaContext.modulo_por_nombre(nombre)
+
+        renglones =
+          detalle_modulo
+          |> CatalogoGenerico.listar(%{"encabezado_id" => registro_id})
+          |> Enum.map(&struct_a_mapa_resumen(&1, columnas))
+
+        resumen = MetadataApp.ResumenRenglones.calcular(renglones, columnas)
+        Logger.debug("Resumen de renglones (#{nombre}, encabezado ##{registro_id}): #{inspect(resumen)}")
+      end
+    end)
+  rescue
+    error -> Logger.warning("No se pudo recalcular el resumen de renglones tras guardar: #{inspect(error)}")
+  end
+
+  defp struct_a_mapa_resumen(struct, columnas) do
+    Map.new(columnas, fn col -> {col.schema_context_field, Map.get(struct, String.to_existing_atom(col.schema_context_field))} end)
   end
 
   # Plug decodifica "renglones[0][x]=a&renglones[1][x]=b" como un MAPA con
