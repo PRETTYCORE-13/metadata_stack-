@@ -832,6 +832,9 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
           schema_visible: header.schema_visible,
           schema_set_permissions: header.schema_set_permissions,
           schema_profiles: header.schema_profiles,
+          cargar_todos_por_default: header.cargar_todos_por_default,
+          schema_es_transaccional: header.schema_es_transaccional,
+          codigo_trn: header.codigo_trn,
           schema_encabezado_catalogo: nombre_encabezado(header.schema_encabezado_id),
           detalles: Enum.map(detalles, &serializar_detalle/1)
         },

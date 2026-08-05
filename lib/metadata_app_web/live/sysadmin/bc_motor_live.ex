@@ -555,6 +555,96 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
+  # Etiqueta de un campo ya existente (2026-08-04, a pedido explícito) —
+  # mismo criterio inmediato que cambiar_categoria/cambiar_mostrar_en_tabla
+  # de arriba: sin modal, guarda directo al perder foco (evento "change"
+  # nativo de un <input type="text">, no dispara por cada tecla). Antes
+  # solo se podía definir al crear el campo — ver
+  # MetaImportExport.sincronizar_etiquetas_campos/2 para la otra mitad
+  # (que esto también se propague al publicar a un catálogo ya existente).
+  def handle_event("cambiar_etiqueta_campo", %{"campo" => campo, "etiqueta" => etiqueta}, socket) do
+    etiqueta = String.trim(etiqueta)
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+
+    if etiqueta == "" do
+      {:noreply, put_flash(socket, :error, "La etiqueta no puede quedar vacía.")}
+    else
+      props = Map.put(detalle.schema_context_properties, "etiqueta", etiqueta)
+
+      case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+        {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+        {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la etiqueta de \"#{campo}\".")}
+      end
+    end
+  end
+
+  # --- Filtros: qué campos numéricos calculan Suma/Promedio/Conteo (y --------
+  # opcionalmente Mín/Máx) en la fila de Resumen del catálogo — sección
+  # aparte de la tabla de campos de arriba, "cantidad" (el campo real, con
+  # su Nombre/Etiqueta/Tipo/Visible) no tiene nada que ver con esto: acá
+  # solo se elige, de la lista de campos numéricos del catálogo, cuáles
+  # participan del Resumen. Guardado inmediato, mismo criterio que
+  # cambiar_categoria/2 y cambiar_mostrar_en_tabla/2 arriba.
+  def handle_event("agregar_filtro_resumen", %{"campo" => campo} = params, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+
+    props =
+      detalle.schema_context_properties
+      |> Map.put("agregacion_activa", true)
+      |> Map.put("minmax_recomendado", params["recomendado"] == "true")
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo agregar el filtro de \"#{campo}\".")}
+    end
+  end
+
+  def handle_event("quitar_filtro_resumen", %{"campo" => campo}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+
+    props =
+      detalle.schema_context_properties
+      |> Map.put("agregacion_activa", false)
+      |> Map.put("minmax_recomendado", false)
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo quitar el filtro de \"#{campo}\".")}
+    end
+  end
+
+  # "Mostrar todos los registros por default" — a diferencia de los
+  # filtros de arriba (calculan Suma/Promedio/Conteo sobre un CAMPO), esto
+  # es a nivel de todo el catálogo: si está prendido, CatalogoLive trae
+  # todos los registros y columnas apenas se abre la tabla, sin esperar
+  # que el usuario final aplique un filtro/búsqueda primero (ver
+  # datos_solicitados?/1 en catalogo_live.ex). El usuario final igual
+  # puede seguir filtrando después con los filtros normales de la tabla —
+  # esto solo cambia si arranca vacía o ya cargada.
+  def handle_event("toggle_cargar_todos_por_default", _params, socket) do
+    header = socket.assigns.header
+    valor = !header.cargar_todos_por_default
+
+    case MetaSchemaContext.actualizar_header(header, %{"cargar_todos_por_default" => valor}) do
+      {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Mostrar todos los registros\".")}
+    end
+  end
+
+  # "Recomendado" de un filtro ya agregado — extra Mín/Máx: si está
+  # prendido, CatalogoLive lo muestra siempre junto al cálculo principal
+  # en la fila de Resumen (celdas_resumen/1 ahí respeta este flag), no es
+  # una elección del usuario final, es on/off.
+  def handle_event("cambiar_minmax_recomendado", %{"campo" => campo, "recomendado" => recomendado}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "minmax_recomendado", recomendado == "true")
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Recomendado\" de \"#{campo}\".")}
+    end
+  end
+
   # --- Get View: qué campos ve el usuario final en la tabla del catálogo ------
 
   def handle_event("guardar_get_view", params, socket) do
@@ -1211,6 +1301,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       <div id="motor-panel-getview" class="hidden">
         <.panel_get_view campos={@campos} />
+        <.panel_filtros_resumen campos={@campos} cargar_todos_por_default={@header.cargar_todos_por_default} />
       </div>
 
       <div id="motor-panel-get" class="hidden">
@@ -1569,7 +1660,13 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <% props = c.schema_context_properties || %{} %>
                 <tr class="border-b border-gray-100 hover:bg-gray-50">
                   <td class="px-1.5 py-1 text-gray-900 font-mono">{c.schema_context_field}</td>
-                  <td class="px-1.5 py-1 text-gray-700">{Map.get(props, "etiqueta")}</td>
+                  <td class="px-1.5 py-1">
+                    <form phx-change="cambiar_etiqueta_campo">
+                      <input type="hidden" name="campo" value={c.schema_context_field} />
+                      <input type="text" name="etiqueta" value={Map.get(props, "etiqueta")} maxlength="100" required
+                        class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] text-gray-700 w-full min-w-[110px]" />
+                    </form>
+                  </td>
                   <td class="px-1.5 py-1 text-gray-600">
                     <%= if Map.get(props, "tipo") == "referencia" do %>
                       <span class="inline-flex items-center gap-0.5 bg-blue-50 text-blue-700 rounded-full px-1.5 py-0.5 font-semibold" title={"Relación con #{Map.get(props, "catalogo")}"}>
@@ -1745,11 +1842,129 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <% end %>
               </tbody>
             </table>
-            <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
-              Guardar Get View
-            </button>
           </form>
         <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  # "Filtros": qué campos numéricos calculan Suma/Promedio/Conteo (fila de
+  # Resumen de CatalogoLive) — sección aparte de la tabla de Get View de
+  # arriba, a propósito: un campo real (ej. "cantidad", con su Nombre/
+  # Etiqueta/Tipo/Visible) es simplemente un dato de la tabla, no tiene
+  # nada que ver con esto. Acá se arma una lista aparte: de los campos
+  # numéricos del catálogo, cuáles participan del Resumen ("+ Agregar
+  # filtro") y cuáles de esos además muestran mínimo/máximo
+  # ("Recomendado").
+  attr :campos, :list, required: true
+  attr :cargar_todos_por_default, :boolean, required: true
+
+  defp panel_filtros_resumen(assigns) do
+    numericos = Enum.filter(assigns.campos, &(get_in(&1.schema_context_properties, ["tipo"]) in ["integer", "decimal"]))
+    activos = Enum.filter(numericos, &(get_in(&1.schema_context_properties, ["agregacion_activa"]) == true))
+    disponibles = numericos -- activos
+
+    assigns =
+      assigns
+      |> assign(:filtros_activos, activos)
+      |> assign(:campos_disponibles, disponibles)
+
+    ~H"""
+    <div class="border border-gray-200 rounded-lg mt-4">
+      <div class="px-1.5 ml-2 -mb-2 relative">
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Filtros</span>
+      </div>
+      <div class="p-3 pt-4 overflow-x-auto">
+        <p class="text-gray-500 mb-2">
+          Qué campos numéricos calculan Suma/Promedio/Conteo en la fila de Resumen del catálogo. "Recomendado" además muestra siempre el mínimo y el máximo.
+        </p>
+
+        <%= if @filtros_activos == [] do %>
+          <p class="text-gray-400 mb-2">Todavía no agregaste ningún filtro.</p>
+        <% else %>
+          <table class="min-w-full mb-3">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campo</th>
+                <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Recomendado</th>
+                <th class="px-1.5 py-1 border-b border-gray-200"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <%= for c <- @filtros_activos do %>
+                <% props = c.schema_context_properties || %{} %>
+                <% recomendado? = Map.get(props, "minmax_recomendado") == true %>
+                <tr class="border-b border-gray-100 hover:bg-gray-50">
+                  <td class="px-1.5 py-1 text-gray-900">{Map.get(props, "etiqueta") || c.schema_context_field}</td>
+                  <td class="px-1.5 py-1 text-center">
+                    <button type="button"
+                      phx-click="cambiar_minmax_recomendado"
+                      phx-value-campo={c.schema_context_field}
+                      phx-value-recomendado={to_string(!recomendado?)}
+                      title="Mostrar siempre el mínimo y el máximo en la fila de Resumen del catálogo"
+                      class={[
+                        "text-[9px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 transition-colors",
+                        if(recomendado?, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+                      ]}
+                    >
+                      Recomendado
+                    </button>
+                  </td>
+                  <td class="px-1.5 py-1 text-center">
+                    <button type="button"
+                      phx-click="quitar_filtro_resumen"
+                      phx-value-campo={c.schema_context_field}
+                      class="text-red-600 hover:text-red-800 text-[11px] font-semibold"
+                    >
+                      Quitar
+                    </button>
+                  </td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        <% end %>
+
+        <%= if @campos_disponibles != [] do %>
+          <form phx-submit="agregar_filtro_resumen" class="flex items-center gap-2">
+            <select name="campo" class="border border-gray-300 rounded-lg px-2 py-1.5">
+              <%= for c <- @campos_disponibles do %>
+                <option value={c.schema_context_field}>{Map.get(c.schema_context_properties, "etiqueta") || c.schema_context_field}</option>
+              <% end %>
+            </select>
+            <label class="cursor-pointer select-none">
+              <input type="checkbox" name="recomendado" value="true" class="peer sr-only" />
+              <span class="text-[9px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 transition-colors bg-purple-100 text-purple-700 peer-checked:bg-purple-600 peer-checked:text-white">
+                Recomendado
+              </span>
+            </label>
+            <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
+              + Agregar filtro
+            </button>
+          </form>
+        <% else %>
+          <p :if={@filtros_activos != []} class="text-gray-400">Ya agregaste todos los campos numéricos disponibles.</p>
+        <% end %>
+
+        <hr class="border-gray-200 my-3" />
+
+        <p class="text-gray-500 mb-2">
+          Traer todos los registros y columnas apenas se abre la tabla, sin esperar un filtro o búsqueda primero. El usuario final igual puede filtrar después con los filtros normales de la tabla.
+        </p>
+        <button type="button"
+          phx-click="toggle_cargar_todos_por_default"
+          class={[
+            "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors",
+            if(@cargar_todos_por_default, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+          ]}
+        >
+          <%= if @cargar_todos_por_default do %>
+            ✓ Mostrando todos los registros por default — Quitar
+          <% else %>
+            + Agregar todos los registros
+          <% end %>
+        </button>
       </div>
     </div>
     """
@@ -2802,65 +3017,84 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           <div class="bg-red-50 text-red-700 rounded-lg px-2 py-1.5 mb-2">{@form["error"]}</div>
         <% end %>
 
+        <%!-- Todo el modal organizado en tabs desde arriba (2026-08-04, a
+             pedido explícito): antes "Acción/Etiqueta/Permisos/Origen-
+             Destino" quedaban sueltos arriba y solo "Campos editables"
+             tenía sus propios tabs (Encabezado + uno por catálogo detalle)
+             más abajo — con catálogos de 10+ campos, esa mezcla de form
+             largo + mini-tabs quedaba difícil de escanear. Ahora es un
+             solo nivel de tabs para todo el modal: "Acción" (los datos de
+             siempre) + "Encabezado" + uno por detalle. Mismo mecanismo de
+             siempre (tabs_motor 100% cliente/JS) — el <form> sigue siendo
+             UNO solo por fuera de los tabs, así que ningún input pierde su
+             valor al cambiar de tab (solo se esconde con display:none). --%>
+        <.tabs_motor id="campos-editables" tabs={
+          [%{key: "accion", label: "Acción"}, %{key: "header", label: "Encabezado"}] ++
+            Enum.map(@catalogos_detalle, &%{key: &1.nombre, label: &1.etiqueta})
+        } />
+
         <form phx-submit="guardar_transicion" class="space-y-2">
           <input type="hidden" name="registro_id" value={@form["id"]} />
-          <div>
-            <label class="block text-gray-700 mb-0.5">Acción</label>
-            <input type="text" name="accion" value={@form["accion"]} placeholder="activar" required maxlength="100"
-              class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
-            <p class="mt-0.5 text-[11px] text-gray-500">
-              Se guarda en minúsculas. <span class="font-mono">guardar</span> como self-loop (mismo origen y destino) es la única forma de habilitar PATCH directo por API — cualquier otro nombre no lo activa.
-            </p>
-          </div>
-          <div>
-            <label class="block text-gray-700 mb-0.5">Etiqueta</label>
-            <input type="text" name="etiqueta" value={@form["etiqueta"]} placeholder="Activar" required maxlength="100"
-              class="w-full border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
-          </div>
 
-          <%!-- Solo tiene sentido para una transición ya guardada (cada fila
-               de permiso se registra por {recurso, accion} — antes de
-               guardar no hay accion definitiva todavía). Sin la fila del
-               ENCABEZADO nadie ve/ejecuta la transición ahí; sin la fila de
-               un catálogo DETALLE, nadie puede mover renglones de esa tabla
-               en esta transición — ni el administrador (no es un comodín,
-               ver Permissions.can?/3), ambos casos encontrados reales con
-               pty_crac_clientes. Conceder a roles puntuales sigue siendo en
-               Roles/Permission Sets, esto solo asegura que la fila exista. --%>
-          <div :if={@form["id"]} class="rounded-lg border border-gray-200 divide-y divide-gray-100">
-            <div :for={p <- @form["permisos"]} class="px-2 py-1.5 flex items-center justify-between gap-2">
-              <span class={["font-semibold", if(p.existe, do: "text-green-700", else: "text-amber-700")]}>
-                <%= if p.existe do %>
-                  ✓ {p.etiqueta}
-                <% else %>
-                  ⚠ {p.etiqueta} — sin permiso registrado
-                <% end %>
-              </span>
-              <button :if={!p.existe} type="button" phx-click="registrar_permiso_transicion" phx-value-recurso={p.recurso}
-                class="px-2 py-1 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 whitespace-nowrap">
-                Registrar permiso
-              </button>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-2 gap-2">
+          <div id="campos-editables-panel-accion" class="space-y-2">
             <div>
-              <label class="block text-gray-700 mb-0.5">Origen</label>
-              <select name="estado_origen_id" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
-                <option value="">— (alta, sin origen) —</option>
-                <%= for e <- @estados do %>
-                  <option value={e.id} selected={@form["estado_origen_id"] == to_string(e.id)}>{e.nombre}</option>
-                <% end %>
-              </select>
+              <label class="block text-gray-700 mb-0.5">Acción</label>
+              <input type="text" name="accion" value={@form["accion"]} placeholder="activar" required maxlength="100"
+                class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
+              <p class="mt-0.5 text-[11px] text-gray-500">
+                Se guarda en minúsculas. <span class="font-mono">guardar</span> como self-loop (mismo origen y destino) es la única forma de habilitar PATCH directo por API — cualquier otro nombre no lo activa.
+              </p>
             </div>
             <div>
-              <label class="block text-gray-700 mb-0.5">Destino</label>
-              <select name="estado_destino_id" required class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
-                <option value="">— Elegir —</option>
-                <%= for e <- @estados do %>
-                  <option value={e.id} selected={@form["estado_destino_id"] == to_string(e.id)}>{e.nombre}</option>
-                <% end %>
-              </select>
+              <label class="block text-gray-700 mb-0.5">Etiqueta</label>
+              <input type="text" name="etiqueta" value={@form["etiqueta"]} placeholder="Activar" required maxlength="100"
+                class="w-full border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
+            </div>
+
+            <%!-- Solo tiene sentido para una transición ya guardada (cada fila
+                 de permiso se registra por {recurso, accion} — antes de
+                 guardar no hay accion definitiva todavía). Sin la fila del
+                 ENCABEZADO nadie ve/ejecuta la transición ahí; sin la fila de
+                 un catálogo DETALLE, nadie puede mover renglones de esa tabla
+                 en esta transición — ni el administrador (no es un comodín,
+                 ver Permissions.can?/3), ambos casos encontrados reales con
+                 pty_crac_clientes. Conceder a roles puntuales sigue siendo en
+                 Roles/Permission Sets, esto solo asegura que la fila exista. --%>
+            <div :if={@form["id"]} class="rounded-lg border border-gray-200 divide-y divide-gray-100">
+              <div :for={p <- @form["permisos"]} class="px-2 py-1.5 flex items-center justify-between gap-2">
+                <span class={["font-semibold", if(p.existe, do: "text-green-700", else: "text-amber-700")]}>
+                  <%= if p.existe do %>
+                    ✓ {p.etiqueta}
+                  <% else %>
+                    ⚠ {p.etiqueta} — sin permiso registrado
+                  <% end %>
+                </span>
+                <button :if={!p.existe} type="button" phx-click="registrar_permiso_transicion" phx-value-recurso={p.recurso}
+                  class="px-2 py-1 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 whitespace-nowrap">
+                  Registrar permiso
+                </button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="block text-gray-700 mb-0.5">Origen</label>
+                <select name="estado_origen_id" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                  <option value="">— (alta, sin origen) —</option>
+                  <%= for e <- @estados do %>
+                    <option value={e.id} selected={@form["estado_origen_id"] == to_string(e.id)}>{e.nombre}</option>
+                  <% end %>
+                </select>
+              </div>
+              <div>
+                <label class="block text-gray-700 mb-0.5">Destino</label>
+                <select name="estado_destino_id" required class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                  <option value="">— Elegir —</option>
+                  <%= for e <- @estados do %>
+                    <option value={e.id} selected={@form["estado_destino_id"] == to_string(e.id)}>{e.nombre}</option>
+                  <% end %>
+                </select>
+              </div>
             </div>
           </div>
 
@@ -2868,29 +3102,20 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                es tan "editable en esta transición" como uno del propio
                maestro (el motor ya lo acepta desde Fase 3). Con 1 maestro +
                N detalles de hasta 20-30 campos, listar todo suelto es
-               inmanejable — se organiza en tabs (una por catálogo,
-               tabs_motor ya es 100% cliente/JS, no pierde selección de
-               otros tabs al cambiar) + buscador por tab + "Todos/Ninguno".
-               Un solo <input name="campos_editables[]"> compartido entre
-               TODOS los tabs (siguen en el DOM aunque el tab esté oculto,
-               solo con display:none) — el submit junta la selección real
-               sin importar en qué tab haya quedado parado el usuario. --%>
-          <%= if @campos != [] or @catalogos_detalle != [] do %>
-            <div>
+               inmanejable — cada uno es su propio tab (arriba, junto con
+               "Acción") + buscador por tab + "Todos/Ninguno". Un solo
+               <input name="campos_editables[]"> compartido entre TODOS los
+               tabs (siguen en el DOM aunque el tab esté oculto, solo con
+               display:none) — el submit junta la selección real sin
+               importar en qué tab haya quedado parado el usuario. --%>
+          <div id="campos-editables-panel-header" class="hidden">
+            <label class="block text-gray-700 mb-1">Campos editables en esta transición</label>
+            <.grupo_campos_editables grupo="header" campos={@campos} form={@form} />
+          </div>
+          <%= for cat <- @catalogos_detalle do %>
+            <div id={"campos-editables-panel-#{cat.nombre}"} class="hidden">
               <label class="block text-gray-700 mb-1">Campos editables en esta transición</label>
-
-              <.tabs_motor id="campos-editables" tabs={
-                [%{key: "header", label: "Encabezado"}] ++ Enum.map(@catalogos_detalle, &%{key: &1.nombre, label: &1.etiqueta})
-              } />
-
-              <div id="campos-editables-panel-header">
-                <.grupo_campos_editables grupo="header" campos={@campos} form={@form} />
-              </div>
-              <%= for cat <- @catalogos_detalle do %>
-                <div id={"campos-editables-panel-#{cat.nombre}"} class="hidden">
-                  <.grupo_campos_editables grupo={cat.nombre} campos={cat.campos} form={@form} />
-                </div>
-              <% end %>
+              <.grupo_campos_editables grupo={cat.nombre} campos={cat.campos} form={@form} />
             </div>
           <% end %>
 
@@ -2946,16 +3171,16 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         <button type="button" phx-click="desmarcar_todos_campos" phx-value-grupo={@grupo}
           class="text-gray-500 font-semibold hover:underline whitespace-nowrap">Ninguno</button>
       </div>
-      <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-1.5">
+      <div class="flex flex-col gap-y-1 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-1.5">
         <%= for c <- @visibles do %>
           <label class="flex items-center gap-1 min-w-0">
             <input type="checkbox" name="campos_editables[]" value={c.schema_context_field}
               checked={c.schema_context_field in @seleccionados} class="accent-purple-600 shrink-0" />
-            <span class="font-mono truncate" title={c.schema_context_field}>{c.schema_context_field}</span>
+            <span class="font-mono" title={c.schema_context_field}>{c.schema_context_field}</span>
           </label>
         <% end %>
         <%= if @visibles == [] do %>
-          <p class="col-span-2 text-gray-400 text-center py-2">Sin resultados.</p>
+          <p class="text-gray-400 text-center py-2">Sin resultados.</p>
         <% end %>
       </div>
     </div>

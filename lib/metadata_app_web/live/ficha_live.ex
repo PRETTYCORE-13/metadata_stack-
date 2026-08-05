@@ -569,7 +569,7 @@ defmodule MetadataAppWeb.FichaLive do
       (map_size(attrs) > 0 or hay_renglones_nuevos? or hay_renglones_eliminados?) and not hay_renglones_editados? and
           not Permissions.can?(socket.assigns.current_scope, "guardar", socket.assigns.header.schema_context_name) ->
         {:noreply,
-         assign(socket, :error_guardado, "No tenés permiso para guardar cambios en este catálogo.")}
+         assign(socket, :error_guardado, "No tienes permiso para guardar cambios en este catálogo.")}
 
       registro_cambio_de_estado?(schema_mod, registro) ->
         {:noreply,
@@ -1119,6 +1119,14 @@ defmodule MetadataAppWeb.FichaLive do
         :renglones_nuevos_count,
         contar_cambios_detalle(assigns.detalle_renglones_nuevos, assigns.detalle_renglones_editados, assigns.detalle_renglones_eliminados)
       )
+      # Map.get/2, no @registro.trn — FichaLive es genérico para CUALQUIER
+      # catálogo, y el campo :trn solo existe en el struct compilado si el
+      # header estaba schema_es_transaccional: true en el momento en que
+      # se generó ese schema (ver CatalogoGenerador.opciones_trn_use/1).
+      # Un acceso directo (.trn) rompería con KeyError si el header quedó
+      # marcado transaccional pero el módulo todavía no se regeneró/
+      # publicó con ese campo (hallazgo real 2026-08-04, pty_gasto_diario).
+      |> assign(:trn_registro, Map.get(assigns.registro, :trn))
       |> assign(:contexto_formula, contexto_formula)
       |> assign(
         :valores_calculados,
@@ -1135,19 +1143,34 @@ defmodule MetadataAppWeb.FichaLive do
         </span>
       </div>
 
-      <div class="bg-white border border-gray-200 rounded-2xl shadow-sm p-5 mb-4">
-        <div class="flex items-start justify-between gap-4 flex-wrap">
+      <div class="bg-white border border-gray-200 rounded-2xl shadow-sm px-4 py-2.5 mb-3">
+        <div class="flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <div class="text-[11px] font-mono uppercase tracking-wide text-gray-400 mb-1">
-              {@header.schema_context_label}<span :if={@modo == :ver}> · ID {@registro.id}</span>
-            </div>
-            <h1 :if={@modo == :alta} class="text-xl font-bold text-gray-900">Nuevo — {@header.schema_context_label}</h1>
-            <h1 :if={@modo == :ver} class="text-xl font-bold text-gray-900">{@header.schema_context_label} #{@registro.id}</h1>
-            <div :if={@modo == :ver} class="flex items-center flex-wrap gap-2 mt-2 text-xs text-gray-500">
-              <span :if={@mostrar_estado?} class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-50 text-purple-700 font-semibold">
-                {Map.get(@estados_por_id, @registro.estado_id) || "—"}
-              </span>
-              <span>{@relaciones_total} relaciones</span>
+            <div class="flex items-center flex-wrap gap-2">
+              <h1 :if={@modo == :alta} class="text-base font-bold text-gray-900">Nuevo — {@header.schema_context_label}</h1>
+              <h1 :if={@modo == :ver} class="text-base font-bold text-gray-900">{@header.schema_context_label} #{@registro.id}</h1>
+              <div :if={@modo == :ver} class="flex items-center flex-wrap gap-2 text-xs text-gray-500">
+                <span :if={@mostrar_estado?} class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 font-semibold">
+                  {Map.get(@estados_por_id, @registro.estado_id) || "—"}
+                </span>
+                <span>{@relaciones_total} relaciones</span>
+                <span :if={@header.schema_es_transaccional and @trn_registro} class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-mono">
+                  TRN: {@trn_registro}
+                  <button type="button" id={"copiar-trn-#{@registro.id}"} phx-hook="CopiarTexto" data-texto={@trn_registro}
+                    title="Copiar TRN — para compartir o buscar este registro después" class="pc-breadcrumb-copiar">
+                    <svg class="pc-breadcrumb-copiar-icono-copiar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <rect x="9" y="9" width="12" height="12" rx="2" />
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                    <svg class="pc-breadcrumb-copiar-icono-listo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  </button>
+                </span>
+                <span :if={@header.schema_es_transaccional and !@trn_registro} class="text-gray-400 italic">
+                  Sin TRN (registro anterior a activar TRN en este catálogo)
+                </span>
+              </div>
             </div>
           </div>
 
@@ -1156,7 +1179,7 @@ defmodule MetadataAppWeb.FichaLive do
               phx-click="ejecutar_transicion" phx-value-accion={t.accion} disabled={!t.disponible}
               title={if !t.disponible, do: Enum.map_join(t.razones, "; ", & &1.mensaje)}
               class={[
-                "px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors border",
+                "px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors border",
                 t.disponible && "border-gray-300 text-gray-700 hover:bg-gray-50",
                 !t.disponible && "border-gray-200 text-gray-300 cursor-not-allowed"
               ]}>
@@ -1164,7 +1187,7 @@ defmodule MetadataAppWeb.FichaLive do
             </button>
 
             <button :if={@es_detalle?} type="button" disabled title="Los campos de un renglón de catálogo detalle se editan mediante una transición del maestro"
-              class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-200 text-gray-300 cursor-not-allowed">
+              class="px-2.5 py-1 rounded-lg text-xs font-semibold border border-gray-200 text-gray-300 cursor-not-allowed">
               Editar
             </button>
 
@@ -1174,23 +1197,23 @@ defmodule MetadataAppWeb.FichaLive do
                 {map_size(@form_values) + @renglones_nuevos_count} cambio{if map_size(@form_values) + @renglones_nuevos_count == 1, do: "", else: "s"} sin guardar
               </span>
               <.link :if={@modo == :alta} navigate={@header.schema_context_nav}
-                class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50">
+                class="px-2.5 py-1 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50">
                 Cancelar
               </.link>
               <button :if={@modo == :ver} type="button" phx-click="cancelar_edicion" disabled={map_size(@form_values) == 0}
-                class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                class="px-2.5 py-1 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">
                 Cancelar
               </button>
               <button type="button" phx-click="guardar"
                 disabled={@modo == :ver and map_size(@form_values) == 0 and @renglones_nuevos_count == 0}
-                class="px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
+                class="px-2.5 py-1 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
                 {etiqueta_guardar(@transicion_edicion)}
               </button>
             </div>
           </div>
         </div>
 
-        <div :if={@error_guardado} class="mt-3 bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2 flex items-center justify-between gap-3">
+        <div :if={@error_guardado} class="mt-2 bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2 flex items-center justify-between gap-3">
           <span>{@error_guardado}</span>
           <button type="button" phx-click="actualizar_ficha" class="font-semibold whitespace-nowrap hover:underline">
             Actualizar ficha

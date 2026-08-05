@@ -23,7 +23,7 @@ defmodule MetadataAppWeb.UsuarioLive.SeleccionarEmpresa do
         </ul>
 
         <p :if={@empresas == []} class="alert alert-outline mt-6">
-          Todavía no tenés ninguna empresa asignada. Contactá a un administrador.
+          Todavía no tienes ninguna empresa asignada. Contacta a un administrador.
         </p>
       </div>
     </Layouts.app>

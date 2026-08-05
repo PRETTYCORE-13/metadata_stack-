@@ -37,47 +37,37 @@ defmodule MetadataAppWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <header class="navbar px-4 sm:px-6 lg:px-8 flex-wrap gap-y-2">
-      <div class="flex-1">
-        <a href="/" class="flex-1 flex w-fit items-center gap-2">
-          <img src={~p"/images/logo.svg"} width="36" />
-          <span class="text-sm font-semibold">v{Application.spec(:phoenix, :vsn)}</span>
-        </a>
-      </div>
-      <!-- min-w-0 + sm:flex-none (en vez de flex-none a secas): flex-none
-           bloquea el shrink del contenedor sin importar cuánto lo empuje
-           el flex-wrap de arriba — el <ul> de adentro nunca llegaba a
-           angostarse lo suficiente como para que SU PROPIO flex-wrap
-           entrara a tallar, y se salía del viewport en un celular. Bajo
-           sm (640px) sí hay lugar de sobra para el comportamiento
-           original de una sola fila sin crecer/achicarse. -->
-      <div class="min-w-0 sm:flex-none">
-        <ul class="flex flex-wrap px-1 gap-4 items-center justify-end">
-          <li>
-            <a href="https://phoenixframework.org/" class="btn btn-ghost">Website</a>
-          </li>
-          <li>
-            <a href="https://github.com/phoenixframework/phoenix" class="btn btn-ghost">GitHub</a>
-          </li>
-          <li>
-            <.theme_toggle />
-          </li>
-          <li>
-            <a href="https://hexdocs.pm/phoenix/overview.html" class="btn btn-primary">
-              Get Started <span aria-hidden="true">&rarr;</span>
-            </a>
-          </li>
-        </ul>
-      </div>
-    </header>
+    <div class="min-h-screen flex flex-col bg-black text-white">
+      <header class="navbar px-4 sm:px-6 lg:px-8 flex-wrap gap-y-2 border-b border-white/10">
+        <div class="flex-1">
+          <a href="/" class="flex-1 flex w-fit items-center gap-2">
+            <img src="https://prettycore.xyz/IMAGENES/Logo%20Prettycore%20(8).png" alt="Prettycore" class="h-9 w-auto" />
+          </a>
+        </div>
+        <!-- min-w-0 + sm:flex-none (en vez de flex-none a secas): flex-none
+             bloquea el shrink del contenedor sin importar cuánto lo empuje
+             el flex-wrap de arriba — el <ul> de adentro nunca llegaba a
+             angostarse lo suficiente como para que SU PROPIO flex-wrap
+             entrara a tallar, y se salía del viewport en un celular. Bajo
+             sm (640px) sí hay lugar de sobra para el comportamiento
+             original de una sola fila sin crecer/achicarse. -->
+        <div class="min-w-0 sm:flex-none">
+          <ul class="flex flex-wrap px-1 gap-4 items-center justify-end">
+            <li>
+              <.theme_toggle />
+            </li>
+          </ul>
+        </div>
+      </header>
 
-    <main class="px-4 py-20 sm:px-6 lg:px-8">
-      <div class="mx-auto max-w-2xl space-y-4">
-        {render_slot(@inner_block)}
-      </div>
-    </main>
+      <main class="flex-1 px-4 py-20 sm:px-6 lg:px-8">
+        <div class="mx-auto max-w-2xl space-y-4">
+          {render_slot(@inner_block)}
+        </div>
+      </main>
 
-    <.flash_group flash={@flash} />
+      <.flash_group flash={@flash} />
+    </div>
     """
   end
 

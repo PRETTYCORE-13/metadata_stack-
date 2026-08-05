@@ -233,7 +233,7 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
   defp confirmacion_remocion(assigns) do
     ~H"""
     <div class="mt-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-sm px-3 py-3 space-y-2">
-      <p class="font-bold">Este tepache no trae campos que vos sí tenés localmente:</p>
+      <p class="font-bold">Este tepache no trae campos que tú sí tienes localmente:</p>
       <ul class="space-y-0.5">
         <li :for={{catalogo, campos} <- @pendiente.campos_removidos}>
           <span class="font-mono">{catalogo}</span>: {Enum.join(campos, ", ")}

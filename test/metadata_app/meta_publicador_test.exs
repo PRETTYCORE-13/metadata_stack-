@@ -23,7 +23,15 @@ defmodule MetadataApp.MetaPublicadorTest do
     end
 
     test "persistir_bundle/2 devuelve error legible en vez de crashear" do
-      assert {:error, mensaje} = MetaPublicador.persistir_bundle(["catalogo_x"], "bundle-inexistente.tar.gz")
+      bundle_path = Path.join(System.tmp_dir!(), "meta-publicador-test-#{System.unique_integer([:positive])}.tar.gz")
+      File.write!(bundle_path, "contenido de prueba")
+
+      on_exit(fn ->
+        File.rm(bundle_path)
+        File.rm(Path.join(Path.dirname(bundle_path), "bundle.tar.gz"))
+      end)
+
+      assert {:error, mensaje} = MetaPublicador.persistir_bundle(["catalogo_x"], bundle_path)
       assert mensaje =~ ~s(No se pudo ejecutar "gh")
     end
 

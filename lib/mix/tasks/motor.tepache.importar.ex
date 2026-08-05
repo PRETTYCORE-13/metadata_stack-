@@ -17,7 +17,7 @@ defmodule Mix.Tasks.Motor.Tepache.Importar do
   `aplicar_import/1` — compartida con la pantalla "Tepache Exp/Imp"
   (Business Process Builder), este task es solo la interfaz de línea de
   comandos. Si el catálogo YA existe localmente y el tepache no trae
-  campos que vos sí tenés (se quitaron en el origen), este task PARA y
+  campos que tú sí tienes (se quitaron en el origen), este task PARA y
   pregunta antes de borrar nada — nunca elimina datos sin confirmación
   explícita.
 
@@ -54,7 +54,7 @@ defmodule Mix.Tasks.Motor.Tepache.Importar do
   end
 
   defp avisar_y_confirmar(%{campos_removidos: campos_removidos} = info) do
-    Mix.shell().info("\nEste tepache NO trae campos que vos sí tenés localmente (se habrían quitado en el origen):")
+    Mix.shell().info("\nEste tepache NO trae campos que tú sí tienes localmente (se habrían quitado en el origen):")
 
     Enum.each(campos_removidos, fn {nombre, campos} ->
       Mix.shell().info("  #{nombre}: #{Enum.join(campos, ", ")}")

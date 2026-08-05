@@ -21,10 +21,15 @@ defmodule MetadataAppWeb.UsuarioSessionControllerTest do
       assert redirected_to(conn) == ~p"/sysadmin/bc-list"
 
       # Now do a logged in request and assert on the menu (dropdown propio de
-      # la app, no la barra genérica del scaffold — esa se sacó a propósito)
+      # la app, no la barra genérica del scaffold — esa se sacó a propósito).
+      # "Configuración de cuenta" ya no navega a /meta_schema_usuario/settings
+      # (esa página se convirtió en el modal ConfiguracionCuentaModal,
+      # embebido en menu_layout.ex y disponible desde cualquier pantalla) —
+      # se verifica que el modal esté presente en el DOM en vez del href viejo.
       conn = get(conn, ~p"/")
       response = html_response(conn, 200)
-      assert response =~ ~p"/meta_schema_usuario/settings"
+      assert response =~ "Configuración de cuenta"
+      assert response =~ "config-cuenta-modal"
       assert response =~ ~p"/meta_schema_usuario/log-out"
     end
 
@@ -85,10 +90,15 @@ defmodule MetadataAppWeb.UsuarioSessionControllerTest do
       assert redirected_to(conn) == ~p"/sysadmin/bc-list"
 
       # Now do a logged in request and assert on the menu (dropdown propio de
-      # la app, no la barra genérica del scaffold — esa se sacó a propósito)
+      # la app, no la barra genérica del scaffold — esa se sacó a propósito).
+      # "Configuración de cuenta" ya no navega a /meta_schema_usuario/settings
+      # (esa página se convirtió en el modal ConfiguracionCuentaModal,
+      # embebido en menu_layout.ex y disponible desde cualquier pantalla) —
+      # se verifica que el modal esté presente en el DOM en vez del href viejo.
       conn = get(conn, ~p"/")
       response = html_response(conn, 200)
-      assert response =~ ~p"/meta_schema_usuario/settings"
+      assert response =~ "Configuración de cuenta"
+      assert response =~ "config-cuenta-modal"
       assert response =~ ~p"/meta_schema_usuario/log-out"
     end
 
@@ -109,10 +119,15 @@ defmodule MetadataAppWeb.UsuarioSessionControllerTest do
       assert Autenticacion.get_usuario!(usuario.id).confirmed_at
 
       # Now do a logged in request and assert on the menu (dropdown propio de
-      # la app, no la barra genérica del scaffold — esa se sacó a propósito)
+      # la app, no la barra genérica del scaffold — esa se sacó a propósito).
+      # "Configuración de cuenta" ya no navega a /meta_schema_usuario/settings
+      # (esa página se convirtió en el modal ConfiguracionCuentaModal,
+      # embebido en menu_layout.ex y disponible desde cualquier pantalla) —
+      # se verifica que el modal esté presente en el DOM en vez del href viejo.
       conn = get(conn, ~p"/")
       response = html_response(conn, 200)
-      assert response =~ ~p"/meta_schema_usuario/settings"
+      assert response =~ "Configuración de cuenta"
+      assert response =~ "config-cuenta-modal"
       assert response =~ ~p"/meta_schema_usuario/log-out"
     end
 
