@@ -26,6 +26,9 @@ import {hooks as colocatedHooks} from "phoenix-colocated/metadata_app"
 import topbar from "../vendor/topbar"
 import Sortable from "../vendor/sortable"
 import GridEditable from "./hooks/grid_editable"
+import RenglonForm from "./hooks/renglon_form"
+import ReferenciaField from "./hooks/referencia_field"
+import GridConstructor from "./hooks/grid_constructor"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 
@@ -634,7 +637,7 @@ const AbrirVistaPrevia = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, CopiarRuta, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, CopiarRuta, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor},
 })
 
 // Show progress bar on live navigation and form submits

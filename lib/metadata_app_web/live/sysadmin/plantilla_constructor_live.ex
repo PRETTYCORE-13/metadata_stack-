@@ -1,18 +1,20 @@
 defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   @moduledoc """
-  Constructor de plantillas: arma el árbol de componentes que `FichaLive`
-  usa para renderizar el tab "Datos" de un catálogo en vez de la lista
-  plana de siempre — ver `MetadataApp.MetaPlantillas` para el modelo de
-  datos y los helpers de árbol que este LiveView llama.
+  Constructor de plantillas: arma la definición que `FichaLive` usa para
+  renderizar el tab "Datos" de un catálogo en vez de la lista plana de
+  siempre — ver `MetadataApp.MetaPlantillas` para el modelo de datos
+  ("Grid 2D" en su moduledoc) y los helpers puros que este LiveView llama.
 
-  El lienzo soporta arrastrar y soltar real (hook `ListaOrdenable` en
-  assets/js/app.js, sobre Sortable.js) — cada lista de hijos (la raíz y
-  adentro de cada Sección) es su propio contenedor arrastrable, todas con
-  el mismo `group`, así un componente se puede mover entre listas, no solo
-  reordenar dentro de la misma.
+  No hay un modo "árbol" separado del editor de grid — la raíz de la
+  plantilla ES un grid desde el arranque, y siempre se está editando UNO
+  (la raíz, o una Sección/Panel/Pestaña en la que se entró vía
+  `entrar_contenedor/2`). El lienzo soporta arrastrar y soltar real (hook
+  `GridConstructor` en assets/js/hooks/grid_constructor.js, sobre HTML5
+  Drag and Drop nativo — Sortable.js no sirve acá, hace falta soltar en
+  una celda (fila, columna) exacta con chequeo de ocupación).
 
-  Los cambios de árbol (agregar/quitar/mover/editar propiedades) se hacen
-  sobre `@definicion` en memoria; "Guardar" persiste, "Publicar" persiste y
+  Los cambios (colocar/mover/combinar/editar propiedades) se hacen sobre
+  `@definicion` en memoria; "Guardar" persiste, "Publicar" persiste y
   además marca esta plantilla como la única activa del catálogo.
   """
 
@@ -27,17 +29,27 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   alias MetadataApp.MetaStateEngine
   alias MetadataAppWeb.AdminNav
 
-  @tipos_estructura [
+  # Paleta única — ya no hay un modo "árbol" separado del editor de grid
+  # (ver moduledoc de MetaPlantillas, "Grid 2D"): TODO PostView es un solo
+  # grid grande desde la raíz, así que siempre se está "adentro" de alguno
+  # (la raíz misma, o una Sección/Panel/Pestaña en la que se entró — ver
+  # `entrar_contenedor/2`). "fila" y "grid" NO están acá a propósito: ya no
+  # hace falta insertarlos aparte, cualquier contenedor nuevo (Sección,
+  # Panel, Pestaña) es un grid por dentro apenas tiene 2+ hijos. "panel"
+  # sigue siendo el "contenedor interno" de la moduledoc — si una celda
+  # necesita más de un componente, el ocupante de esa celda es un Panel, y
+  # los demás van adentro de ESE (entrando con "Editar contenido →").
+  @tipos_paleta [
     {"seccion", "Sección"},
-    {"fila", "Fila (2 columnas)"},
+    {"panel", "Panel (varios componentes en la celda)"},
     {"pestanas", "Pestañas"},
-    {"panel", "Panel"},
+    {"etiqueta", "Etiqueta"},
+    {"boton", "Botón"},
+    {"alerta", "Alerta"},
     {"divisor", "Divisor"},
     {"tabla", "Tabla relacionada"},
     {"campo_calculado", "Campo calculado"},
     {"autocompletar", "Autocompletar"},
-    {"etiqueta", "Etiqueta"},
-    {"alerta", "Alerta"},
     {"tarjeta", "Tarjeta"}
   ]
 
@@ -153,6 +165,10 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
          |> assign(:registro_muestra_id, registro_muestra_id)
          |> assign(:plantillas, plantillas)
          |> assign(:nodo_seleccionado_id, nil)
+         |> assign(:grid_editando_id, nil)
+         |> assign(:celda_seleccionada, nil)
+         |> assign(:grid_historial_undo, [])
+         |> assign(:grid_historial_redo, [])
          |> assign(:resumen_catalogo, nil)
          |> assign(:resumen_funcion, "SUM")
          |> assign(:resumen_campo, nil)
@@ -187,46 +203,178 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     {:noreply, seleccionar(socket, plantilla)}
   end
 
-  def handle_event("agregar", %{"tipo" => tipo}, socket) do
-    nodo =
-      case tipo do
-        "fila" -> MetaPlantillas.nuevo_nodo_fila()
-        "pestanas" -> MetaPlantillas.nuevo_nodo_pestanas()
-        _ -> MetaPlantillas.nuevo_nodo(tipo)
-      end
+  # --- Editor de grid (hoja de cálculo) -------------------------------------
+  # Ver moduledoc de MetaPlantillas ("Grid 2D") para el modelo de datos.
+  # Todo lo que muta @definicion acá pasa por aplicar_cambio_grid/2, que
+  # apila el estado ANTERIOR en @grid_historial_undo (deshacer/rehacer
+  # acotado a esta sesión de edición de UN grid puntual — se vacía al
+  # entrar/salir, ver entrar_contenedor/2).
 
-    definicion = MetaPlantillas.insertar_nodo(socket.assigns.definicion, contenedor_seleccionado(socket), nodo)
-
-    {:noreply, socket |> assign(:definicion, definicion) |> assign(:nodo_seleccionado_id, nodo["id"]) |> reset_resumen() |> reset_lookup() |> assign(:herramienta_calculado, nil)}
+  # Único evento de navegación entre grids — reemplaza a los viejos
+  # "abrir_grid"/"cerrar_grid": entrar a una Sección/Panel/Pestaña (`id`
+  # real) y volver hacia arriba por el breadcrumb (`id` vacío = raíz) son
+  # el MISMO gesto (mover @grid_editando_id a otro contenedor), nunca dos
+  # modos de pantalla distintos. `id` vacío llega como `""` desde
+  # phx-value-id (HTML no manda `nil`), se traduce acá.
+  def handle_event("entrar_contenedor", %{"id" => id}, socket) do
+    {:noreply, entrar_contenedor(socket, if(id == "", do: nil, else: id))}
   end
 
-  def handle_event("agregar_campo", %{"filtro" => filtro}, socket) do
-    nodo = MetaPlantillas.nuevo_nodo_campo(filtro)
-    definicion = MetaPlantillas.insertar_nodo(socket.assigns.definicion, contenedor_seleccionado(socket), nodo)
+  # Clic en una celda VACÍA — la deja como destino para "colocar desde la
+  # paleta" (grid_colocar_tipo/grid_colocar_campo) y como segundo punto de
+  # "Combinar" (la primera celda es el nodo ya seleccionado, @nodo_seleccionado_id).
+  def handle_event("seleccionar_celda", %{"fila" => fila, "columna" => columna}, socket) do
+    {:noreply, assign(socket, :celda_seleccionada, %{fila: String.to_integer(fila), columna: String.to_integer(columna)})}
+  end
 
-    {:noreply, socket |> assign(:definicion, definicion) |> assign(:nodo_seleccionado_id, nodo["id"]) |> reset_resumen() |> reset_lookup() |> assign(:herramienta_calculado, nil)}
+  def handle_event("grid_colocar_tipo", %{"tipo" => tipo}, socket), do: colocar_en_grid(socket, nodo_de_paleta(tipo))
+  def handle_event("grid_colocar_campo", %{"filtro" => filtro}, socket), do: colocar_en_grid(socket, MetaPlantillas.nuevo_nodo_campo(filtro))
+
+  # Único destino de un "soltar" del hook GridConstructor (assets/js/hooks/grid_constructor.js)
+  # — el payload trae SIEMPRE fila/columna del destino, y exactamente uno
+  # de "nodo_id" (arrastró un chip ya colocado, mover_celda/4), "filtro"
+  # (arrastró un botón de Campo de la paleta) o "tipo" (cualquier otro
+  # botón de la paleta, @tipos_paleta).
+  def handle_event("grid_soltar", %{"fila" => fila_str, "columna" => columna_str} = params, socket) do
+    fila = String.to_integer(fila_str)
+    columna = String.to_integer(columna_str)
+
+    cond do
+      params["nodo_id"] not in [nil, ""] ->
+        case MetaPlantillas.mover_celda(socket.assigns.definicion, socket.assigns.grid_editando_id, params["nodo_id"], fila, columna) do
+          {:ok, definicion} -> {:noreply, aplicar_cambio_grid(socket, definicion)}
+          {:error, _} -> {:noreply, assign(socket, :mensaje, {:error, "Esa celda ya está ocupada."})}
+        end
+
+      params["filtro"] not in [nil, ""] ->
+        colocar_soltado(socket, MetaPlantillas.nuevo_nodo_campo(params["filtro"]), fila, columna)
+
+      params["tipo"] not in [nil, ""] ->
+        colocar_soltado(socket, nodo_de_paleta(params["tipo"]), fila, columna)
+
+      true ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("grid_agregar_fila", %{"direccion" => direccion}, socket) do
+    indice = fila_referencia(socket) + if(direccion == "abajo", do: 1, else: 0)
+    definicion = MetaPlantillas.agregar_fila_grid(socket.assigns.definicion, socket.assigns.grid_editando_id, indice)
+    {:noreply, aplicar_cambio_grid(socket, definicion)}
+  end
+
+  def handle_event("grid_agregar_columna", %{"direccion" => direccion}, socket) do
+    indice = columna_referencia(socket) + if(direccion == "derecha", do: 1, else: 0)
+    definicion = MetaPlantillas.agregar_columna_grid(socket.assigns.definicion, socket.assigns.grid_editando_id, indice)
+    {:noreply, aplicar_cambio_grid(socket, definicion)}
+  end
+
+  def handle_event("grid_eliminar_fila", _params, socket) do
+    definicion = MetaPlantillas.eliminar_fila_grid(socket.assigns.definicion, socket.assigns.grid_editando_id, fila_referencia(socket))
+    {:noreply, socket |> aplicar_cambio_grid(definicion) |> assign(:celda_seleccionada, nil) |> assign(:nodo_seleccionado_id, nil)}
+  end
+
+  def handle_event("grid_eliminar_columna", _params, socket) do
+    definicion = MetaPlantillas.eliminar_columna_grid(socket.assigns.definicion, socket.assigns.grid_editando_id, columna_referencia(socket))
+    {:noreply, socket |> aplicar_cambio_grid(definicion) |> assign(:celda_seleccionada, nil) |> assign(:nodo_seleccionado_id, nil)}
+  end
+
+  def handle_event("grid_duplicar_fila", _params, socket) do
+    definicion = MetaPlantillas.duplicar_fila_grid(socket.assigns.definicion, socket.assigns.grid_editando_id, fila_referencia(socket))
+    {:noreply, aplicar_cambio_grid(socket, definicion)}
+  end
+
+  # Ancla = nodo ya seleccionado (@nodo_seleccionado_id); destino = celda
+  # elegida después con un clic (@celda_seleccionada) — mismo gesto de
+  # "elegí origen, después destino" que ya usa el resto del panel.
+  def handle_event("grid_combinar", _params, socket) do
+    with id when not is_nil(id) <- socket.assigns.nodo_seleccionado_id,
+         %{fila: fila_fin, columna: columna_fin} <- socket.assigns.celda_seleccionada,
+         {:ok, definicion} <- MetaPlantillas.combinar_celdas(socket.assigns.definicion, socket.assigns.grid_editando_id, id, fila_fin, columna_fin) do
+      {:noreply, socket |> aplicar_cambio_grid(definicion) |> assign(:celda_seleccionada, nil)}
+    else
+      _ -> {:noreply, assign(socket, :mensaje, {:error, "Elegí un componente y después una celda destino para combinar."})}
+    end
+  end
+
+  def handle_event("grid_separar", _params, socket) do
+    case socket.assigns.nodo_seleccionado_id do
+      nil -> {:noreply, socket}
+      id -> {:noreply, aplicar_cambio_grid(socket, MetaPlantillas.separar_celda(socket.assigns.definicion, id))}
+    end
+  end
+
+  # "Limpiar celda": saca el componente de la celda (quitar_componente/2,
+  # ya existente) SIN tocar filas/columnas — a diferencia de "Eliminar
+  # fila/columna" de arriba.
+  def handle_event("grid_limpiar_celda", _params, socket) do
+    case socket.assigns.nodo_seleccionado_id do
+      nil ->
+        {:noreply, socket}
+
+      id ->
+        definicion = MetaPlantillas.quitar_componente(socket.assigns.definicion, id)
+        {:noreply, socket |> aplicar_cambio_grid(definicion) |> assign(:nodo_seleccionado_id, nil)}
+    end
+  end
+
+  def handle_event("grid_deshacer", _params, socket) do
+    case socket.assigns.grid_historial_undo do
+      [anterior | resto] ->
+        {:noreply,
+         socket
+         |> assign(:grid_historial_redo, [socket.assigns.definicion | socket.assigns.grid_historial_redo])
+         |> assign(:grid_historial_undo, resto)
+         |> assign(:definicion, anterior)}
+
+      [] ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("grid_rehacer", _params, socket) do
+    case socket.assigns.grid_historial_redo do
+      [siguiente | resto] ->
+        {:noreply,
+         socket
+         |> assign(:grid_historial_undo, [socket.assigns.definicion | socket.assigns.grid_historial_undo])
+         |> assign(:grid_historial_redo, resto)
+         |> assign(:definicion, siguiente)}
+
+      [] ->
+        {:noreply, socket}
+    end
+  end
+
+  # Form del panel "Celda" (panel_celda/1) — pisa propiedades["celda"] del
+  # nodo seleccionado. La geometría (fila/columna/colspan/rowspan) se
+  # revalida contra celda_libre?/6 acá mismo: si el rectángulo pedido
+  # choca con otro componente, esos 4 campos se ignoran en silencio (el
+  # resto del form — alineación, padding, estilo, responsive — sí se
+  # aplica igual) en vez de tirar el cambio entero.
+  def handle_event("actualizar_celda", params, socket) do
+    id = socket.assigns.nodo_seleccionado_id
+    cambios = celda_cambios_desde_params(params, socket.assigns.definicion, socket.assigns.grid_editando_id, id)
+    {:noreply, aplicar_cambio_grid(socket, MetaPlantillas.actualizar_celda(socket.assigns.definicion, id, cambios))}
   end
 
   # El selector de "Resumen" (catálogo/función/campo) es estado transitorio
   # del panel, no de la definicion — se resetea cada vez que cambia el
   # nodo seleccionado para no arrastrar una elección de un campo_calculado
-  # a otro sin querer.
+  # a otro sin querer. Seleccionar un chip es siempre el ancla de un gesto
+  # nuevo ("Combinar" mira nodo_seleccionado_id como ancla + la celda que
+  # se clickee DESPUÉS como destino, ver grid_combinar) — por eso también
+  # limpia celda_seleccionada: una celda vacía elegida en un momento suelto
+  # de ANTES (ej. solo explorando) no puede quedar pegada como destino de
+  # un "Combinar" que el usuario nunca pidió.
   def handle_event("seleccionar_nodo", %{"id" => id}, socket) do
-    {:noreply, socket |> assign(:nodo_seleccionado_id, id) |> reset_resumen() |> reset_lookup() |> assign(:herramienta_calculado, nil)}
-  end
-
-  def handle_event("quitar_nodo", %{"id" => id}, socket) do
-    definicion = MetaPlantillas.quitar_componente(socket.assigns.definicion, id)
-    seleccionado = if socket.assigns.nodo_seleccionado_id == id, do: nil, else: socket.assigns.nodo_seleccionado_id
-
-    {:noreply, socket |> assign(:definicion, definicion) |> assign(:nodo_seleccionado_id, seleccionado)}
-  end
-
-  def handle_event("mover_a", %{"id" => id, "contenedor_id" => contenedor_id, "index" => index}, socket) do
-    contenedor_id = if contenedor_id in [nil, ""], do: nil, else: contenedor_id
-    definicion = MetaPlantillas.mover_a(socket.assigns.definicion, id, contenedor_id, index)
-
-    {:noreply, assign(socket, :definicion, definicion)}
+    {:noreply,
+     socket
+     |> assign(:nodo_seleccionado_id, id)
+     |> assign(:celda_seleccionada, nil)
+     |> reset_resumen()
+     |> reset_lookup()
+     |> assign(:herramienta_calculado, nil)}
   end
 
   def handle_event("actualizar_propiedad", params, socket) do
@@ -434,7 +582,14 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     else
       case MetaPlantillas.actualizar_definicion(socket.assigns.plantilla, socket.assigns.definicion) do
         {:ok, plantilla} ->
-          url = "/registro/#{socket.assigns.nombre}/#{socket.assigns.registro_muestra_id}?plantilla_id=#{plantilla.id}"
+          # "/nuevo" (alta) en vez de un registro real puntual — así se
+          # puede previsualizar el DISEÑO (layout, agrupación, campos)
+          # desde el primer momento, sin depender de que el catálogo ya
+          # tenga algún registro cargado (antes la vista previa ni
+          # aparecía si @registro_muestra_id era nil). Los valores se ven
+          # en blanco (@registro = %{} en modo :alta), pero eso no importa
+          # para juzgar el layout — es justamente lo que se está diseñando acá.
+          url = "/registro/#{socket.assigns.nombre}/nuevo?plantilla_id=#{plantilla.id}"
 
           {:noreply,
            socket
@@ -509,7 +664,14 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   defp id_valido?(id), do: is_binary(id) and Regex.match?(~r/^\d+$/, id)
 
   defp seleccionar(socket, nil) do
-    socket |> assign(:plantilla, nil) |> assign(:definicion, nil) |> assign(:nodo_seleccionado_id, nil)
+    socket
+    |> assign(:plantilla, nil)
+    |> assign(:definicion, nil)
+    |> assign(:nodo_seleccionado_id, nil)
+    |> assign(:grid_editando_id, nil)
+    |> assign(:celda_seleccionada, nil)
+    |> assign(:grid_historial_undo, [])
+    |> assign(:grid_historial_redo, [])
   end
 
   defp seleccionar(socket, plantilla) do
@@ -517,20 +679,146 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     |> assign(:plantilla, plantilla)
     |> assign(:definicion, plantilla.definicion)
     |> assign(:nodo_seleccionado_id, nil)
+    |> assign(:grid_editando_id, nil)
+    |> assign(:celda_seleccionada, nil)
+    |> assign(:grid_historial_undo, [])
+    |> assign(:grid_historial_redo, [])
   end
 
-  # Si hay un nodo seleccionado Y es un contenedor (MetaPlantillas.tipos_contenedor/0
-  # — Sección/Fila/Columna), los nuevos componentes entran ahí; si no, van a la raíz.
-  defp contenedor_seleccionado(socket) do
-    case socket.assigns.nodo_seleccionado_id do
-      nil ->
-        nil
+  # --- Helpers privados del editor de grid ----------------------------------
 
-      id ->
-        nodo = MetaPlantillas.buscar_nodo(socket.assigns.definicion, id)
-        if nodo && nodo["tipo"] in MetaPlantillas.tipos_contenedor(), do: id, else: nil
+  # "pestanas" necesita nacer con 2 pestañas ya adentro (nuevo_nodo_pestanas/0)
+  # — el resto de la paleta (@tipos_paleta) es un nuevo_nodo/1 genérico.
+  defp nodo_de_paleta("pestanas"), do: MetaPlantillas.nuevo_nodo_pestanas()
+  defp nodo_de_paleta(tipo), do: MetaPlantillas.nuevo_nodo(tipo)
+
+  defp entrar_contenedor(socket, id) do
+    socket
+    |> assign(:grid_editando_id, id)
+    |> assign(:celda_seleccionada, nil)
+    |> assign(:nodo_seleccionado_id, nil)
+    |> assign(:grid_historial_undo, [])
+    |> assign(:grid_historial_redo, [])
+  end
+
+  # Único punto de mutación del editor de grid — SIEMPRE apila el
+  # @definicion ANTERIOR en el undo y vacía el redo, así ningún
+  # handle_event de arriba tiene que acordarse de hacerlo a mano.
+  defp aplicar_cambio_grid(socket, nueva_definicion) do
+    socket
+    |> assign(:grid_historial_undo, [socket.assigns.definicion | Enum.take(socket.assigns.grid_historial_undo, 29)])
+    |> assign(:grid_historial_redo, [])
+    |> assign(:definicion, nueva_definicion)
+  end
+
+  defp colocar_en_grid(socket, nodo) do
+    case socket.assigns.celda_seleccionada do
+      nil -> {:noreply, assign(socket, :mensaje, {:error, "Elegí primero una celda vacía del grid."})}
+      %{fila: fila, columna: columna} -> colocar_soltado(socket, nodo, fila, columna)
     end
   end
+
+  defp colocar_soltado(socket, nodo, fila, columna) do
+    case MetaPlantillas.colocar_en_celda(socket.assigns.definicion, socket.assigns.grid_editando_id, nodo, fila, columna) do
+      {:ok, definicion} ->
+        {:noreply, socket |> aplicar_cambio_grid(definicion) |> assign(:nodo_seleccionado_id, nodo["id"]) |> assign(:celda_seleccionada, nil)}
+
+      {:error, _} ->
+        {:noreply, assign(socket, :mensaje, {:error, "Esa celda ya está ocupada."})}
+    end
+  end
+
+  # Fila/columna "de referencia" para Agregar/Eliminar/Duplicar fila o
+  # columna: la celda vacía elegida por clic si hay una; si no, la del
+  # componente seleccionado (siempre que sea hijo del grid que se está
+  # editando); si tampoco, la primera (0).
+  defp fila_referencia(socket), do: celda_referencia(socket)["fila"]
+  defp columna_referencia(socket), do: celda_referencia(socket)["columna"]
+
+  defp celda_referencia(socket) do
+    case socket.assigns.celda_seleccionada do
+      %{fila: fila, columna: columna} ->
+        %{"fila" => fila, "columna" => columna}
+
+      nil ->
+        case nodo_en_grid_seleccionado(socket) do
+          nil -> %{"fila" => 0, "columna" => 0}
+          nodo -> Map.merge(MetaPlantillas.celda_default(), nodo["propiedades"]["celda"] || %{})
+        end
+    end
+  end
+
+  defp nodo_en_grid_seleccionado(socket) do
+    case socket.assigns.nodo_seleccionado_id do
+      nil -> nil
+      id -> MetaPlantillas.buscar_nodo(socket.assigns.definicion, id)
+    end
+  end
+
+  # Arma el mapa de cambios para "actualizar_celda" — geometría
+  # (fila/columna/colspan/rowspan) revalidada contra celda_libre?/6 antes
+  # de aplicarse (si no cabe, se descarta EN SILENCIO, el resto del form
+  # sigue aplicándose); estilo/responsive siempre son sub-mapas completos
+  # (nunca un merge parcial a medias, para no dejar basura de una versión
+  # vieja del formulario).
+  defp celda_cambios_desde_params(params, definicion, grid_id, id) do
+    nodo = MetaPlantillas.buscar_nodo(definicion, id)
+    celda_actual = Map.merge(MetaPlantillas.celda_default(), (nodo && nodo["propiedades"]["celda"]) || %{})
+    grid_nodo = MetaPlantillas.grid_host(definicion, grid_id)
+
+    fila = entero(params["fila"], celda_actual["fila"])
+    columna = entero(params["columna"], celda_actual["columna"])
+    colspan = max(entero(params["colspan"], celda_actual["colspan"]), 1)
+    rowspan = max(entero(params["rowspan"], celda_actual["rowspan"]), 1)
+
+    geometria =
+      if grid_nodo && MetaPlantillas.celda_libre?(grid_nodo, fila, columna, colspan, rowspan, id) do
+        %{"fila" => fila, "columna" => columna, "colspan" => colspan, "rowspan" => rowspan}
+      else
+        %{}
+      end
+
+    %{
+      "ancho" => blank_to_nil(params["ancho"]),
+      "alto" => blank_to_nil(params["alto"]),
+      "alineacion_h" => params["alineacion_h"] || celda_actual["alineacion_h"],
+      "alineacion_v" => params["alineacion_v"] || celda_actual["alineacion_v"],
+      "padding" => params["padding"] || celda_actual["padding"],
+      "visible" => params["visible"] == "true",
+      "estilo" => %{
+        "fondo" => params["estilo_fondo"] || "",
+        "borde" => params["estilo_borde"] == "true",
+        "redondeado" => params["estilo_redondeado"] == "true",
+        "sombra" => params["estilo_sombra"] == "true",
+        "color_texto" => params["estilo_color_texto"] || ""
+      },
+      "responsive" => %{
+        "ocultar_movil" => params["responsive_ocultar_movil"] == "true",
+        "colspan_movil" => entero_opcional(params["responsive_colspan_movil"]),
+        "rowspan_movil" => entero_opcional(params["responsive_rowspan_movil"]),
+        "orden_movil" => entero_opcional(params["responsive_orden_movil"])
+      }
+    }
+    |> Map.merge(geometria)
+  end
+
+  defp entero(valor, default) do
+    case Integer.parse(to_string(valor || "")) do
+      {n, _} -> n
+      :error -> default
+    end
+  end
+
+  defp entero_opcional(valor) do
+    case Integer.parse(to_string(valor || "")) do
+      {n, _} -> n
+      :error -> nil
+    end
+  end
+
+  defp blank_to_nil(nil), do: nil
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(v), do: v
 
   # Chequeo de concurrencia best-effort (mismo criterio que ya usa FichaLive
   # para el drawer de edición de un registro): compara el update_guid que
@@ -571,7 +859,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   end
 
   def render(assigns) do
-    assigns = assigns |> assign(:tipos_estructura, @tipos_estructura) |> assign(:tipos_campo, @tipos_campo)
+    assigns = assigns |> assign(:tipos_paleta, @tipos_paleta) |> assign(:tipos_campo, @tipos_campo)
 
     ~H"""
     <div class={if @embebido?, do: "", else: "p-6"}>
@@ -599,14 +887,12 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           <button type="button" phx-click="nueva_plantilla" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50">
             + Nuevo PostView
           </button>
-          <button :if={@plantilla && @registro_muestra_id} type="button" phx-click="vista_previa" phx-hook="AbrirVistaPrevia" id="btn-vista-previa"
+          <button :if={@plantilla} type="button" phx-click="vista_previa" phx-hook="AbrirVistaPrevia" id="btn-vista-previa"
+            title="Abre la Ficha de un registro nuevo (en blanco) con este diseño — no hace falta tener ningún registro cargado todavía"
             class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" /><circle cx="12" cy="12" r="3" /></svg>
             Vista previa
           </button>
-          <span :if={@plantilla && !@registro_muestra_id} class="text-[11px] text-gray-400" title="Este catálogo no tiene registros todavía">
-            Sin registros para previsualizar
-          </span>
           <button :if={@plantilla} type="button" phx-click="guardar" class="px-3 py-1.5 rounded-lg border border-purple-300 text-purple-700 text-xs font-semibold hover:bg-purple-50">
             Guardar
           </button>
@@ -634,72 +920,44 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
 
       <div :if={@plantilla} class="grid grid-cols-1 lg:grid-cols-[180px_1fr_280px] gap-4">
         <div class="bg-white border border-gray-200 rounded-xl p-3">
-          <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">Estructura</div>
+          <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">Componentes</div>
           <div class="flex flex-col gap-1.5 mb-4">
-            <button :for={{tipo, etiqueta} <- @tipos_estructura} type="button" phx-click="agregar" phx-value-tipo={tipo}
-              class="flex items-center gap-2 text-left px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-purple-400 hover:text-purple-700 hover:bg-purple-50/50">
+            <button :for={{tipo, etiqueta} <- @tipos_paleta} type="button" draggable="true" data-origen="paleta" data-tipo={tipo}
+              phx-click="grid_colocar_tipo" phx-value-tipo={tipo}
+              class="gc-paleta-item flex items-center gap-2 text-left px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-purple-400 hover:text-purple-700 hover:bg-purple-50/50 cursor-grab">
               <.icono tipo={tipo} /> {etiqueta}
             </button>
           </div>
           <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">Campos</div>
           <div class="flex flex-col gap-1.5">
-            <button :for={{filtro, etiqueta} <- @tipos_campo} type="button" phx-click="agregar_campo" phx-value-filtro={filtro}
-              class="flex items-center gap-2 text-left px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-purple-400 hover:text-purple-700 hover:bg-purple-50/50">
+            <button :for={{filtro, etiqueta} <- @tipos_campo} type="button" draggable="true" data-origen="paleta" data-filtro={filtro}
+              phx-click="grid_colocar_campo" phx-value-filtro={filtro}
+              class="gc-paleta-item flex items-center gap-2 text-left px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-purple-400 hover:text-purple-700 hover:bg-purple-50/50 cursor-grab">
               <.icono tipo={filtro} /> {etiqueta}
             </button>
           </div>
+          <p class="text-[11px] text-gray-400 mt-3">
+            Arrastrá un componente a una celda, o hacé clic en una celda vacía y después acá.
+          </p>
         </div>
 
         <div class="bg-white border border-gray-200 rounded-xl p-4 min-h-[300px]">
-          <div id="jal-lista-raiz" phx-hook="ListaOrdenable" data-contenedor-id="" class="min-h-[280px]">
-            <.nodo_item :for={nodo <- @definicion["hijos"]} nodo={nodo} nivel={0} seleccionado_id={@nodo_seleccionado_id} />
-          </div>
-          <p :if={@definicion["hijos"] == []} class="text-center text-gray-400 text-sm py-10">
-            Lienzo vacío — agregá un componente desde la paleta.
-          </p>
+          <.grid_editor grid={MetaPlantillas.grid_host(@definicion, @grid_editando_id)} ruta={MetaPlantillas.ruta_hasta(@definicion, @grid_editando_id)}
+            nodo_seleccionado_id={@nodo_seleccionado_id} celda_seleccionada={@celda_seleccionada}
+            puede_deshacer={@grid_historial_undo != []} puede_rehacer={@grid_historial_redo != []} />
         </div>
 
         <div class="bg-white border border-gray-200 rounded-xl p-3">
           <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">Propiedades</div>
+          <.panel_celda :if={@nodo_seleccionado_id} nodo={MetaPlantillas.buscar_nodo(@definicion, @nodo_seleccionado_id)} />
           <.panel_propiedades :if={@nodo_seleccionado_id} nodo={MetaPlantillas.buscar_nodo(@definicion, @nodo_seleccionado_id)} campos={@campos} catalogos_relacionables={@catalogos_relacionables} catalogos_disponibles={@catalogos_disponibles}
             resumen_catalogo={@resumen_catalogo} resumen_funcion={@resumen_funcion} resumen_campo={@resumen_campo}
             lookup_catalogo={@lookup_catalogo} lookup_id={@lookup_id} lookup_campo={@lookup_campo} definicion={@definicion}
             herramienta_calculado={@herramienta_calculado}
             nombre={@nombre} registro_muestra_id={@registro_muestra_id} />
-          <p :if={!@nodo_seleccionado_id} class="text-xs text-gray-400">Seleccioná un componente del lienzo.</p>
+          <p :if={!@nodo_seleccionado_id} class="text-xs text-gray-400">Elegí una celda ocupada del grid.</p>
           <.panel_condicion :if={@nodo_seleccionado_id} nodo={MetaPlantillas.buscar_nodo(@definicion, @nodo_seleccionado_id)} campos={@campos} estados={@estados} />
         </div>
-      </div>
-    </div>
-    """
-  end
-
-  attr :nodo, :map, required: true
-  attr :nivel, :integer, required: true
-  attr :seleccionado_id, :string, default: nil
-
-  defp nodo_item(assigns) do
-    ~H"""
-    <div id={"jal-nodo-" <> @nodo["id"]} data-id={@nodo["id"]} style={"margin-left: #{@nivel * 18}px"} class="mb-2">
-      <div
-        phx-click="seleccionar_nodo" phx-value-id={@nodo["id"]}
-        class={[
-          "flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border cursor-pointer text-xs",
-          @seleccionado_id == @nodo["id"] && "border-purple-500 bg-purple-50",
-          @seleccionado_id != @nodo["id"] && "border-gray-200 hover:border-gray-300"
-        ]}
-      >
-        <div class="flex items-center gap-2 min-w-0">
-          <svg class="jal-manija text-gray-300 hover:text-gray-500 cursor-grab flex-shrink-0" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" title="Arrastrar para reordenar">
-            <circle cx="8" cy="6" r="1.6" /><circle cx="16" cy="6" r="1.6" /><circle cx="8" cy="12" r="1.6" /><circle cx="16" cy="12" r="1.6" /><circle cx="8" cy="18" r="1.6" /><circle cx="16" cy="18" r="1.6" />
-          </svg>
-          <span class="text-gray-400 flex-shrink-0"><.icono tipo={icono_de_nodo(@nodo)} /></span>
-          <span class="font-semibold text-gray-700 truncate">{etiqueta_nodo(@nodo)}</span>
-        </div>
-        <button type="button" phx-click="quitar_nodo" phx-value-id={@nodo["id"]} class="text-red-400 hover:text-red-600 px-1 flex-shrink-0">✕</button>
-      </div>
-      <div :if={@nodo["tipo"] in MetaPlantillas.tipos_contenedor()} id={"jal-lista-" <> @nodo["id"]} phx-hook="ListaOrdenable" data-contenedor-id={@nodo["id"]} class="min-h-[8px] mt-1">
-        <.nodo_item :for={hijo <- @nodo["hijos"]} nodo={hijo} nivel={@nivel + 1} seleccionado_id={@seleccionado_id} />
       </div>
     </div>
     """
@@ -725,6 +983,8 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   defp etiqueta_nodo(%{"tipo" => "panel"}), do: "Panel"
   defp etiqueta_nodo(%{"tipo" => "pestanas"}), do: "Pestañas"
   defp etiqueta_nodo(%{"tipo" => "pestana", "propiedades" => %{"titulo" => t}}), do: "Pestaña — #{t}"
+  defp etiqueta_nodo(%{"tipo" => "grid", "propiedades" => %{"filas" => f, "columnas" => c}}), do: "Grid — #{f}×#{c}"
+  defp etiqueta_nodo(%{"tipo" => "boton", "propiedades" => %{"etiqueta" => e}}), do: "Botón — #{e}"
   defp etiqueta_nodo(nodo), do: nodo["tipo"]
 
   # Ícono del nodo en el lienzo — para "campo" usa el tipo_filtro elegido en
@@ -732,6 +992,21 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   # de fecha), o el genérico si no.
   defp icono_de_nodo(%{"tipo" => "campo", "propiedades" => %{"tipo_filtro" => filtro}}) when filtro not in [nil, ""], do: filtro
   defp icono_de_nodo(nodo), do: nodo["tipo"]
+
+  # Botón "Editar contenido →" — generaliza lo que antes solo tenía "grid"
+  # ("Editar grid"): CUALQUIER tipos_grid_host/0 (Sección/Panel/Grid legado
+  # — "pestana" usa su propio botón sin ambigüedad porque nunca es plural)
+  # entra a su propio grid con el mismo evento `entrar_contenedor`.
+  attr :id, :string, required: true
+
+  defp boton_entrar(assigns) do
+    ~H"""
+    <button type="button" phx-click="entrar_contenedor" phx-value-id={@id}
+      class="px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 text-center">
+      Editar contenido →
+    </button>
+    """
+  end
 
   attr :nodo, :map, required: true
   attr :campos, :list, required: true
@@ -782,6 +1057,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         Visible en la Ficha 360°
       </label>
     </form>
+    <.boton_entrar id={@nodo["id"]} />
     """
   end
 
@@ -812,12 +1088,39 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         <input type="text" name="titulo" value={@nodo["propiedades"]["titulo"]} class="w-full border border-gray-300 rounded px-2 py-1.5" />
       </div>
     </form>
+    <.boton_entrar id={@nodo["id"]} />
     """
   end
 
-  defp panel_propiedades(%{nodo: %{"tipo" => tipo}} = assigns) when tipo in ["fila", "columna", "panel", "pestanas"] do
+  # El contenido de cada pestaña es SU PROPIO grid (ver moduledoc "Grid 2D"
+  # de MetaPlantillas) — pero "pestanas" (el conmutador en sí) no lo es:
+  # sus hijos son las pestañas literales, nunca celdas. Por eso acá se
+  # entra a CADA "pestana" por separado, no a "pestanas" mismo.
+  defp panel_propiedades(%{nodo: %{"tipo" => "pestanas"}} = assigns) do
     ~H"""
-    <p class="text-gray-400">Sin propiedades — agregá componentes adentro desde la paleta.</p>
+    <div class="flex flex-col gap-1.5 text-xs">
+      <p class="text-gray-500 mb-0.5">Entrá a cada pestaña para editar su contenido.</p>
+      <button :for={p <- @nodo["hijos"]} type="button" phx-click="entrar_contenedor" phx-value-id={p["id"]}
+        class="flex items-center justify-between px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 font-semibold hover:border-purple-400 hover:text-purple-700 hover:bg-purple-50/50">
+        {p["propiedades"]["titulo"] || "Pestaña"} <span>→</span>
+      </button>
+    </div>
+    """
+  end
+
+  defp panel_propiedades(%{nodo: %{"tipo" => "panel"}} = assigns) do
+    ~H"""
+    <p class="text-gray-400 mb-2">Sin propiedades propias.</p>
+    <.boton_entrar id={@nodo["id"]} />
+    """
+  end
+
+  # "fila"/"columna" quedan solo por compatibilidad con datos viejos (ver
+  # MetaPlantillas.tipos_contenedor/0) — ya no se generan desde acá, así
+  # que no hace falta un "Editar contenido" (no son tipos_grid_host/0).
+  defp panel_propiedades(%{nodo: %{"tipo" => tipo}} = assigns) when tipo in ["fila", "columna"] do
+    ~H"""
+    <p class="text-gray-400">Sin propiedades.</p>
     """
   end
 
@@ -1225,6 +1528,335 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     """
   end
 
+  defp panel_propiedades(%{nodo: %{"tipo" => "grid"}} = assigns) do
+    ~H"""
+    <div class="flex flex-col gap-2.5 text-xs">
+      <p class="text-gray-500">{@nodo["propiedades"]["filas"]} filas × {@nodo["propiedades"]["columnas"]} columnas</p>
+      <form phx-change="actualizar_propiedad">
+        <label class="block text-gray-500 mb-0.5">Espaciado entre celdas</label>
+        <select name="gap" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="compacto" selected={@nodo["propiedades"]["gap"] == "compacto"}>Compacto</option>
+          <option value="normal" selected={(@nodo["propiedades"]["gap"] || "normal") == "normal"}>Normal</option>
+          <option value="amplio" selected={@nodo["propiedades"]["gap"] == "amplio"}>Amplio</option>
+        </select>
+      </form>
+      <.boton_entrar id={@nodo["id"]} />
+    </div>
+    """
+  end
+
+  defp panel_propiedades(%{nodo: %{"tipo" => "boton"}} = assigns) do
+    ~H"""
+    <form phx-change="actualizar_propiedad" class="flex flex-col gap-2.5 text-xs">
+      <div>
+        <label class="block text-gray-500 mb-0.5">Etiqueta</label>
+        <input type="text" name="etiqueta" value={@nodo["propiedades"]["etiqueta"]} class="w-full border border-gray-300 rounded px-2 py-1.5" />
+      </div>
+      <div>
+        <label class="block text-gray-500 mb-0.5">Acción (transición) a disparar</label>
+        <input type="text" name="accion" value={@nodo["propiedades"]["accion"]} placeholder="ej. guardar, aprobar, baja"
+          class="w-full border border-gray-300 rounded px-2 py-1.5" />
+        <p class="text-gray-400 mt-1">
+          Mismo nombre de "accion" configurado en las transiciones de este catálogo — si no aplica al estado actual del registro, el botón queda deshabilitado solo.
+        </p>
+      </div>
+      <div>
+        <label class="block text-gray-500 mb-0.5">Estilo</label>
+        <select name="estilo" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="primario" selected={(@nodo["propiedades"]["estilo"] || "primario") == "primario"}>Primario (relleno)</option>
+          <option value="secundario" selected={@nodo["propiedades"]["estilo"] == "secundario"}>Secundario (borde)</option>
+        </select>
+      </div>
+    </form>
+    """
+  end
+
+  # --- Panel "Celda" (posición/tamaño/alineación/estilo/responsive) --------
+  # Se antepone a panel_propiedades/1 SOLO mientras se edita un grid (ver
+  # render/1) — ortogonal al tipo del nodo, por eso vive aparte en vez de
+  # ser una cláusula más de panel_propiedades/1. Todo viaja junto por
+  # "actualizar_celda" (ver celda_cambios_desde_params/4).
+  attr :nodo, :map, required: true
+
+  defp panel_celda(assigns) do
+    celda = Map.merge(MetaPlantillas.celda_default(), assigns.nodo["propiedades"]["celda"] || %{})
+    assigns = assigns |> assign(:celda, celda) |> assign(:estilo, celda["estilo"] || %{}) |> assign(:responsive, celda["responsive"] || %{})
+
+    ~H"""
+    <form phx-change="actualizar_celda" class="flex flex-col gap-2.5 text-xs pb-3 mb-3 border-b border-gray-100">
+      <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400">Celda</div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="block text-gray-500 mb-0.5">Fila</label>
+          <input type="number" min="0" name="fila" value={@celda["fila"]} class="w-full border border-gray-300 rounded px-2 py-1.5" />
+        </div>
+        <div>
+          <label class="block text-gray-500 mb-0.5">Columna</label>
+          <input type="number" min="0" name="columna" value={@celda["columna"]} class="w-full border border-gray-300 rounded px-2 py-1.5" />
+        </div>
+        <div>
+          <label class="block text-gray-500 mb-0.5">Colspan</label>
+          <input type="number" min="1" name="colspan" value={@celda["colspan"]} class="w-full border border-gray-300 rounded px-2 py-1.5" />
+        </div>
+        <div>
+          <label class="block text-gray-500 mb-0.5">Rowspan</label>
+          <input type="number" min="1" name="rowspan" value={@celda["rowspan"]} class="w-full border border-gray-300 rounded px-2 py-1.5" />
+        </div>
+        <div>
+          <label class="block text-gray-500 mb-0.5">Ancho</label>
+          <input type="text" name="ancho" value={@celda["ancho"]} placeholder="auto" class="w-full border border-gray-300 rounded px-2 py-1.5" />
+        </div>
+        <div>
+          <label class="block text-gray-500 mb-0.5">Alto</label>
+          <input type="text" name="alto" value={@celda["alto"]} placeholder="auto" class="w-full border border-gray-300 rounded px-2 py-1.5" />
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="block text-gray-500 mb-0.5">Alineación horizontal</label>
+          <select name="alineacion_h" class="w-full border border-gray-300 rounded px-2 py-1.5">
+            <option value="izquierda" selected={(@celda["alineacion_h"] || "izquierda") == "izquierda"}>Izquierda</option>
+            <option value="centro" selected={@celda["alineacion_h"] == "centro"}>Centro</option>
+            <option value="derecha" selected={@celda["alineacion_h"] == "derecha"}>Derecha</option>
+            <option value="justificado" selected={@celda["alineacion_h"] == "justificado"}>Justificado</option>
+          </select>
+          <p class="text-gray-400 mt-1">Mueve el contenido DENTRO de la celda (que siempre llena su ancho) — para un ancho angosto de verdad, usá "Ancho" arriba.</p>
+        </div>
+        <div>
+          <label class="block text-gray-500 mb-0.5">Alineación vertical</label>
+          <select name="alineacion_v" class="w-full border border-gray-300 rounded px-2 py-1.5">
+            <option value="arriba" selected={@celda["alineacion_v"] == "arriba"}>Arriba</option>
+            <option value="centro" selected={@celda["alineacion_v"] == "centro"}>Centro</option>
+            <option value="abajo" selected={@celda["alineacion_v"] == "abajo"}>Abajo</option>
+            <option value="estirar" selected={@celda["alineacion_v"] == "estirar"}>Estirar</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-gray-500 mb-0.5">Padding</label>
+        <select name="padding" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="ninguno" selected={@celda["padding"] == "ninguno"}>Ninguno</option>
+          <option value="compacto" selected={@celda["padding"] == "compacto"}>Compacto</option>
+          <option value="normal" selected={(@celda["padding"] || "normal") == "normal"}>Normal</option>
+          <option value="amplio" selected={@celda["padding"] == "amplio"}>Amplio</option>
+        </select>
+      </div>
+
+      <label class="flex items-center gap-1.5">
+        <input type="hidden" name="visible" value="false" />
+        <input type="checkbox" name="visible" value="true" checked={@celda["visible"] != false} class="accent-purple-600" />
+        Visible
+      </label>
+
+      <div class="pt-2 border-t border-gray-100">
+        <div class="text-gray-500 font-semibold mb-1">Estilo</div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-gray-500 mb-0.5">Fondo</label>
+            <select name="estilo_fondo" class="w-full border border-gray-300 rounded px-2 py-1.5">
+              <option value="" selected={@estilo["fondo"] in [nil, ""]}>Ninguno</option>
+              <option :for={{v, e} <- swatches()} value={v} selected={@estilo["fondo"] == v}>{e}</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-gray-500 mb-0.5">Color de texto</label>
+            <select name="estilo_color_texto" class="w-full border border-gray-300 rounded px-2 py-1.5">
+              <option value="" selected={@estilo["color_texto"] in [nil, ""]}>Por defecto</option>
+              <option :for={{v, e} <- swatches()} value={v} selected={@estilo["color_texto"] == v}>{e}</option>
+            </select>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-3 mt-2">
+          <label class="flex items-center gap-1.5">
+            <input type="hidden" name="estilo_borde" value="false" />
+            <input type="checkbox" name="estilo_borde" value="true" checked={@estilo["borde"] == true} class="accent-purple-600" /> Borde
+          </label>
+          <label class="flex items-center gap-1.5">
+            <input type="hidden" name="estilo_redondeado" value="false" />
+            <input type="checkbox" name="estilo_redondeado" value="true" checked={@estilo["redondeado"] == true} class="accent-purple-600" /> Redondeado
+          </label>
+          <label class="flex items-center gap-1.5">
+            <input type="hidden" name="estilo_sombra" value="false" />
+            <input type="checkbox" name="estilo_sombra" value="true" checked={@estilo["sombra"] == true} class="accent-purple-600" /> Sombra
+          </label>
+        </div>
+      </div>
+
+      <div class="pt-2 border-t border-gray-100">
+        <div class="text-gray-500 font-semibold mb-1">Responsive (móvil)</div>
+        <label class="flex items-center gap-1.5 mb-1.5">
+          <input type="hidden" name="responsive_ocultar_movil" value="false" />
+          <input type="checkbox" name="responsive_ocultar_movil" value="true" checked={@responsive["ocultar_movil"] == true} class="accent-purple-600" />
+          Ocultar en móvil
+        </label>
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <label class="block text-gray-500 mb-0.5">Colspan móvil</label>
+            <input type="number" min="1" name="responsive_colspan_movil" value={@responsive["colspan_movil"]} placeholder="—" class="w-full border border-gray-300 rounded px-2 py-1.5" />
+          </div>
+          <div>
+            <label class="block text-gray-500 mb-0.5">Rowspan móvil</label>
+            <input type="number" min="1" name="responsive_rowspan_movil" value={@responsive["rowspan_movil"]} placeholder="—" class="w-full border border-gray-300 rounded px-2 py-1.5" />
+          </div>
+          <div>
+            <label class="block text-gray-500 mb-0.5">Orden móvil</label>
+            <input type="number" name="responsive_orden_movil" value={@responsive["orden_movil"]} placeholder="—" class="w-full border border-gray-300 rounded px-2 py-1.5" />
+          </div>
+        </div>
+      </div>
+    </form>
+    """
+  end
+
+  # Paleta corta de colores con nombre — ni un picker libre (fuera de
+  # alcance) ni solo On/Off, un término medio manejable. Los mismos
+  # nombres se resuelven a clases Tailwind reales del lado de FichaLive
+  # (ver celda_classes/1 en ficha_live.ex) — un solo lugar de verdad
+  # (esta lista) para no desincronizar el <select> de lo que existe.
+  defp swatches, do: [{"gris", "Gris"}, {"purpura", "Púrpura"}, {"azul", "Azul"}, {"verde", "Verde"}, {"amarillo", "Amarillo"}, {"rojo", "Rojo"}]
+
+  # --- Lienzo del editor de grid (hoja de cálculo) --------------------------
+  # Reemplaza al viejo botón fijo "‹ Volver al árbol" — ya no hay un único
+  # "afuera", puede haber varios niveles (Raíz > Sección > Panel anidado).
+  # Cada segmento navega directo a SU id con "entrar_contenedor" (ver
+  # MetaPlantillas.ruta_hasta/2, que arma esta lista recorriendo el árbol
+  # en cada render — nunca es estado propio de este LiveView).
+  attr :ruta, :list, required: true
+
+  defp breadcrumb(assigns) do
+    assigns = assign(assigns, :ultimo, length(assigns.ruta) - 1)
+
+    ~H"""
+    <div class="flex items-center gap-1 flex-wrap text-xs">
+      <%= for {seg, i} <- Enum.with_index(@ruta) do %>
+        <button type="button" phx-click="entrar_contenedor" phx-value-id={seg.id || ""}
+          class={[
+            i == @ultimo && "font-bold text-gray-700 cursor-default",
+            i != @ultimo && "text-gray-500 hover:text-purple-700 hover:underline"
+          ]}>
+          {seg.etiqueta}
+        </button>
+        <span :if={i < @ultimo} class="text-gray-300">›</span>
+      <% end %>
+    </div>
+    """
+  end
+
+  attr :grid, :map, required: true
+  attr :ruta, :list, required: true
+  attr :nodo_seleccionado_id, :string, default: nil
+  attr :celda_seleccionada, :map, default: nil
+  attr :puede_deshacer, :boolean, default: false
+  attr :puede_rehacer, :boolean, default: false
+
+  defp grid_editor(%{grid: nil} = assigns) do
+    ~H"""
+    <div class="flex items-center gap-1 text-xs mb-3">
+      <.breadcrumb ruta={@ruta} />
+    </div>
+    <p class="text-center text-gray-400 text-sm py-10">Este contenedor ya no existe (lo borraron desde otro lado).</p>
+    """
+  end
+
+  defp grid_editor(assigns) do
+    filas = assigns.grid["propiedades"]["filas"] || 1
+    columnas = assigns.grid["propiedades"]["columnas"] || 1
+    ocupadas = celdas_ocupadas(assigns.grid)
+    seleccionado = assigns.nodo_seleccionado_id && Enum.find(assigns.grid["hijos"] || [], &(&1["id"] == assigns.nodo_seleccionado_id))
+    combinado? = !!(seleccionado && (celda_de_nodo(seleccionado)["colspan"] > 1 or celda_de_nodo(seleccionado)["rowspan"] > 1))
+
+    assigns =
+      assigns
+      |> assign(:filas, filas)
+      |> assign(:columnas, columnas)
+      |> assign(:celdas_vacias, celdas_vacias(filas, columnas, ocupadas))
+      |> assign(:combinado?, combinado?)
+      |> assign(:puede_combinar?, not is_nil(seleccionado) and not is_nil(assigns.celda_seleccionada))
+      |> assign(
+        :btn,
+        "px-2 py-1 rounded-md border border-gray-200 text-gray-600 text-[11px] font-semibold hover:bg-gray-50 hover:border-gray-300 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+      )
+
+    ~H"""
+    <div>
+      <div class="mb-2.5">
+        <.breadcrumb ruta={@ruta} />
+      </div>
+      <div class="flex items-center flex-wrap gap-1.5 mb-3 pb-3 border-b border-gray-100">
+        <button type="button" phx-click="grid_agregar_fila" phx-value-direccion="arriba" title="Agregar fila arriba" class={@btn}>Fila ↑</button>
+        <button type="button" phx-click="grid_agregar_fila" phx-value-direccion="abajo" title="Agregar fila abajo" class={@btn}>Fila ↓</button>
+        <button type="button" phx-click="grid_agregar_columna" phx-value-direccion="izquierda" title="Agregar columna a la izquierda" class={@btn}>Col ←</button>
+        <button type="button" phx-click="grid_agregar_columna" phx-value-direccion="derecha" title="Agregar columna a la derecha" class={@btn}>Col →</button>
+        <div class="w-px h-5 bg-gray-200 mx-1"></div>
+        <button type="button" phx-click="grid_eliminar_fila" disabled={@filas <= 1} title="Eliminar fila" class={@btn}>Eliminar fila</button>
+        <button type="button" phx-click="grid_eliminar_columna" disabled={@columnas <= 1} title="Eliminar columna" class={@btn}>Eliminar columna</button>
+        <button type="button" phx-click="grid_duplicar_fila" title="Duplicar fila" class={@btn}>Duplicar fila</button>
+        <div class="w-px h-5 bg-gray-200 mx-1"></div>
+        <button type="button" phx-click="grid_combinar" disabled={!@puede_combinar?} title="Combinar celdas" class={@btn}>Combinar</button>
+        <button type="button" phx-click="grid_separar" disabled={!@combinado?} title="Separar celda" class={@btn}>Separar</button>
+        <button type="button" phx-click="grid_limpiar_celda" disabled={is_nil(@nodo_seleccionado_id)} title="Limpiar celda" class={@btn}>Limpiar celda</button>
+        <div class="w-px h-5 bg-gray-200 mx-1"></div>
+        <button type="button" phx-click="grid_deshacer" disabled={!@puede_deshacer} title="Deshacer" class={@btn}>↶ Deshacer</button>
+        <button type="button" phx-click="grid_rehacer" disabled={!@puede_rehacer} title="Rehacer" class={@btn}>↷ Rehacer</button>
+      </div>
+
+      <div class="overflow-auto">
+        <div id="gc-grid" phx-hook="GridConstructor"
+          class="inline-grid gc-editor"
+          style={"grid-template-columns: 32px repeat(#{@columnas}, minmax(90px,1fr)); grid-template-rows: 24px repeat(#{@filas}, minmax(48px,auto));"}>
+          <div class="gc-header" style="grid-column:1;grid-row:1"></div>
+
+          <button :for={c <- 0..(@columnas - 1)} type="button" phx-click="seleccionar_celda" phx-value-fila="0" phx-value-columna={c}
+            class="gc-header" style={"grid-column:#{c + 2};grid-row:1"}>{c + 1}</button>
+
+          <button :for={f <- 0..(@filas - 1)} type="button" phx-click="seleccionar_celda" phx-value-fila={f} phx-value-columna="0"
+            class="gc-header" style={"grid-column:1;grid-row:#{f + 2}"}>{f + 1}</button>
+
+          <div :for={hijo <- @grid["hijos"] || []}
+            style={celda_style(hijo)} draggable="true" data-origen="celda" data-nodo-id={hijo["id"]}
+            data-fila={celda_de_nodo(hijo)["fila"]} data-columna={celda_de_nodo(hijo)["columna"]} data-ocupada="true"
+            phx-click="seleccionar_nodo" phx-value-id={hijo["id"]}
+            class={["gc-celda gc-ocupada", @nodo_seleccionado_id == hijo["id"] && "gc-celda-activa"]}>
+            <span class="text-gray-400 flex-shrink-0"><.icono tipo={icono_de_nodo(hijo)} /></span>
+            <span class="truncate">{etiqueta_nodo(hijo)}</span>
+          </div>
+
+          <div :for={{f, c} <- @celdas_vacias}
+            style={"grid-column:#{c + 2};grid-row:#{f + 2}"} data-fila={f} data-columna={c} data-ocupada="false"
+            phx-click="seleccionar_celda" phx-value-fila={f} phx-value-columna={c}
+            class={["gc-celda gc-vacia", @celda_seleccionada == %{fila: f, columna: c} && "gc-celda-activa"]}>
+            +
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp celdas_ocupadas(grid) do
+    Enum.reduce(grid["hijos"] || [], MapSet.new(), fn hijo, acc ->
+      celda = celda_de_nodo(hijo)
+
+      Enum.reduce(celda["fila"]..(celda["fila"] + celda["rowspan"] - 1), acc, fn f, acc2 ->
+        Enum.reduce(celda["columna"]..(celda["columna"] + celda["colspan"] - 1), acc2, fn c, acc3 -> MapSet.put(acc3, {f, c}) end)
+      end)
+    end)
+  end
+
+  defp celdas_vacias(filas, columnas, ocupadas) do
+    for f <- 0..(filas - 1), c <- 0..(columnas - 1), not MapSet.member?(ocupadas, {f, c}), do: {f, c}
+  end
+
+  defp celda_style(hijo) do
+    celda = celda_de_nodo(hijo)
+    "grid-column:#{celda["columna"] + 2}/span #{celda["colspan"]};grid-row:#{celda["fila"] + 2}/span #{celda["rowspan"]}"
+  end
+
+  defp celda_de_nodo(nodo), do: Map.merge(MetaPlantillas.celda_default(), nodo["propiedades"]["celda"] || %{})
+
   # Campos VISIBLES del catálogo elegido en "Catálogo relacionado" — sale de
   # @catalogos_disponibles (ya calculado en mount/2 para el panel de
   # "Campo calculado", pero es la misma lista de TODOS los catálogos con sus
@@ -1546,6 +2178,22 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     ~H"""
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    </svg>
+    """
+  end
+
+  defp icono(%{tipo: "grid"} = assigns) do
+    ~H"""
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="3" y1="9" x2="21" y2="9" /><line x1="3" y1="15" x2="21" y2="15" /><line x1="9" y1="3" x2="9" y2="21" /><line x1="15" y1="3" x2="15" y2="21" />
+    </svg>
+    """
+  end
+
+  defp icono(%{tipo: "boton"} = assigns) do
+    ~H"""
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="7" width="18" height="10" rx="3" /><line x1="8" y1="12" x2="16" y2="12" />
     </svg>
     """
   end

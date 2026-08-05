@@ -159,6 +159,129 @@ body {
   }
 }
 
+/* Bloque "grid" de un PostView armado a mano (ver nodo_plantilla_render/1
+   en ficha_live.ex, tipo "grid") — mismo criterio que .pc-fila-dinamica de
+   arriba (variables CSS para no hornear el tamaño en la clase, colapso a 1
+   columna en el celular), pero acá CADA hijo puede pedir su propio
+   colspan/rowspan de móvil (--celda-colspan-movil/--celda-rowspan-movil,
+   ver celda_classes/1) — si no los pidió, `auto` los deja fluir apilados
+   como cualquier hijo más de una sola columna. Nunca lleva bordes de
+   grilla acá — esos son solo del Constructor (ver .gc-editor más abajo). */
+.pc-grid-dinamica {
+  display: grid;
+  grid-template-columns: repeat(var(--pc-grid-cols, 1), minmax(0, 1fr));
+  grid-auto-rows: minmax(0, auto);
+  gap: var(--pc-grid-gap, 12px);
+}
+
+/* "Ocultar en móvil" de una celda (ver celda_classes/1) — se ve normal en
+   cualquier otra pantalla, solo desaparece bajo 640px. */
+@media (max-width: 640px) {
+  .pc-celda-ocultar-movil {
+    display: none;
+  }
+
+  .pc-grid-dinamica {
+    grid-template-columns: 1fr;
+  }
+
+  .pc-grid-dinamica > * {
+    grid-column: auto !important;
+    grid-row: auto !important;
+  }
+
+  /* Overrides puntuales por celda (ver responsive.colspan_movil/orden_movil,
+     panel_celda/1 en el Constructor) — la presencia del atributo data-* es
+     el opt-in, el valor real viaja en la variable CSS que ya trae el style
+     inline de cada celda (ver estilo_celda/1). */
+  .pc-grid-dinamica > [data-celda-colspan-movil] {
+    grid-column: span var(--celda-colspan-movil, 1) !important;
+  }
+
+  .pc-grid-dinamica > [data-celda-orden-movil] {
+    order: var(--celda-orden-movil, 0);
+  }
+}
+
+/* Editor de grid (hoja de cálculo) del Constructor — ver
+   PlantillaConstructorLive.grid_editor/1. A propósito con bordes bien
+   visibles (estilo hoja de cálculo real, encabezados numerados incluidos)
+   — es la ÚNICA parte de todo el sistema de plantillas que se ve así; el
+   render final en FichaLive (.pc-grid-dinamica arriba) nunca muestra
+   ninguno de estos bordes. */
+.gc-editor {
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: #f9fafb;
+}
+
+.gc-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  color: #6b7280;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.gc-header:hover {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+.gc-celda {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.gc-vacia {
+  justify-content: center;
+  color: #d1d5db;
+  border-style: dashed;
+  background: #fafafa;
+}
+
+.gc-vacia:hover {
+  border-color: #a78bfa;
+  color: #a78bfa;
+  background: #f5f3ff;
+}
+
+.gc-ocupada:hover {
+  border-color: #c4b5fd;
+}
+
+.gc-celda-activa {
+  border-color: #7c3aed !important;
+  border-width: 2px;
+  background: #f5f3ff;
+}
+
+.gc-drop-valido {
+  background: #ecfdf5 !important;
+  border-color: #10b981 !important;
+  border-style: dashed;
+}
+
+.gc-drop-invalido {
+  background: #fef2f2 !important;
+  border-color: #ef4444 !important;
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
 /* Red de seguridad para TODOS los modales (actuales y futuros): en este
    código base el overlay de un modal siempre se arma con las mismas 4
    clases de Tailwind ("fixed inset-0 ... flex items-center justify-center",

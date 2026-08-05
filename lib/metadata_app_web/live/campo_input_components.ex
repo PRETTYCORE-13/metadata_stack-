@@ -26,6 +26,8 @@ defmodule MetadataAppWeb.CampoInputComponents do
   attr :name, :string, default: nil
   attr :required, :boolean, default: true
   attr :opciones, :list, default: []
+  attr :id, :string, default: nil
+  attr :disabled, :boolean, default: false
 
   def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
     assigns = assign_name(assigns)
@@ -33,7 +35,8 @@ defmodule MetadataAppWeb.CampoInputComponents do
     ~H"""
     <label class="flex items-center gap-1 text-[11px] leading-tight">
       <input type="hidden" name={@name} value="false" />
-      <input type="checkbox" name={@name} value="true" checked={@valor == "true"} class="accent-purple-600" />
+      <input type="checkbox" name={@name} value="true" checked={@valor == "true"} disabled={@disabled}
+        class="accent-purple-600 disabled:opacity-50 disabled:cursor-not-allowed" />
       <span :if={@mostrar_etiqueta} class="text-gray-500">{@columna.schema_context_properties["etiqueta"]}</span>
     </label>
     """
@@ -45,8 +48,8 @@ defmodule MetadataAppWeb.CampoInputComponents do
     ~H"""
     <div>
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
-      <select name={@name} required={@required}
-        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight">
+      <select name={@name} required={@required} disabled={@disabled}
+        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed">
         <option :for={v <- @columna.schema_context_properties["valores"]} value={v} selected={v == @valor}>{v}</option>
       </select>
     </div>
@@ -60,8 +63,8 @@ defmodule MetadataAppWeb.CampoInputComponents do
     ~H"""
     <div>
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
-      <input type="number" step={@step} name={@name} value={@valor} required={@required}
-        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight" />
+      <input type="number" step={@step} name={@name} value={@valor} required={@required} disabled={@disabled}
+        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
     </div>
     """
   end
@@ -72,30 +75,42 @@ defmodule MetadataAppWeb.CampoInputComponents do
     ~H"""
     <div>
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
-      <input type="date" name={@name} value={@valor} required={@required}
-        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight" />
+      <input type="date" name={@name} value={@valor} required={@required} disabled={@disabled}
+        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
     </div>
     """
   end
 
-  # Referencia: picker simple (<select>, sin búsqueda — catálogos grandes
-  # quedan para una Fase 2, ver docs/roadmap-campos-acompanamiento.md).
-  # `@opciones` ([{id, etiqueta}, ...]) la arma el caller vía
-  # CatalogoGenerico.opciones_referencia/1 — la etiqueta ya viene resuelta
-  # desde "campos_acompanamiento" (o "#<id>" si el catálogo destino no
-  # configuró ninguno), así se ve el dato real en vez del id crudo. Mismo
-  # criterio que "enum" arriba: sin placeholder en blanco, si @valor no
-  # matchea ninguna opción el navegador selecciona la primera.
+  # Referencia: combobox con filtro LOCAL sobre `@opciones` (sin ida y
+  # vuelta al servidor — el hook ReferenciaField filtra en el cliente),
+  # abierto con F2 o al tipear. `@opciones` ([{id, etiqueta}, ...]) la arma
+  # el caller vía CatalogoGenerico.opciones_referencia/1 — la etiqueta ya
+  # viene resuelta desde "campos_acompanamiento" (o "#<id>" si el catálogo
+  # destino no configuró ninguno), así se ve el dato real en vez del id
+  # crudo. El input de texto visible es el que lleva `required` (un
+  # `type="hidden"` queda afuera de la validación nativa del navegador por
+  # spec) — así `form.checkValidity()` en RenglonForm bloquea confirmar la
+  # línea si no hay ninguna referencia elegida.
   def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "referencia"}}} = assigns) do
     assigns = assign_name(assigns)
+
+    assigns =
+      assigns
+      |> assign(:dom_id, assigns.id || "campo-#{String.replace(assigns.name, ~r/[\[\]]/, "-")}")
+      |> assign(:opciones_json, Jason.encode!(Enum.map(assigns.opciones, fn {id, etiqueta} -> %{id: to_string(id), etiqueta: etiqueta} end)))
+      |> assign(:etiqueta_actual, etiqueta_para_valor(assigns.opciones, assigns.valor))
 
     ~H"""
     <div>
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
-      <select name={@name} required={@required}
-        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight">
-        <option :for={{id, etiqueta} <- @opciones} value={id} selected={to_string(id) == @valor}>{etiqueta}</option>
-      </select>
+      <div id={@dom_id} phx-hook="ReferenciaField" data-opciones={@opciones_json} class="relative">
+        <input type="hidden" name={@name} value={@valor} disabled={@disabled} data-campo-hidden />
+        <input type="text" autocomplete="off" value={@etiqueta_actual} required={@required} disabled={@disabled} data-campo-texto
+          placeholder="Escribí o F2 para buscar…"
+          class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+        <ul data-campo-lista role="listbox"
+          class="hidden absolute left-0 right-0 z-20 mt-0.5 max-h-40 overflow-auto rounded border border-gray-200 bg-white shadow-lg"></ul>
+      </div>
     </div>
     """
   end
@@ -107,13 +122,20 @@ defmodule MetadataAppWeb.CampoInputComponents do
     ~H"""
     <div>
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
-      <input type="text" name={@name} value={@valor} required={@required}
+      <input type="text" name={@name} value={@valor} required={@required} disabled={@disabled}
         maxlength={@columna.schema_context_properties["longitud"]}
-        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight" />
+        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
     </div>
     """
   end
 
   defp assign_name(%{name: nil} = assigns), do: assign(assigns, :name, "campos[#{assigns.columna.schema_context_field}]")
   defp assign_name(assigns), do: assigns
+
+  defp etiqueta_para_valor(opciones, valor) do
+    case Enum.find(opciones, fn {id, _etiqueta} -> to_string(id) == valor end) do
+      {_id, etiqueta} -> etiqueta
+      nil -> ""
+    end
+  end
 end

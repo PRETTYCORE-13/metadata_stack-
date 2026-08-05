@@ -85,7 +85,7 @@ defmodule MetadataAppWeb.FichaLive do
   # sin un branch por tipo de nodo. Los campos editables salen de la
   # transición "alta" (no "guardar") — mismo criterio que ya usa
   # CatalogoLive.campos_alta para el botón "+ Nuevo registro" de siempre.
-  def mount(%{"tabla" => tabla}, _session, socket) do
+  def mount(%{"tabla" => tabla} = params, _session, socket) do
     socket =
       socket
       |> assign(:sidebar_open, false)
@@ -114,6 +114,14 @@ defmodule MetadataAppWeb.FichaLive do
             do: [],
             else: tabla |> MetaStateEngine.campos_editables(transicion_alta) |> campos_editables_propios(columnas)
 
+        # ?plantilla_id=N — mismo criterio que el modo :ver (ver plantilla_a_mostrar/2):
+        # "Vista previa" del Constructor apunta acá con un registro en blanco
+        # (nunca hizo falta que el catálogo ya tuviera datos cargados para
+        # poder juzgar el DISEÑO), forzando esa plantilla puntual (borrador
+        # incluido) en vez de la publicada real.
+        socket = assign(socket, :plantilla_preview_id, Map.get(params, "plantilla_id"))
+        plantilla = plantilla_a_mostrar(socket, header.id)
+
         {:ok,
          socket
          |> assign(:current_page, tabla)
@@ -123,8 +131,7 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:schema_mod, schema_mod)
          |> assign(:header, header)
          |> assign(:es_detalle?, es_detalle?)
-         |> assign(:plantilla_preview_id, nil)
-         |> assign(:plantilla, MetaPlantillas.obtener_plantilla_publicada(header.id))
+         |> assign(:plantilla, plantilla)
          |> assign(:tab, "datos")
          |> assign(:registro, %{})
          |> assign(:columnas, columnas)
@@ -132,6 +139,7 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:mostrar_estado?, false)
          |> assign(:transicion_edicion, transicion_alta)
          |> assign(:campos_editables, campos_editables)
+         |> assign(:detalle_campos_editables, [])
          |> assign(:otras_transiciones, [])
          |> assign(:relaciones, [])
          |> assign(:relaciones_total, 0)
@@ -378,13 +386,63 @@ defmodule MetadataAppWeb.FichaLive do
   # Limpia el formulario y le pide a la tabla una fila nueva en blanco —
   # la tabla la crea, la enfoca (arranca a escribir de una) y reporta su
   # client_id real vía "detalle_seleccionar_fila", cerrando el círculo.
+  # También es el destino de "confirmar línea" (Enter en el último campo,
+  # ver hook RenglonForm) — mismo resultado final que arrancar una línea
+  # nueva a mano, por eso reusa el mismo evento en vez de duplicar lógica.
+  # "detalle_enfocar_primero" es la señal explícita para que el hook del
+  # formulario devuelva el foco al primer campo — no se puede inferir de
+  # un `updated()` genérico sin arriesgar robarle el foco al usuario
+  # mientras todavía está tipeando otra cosa.
   def handle_event("detalle_nueva_linea", %{"catalogo" => catalogo}, socket) do
     seleccion = %{client_id: nil, renglon_id: nil, valores: %{}}
 
     {:noreply,
      socket
      |> assign(:detalle_seleccion, Map.put(socket.assigns.detalle_seleccion, catalogo, seleccion))
-     |> push_event("grid_nueva_fila", %{catalogo: catalogo})}
+     |> push_event("grid_nueva_fila", %{catalogo: catalogo})
+     |> push_event("detalle_enfocar_primero", %{catalogo: catalogo})}
+  end
+
+  # Esc (ver hook RenglonForm) — "cancela la edición", no es lo mismo que
+  # "detalle_eliminar_linea": una línea NUEVA sin persistir se descarta
+  # entera (nunca llegó a existir, nada que revertir) y arranca una en
+  # blanco de nuevo; un renglón YA PERSISTIDO conserva su lugar, solo
+  # revierte los campos tocados a sus valores originales (grid_revertir_fila
+  # limpia dirty/errors del lado del hook, así una edición cancelada no
+  # queda igual "sucia" para grid_sync).
+  def handle_event("detalle_cancelar_linea", %{"catalogo" => catalogo}, socket) do
+    case Map.get(socket.assigns.detalle_seleccion, catalogo) do
+      %{renglon_id: nil, client_id: client_id} when not is_nil(client_id) ->
+        seleccion = %{client_id: nil, renglon_id: nil, valores: %{}}
+
+        {:noreply,
+         socket
+         |> assign(:detalle_seleccion, Map.put(socket.assigns.detalle_seleccion, catalogo, seleccion))
+         |> push_event("grid_quitar_fila", %{catalogo: catalogo, client_id: client_id})
+         |> push_event("grid_nueva_fila", %{catalogo: catalogo})
+         |> push_event("detalle_enfocar_primero", %{catalogo: catalogo})}
+
+      %{renglon_id: renglon_id} when not is_nil(renglon_id) ->
+        filas = Map.get(socket.assigns.detalle_renglones, catalogo, [])
+        columnas = columnas_de_catalogo(socket.assigns.catalogos_detalle, catalogo)
+
+        case Enum.find(filas, &(&1.renglon_id == renglon_id)) do
+          nil ->
+            {:noreply, socket}
+
+          fila ->
+            seleccion = %{client_id: nil, renglon_id: renglon_id, valores: valores_como_texto(fila, columnas)}
+
+            {:noreply,
+             socket
+             |> assign(:detalle_seleccion, Map.put(socket.assigns.detalle_seleccion, catalogo, seleccion))
+             |> push_event("grid_revertir_fila", %{catalogo: catalogo, renglon_id: renglon_id})
+             |> push_event("detalle_enfocar_primero", %{catalogo: catalogo})}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   # Fila TODAVÍA no persistida: se saca del array entero (nunca llegó a
@@ -708,6 +766,23 @@ defmodule MetadataAppWeb.FichaLive do
     Enum.filter(campos_editables, &MapSet.member?(propios, &1))
   end
 
+  # Un renglón nuevo (sin renglon_id todavía) siempre es editable — el alta
+  # de renglones no pasa por ninguna transición, así que campos_editables no
+  # le aplica (ver crear_renglones_nuevos/3). Un renglón YA PERSISTIDO solo
+  # puede tocar los campos que la transición "guardar" resuelta whitelisteó
+  # explícitamente (MetaStateEngine.campos_editables/2, SIN el filtro
+  # campos_editables_propios/2 que usa el formulario del encabezado — acá sí
+  # interesan los campos de catálogos detalle). Sin este chequeo el usuario
+  # podía tipear libremente en un campo que el servidor iba a rechazar
+  # recién al Guardar con "no editable en esta transición" (bug real,
+  # reportado).
+  defp campo_detalle_editable?(_campo, %{renglon_id: nil}, _campos_editables), do: true
+  defp campo_detalle_editable?(_campo, nil, _campos_editables), do: true
+
+  defp campo_detalle_editable?(campo, %{renglon_id: renglon_id}, campos_editables) when not is_nil(renglon_id) do
+    campo.schema_context_field in campos_editables
+  end
+
   defp campos_modificados(registro, campos_params, campos_editables) do
     Enum.reduce(campos_editables, %{}, fn campo, acc ->
       nuevo = Map.get(campos_params, campo)
@@ -750,10 +825,18 @@ defmodule MetadataAppWeb.FichaLive do
     transicion_edicion =
       if es_detalle?, do: nil, else: MetaStateEngine.transicion_guardar(tabla, registro.estado_id)
 
+    # Sin filtrar por campos_editables_propios/2 a propósito, a diferencia
+    # de @campos_editables — esta versión completa (con campos de
+    # catálogos detalle incluidos) es la que necesita
+    # campo_detalle_editable?/3 para saber, campo por campo de un renglón
+    # YA PERSISTIDO, si la transición "guardar" resuelta lo dejó tocar.
+    detalle_campos_editables_raw =
+      if es_detalle?, do: [], else: MetaStateEngine.campos_editables(tabla, transicion_edicion)
+
     campos_editables =
       if es_detalle?,
         do: [],
-        else: tabla |> MetaStateEngine.campos_editables(transicion_edicion) |> campos_editables_propios(columnas)
+        else: campos_editables_propios(detalle_campos_editables_raw, columnas)
 
     # MetaStateEngine.transiciones_disponibles/2 asume estado_id no-nil
     # (transiciones_desde/2 hace `t.estado_origen_id == ^estado_id`, que Ecto
@@ -790,6 +873,7 @@ defmodule MetadataAppWeb.FichaLive do
     |> assign(:mostrar_estado?, estados_por_id != %{})
     |> assign(:transicion_edicion, transicion_edicion)
     |> assign(:campos_editables, campos_editables)
+    |> assign(:detalle_campos_editables, detalle_campos_editables_raw)
     |> assign(:otras_transiciones, otras_transiciones)
     |> assign(:relaciones, relaciones)
     |> assign(:relaciones_total, Enum.sum(Enum.map(relaciones, & &1.total)))
@@ -1134,13 +1218,13 @@ defmodule MetadataAppWeb.FichaLive do
       </div>
 
       <.tab_datos :if={@tab == "datos"} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
-        plantilla={@plantilla} relaciones={@relaciones} estados_por_id={@estados_por_id}
+        plantilla={@plantilla} relaciones={@relaciones} estados_por_id={@estados_por_id} otras_transiciones={@otras_transiciones}
         edicion={%{valores: @form_values, errores: @errores_campos, contexto: @contexto_formula, calculados: @valores_calculados}} />
       <.tab_relaciones :if={@tab == "relaciones"} relaciones={@relaciones} />
       <.tab_historial :if={@tab == "historial"} historial={@historial} estados_por_id={@estados_por_id} />
       <.tab_detalle :if={@tab == "detalle"} modo={@modo} catalogos_detalle={@catalogos_detalle} detalle_renglones={@detalle_renglones}
         otras_transiciones={@otras_transiciones} detalle_form_error={@detalle_form_error} estados_por_id={@estados_por_id}
-        detalle_seleccion={@detalle_seleccion} />
+        detalle_seleccion={@detalle_seleccion} detalle_campos_editables={@detalle_campos_editables} />
     </div>
     """
   end
@@ -1152,6 +1236,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :relaciones, :list, default: []
   attr :estados_por_id, :map, default: %{}
   attr :edicion, :map, required: true
+  attr :otras_transiciones, :list, default: []
 
   # Sin plantilla publicada (el 100% de los catálogos hasta que alguien use
   # el Constructor): la lista plana de siempre, sin cambios. Con plantilla,
@@ -1178,15 +1263,29 @@ defmodule MetadataAppWeb.FichaLive do
     """
   end
 
+  # La raíz de la plantilla ES un grid desde el arranque (ver moduledoc
+  # "Grid 2D" de MetaPlantillas — ya no hay un "modo árbol" aparte en el
+  # Constructor) — mismo render que cualquier otro tipos_grid_host/0
+  # (Sección/Panel/Grid legado), solo que acá la raíz no tiene un "nodo"
+  # propio con "id" (siempre existió como el mapa `definicion` pelado), así
+  # que arma hijos_grid/estilo_grid_hijos directo sobre `@plantilla.definicion`
+  # en vez de despachar por `nodo_plantilla_render/1`.
   defp tab_datos(assigns) do
+    assigns =
+      assigns
+      |> assign(:estilo_grid, estilo_grid_hijos(assigns.plantilla.definicion))
+      |> assign(:hijos, hijos_grid(assigns.plantilla.definicion))
+
     ~H"""
     <form id="form-ficha-datos" phx-change="validar" phx-submit="guardar" class="space-y-4">
       <div :if={map_size(@edicion.errores) > 0} class="bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2">
         No se pudo guardar: revisá los campos marcados en rojo.
       </div>
-      <.nodo_plantilla :for={nodo <- @plantilla.definicion["hijos"]} nodo={nodo}
-        columnas={@columnas} registro={@registro} campos_editables={@campos_editables} relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} />
-      <p :if={@plantilla.definicion["hijos"] == []} class="px-4 py-8 text-center text-gray-400 text-sm bg-white border border-gray-200 rounded-xl">
+      <div class="pc-grid-dinamica" style={@estilo_grid}>
+        <.celda_grid :for={hijo <- @hijos} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
+          relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+      </div>
+      <p :if={@hijos == []} class="px-4 py-8 text-center text-gray-400 text-sm bg-white border border-gray-200 rounded-xl">
         La plantilla publicada todavía no tiene componentes.
       </p>
     </form>
@@ -1200,6 +1299,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :relaciones, :list, required: true
   attr :estados_por_id, :map, required: true
   attr :edicion, :map, required: true
+  attr :otras_transiciones, :list, default: []
 
   # Envoltorio de condición: TODO nodo (cualquier tipo) puede tener
   # propiedades["condicion"] — %{"campo","operador","valor"} armado desde el
@@ -1211,7 +1311,7 @@ defmodule MetadataAppWeb.FichaLive do
     ~H"""
     <.nodo_plantilla_render :if={condicion_cumplida?(@nodo, @registro, @estados_por_id)}
       nodo={@nodo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
-      relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} />
+      relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
     """
   end
 
@@ -1222,6 +1322,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :relaciones, :list, required: true
   attr :estados_por_id, :map, required: true
   attr :edicion, :map, required: true
+  attr :otras_transiciones, :list, default: []
 
   # "visible: false" oculta la sección entera (y lo que tenga adentro) en la
   # Ficha 360° — la propiedad la pone/quita quien diseña la plantilla desde
@@ -1230,7 +1331,11 @@ defmodule MetadataAppWeb.FichaLive do
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "seccion", "propiedades" => %{"visible" => false}}} = assigns), do: ~H""
 
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "seccion", "propiedades" => %{"colapsable" => true}}} = assigns) do
-    assigns = assign(assigns, :padding, padding_seccion(assigns.nodo))
+    assigns =
+      assigns
+      |> assign(:padding, padding_seccion(assigns.nodo))
+      |> assign(:estilo_grid, estilo_grid_hijos(assigns.nodo))
+      |> assign(:hijos, hijos_grid(assigns.nodo))
 
     ~H"""
     <details class="bg-white border border-gray-200 rounded-xl overflow-hidden" open>
@@ -1240,13 +1345,20 @@ defmodule MetadataAppWeb.FichaLive do
         </span>
         <div :if={@nodo["propiedades"]["descripcion"] not in [nil, ""]} class="text-xs text-gray-400 mt-0.5 font-normal">{@nodo["propiedades"]["descripcion"]}</div>
       </summary>
-      <.nodo_plantilla :for={hijo <- @nodo["hijos"]} nodo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables} relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} />
+      <div class="pc-grid-dinamica p-3" style={@estilo_grid}>
+        <.celda_grid :for={hijo <- @hijos} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
+          relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+      </div>
     </details>
     """
   end
 
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "seccion"}} = assigns) do
-    assigns = assign(assigns, :padding, padding_seccion(assigns.nodo))
+    assigns =
+      assigns
+      |> assign(:padding, padding_seccion(assigns.nodo))
+      |> assign(:estilo_grid, estilo_grid_hijos(assigns.nodo))
+      |> assign(:hijos, hijos_grid(assigns.nodo))
 
     ~H"""
     <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -1256,7 +1368,10 @@ defmodule MetadataAppWeb.FichaLive do
         </div>
         <div :if={@nodo["propiedades"]["descripcion"] not in [nil, ""]} class="text-xs text-gray-400 mt-0.5">{@nodo["propiedades"]["descripcion"]}</div>
       </div>
-      <.nodo_plantilla :for={hijo <- @nodo["hijos"]} nodo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables} relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} />
+      <div class="pc-grid-dinamica p-3" style={@estilo_grid}>
+        <.celda_grid :for={hijo <- @hijos} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
+          relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+      </div>
     </div>
     """
   end
@@ -1272,7 +1387,7 @@ defmodule MetadataAppWeb.FichaLive do
          en app.css, que las colapsa a 1 columna bajo 640px), quedaría
          cada campo apretadísimo e ilegible. -->
     <div class="pc-fila-dinamica" style={@estilo_grid}>
-      <.nodo_plantilla :for={hijo <- @nodo["hijos"]} nodo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables} relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} />
+      <.nodo_plantilla :for={hijo <- @nodo["hijos"]} nodo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables} relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
     </div>
     """
   end
@@ -1280,7 +1395,7 @@ defmodule MetadataAppWeb.FichaLive do
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "columna"}} = assigns) do
     ~H"""
     <div class="flex flex-col gap-3">
-      <.nodo_plantilla :for={hijo <- @nodo["hijos"]} nodo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables} relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} />
+      <.nodo_plantilla :for={hijo <- @nodo["hijos"]} nodo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables} relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
     </div>
     """
   end
@@ -1288,11 +1403,18 @@ defmodule MetadataAppWeb.FichaLive do
   # Contenedor visual simple, sin encabezado — a diferencia de "seccion" no
   # tiene título/descripción, solo agrupa visualmente con borde + espaciado.
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "panel"}} = assigns) do
-    assigns = assign(assigns, :padding, padding_seccion(assigns.nodo))
+    assigns =
+      assigns
+      |> assign(:padding, padding_seccion(assigns.nodo))
+      |> assign(:estilo_grid, estilo_grid_hijos(assigns.nodo))
+      |> assign(:hijos, hijos_grid(assigns.nodo))
 
     ~H"""
-    <div class={["bg-white border border-gray-200 rounded-xl flex flex-col gap-3", @padding]}>
-      <.nodo_plantilla :for={hijo <- @nodo["hijos"]} nodo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables} relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} />
+    <div class={["bg-white border border-gray-200 rounded-xl", @padding]}>
+      <div class="pc-grid-dinamica" style={@estilo_grid}>
+        <.celda_grid :for={hijo <- @hijos} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
+          relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+      </div>
     </div>
     """
   end
@@ -1311,8 +1433,9 @@ defmodule MetadataAppWeb.FichaLive do
     <div class="bg-white border border-gray-200 rounded-xl p-4">
       <.tabs_motor id={@tabs_id} tabs={@tabs} />
       <div :for={{pestana, i} <- Enum.with_index(@nodo["hijos"])} id={"#{@tabs_id}-panel-#{pestana["id"]}"} class={i != 0 && "hidden"}>
-        <div class="flex flex-col gap-3">
-          <.nodo_plantilla :for={hijo <- pestana["hijos"]} nodo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables} relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} />
+        <div class="pc-grid-dinamica" style={estilo_grid_hijos(pestana)}>
+          <.celda_grid :for={hijo <- hijos_grid(pestana)} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
+            relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
         </div>
       </div>
     </div>
@@ -1448,7 +1571,185 @@ defmodule MetadataAppWeb.FichaLive do
     """
   end
 
+  # Bloque "grid" (Constructor visual tipo hoja de cálculo — ver moduledoc
+  # "Grid 2D" de MetaPlantillas). A diferencia de "fila" (columnas iguales,
+  # orden de lista = orden visual), acá cada hijo lleva su posición real en
+  # propiedades["celda"] — celda_grid/1 hace de puente entre esa metadata y
+  # el <div> real posicionado con CSS Grid explícito (grid-column/grid-row),
+  # SIN ningún borde de grilla (eso es solo del Constructor, ver .gc-editor
+  # en app.css) — .pc-grid-dinamica colapsa a 1 columna bajo 640px salvo que
+  # el nodo pida un override puntual (responsive.colspan_movil/orden_movil).
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "grid"}} = assigns) do
+    assigns = assigns |> assign(:estilo_grid, estilo_grid_hijos(assigns.nodo)) |> assign(:hijos, hijos_grid(assigns.nodo))
+
+    ~H"""
+    <div class="pc-grid-dinamica" style={@estilo_grid}>
+      <.celda_grid :for={hijo <- @hijos} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
+        relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+    </div>
+    """
+  end
+
+  # Dispara una transición YA CONFIGURADA del catálogo (mismo mecanismo que
+  # los botones de transición del encabezado, ver phx-click="ejecutar_transicion"
+  # más arriba) — nunca código arbitrario. Si "accion" no está entre
+  # @otras_transiciones (no aplica al estado actual, o typo al configurar la
+  # plantilla) el botón queda deshabilitado solo, con el mismo motivo que ya
+  # explica por qué una transición no está disponible.
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "boton"}} = assigns) do
+    accion = assigns.nodo["propiedades"]["accion"]
+    transicion = accion not in [nil, ""] && Enum.find(assigns.otras_transiciones, &(&1.accion == accion))
+    disponible? = match?(%{disponible: true}, transicion)
+
+    titulo =
+      case transicion do
+        %{disponible: false, razones: razones} -> Enum.map_join(razones, "; ", & &1.mensaje)
+        false -> "Esta acción no está disponible en el estado actual."
+        _ -> nil
+      end
+
+    assigns = assigns |> assign(:disponible?, disponible?) |> assign(:titulo, titulo) |> assign(:accion, accion)
+
+    ~H"""
+    <button type="button" phx-click="ejecutar_transicion" phx-value-accion={@accion} disabled={!@disponible?} title={@titulo}
+      class={[
+        "px-4 py-2 rounded-lg text-sm font-semibold",
+        @nodo["propiedades"]["estilo"] != "secundario" && @disponible? && "bg-purple-600 text-white hover:bg-purple-700",
+        @nodo["propiedades"]["estilo"] == "secundario" && @disponible? && "border border-purple-300 text-purple-700 hover:bg-purple-50",
+        !@disponible? && "border border-gray-200 text-gray-300 cursor-not-allowed"
+      ]}>
+      {@nodo["propiedades"]["etiqueta"]}
+    </button>
+    """
+  end
+
   defp nodo_plantilla_render(assigns), do: ~H""
+
+  # Hijos de CUALQUIER contenedor-grid (raíz/seccion/panel/pestana/grid, ver
+  # MetaPlantillas.tipos_grid_host/0) con la celda YA resuelta en grupo —
+  # nunca celda_de/1 nodo por nodo (eso apilaría en la misma celda a
+  # cualquier plantilla vieja de un catálogo que todavía no pasó por acá,
+  # ver MetaPlantillas.celdas_resueltas/1 para el detalle de la migración
+  # en memoria).
+  defp hijos_grid(nodo), do: MetaPlantillas.celdas_resueltas(nodo["hijos"] || [])
+
+  defp estilo_grid_hijos(nodo) do
+    n = nodo["propiedades"]["columnas"] || 1
+    gap = %{"compacto" => "8px", "amplio" => "20px"}[nodo["propiedades"]["gap"]] || "12px"
+    "--pc-grid-cols: #{n}; --pc-grid-gap: #{gap}"
+  end
+
+  attr :hijo, :map, required: true
+  attr :columnas, :list, required: true
+  attr :registro, :map, required: true
+  attr :campos_editables, :list, required: true
+  attr :relaciones, :list, required: true
+  attr :estados_por_id, :map, required: true
+  attr :edicion, :map, required: true
+  attr :otras_transiciones, :list, default: []
+
+  defp celda_grid(assigns) do
+    celda = Map.merge(MetaPlantillas.celda_default(), assigns.hijo["propiedades"]["celda"] || %{})
+    responsive = celda["responsive"] || %{}
+
+    # Un "campo" adentro de una celda usa campo_row/1 en modo "compacto"
+    # (etiqueta de ancho automático en vez del w-56 fijo que campo_row usa
+    # para alinear una LISTA de renglones apilados, ver tab_datos sin
+    # plantilla) — una celda angosta con esa etiqueta fija dejaba casi sin
+    # lugar al input real (bug real, reportado: el campo se veía diminuto).
+    # Cualquier otro tipo sigue el dispatch genérico de nodo_plantilla_render/1.
+    campo_col =
+      if assigns.hijo["tipo"] == "campo" do
+        Enum.find(assigns.columnas, &(&1.schema_context_field == assigns.hijo["propiedades"]["campo"]))
+      end
+
+    assigns =
+      assigns
+      |> assign(:celda, celda)
+      |> assign(:responsive, responsive)
+      |> assign(:estilo_celda, estilo_celda(celda))
+      |> assign(:clases_celda, celda_classes(celda))
+      |> assign(:campo_col, campo_col)
+
+    ~H"""
+    <div :if={@celda["visible"] != false} style={@estilo_celda} class={@clases_celda}
+      data-celda-colspan-movil={@responsive["colspan_movil"]} data-celda-orden-movil={@responsive["orden_movil"]}>
+      <.campo_row :if={@campo_col} col={@campo_col} registro={@registro} campos_editables={@campos_editables} edicion={@edicion} compacto={true} />
+      <.nodo_plantilla :if={is_nil(@campo_col)} nodo={@hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
+        relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+    </div>
+    """
+  end
+
+  defp estilo_celda(celda) do
+    base = "grid-column: #{celda["columna"] + 1} / span #{celda["colspan"]}; grid-row: #{celda["fila"] + 1} / span #{celda["rowspan"]};"
+    ancho = if celda["ancho"] not in [nil, ""], do: "width: #{celda["ancho"]};", else: ""
+    alto = if celda["alto"] not in [nil, ""], do: "height: #{celda["alto"]};", else: ""
+    responsive = celda["responsive"] || %{}
+    colspan_movil = if responsive["colspan_movil"], do: "--celda-colspan-movil: #{responsive["colspan_movil"]};", else: ""
+    orden_movil = if responsive["orden_movil"], do: "--celda-orden-movil: #{responsive["orden_movil"]};", else: ""
+
+    base <> ancho <> alto <> colspan_movil <> orden_movil
+  end
+
+  @doc false
+  # Clases Tailwind de una celda de grid — alineación/padding/estilo curado
+  # (misma paleta corta que ofrece panel_celda/1 en el Constructor, nunca
+  # CSS libre). `false`/`nil` en la lista simplemente no imprimen nada
+  # (Phoenix ya descarta esas entradas al armar el atributo `class`).
+  defp celda_classes(celda) do
+    estilo = celda["estilo"] || %{}
+
+    [
+      "min-w-0",
+      alineacion_h_class(celda["alineacion_h"]),
+      alineacion_v_class(celda["alineacion_v"]),
+      padding_celda_class(celda["padding"]),
+      estilo["fondo"] not in [nil, ""] && swatch_fondo(estilo["fondo"]),
+      estilo["color_texto"] not in [nil, ""] && swatch_texto(estilo["color_texto"]),
+      estilo["borde"] == true && "border border-gray-200",
+      estilo["redondeado"] == true && "rounded-lg",
+      estilo["sombra"] == true && "shadow-sm",
+      get_in(celda, ["responsive", "ocultar_movil"]) == true && "pc-celda-ocultar-movil"
+    ]
+  end
+
+  # SIEMPRE justify-self-stretch — "alineación horizontal" solo mueve el
+  # TEXTO/contenido adentro de una celda que ya llena su ancho completo
+  # (mismo criterio que "Ancho" para controlar tamaño real, si alguna vez
+  # hace falta uno angosto). `justify-self-start/center/end` (achicar la
+  # celda al tamaño de su contenido) fue el diseño original, pero volvía
+  # "Izquierda" (que suena inocuo, y encima quedaba de default) en un
+  # <input> encogido al ancho de lo que tenía tipeado — bug real,
+  # reportado — en vez de llenar la celda como cualquier campo esperaría.
+  defp alineacion_h_class("centro"), do: "justify-self-stretch text-center"
+  defp alineacion_h_class("derecha"), do: "justify-self-stretch text-right"
+  defp alineacion_h_class("justificado"), do: "justify-self-stretch text-justify"
+  defp alineacion_h_class(_), do: "justify-self-stretch text-left"
+
+  defp alineacion_v_class("centro"), do: "self-center"
+  defp alineacion_v_class("abajo"), do: "self-end"
+  defp alineacion_v_class("estirar"), do: "self-stretch"
+  defp alineacion_v_class(_), do: "self-start"
+
+  defp padding_celda_class("ninguno"), do: "p-0"
+  defp padding_celda_class("compacto"), do: "p-1.5"
+  defp padding_celda_class("amplio"), do: "p-5"
+  defp padding_celda_class(_), do: "p-3"
+
+  defp swatch_fondo(nombre) do
+    Map.get(
+      %{"gris" => "bg-gray-100", "purpura" => "bg-purple-100", "azul" => "bg-blue-100", "verde" => "bg-green-100", "amarillo" => "bg-amber-100", "rojo" => "bg-red-100"},
+      nombre
+    )
+  end
+
+  defp swatch_texto(nombre) do
+    Map.get(
+      %{"gris" => "text-gray-700", "purpura" => "text-purple-700", "azul" => "text-blue-700", "verde" => "text-green-700", "amarillo" => "text-amber-700", "rojo" => "text-red-700"},
+      nombre
+    )
+  end
 
   # "condicion" (dinámica, ver panel_condicion en PlantillaConstructorLive):
   # %{"campo","operador","valor"} — "campo" puede ser un campo real del
@@ -1694,6 +1995,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :registro, :map, required: true
   attr :campos_editables, :list, required: true
   attr :edicion, :map, required: true
+  attr :compacto, :boolean, default: false
 
   # Edición en el lugar, siempre: si el campo es editable, la columna de
   # "valor" ya ES el input real (campo_input/1, el mismo que comparten
@@ -1731,8 +2033,12 @@ defmodule MetadataAppWeb.FichaLive do
       |> assign(:valor_legible, valor_legible)
 
     ~H"""
-    <div class="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3 px-4 py-2.5 border-b border-gray-100 last:border-b-0 text-sm">
-      <div class="flex items-center gap-3 sm:contents">
+    <div class={[
+      "flex flex-col sm:flex-row sm:items-center text-sm",
+      @compacto && "gap-2",
+      !@compacto && "gap-1.5 sm:gap-3 px-4 py-2.5 border-b border-gray-100 last:border-b-0"
+    ]}>
+      <div class={["flex items-center gap-2 sm:contents", !@compacto && "gap-3"]}>
         <span class="w-5 flex-shrink-0 text-gray-400 self-start mt-0.5">
           <svg :if={@editable?} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-purple-600">
             <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
@@ -1741,7 +2047,7 @@ defmodule MetadataAppWeb.FichaLive do
             <rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" />
           </svg>
         </span>
-        <span class="w-full sm:w-56 flex-shrink-0 text-gray-500 self-start mt-0.5">
+        <span class={["flex-shrink-0 text-gray-500 self-start mt-0.5", @compacto && "whitespace-nowrap", !@compacto && "w-full sm:w-56"]}>
           {@col.schema_context_properties["etiqueta"]}
           <span :if={@editable? and @col.schema_context_properties["tipo"] != "boolean"} class="text-red-500">*</span>
         </span>
@@ -1873,6 +2179,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :detalle_form_error, :string, default: nil
   attr :estados_por_id, :map, required: true
   attr :detalle_seleccion, :map, required: true
+  attr :detalle_campos_editables, :list, default: []
 
   # Layout tipo IDE (editor fijo + área de trabajo amplia): un catálogo
   # detalle = un par formulario (1/3, izquierda) + tabla (2/3, derecha),
@@ -1887,7 +2194,8 @@ defmodule MetadataAppWeb.FichaLive do
 
       <.panel_detalle_catalogo :for={cat <- @catalogos_detalle} cat={cat}
         filas={Map.get(@detalle_renglones, cat.nombre, [])} otras_transiciones={@otras_transiciones}
-        estados_por_id={@estados_por_id} seleccion={Map.get(@detalle_seleccion, cat.nombre)} />
+        estados_por_id={@estados_por_id} seleccion={Map.get(@detalle_seleccion, cat.nombre)}
+        campos_editables={@detalle_campos_editables} />
     </div>
     """
   end
@@ -1897,6 +2205,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :otras_transiciones, :list, required: true
   attr :estados_por_id, :map, required: true
   attr :seleccion, :map, default: nil
+  attr :campos_editables, :list, default: []
 
   defp panel_detalle_catalogo(assigns) do
     ~H"""
@@ -1906,7 +2215,7 @@ defmodule MetadataAppWeb.FichaLive do
       </div>
 
       <div class="border-b border-gray-100">
-        <.formulario_renglon cat={@cat} seleccion={@seleccion} total={length(@filas)} />
+        <.formulario_renglon cat={@cat} seleccion={@seleccion} total={length(@filas)} campos_editables={@campos_editables} />
       </div>
 
       <div class="overflow-x-auto">
@@ -1920,34 +2229,51 @@ defmodule MetadataAppWeb.FichaLive do
   attr :cat, :map, required: true
   attr :seleccion, :map, default: nil
   attr :total, :integer, required: true
+  attr :campos_editables, :list, default: []
 
   defp formulario_renglon(assigns) do
     grupos = if assigns.seleccion, do: agrupar_por_categoria(assigns.cat.columnas), else: []
     {primer_grupo, resto_grupos} = separar_primer_grupo(grupos)
-    assigns = assigns |> assign(:primer_grupo, primer_grupo) |> assign(:resto_grupos, resto_grupos)
+
+    # Un renglón YA PERSISTIDO solo se puede tocar si al menos uno de sus
+    # campos está en la whitelist campos_editables de la transición
+    # "guardar" resuelta (ver campo_detalle_editable?/3 más abajo, que
+    # aplica el mismo criterio campo por campo) — una línea NUEVA siempre
+    # es editable, esa restricción no le aplica (el alta no pasa por
+    # ninguna transición, ver crear_renglones_nuevos/3).
+    bloqueado? =
+      assigns.seleccion && assigns.seleccion.renglon_id &&
+        not Enum.any?(assigns.cat.columnas, &(&1.schema_context_field in assigns.campos_editables))
+
+    assigns = assigns |> assign(:primer_grupo, primer_grupo) |> assign(:resto_grupos, resto_grupos) |> assign(:bloqueado?, bloqueado?)
 
     ~H"""
     <div class="flex flex-col">
-      <div class="px-4 py-2 border-b border-gray-100 bg-gray-50 text-[11px] font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-        <%= cond do %>
-          <% is_nil(@seleccion) -> %>
-            <span class="text-gray-300">–</span> Ningún renglón seleccionado
-          <% is_nil(@seleccion.renglon_id) -> %>
-            <span class="text-green-600 font-bold">+</span> Nueva línea
-          <% true -> %>
-            <span class="text-purple-600 font-bold">×</span> Renglón #{@seleccion.renglon_id}
-        <% end %>
+      <div class="px-4 py-2 border-b border-gray-100 bg-gray-50 flex items-center justify-between gap-2">
+        <div class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+          <%= cond do %>
+            <% is_nil(@seleccion) -> %>
+              <span class="text-gray-300">–</span> Preparando línea de captura…
+            <% is_nil(@seleccion.renglon_id) -> %>
+              <span class="text-green-600 font-bold">+</span> Nueva línea
+            <% true -> %>
+              <span class="text-purple-600 font-bold">×</span> Renglón #{@seleccion.renglon_id}
+          <% end %>
+        </div>
+        <div :if={@seleccion && @bloqueado?} class="text-[10px] text-amber-600 normal-case font-semibold">
+          No editable en el estado actual
+        </div>
+        <div :if={@seleccion && !@bloqueado?} class="text-[10px] text-gray-400 normal-case">
+          Enter confirma · Tab siguiente campo · F2 busca referencias · Esc cancela
+        </div>
       </div>
 
       <%= if is_nil(@seleccion) do %>
-        <div class="px-4 py-6 flex items-center justify-center gap-2 text-gray-400">
-          <span>Hacé clic en una fila de la tabla, o</span>
-          <button type="button" phx-click="detalle_nueva_linea" phx-value-catalogo={@cat.nombre} title="Nueva línea"
-            class="w-6 h-6 rounded-lg bg-purple-600 text-white font-bold hover:bg-purple-700 flex-none">+</button>
-          <span>para capturar/editar acá.</span>
+        <div class="px-4 py-6 flex items-center justify-center text-gray-400">
+          <span>Cargando…</span>
         </div>
       <% else %>
-        <form phx-change="detalle_form_cambiar">
+        <form id={"renglon-form-#{@cat.nombre}"} phx-hook="RenglonForm" data-catalogo={@cat.nombre} phx-change="detalle_form_cambiar">
           <input type="hidden" name="catalogo" value={@cat.nombre} />
 
           <div :if={@primer_grupo} class="border-b border-gray-100">
@@ -1956,11 +2282,11 @@ defmodule MetadataAppWeb.FichaLive do
               <div :for={campo <- @primer_grupo.campos} class="flex-1 min-w-[120px]">
                 <.campo_input columna={campo} mostrar_etiqueta={true}
                   valor={Map.get(@seleccion.valores, campo.schema_context_field, "")}
-                  name={"renglon[#{campo.schema_context_field}]"} opciones={opciones_para_campo(campo)} />
+                  name={"renglon[#{campo.schema_context_field}]"} opciones={opciones_para_campo(campo)}
+                  id={"campo-#{@cat.nombre}-#{campo.schema_context_field}"}
+                  disabled={!campo_detalle_editable?(campo, @seleccion, @campos_editables)} />
               </div>
               <div class="flex items-center gap-1.5 flex-none pb-0.5">
-                <button type="button" phx-click="detalle_nueva_linea" phx-value-catalogo={@cat.nombre} title="Nueva línea"
-                  class="w-6 h-6 rounded-lg bg-purple-600 text-white font-bold hover:bg-purple-700">+</button>
                 <button type="button" phx-click="detalle_eliminar_linea" phx-value-catalogo={@cat.nombre}
                   title={
                     if @seleccion.renglon_id,
@@ -1980,7 +2306,9 @@ defmodule MetadataAppWeb.FichaLive do
             <div class="px-3 pb-2 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-x-2 gap-y-1.5">
               <.campo_input :for={campo <- grupo.campos} columna={campo} mostrar_etiqueta={true}
                 valor={Map.get(@seleccion.valores, campo.schema_context_field, "")}
-                name={"renglon[#{campo.schema_context_field}]"} opciones={opciones_para_campo(campo)} />
+                name={"renglon[#{campo.schema_context_field}]"} opciones={opciones_para_campo(campo)}
+                id={"campo-#{@cat.nombre}-#{campo.schema_context_field}"}
+                disabled={!campo_detalle_editable?(campo, @seleccion, @campos_editables)} />
             </div>
           </details>
         </form>

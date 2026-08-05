@@ -240,14 +240,28 @@ export default {
       this.programarSync()
     })
 
-    // "+ Nueva línea" del formulario: crea una fila real en blanco y la
-    // selecciona, trayéndola a la vista si está virtualizada.
+    // "+ Nueva línea" del formulario (hoy disparado por el hook
+    // RenglonForm, al confirmar con Enter o al cancelar con Esc — ya no
+    // hay botón): crea una fila real en blanco y la selecciona, trayéndola
+    // a la vista si está virtualizada.
     this.handleEvent("grid_nueva_fila", ({catalogo}) => {
       if (catalogo !== this.catalogo) return
-      const idx = this.rows.length
-      this.rows.push(filaNueva())
+      this.iniciarLineaNueva()
+    })
+
+    // Esc sobre un renglón YA PERSISTIDO (ver RenglonForm/detalle_cancelar_linea):
+    // revierte values/dirty/errors a lo que había al seleccionarlo, sin
+    // sacar la fila de this.rows (a diferencia de grid_quitar_fila) — así
+    // grid_sync deja de mandarla como "editada" en el próximo sync.
+    this.handleEvent("grid_revertir_fila", ({catalogo, renglon_id}) => {
+      if (catalogo !== this.catalogo) return
+      const fila = this.rows.find((f) => f.renglonId === renglon_id)
+      if (!fila) return
+      fila.values = {...fila.original}
+      fila.dirty.clear()
+      fila.errors = {}
       this.render()
-      this.pararEnFila(idx)
+      this.programarSync()
     })
 
     // "Eliminar línea" del formulario, para una fila TODAVÍA sin
@@ -297,12 +311,27 @@ export default {
     })
 
     this.render()
+    // Sin botón "Agregar": la captura arranca sola, lista para tipear —
+    // si nada quedó seleccionado (caso normal al entrar a la Ficha), abre
+    // ya una línea nueva en blanco.
+    if (this.filaSeleccionadaClientId == null) this.iniciarLineaNueva()
   },
 
   destroyed() {
     if (this.botonGuardar) this.botonGuardar.removeEventListener("click", this.alGuardarClick, true)
     clearTimeout(this.syncTimer)
     Object.values(this.validarTimers).forEach(clearTimeout)
+  },
+
+  // Crea una fila real en blanco y la selecciona, trayéndola a la vista si
+  // está virtualizada — arranque en frío (mounted, sin nada seleccionado
+  // todavía) y "grid_nueva_fila" (confirmar/cancelar desde el formulario)
+  // comparten exactamente este cuerpo.
+  iniciarLineaNueva() {
+    const idx = this.rows.length
+    this.rows.push(filaNueva())
+    this.render()
+    this.pararEnFila(idx)
   },
 
   setCelda(rowIdx, campo, valor) {
