@@ -13,6 +13,8 @@ defmodule MetadataApp.MetaAuditoria do
   sin un usuario real detrás, NO un error.
   """
 
+  import Ecto.Query
+
   alias MetadataApp.MetaSchema.Auditoria
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.Notificaciones
@@ -66,5 +68,27 @@ defmodule MetadataApp.MetaAuditoria do
       nil -> catalogo
       header -> header.schema_context_label || catalogo
     end
+  end
+
+  @doc """
+  IDs (entidad_id) de "catalogo" dados de alta entre desde/hasta (ambos
+  `DateTime`, inclusive) — usado por el filtro "por default" de fecha en
+  CatalogoLive (ver `MetadataApp.FiltrosDefault.rango_fecha/3`, que
+  traduce Header.filtro_default_fecha_modo/valor a ese {desde, hasta}).
+  Los catálogos generados no tienen columna de timestamp propia (solo
+  insert_guid, sin fecha), así que esto es lo único que sabe "cuándo se
+  creó" cada fila — solo cubre registros dados de alta con un usuario
+  real detrás (CatalogoGenerico.crear/3, el único que llama a
+  registrar/6); filas insertadas por fuera de ese camino (ej. una
+  migración a mano) no van a tener entrada acá y quedan afuera del
+  filtro.
+  """
+  def ids_creados_en_rango(catalogo, %DateTime{} = desde, %DateTime{} = hasta) do
+    from(a in Auditoria,
+      where: a.bc == ^catalogo and a.operacion == "alta" and a.inserted_at >= ^desde and a.inserted_at <= ^hasta,
+      distinct: true,
+      select: a.entidad_id
+    )
+    |> Repo.all()
   end
 end

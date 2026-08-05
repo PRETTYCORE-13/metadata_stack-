@@ -7,6 +7,8 @@ defmodule MetadataAppWeb.CatalogoLive do
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerico
   alias MetadataApp.MetaStateEngine
   alias MetadataApp.MetaConsultas
+  alias MetadataApp.MetaAuditoria
+  alias MetadataApp.FiltrosDefault
   alias MetadataApp.Permissions
   alias MetadataApp.Autenticacion.Scope
   alias MetadataAppWeb.AdminNav
@@ -77,14 +79,10 @@ defmodule MetadataAppWeb.CatalogoLive do
         []
       end
 
-    columnas =
-      header.schema_context_name
-      |> MetaSchemaContext.listar_detalles()
-      |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
-      |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
-      |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
+    columnas = construir_columnas(header.schema_context_name)
 
     estados_por_id = MetaStateEngine.mapa_nombres_estados(header.schema_context_name)
+    filtros = filtros_por_default(header)
 
     {:ok,
      socket
@@ -99,7 +97,7 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:campos_alta, campos_alta)
      |> assign(:estados_por_id, estados_por_id)
      |> assign(:pagina, 1)
-     |> assign(:filtros, %{})
+     |> assign(:filtros, filtros)
      |> assign(:filtros_activos, [])
      |> assign(:selector_campo_abierto, false)
      |> assign(:busqueda_campo_filtro, "")
@@ -109,7 +107,32 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:agregaciones_valores, %{})
      |> assign(:minmax_valores, %{})
      |> assign(:cargar_todos_por_default?, header.cargar_todos_por_default)
+     |> assign(
+       :filtro_default_fecha_descripcion,
+       FiltrosDefault.descripcion(header.filtro_default_fecha_modo, header.filtro_default_fecha_valor, header.filtro_default_fecha_valor_hasta)
+     )
      |> cargar_filas()}
+  end
+
+  defp construir_columnas(schema_context_name) do
+    schema_context_name
+    |> MetaSchemaContext.listar_detalles()
+    |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
+    |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
+    |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
+  end
+
+  # Get View → "Filtros por default" (bc_motor_live.ex): "Agregar todos
+  # los registros" + acotar por fecha de alta — arma el @filtros INICIAL
+  # de la tabla, en vez de arrancar vacía. No es un campo real de la
+  # tabla (los catálogos generados no tienen columna de timestamp
+  # propia), así que va aparte como "__fecha_ids__" y no aparece como
+  # fila editable en el panel de Filtros normal.
+  defp filtros_por_default(header) do
+    case FiltrosDefault.rango_fecha(header.filtro_default_fecha_modo, header.filtro_default_fecha_valor, header.filtro_default_fecha_valor_hasta) do
+      nil -> %{}
+      {desde, hasta} -> %{"__fecha_ids__" => MetaAuditoria.ids_creados_en_rango(header.schema_context_name, desde, hasta)}
+    end
   end
 
   # Consulta Ecto (schema_context_type: 3): reporte de solo lectura, sin
@@ -168,6 +191,28 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   def handle_event("change_page", %{"id" => id}, socket) do
     AdminNav.handle_nav(id, socket, socket.assigns.current_page)
+  end
+
+  # "Máscara" de la Suma/Promedio/Mín/Máx de un campo integer/decimal en
+  # la fila de Resumen (ver celdas_resumen/1 y formatear_agregacion/2) —
+  # a propósito EN la tabla que ve el usuario final (no en Get View de
+  # BcMotorLive): es una preferencia de cómo LEER el total, no de qué
+  # trae la API, así que tiene más sentido ajustarla ahí mismo donde se
+  # está mirando. Se persiste en el Detail igual que "Recomendado" (mismo
+  # criterio de guardado inmediato), así que la elección le queda a
+  # cualquiera que abra este catálogo después, no solo a quien la cambió.
+  def handle_event("cambiar_mascara_totales", %{"campo" => campo, "separador" => separador, "simbolo" => simbolo}, socket) do
+    detalle = MetaSchemaContext.listar_detalles(socket.assigns.current_page) |> Enum.find(&(&1.schema_context_field == campo))
+
+    props =
+      detalle.schema_context_properties
+      |> Map.put("mascara_separador", separador)
+      |> Map.put("mascara_simbolo", simbolo)
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, assign(socket, :columnas, construir_columnas(socket.assigns.current_page))}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la máscara de \"#{campo}\".")}
+    end
   end
 
   # Búsqueda general: mismo texto contra CUALQUIER columna (OR), a
@@ -281,6 +326,7 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   defp datos_solicitados?(socket) do
     socket.assigns.cargar_todos_por_default? or
+      Map.has_key?(socket.assigns.filtros, "__fecha_ids__") or
       contar_filtros_activos(socket.assigns.filtros) > 0 or
       String.trim(socket.assigns.busqueda_general) != ""
   end
@@ -456,11 +502,20 @@ defmodule MetadataAppWeb.CatalogoLive do
   # -> rango desde/hasta, cualquier otro tipo (enum, referencia) -> texto
   # exacto como fallback razonable.
   defp construir_filtros_ecto(filtros, columnas) do
-    Enum.reduce(columnas, %{}, fn columna, acc ->
-      campo = columna.schema_context_field
-      tipo = columna.schema_context_properties["tipo"]
-      agregar_filtro_ecto(acc, campo, tipo, filtros)
-    end)
+    base =
+      Enum.reduce(columnas, %{}, fn columna, acc ->
+        campo = columna.schema_context_field
+        tipo = columna.schema_context_properties["tipo"]
+        agregar_filtro_ecto(acc, campo, tipo, filtros)
+      end)
+
+    # "__fecha_ids__" (ver filtros_por_default/2): no es un campo real de
+    # la tabla, así que no pasa por el reduce de arriba (que solo mira
+    # @columnas) — se suma aparte como filtro por :id.
+    case Map.get(filtros, "__fecha_ids__") do
+      nil -> base
+      ids -> Map.put(base, :id, {:en, ids})
+    end
   end
 
   defp agregar_filtro_ecto(acc, campo, "boolean", filtros) do
@@ -498,10 +553,13 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   # Cuenta campos con un valor realmente puesto (no solo agregados al panel
   # pero todavía vacíos) — un rango cuenta una sola vez aunque tenga
-  # _desde/_hasta. Usado para el badge del botón "Filtros".
+  # _desde/_hasta. Usado para el badge del botón "Filtros". Ignora claves
+  # internas tipo "__fecha_ids__" (filtro por default de fecha, ver
+  # filtros_por_default/2) — no es una fila real del panel, no debe sumar
+  # al contador que ve el usuario final.
   defp contar_filtros_activos(filtros) do
     filtros
-    |> Enum.reject(fn {_campo, valor} -> valor in [nil, ""] end)
+    |> Enum.reject(fn {campo, valor} -> valor in [nil, ""] or String.starts_with?(campo, "__") end)
     |> Enum.map(fn {campo, _valor} -> String.replace_trailing(campo, "_desde", "") |> String.replace_trailing("_hasta", "") end)
     |> Enum.uniq()
     |> length()
@@ -632,7 +690,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                       "px-4 py-1.5 text-[10px] text-gray-700",
                       alineacion_columna(columna)
                     ]}>
-                      {formatear_celda(valor)}
+                      {formatear_celda(valor, columna.schema_context_properties)}
                     </td>
                   <% end %>
                 </tr>
@@ -654,7 +712,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <%= for columna <- @columnas do %>
                   <td data-col={col_key(columna)} class={["px-4 py-2 text-[10px] text-purple-900", alineacion_columna(columna)]}>
                     <%= if Map.get(columna, :totalizar) do %>
-                      {formatear_celda(Map.get(@totales, columna.clave))}
+                      {formatear_celda(Map.get(@totales, columna.clave), columna.schema_context_properties)}
                     <% end %>
                   </td>
                 <% end %>
@@ -667,6 +725,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                   agregaciones={@agregaciones}
                   valores={@agregaciones_valores}
                   minmax_valores={@minmax_valores}
+                  es_consulta?={@es_consulta?}
                 />
               </tr>
             </tfoot>
@@ -772,6 +831,13 @@ defmodule MetadataAppWeb.CatalogoLive do
           <.panel_campos campos={campos_selector(@columnas, @mostrar_estado?, @mostrar_trn?)} tabla_id="tabla-catalogo" />
         </div>
 
+        <div :if={@filtro_default_fecha_descripcion} class="flex items-center gap-1.5 text-[11px] font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-2.5 py-1.5 mb-4 w-fit">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+          </svg>
+          {@filtro_default_fecha_descripcion}
+        </div>
+
         <div class="overflow-x-auto rounded-xl border border-gray-200">
           <table id="tabla-catalogo" class="min-w-full divide-y divide-gray-200 text-xs">
             <thead class="bg-gray-50">
@@ -813,7 +879,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                       alineacion_columna(columna),
                       if(is_map(valor) and not is_struct(valor), do: "text-blue-700 font-medium", else: "text-gray-700")
                     ]}>
-                      {formatear_celda(valor)}
+                      {formatear_celda(valor, columna.schema_context_properties)}
                     </td>
                   <% end %>
                   <%= if @mostrar_estado? do %>
@@ -912,25 +978,47 @@ defmodule MetadataAppWeb.CatalogoLive do
       (if mostrar_trn?, do: [%{clave: "trn", etiqueta: "TRN"}], else: [])
   end
 
-  defp formatear_agregacion(nil), do: "—"
-  defp formatear_agregacion(%Decimal{} = valor), do: valor |> Decimal.to_float() |> formatear_agregacion()
-  defp formatear_agregacion(valor) when is_integer(valor), do: separar_miles(valor)
+  # `props` (schema_context_properties del campo) trae la máscara elegida
+  # en Get View → Filtros → "Máscara" (solo para tipo "decimal", ver
+  # panel_filtros_resumen/1 en bc_motor_live.ex): "mascara_separador" —
+  # "," (default, formato 1,234.56) o "." (formato 1.234,56) — y
+  # "mascara_simbolo" — "" (default) o "$" antepuesto. Un campo sin esas
+  # claves (integer, o decimal nunca reconfigurado) cae en el default de
+  # siempre, sin romper nada de lo que ya había.
+  defp formatear_agregacion(nil, _props), do: "—"
+  defp formatear_agregacion(%Decimal{} = valor, props), do: valor |> Decimal.to_float() |> formatear_agregacion(props)
+  defp formatear_agregacion(valor, props) when is_integer(valor), do: aplicar_simbolo(separar_miles(valor, props), props)
 
-  defp formatear_agregacion(valor) when is_float(valor) do
+  defp formatear_agregacion(valor, props) when is_float(valor) do
+    separador_decimal = if Map.get(props, "mascara_separador", ",") == ",", do: ".", else: ","
     [entero, decimales] = valor |> :erlang.float_to_binary(decimals: 2) |> String.split(".")
-    separar_miles(String.to_integer(entero)) <> "." <> decimales
+    (separar_miles(String.to_integer(entero), props) <> separador_decimal <> decimales) |> aplicar_simbolo(props)
   end
 
-  defp separar_miles(numero) when numero < 0, do: "-" <> separar_miles(-numero)
+  defp separar_miles(numero, props) when numero < 0, do: "-" <> separar_miles(-numero, props)
 
-  defp separar_miles(numero) do
+  defp separar_miles(numero, props) do
+    separador = Map.get(props, "mascara_separador", ",")
+
     numero
     |> Integer.to_string()
     |> String.reverse()
-    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
+    |> String.replace(~r/(\d{3})(?=\d)/, "\\1#{separador}")
     |> String.reverse()
   end
 
+  defp aplicar_simbolo(texto, props) do
+    case Map.get(props, "mascara_simbolo", "") do
+      "$" -> "$" <> texto
+      _ -> texto
+    end
+  end
+
+  # `props` (schema_context_properties de la columna) opcional — un
+  # integer/decimal con "mascara_separador"/"mascara_simbolo" configurados
+  # (ver panel de Máscara en celdas_resumen/1) se formatea con la MISMA
+  # función que ya usa el Resumen (formatear_agregacion/2), así una
+  # columna de plata se lee igual fila por fila que en su total.
   # Un campo tipo "referencia" con campos de acompañamiento configurados
   # llega acá como objeto anidado (%{id: 1, razon_social: "..."}), no como
   # escalar — se muestra el resumen legible (sin el id), no el mapa crudo.
@@ -938,14 +1026,19 @@ defmodule MetadataAppWeb.CatalogoLive do
   # DateTime también hace match contra `%{}` (son structs = mapas), y sin
   # excluirlos acá se les destripaban los campos internos en vez de
   # mostrarse como el escalar que son.
-  defp formatear_celda(%{} = mapa) when not is_struct(mapa) do
+  defp formatear_celda(%{} = mapa, _props) when not is_struct(mapa) do
     mapa
     |> Map.delete(:id)
     |> Map.values()
     |> Enum.map_join(" · ", &(if is_nil(&1), do: "", else: to_string(&1)))
   end
 
-  defp formatear_celda(valor), do: valor
+  defp formatear_celda(valor, %{"tipo" => tipo} = props)
+       when tipo in ["integer", "decimal"] and (is_number(valor) or is_struct(valor, Decimal)) do
+    formatear_agregacion(valor, props)
+  end
+
+  defp formatear_celda(valor, _props), do: valor
 
   # Selector de columnas visibles ("Campos") — a propósito 100% del lado
   # del cliente (JS puro, ver hook SelectorCampos en app.js), sin un solo
@@ -1066,6 +1159,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   attr :agregaciones, :map, required: true
   attr :valores, :map, required: true
   attr :minmax_valores, :map, required: true
+  attr :es_consulta?, :boolean, default: false
 
   defp celdas_resumen(assigns) do
     ~H"""
@@ -1077,27 +1171,41 @@ defmodule MetadataAppWeb.CatalogoLive do
       <% agregacion_activa? = numerico? and props["agregacion_activa"] == true %>
       <% minmax_recomendado? = numerico? and props["minmax_recomendado"] == true %>
       <td data-col={clave} class={["px-4 py-2 align-top", alineacion_columna(columna)]}>
-        <%= if agregacion_activa? do %>
+        <%= if numerico? do %>
           <div class={["flex items-center gap-1.5 flex-wrap", if(alineacion_columna(columna) == "text-right", do: "flex-row-reverse", else: "")]}>
-            <form phx-change="cambiar_agregacion">
+            <%= if agregacion_activa? do %>
+              <form phx-change="cambiar_agregacion">
+                <input type="hidden" name="campo" value={clave} />
+                <select
+                  name="funcion"
+                  class="text-[10px] font-semibold text-purple-700 bg-transparent border-0 p-0 pr-4 focus:outline-none focus:ring-0 cursor-pointer"
+                >
+                  <option value="" selected={!activo?}>—</option>
+                  <option value="suma" selected={@agregaciones[clave] == "suma"}>Suma</option>
+                  <option value="promedio" selected={@agregaciones[clave] == "promedio"}>Promedio</option>
+                  <option value="conteo" selected={@agregaciones[clave] == "conteo"}>Conteo</option>
+                </select>
+              </form>
+              <span :if={activo?} class="text-sm font-bold text-gray-900 tabular-nums whitespace-nowrap">
+                {formatear_agregacion(@valores[clave], props)}
+              </span>
+            <% end %>
+
+            <form :if={not @es_consulta?} phx-change="cambiar_mascara_totales" class="flex items-center gap-0.5">
               <input type="hidden" name="campo" value={clave} />
-              <select
-                name="funcion"
-                class="text-[10px] font-semibold text-purple-700 bg-transparent border-0 p-0 pr-4 focus:outline-none focus:ring-0 cursor-pointer"
-              >
-                <option value="" selected={!activo?}>—</option>
-                <option value="suma" selected={@agregaciones[clave] == "suma"}>Suma</option>
-                <option value="promedio" selected={@agregaciones[clave] == "promedio"}>Promedio</option>
-                <option value="conteo" selected={@agregaciones[clave] == "conteo"}>Conteo</option>
+              <select name="separador" title="Separador de miles" class="text-[9px] text-gray-400 bg-transparent border-0 p-0 pr-2.5 focus:outline-none focus:ring-0 cursor-pointer">
+                <option value="," selected={Map.get(props, "mascara_separador", ",") == ","}>1,234.56</option>
+                <option value="." selected={Map.get(props, "mascara_separador", ",") == "."}>1.234,56</option>
+              </select>
+              <select name="simbolo" title="Símbolo" class="text-[9px] text-gray-400 bg-transparent border-0 p-0 pr-2.5 focus:outline-none focus:ring-0 cursor-pointer">
+                <option value="" selected={Map.get(props, "mascara_simbolo", "") == ""}>Sin $</option>
+                <option value="$" selected={Map.get(props, "mascara_simbolo", "") == "$"}>$</option>
               </select>
             </form>
-            <span :if={activo?} class="text-sm font-bold text-gray-900 tabular-nums whitespace-nowrap">
-              {formatear_agregacion(@valores[clave])}
-            </span>
 
             <% {minimo, maximo} = @minmax_valores[clave] || {nil, nil} %>
             <span :if={minmax_recomendado?} class="text-[11px] font-bold text-gray-700 tabular-nums whitespace-nowrap">
-              Mín {formatear_agregacion(minimo)} / Máx {formatear_agregacion(maximo)}
+              Mín {formatear_agregacion(minimo, props)} / Máx {formatear_agregacion(maximo, props)}
             </span>
           </div>
         <% end %>

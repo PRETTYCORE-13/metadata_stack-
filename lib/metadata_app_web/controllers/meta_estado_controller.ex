@@ -16,6 +16,8 @@ defmodule MetadataAppWeb.MetaEstadoController do
     json(conn, %{data: data})
   end
 
+
+
   def create(conn, %{"meta_schema_estado" => attrs}) when is_list(attrs) do
     with {:ok, estados} <- MetaEstadosAdmin.crear_estados(attrs) do
       conn

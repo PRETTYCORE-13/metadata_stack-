@@ -12,12 +12,15 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "editar"}}
 
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador, CatalogoGenerico}
+  alias MetadataApp.FiltrosDefault
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaReglasCodigo
   alias MetadataApp.Permissions
   alias MetadataAppWeb.AdminNav
   alias Phoenix.LiveView.JS
+
+  import MetadataAppWeb.FiltrosDefaultComponents, only: [panel_filtros_default: 1]
 
   @menu [
     %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
@@ -590,21 +593,67 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # "Mostrar todos los registros por default" — a diferencia de los
-  # filtros de arriba (calculan Suma/Promedio/Conteo sobre un CAMPO), esto
-  # es a nivel de todo el catálogo: si está prendido, CatalogoLive trae
-  # todos los registros y columnas apenas se abre la tabla, sin esperar
-  # que el usuario final aplique un filtro/búsqueda primero (ver
-  # datos_solicitados?/1 en catalogo_live.ex). El usuario final igual
-  # puede seguir filtrando después con los filtros normales de la tabla —
-  # esto solo cambia si arranca vacía o ya cargada.
+  # "Todos por default" — a diferencia de los filtros de arriba (calculan
+  # Suma/Promedio/Conteo sobre un CAMPO), esto es a nivel de todo el
+  # catálogo: si está prendido, CatalogoLive trae todos los registros y
+  # columnas apenas se abre la tabla, sin esperar que el usuario final
+  # aplique un filtro/búsqueda primero (ver datos_solicitados?/1 en
+  # catalogo_live.ex). Independiente de "Filtro de fecha" — apagar este no
+  # toca el otro, se pueden combinar o usar por separado. El usuario final
+  # igual puede seguir filtrando después con los filtros normales de la
+  # tabla — esto solo cambia si arranca vacía o ya cargada.
   def handle_event("toggle_cargar_todos_por_default", _params, socket) do
     header = socket.assigns.header
     valor = !header.cargar_todos_por_default
 
     case MetaSchemaContext.actualizar_header(header, %{"cargar_todos_por_default" => valor}) do
       {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
-      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Mostrar todos los registros\".")}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Todos por default\".")}
+    end
+  end
+
+  # Sub-filtro de fecha de "Filtros por default" — "primer_dia_anio"/
+  # "ultimo_dia_anio"/"actual" (una sola fecha por calendario, precargada
+  # con el valor obvio de cada modo — el usuario la puede cambiar
+  # después) / "rango" (necesita desde Y hasta, dos calendarios, sin
+  # precargar porque no hay un valor obvio para ninguno de los dos) o ""
+  # para apagarlo — al cambiar de modo se limpian las fechas viejas para
+  # no dejar pegado un valor de un modo distinto (ver
+  # cambiar_filtro_fecha_valor/2 abajo).
+  def handle_event("cambiar_filtro_fecha_modo", %{"modo" => modo}, socket) do
+    header = socket.assigns.header
+    valor_default = FiltrosDefault.valor_default_para_modo(modo)
+
+    attrs = %{
+      "filtro_default_fecha_modo" => if(modo == "", do: nil, else: modo),
+      "filtro_default_fecha_valor" => valor_default,
+      "filtro_default_fecha_valor_hasta" => nil
+    }
+
+    case MetaSchemaContext.actualizar_header(header, attrs) do
+      {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar el filtro de fecha.")}
+    end
+  end
+
+  # "campo" es "desde"/"hasta" (modo "rango", dos inputs) o siempre
+  # "desde" para los modos de una sola fecha ("actual"/"primer_dia_anio"/
+  # "ultimo_dia_anio"). Para estos dos últimos el <input> ya trae min/max
+  # acotando al año en curso (ver FiltrosDefault.min_calendario_unico/1),
+  # pero se re-valida acá server-side porque el min/max de un <input
+  # type="date"> se puede saltear escribiendo el valor a mano.
+  def handle_event("cambiar_filtro_fecha_valor", %{"campo" => campo, "valor" => valor}, socket) do
+    header = socket.assigns.header
+    clave = if campo == "desde", do: "filtro_default_fecha_valor", else: "filtro_default_fecha_valor_hasta"
+
+    if FiltrosDefault.fecha_fuera_de_anio_actual?(header.filtro_default_fecha_modo, valor) do
+      {:noreply,
+       put_flash(socket, :error, "La fecha tiene que ser del año en curso (#{Date.utc_today().year}).")}
+    else
+      case MetaSchemaContext.actualizar_header(header, %{clave => valor}) do
+        {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
+        {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la fecha.")}
+      end
     end
   end
 
@@ -1278,7 +1327,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       <div id="motor-panel-getview" class="hidden">
         <.panel_get_view campos={@campos} />
-        <.panel_filtros_resumen campos={@campos} cargar_todos_por_default={@header.cargar_todos_por_default} />
+        <.panel_filtros_resumen campos={@campos} />
+        <.panel_campos_default header={@header} />
+        <.panel_filtros_default header={@header} />
       </div>
 
       <div id="motor-panel-get" class="hidden">
@@ -1829,7 +1880,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # filtro") y cuáles de esos además muestran mínimo/máximo
   # ("Recomendado").
   attr :campos, :list, required: true
-  attr :cargar_todos_por_default, :boolean, required: true
 
   defp panel_filtros_resumen(assigns) do
     numericos = Enum.filter(assigns.campos, &(get_in(&1.schema_context_properties, ["tipo"]) in ["integer", "decimal"]))
@@ -1917,23 +1967,45 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         <% else %>
           <p :if={@filtros_activos != []} class="text-gray-400">Ya agregaste todos los campos numéricos disponibles.</p>
         <% end %>
+      </div>
+    </div>
+    """
+  end
 
-        <hr class="border-gray-200 my-3" />
+  # "Filtros por default": qué ve el usuario final apenas ABRE la tabla
+  # del catálogo, antes de elegir nada — aparte de "Filtros" de arriba
+  # (que calcula Suma/Promedio/Conteo, no filtra filas). Dos opciones
+  # INDEPENDIENTES entre sí (una no depende de la otra prendida, cada una
+  # se puede usar sola o las dos juntas), cada una en su propia caja:
+  #   - "Campos por default": trae TODOS los registros y columnas sin
+  #     esperar filtro/búsqueda.
+  #   - "Filtros por default": acota por fecha de alta (ver Header y
+  #     MetaAuditoria.ids_creados_en_rango/3 — los catálogos generados no
+  #     tienen columna de timestamp propia, se resuelve vía auditoría).
+  attr :header, :any, required: true
 
-        <p class="text-gray-500 mb-2">
-          Traer todos los registros y columnas apenas se abre la tabla, sin esperar un filtro o búsqueda primero. El usuario final igual puede filtrar después con los filtros normales de la tabla.
+  defp panel_campos_default(assigns) do
+    ~H"""
+    <div class="border border-gray-200 rounded-lg mt-4">
+      <div class="px-1.5 ml-2 -mb-2 relative">
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Campos por default</span>
+      </div>
+      <div class="p-3 pt-4 overflow-x-auto">
+        <p class="text-gray-500 mb-3">
+          Trae todos los registros y columnas apenas se abre la tabla, sin esperar un filtro o búsqueda primero. El usuario final igual puede filtrar después con los filtros normales de la tabla.
         </p>
+
         <button type="button"
           phx-click="toggle_cargar_todos_por_default"
           class={[
-            "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors",
-            if(@cargar_todos_por_default, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+            if(@header.cargar_todos_por_default, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
           ]}
         >
-          <%= if @cargar_todos_por_default do %>
-            ✓ Mostrando todos los registros por default — Quitar
+          <%= if @header.cargar_todos_por_default do %>
+            ✓ Campos por default — Quitar
           <% else %>
-            + Agregar todos los registros
+            + Campos por default
           <% end %>
         </button>
       </div>

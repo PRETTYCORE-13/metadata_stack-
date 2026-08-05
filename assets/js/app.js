@@ -290,6 +290,22 @@ const CopiarRuta = {
   },
 }
 
+// <input type="date"> de "Filtros por default" (bc_motor_live.ex,
+// panel_filtros_default/1) — sin esto, un clic en cualquier parte del
+// campo que no sea el iconito diminuto del calendario deja al usuario
+// tipeando dígito por dígito (día/mes/año sueltos, sin validar que la
+// combinación exista de verdad). showPicker() fuerza el selector visual
+// nativo con cualquier clic/foco en el input.
+const AbrirCalendario = {
+  mounted() {
+    this.el.addEventListener("click", () => this.abrir())
+    this.el.addEventListener("focus", () => this.abrir())
+  },
+  abrir() {
+    if (typeof this.el.showPicker === "function") this.el.showPicker()
+  },
+}
+
 // Selector de columnas visibles + orden ("Campos", ver panel_campos/1 en
 // catalogo_live.ex) — 100% del lado del cliente, sin un solo evento al
 // servidor: tildar/destildar/arrastrar un campo solo oculta/reordena
@@ -634,7 +650,7 @@ const AbrirVistaPrevia = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, CopiarRuta, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, CopiarRuta, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, AbrirCalendario},
 })
 
 // Show progress bar on live navigation and form submits

@@ -93,6 +93,14 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     from(r in query, where: field(r, ^campo) >= ^desde and field(r, ^campo) <= ^hasta)
   end
 
+  # Pertenencia a una lista — usado por CatalogoLive para el filtro
+  # "por default" de fecha de alta (ver MetaAuditoria.ids_creados_en_rango/3):
+  # como los catálogos generados no tienen columna de timestamp propia, se
+  # resuelve la lista de :id por afuera (vía auditoría) y se filtra acá.
+  defp aplicar_filtro(query, campo, {:en, lista}) do
+    from(r in query, where: field(r, ^campo) in ^lista)
+  end
+
   defp aplicar_filtro(query, campo, valor) do
     from(r in query, where: field(r, ^campo) == ^valor)
   end
