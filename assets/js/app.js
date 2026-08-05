@@ -26,6 +26,9 @@ import {hooks as colocatedHooks} from "phoenix-colocated/metadata_app"
 import topbar from "../vendor/topbar"
 import Sortable from "../vendor/sortable"
 import GridEditable from "./hooks/grid_editable"
+import RenglonForm from "./hooks/renglon_form"
+import ReferenciaField from "./hooks/referencia_field"
+import GridConstructor from "./hooks/grid_constructor"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 
@@ -472,6 +475,26 @@ const SelectorCampos = {
 // regla en otro editor y volver a pegarla acá antes de "Compilar". Lee
 // .value del textarea en el momento del click (no al montar), así copia lo
 // que el usuario tiene tipeado ahora mismo, incluso si todavía no lo guardó.
+// Copia un texto literal (data-texto) al portapapeles — genérico, a
+// diferencia de CopiarRuta (arma una URL a partir de un nav) y
+// CopiarTextarea (lee el .value de un <textarea> por id). Usado por el
+// TRN de la Ficha 360° (PrettyCore TRN, Fase 3): informativo, para poder
+// compartirlo/mapearlo después sin tener que seleccionarlo a mano.
+const CopiarTexto = {
+  mounted() {
+    this.el.addEventListener("click", () => this.copiar())
+  },
+  copiar() {
+    const texto = this.el.dataset.texto
+    if (!texto) return
+    navigator.clipboard.writeText(texto).then(() => {
+      this.el.classList.add("pc-breadcrumb-copiado")
+      clearTimeout(this._timeout)
+      this._timeout = setTimeout(() => this.el.classList.remove("pc-breadcrumb-copiado"), 1200)
+    })
+  },
+}
+
 const CopiarTextarea = {
   mounted() {
     this.el.addEventListener("click", () => this.copiar())
@@ -650,7 +673,7 @@ const AbrirVistaPrevia = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, CopiarRuta, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, AbrirCalendario},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, AbrirCalendario},
 })
 
 // Show progress bar on live navigation and form submits

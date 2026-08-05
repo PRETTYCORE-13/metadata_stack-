@@ -940,14 +940,30 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # de cada schema .ex contra la metadata actual antes de empaquetar nada
   # (mismo motivo que motor.publicar.ex: un .ex generado antes de que el
   # catálogo quedara enlazado a un maestro, o antes de un campo nuevo,
-  # queda desactualizado en disco si nadie vuelve a correr esto).
+  # queda desactualizado en disco si nadie vuelve a correr esto). Una
+  # carpeta (schema_context_type: 2, ahora seleccionable para publicar,
+  # ver filas_arbol/1) no tiene campos propios ni tabla física — sin este
+  # salto, CatalogoGenerador.generar/1 le pega "No hay metadata en
+  # meta_schema_detail" y el reduce_while aborta TODO el paquete, aunque
+  # el resto de lo seleccionado esté perfecto.
   defp regenerar_paquete(catalogos) do
     Enum.reduce_while(catalogos, :ok, fn nombre, :ok ->
-      case CatalogoGenerador.generar(nombre) do
-        {:ok, _} -> {:cont, :ok}
-        {:error, motivo} -> {:halt, {:error, "#{nombre}: #{motivo}"}}
+      if es_carpeta?(nombre) do
+        {:cont, :ok}
+      else
+        case CatalogoGenerador.generar(nombre) do
+          {:ok, _} -> {:cont, :ok}
+          {:error, motivo} -> {:halt, {:error, "#{nombre}: #{motivo}"}}
+        end
       end
     end)
+  end
+
+  defp es_carpeta?(nombre) do
+    case MetaSchemaContext.obtener_header_por_nombre(nombre) do
+      %{schema_context_type: 2} -> true
+      _ -> false
+    end
   end
 
   defp exportar_paquete(catalogos) do
@@ -2102,8 +2118,25 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         <% ruta = if @ruta_padre == "", do: nodo.segmento, else: @ruta_padre <> "/" <> nodo.segmento %>
         <% expandida? = MapSet.member?(@carpetas_expandidas, ruta) %>
         <tr class="bg-gray-50 hover:bg-gray-100 transition-colors">
+          <td class="px-4 py-2">
+            <%!-- Solo una carpeta EXPLÍCITA (nodo.id != nil, tiene su propio
+                 meta_schema_header) es publicable — una implícita (inferida
+                 solo del nav de lo que tiene adentro, sin fila propia) no
+                 existe como algo que "publicar" pueda empaquetar. A
+                 diferencia de un catálogo, acá no hay validar_motor/1 que
+                 chequear (una carpeta no tiene autómata propio) — siempre
+                 elegible si existe de verdad. --%>
+            <input
+              :if={nodo.id != nil}
+              type="checkbox"
+              checked={MapSet.member?(@seleccionados, nodo.id)}
+              phx-click="toggle_seleccion"
+              phx-value-tabla={nodo.id}
+              class="accent-purple-600"
+            />
+          </td>
           <td
-            colspan="6"
+            colspan="5"
             class="px-4 py-2 text-xs select-none"
             style={"padding-left: #{16 + @nivel * 20}px"}
           >

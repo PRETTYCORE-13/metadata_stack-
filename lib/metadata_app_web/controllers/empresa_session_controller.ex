@@ -15,7 +15,7 @@ defmodule MetadataAppWeb.EmpresaSessionController do
         case Autenticacion.obtener_empresa_de_usuario(usuario.id, empresa_id) do
           nil ->
             conn
-            |> put_flash(:error, "No tenés acceso a esa empresa.")
+            |> put_flash(:error, "No tienes acceso a esa empresa.")
             |> redirect(to: ~p"/meta_schema_usuario/seleccionar-empresa")
 
           _empresa ->
@@ -27,7 +27,7 @@ defmodule MetadataAppWeb.EmpresaSessionController do
 
       :error ->
         conn
-        |> put_flash(:error, "No tenés acceso a esa empresa.")
+        |> put_flash(:error, "No tienes acceso a esa empresa.")
         |> redirect(to: ~p"/meta_schema_usuario/seleccionar-empresa")
     end
   end

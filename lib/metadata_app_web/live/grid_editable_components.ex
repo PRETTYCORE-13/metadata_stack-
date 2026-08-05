@@ -59,6 +59,11 @@ defmodule MetadataAppWeb.GridEditableComponents do
               <td colspan={@total_columnas} class="px-3 py-4 text-center text-gray-400">Cargando…</td>
             </tr>
           </tbody>
+          <!-- Fila de resumen — placeholder vacío y oculto por default, el
+               hook JS la arma/muestra según la metadata de cada columna. -->
+          <tfoot class="bg-gray-50 sticky bottom-0 z-10 border-t border-gray-200">
+            <tr class="ge-resumen-fila" data-resumen-pos="abajo" style="display:none"></tr>
+          </tfoot>
         </table>
       </div>
     </div>
@@ -81,9 +86,27 @@ defmodule MetadataAppWeb.GridEditableComponents do
       opcional: props["opcional"] == true,
       longitud: props["longitud"],
       valores: props["valores"],
-      opciones: opciones_columna(col)
+      opciones: opciones_columna(col),
+      resumen: resumen_estandar(props["tipo"])
     }
   end
+
+  @doc """
+  Fila de resumen (pie fijo de la grilla, ver `grid/1` + hook `GridEditable`)
+  — estándar fijo para TODAS las grillas de renglones, sin configuración
+  por catálogo: toda columna numérica suma por default; el resto no
+  muestra nada por default, pero sí admite "Recuento" (cuántos renglones
+  tienen algo cargado ahí) con clic derecho — sumar/promediar/etc no
+  tiene sentido en una columna no numérica, así que esas dos son las
+  únicas opciones que el hook JS ofrece ahí (ver TIPOS_NUMERICOS en
+  assets/js/hooks/grid_editable.js). El usuario final elige la operación
+  con clic derecho, solo en memoria, nunca se guarda — no hay nada que
+  configurar de antemano.
+  """
+  def resumen_estandar(tipo) when tipo in ["integer", "decimal"],
+    do: %{activo: true, operacion: "suma", formato: "numero", decimales: 2, editable_runtime: true}
+
+  def resumen_estandar(_tipo), do: %{activo: false, operacion: "ninguno", editable_runtime: true}
 
   # Igual que el picker de referencia del formulario de al lado
   # (CampoInputComponents.campo_input/1) — el hook JS pinta un <select>

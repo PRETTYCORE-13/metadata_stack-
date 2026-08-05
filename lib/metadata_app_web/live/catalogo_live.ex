@@ -46,7 +46,7 @@ defmodule MetadataAppWeb.CatalogoLive do
         else
           {:ok,
            socket
-           |> put_flash(:error, "No tenés permiso para acceder a esto.")
+           |> put_flash(:error, "No tienes permiso para acceder a esto.")
            |> redirect(to: ~p"/")}
         end
     end

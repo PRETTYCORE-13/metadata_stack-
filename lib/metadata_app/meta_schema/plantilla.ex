@@ -6,7 +6,8 @@ defmodule MetadataApp.MetaSchema.Plantilla do
     field :nombre, :string
     field :descripcion, :string
     field :estado, :string, default: "borrador"
-    field :definicion, :map, default: %{"tipo" => "raiz", "hijos" => []}
+    field :definicion, :map,
+      default: %{"tipo" => "raiz", "propiedades" => %{"filas" => 1, "columnas" => 1, "gap" => "normal"}, "hijos" => []}
 
     field :insert_guid, :string
     field :update_guid, :string

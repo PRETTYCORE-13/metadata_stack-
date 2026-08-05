@@ -53,11 +53,26 @@ defmodule MetadataApp.MetaImportExport do
         cambios =
           Enum.reject(
             [
-              sincronizar_icono(existente, contexto["schema_context_icono"]) && "ícono actualizado",
+              if(sincronizar_icono(existente, contexto["schema_context_icono"]), do: "ícono actualizado"),
               case sincronizar_detalles_nuevos(existente, contexto["detalles"] || []) do
                 [] -> nil
                 campos -> "campo(s) nuevo(s) sincronizado(s): #{Enum.join(campos, ", ")}"
-              end
+              end,
+              case sincronizar_etiquetas_campos(existente, contexto["detalles"] || []) do
+                [] -> nil
+                campos -> "etiqueta(s) actualizada(s): #{Enum.join(campos, ", ")}"
+              end,
+              if(sincronizar_cargar_todos_por_default(existente, contexto["cargar_todos_por_default"]),
+                do: "\"traer todo por default\" actualizado"
+              ),
+              if(
+                sincronizar_transaccional(
+                  existente,
+                  contexto["schema_es_transaccional"],
+                  contexto["codigo_trn"]
+                ),
+                do: "TRN activado (código #{contexto["codigo_trn"]})"
+              )
             ],
             &is_nil/1
           )
@@ -88,6 +103,51 @@ defmodule MetadataApp.MetaImportExport do
     end
   end
 
+  # "Traer todos los registros y columnas apenas se abre la tabla" (2026-08-04)
+  # -- mismo criterio que sincronizar_icono/2: es un flag que sólo cambia
+  # cómo arranca el GET genérico, no toca estructura ni datos, así que es
+  # seguro sobreescribirlo con lo que diga el bundle. `nil` cubre bundles
+  # exportados antes de que este campo existiera.
+  defp sincronizar_cargar_todos_por_default(_header, nil), do: false
+
+  defp sincronizar_cargar_todos_por_default(%{cargar_todos_por_default: mismo}, mismo), do: false
+
+  defp sincronizar_cargar_todos_por_default(header, nuevo_valor) do
+    case MetaSchemaContext.actualizar_header(header, %{"cargar_todos_por_default" => nuevo_valor}) do
+      {:ok, _header} ->
+        true
+
+      {:error, changeset} ->
+        raise "Error sincronizando \"cargar_todos_por_default\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+    end
+  end
+
+  # TRN (schema_es_transaccional + codigo_trn) -- bug real encontrado en
+  # pty_gasto_diario y corregido ahí a mano vía migración porque el bundle
+  # nunca los traía. A diferencia de los demás sync, nunca se "apaga": no
+  # hay UI para desmarcar un catálogo como transaccional, y si el destino
+  # ya tiene filas con trn/ulid asignado, revertir sería destructivo. Sólo
+  # activa (false/nil -> true), nunca al revés.
+  defp sincronizar_transaccional(%{schema_es_transaccional: true}, _es_transaccional_nuevo, _codigo_nuevo),
+    do: false
+
+  defp sincronizar_transaccional(_header, es_transaccional_nuevo, _codigo_nuevo)
+       when es_transaccional_nuevo != true,
+       do: false
+
+  defp sincronizar_transaccional(header, true, codigo_nuevo) do
+    case MetaSchemaContext.actualizar_header(header, %{
+           "schema_es_transaccional" => true,
+           "codigo_trn" => codigo_nuevo
+         }) do
+      {:ok, _header} ->
+        true
+
+      {:error, changeset} ->
+        raise "Error sincronizando TRN de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+    end
+  end
+
   # La tabla física de un campo agregado a un catálogo YA desplegado se
   # actualiza sola (la migración ADD COLUMN que arma
   # CatalogoGenerador.asegurar_campos_nuevos/1 viaja en el bundle igual que
@@ -114,6 +174,43 @@ defmodule MetadataApp.MetaImportExport do
 
         {:error, changeset} ->
           raise "Error sincronizando campo \"#{detalle_attrs["schema_context_field"]}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+      end
+    end)
+  end
+
+  # Etiqueta de un campo YA existente (2026-08-04, a pedido explícito) —
+  # mismo criterio que sincronizar_icono/2: texto de presentación, sin
+  # riesgo estructural. A propósito NO se generaliza a "sincronizar
+  # cualquier propiedad" — tipo/longitud/catalogo (el destino de una
+  # referencia) sí son estructurales, sobreescribirlos a ciegas podría
+  # fallar un ALTER COLUMN o cambiar a qué apunta una FK ya usada por
+  # datos reales en el destino. Solo toca campos que YA EXISTÍAN — uno
+  # nuevo ya trae su etiqueta correcta desde sincronizar_detalles_nuevos/2.
+  defp sincronizar_etiquetas_campos(header, detalles_json) do
+    existentes =
+      header.schema_context_name
+      |> MetaSchemaContext.listar_detalles()
+      |> Map.new(&{&1.schema_context_field, &1})
+
+    detalles_json
+    |> Enum.filter(&Map.has_key?(existentes, &1["schema_context_field"]))
+    |> Enum.flat_map(fn detalle_json ->
+      detalle = Map.fetch!(existentes, detalle_json["schema_context_field"])
+      etiqueta_nueva = get_in(detalle_json, ["schema_context_properties", "etiqueta"])
+      etiqueta_actual = get_in(detalle.schema_context_properties, ["etiqueta"])
+
+      if etiqueta_nueva not in [nil, ""] and etiqueta_nueva != etiqueta_actual do
+        props = Map.put(detalle.schema_context_properties, "etiqueta", etiqueta_nueva)
+
+        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+          {:ok, _detalle} ->
+            [detalle.schema_context_field]
+
+          {:error, changeset} ->
+            raise "Error sincronizando etiqueta de \"#{detalle.schema_context_field}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+        end
+      else
+        []
       end
     end)
   end
