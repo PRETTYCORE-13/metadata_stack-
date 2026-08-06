@@ -10,7 +10,16 @@ defmodule MetadataApp.Autenticacion.UsuarioToken do
   # since someone with access to the email may take over the account.
   @magic_link_validity_in_minutes 15
   @change_email_validity_in_days 7
-  @session_validity_in_days 14
+  # ERP transaccional con datos sensibles (2026-08-06, decisión explícita
+  # del negocio) -- 14 días era demasiado: un navegador con "restaurar
+  # pestañas al reiniciar" (default en muchos Chrome/Edge) conserva la
+  # cookie de sesión aunque el usuario crea que "cerró todo", así que el
+  # límite de verdad para cortar acceso es este, no la cookie. 12h cubre
+  # una jornada laboral completa sin re-login; ver también
+  # UsuarioAuth.@session_reissue_age_in_hours (renueva sesiones activas
+  # antes de llegar acá, así que esto en la práctica funciona como
+  # timeout por INACTIVIDAD, no como corte a media tarea).
+  @session_validity_in_hours 12
 
   schema "meta_schema_usuario_tokens" do
     field :token, :binary
@@ -53,13 +62,13 @@ defmodule MetadataApp.Autenticacion.UsuarioToken do
   The query returns the usuario found by the token, if any, along with the token's creation time.
 
   The token is valid if it matches the value in the database and it has
-  not expired (after @session_validity_in_days).
+  not expired (after @session_validity_in_hours).
   """
   def verify_session_token_query(token) do
     query =
       from token in by_token_and_context_query(token, "session"),
         join: usuario in assoc(token, :usuario),
-        where: token.inserted_at > ago(@session_validity_in_days, "day"),
+        where: token.inserted_at > ago(@session_validity_in_hours, "hour"),
         select: {%{usuario | authenticated_at: token.authenticated_at}, token.inserted_at}
 
     {:ok, query}

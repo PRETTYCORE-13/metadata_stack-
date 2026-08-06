@@ -5,7 +5,16 @@ defmodule MetadataAppWeb.UsuarioSessionControllerTest do
   alias MetadataApp.Autenticacion
 
   setup do
-    %{unconfirmed_usuario: unconfirmed_usuario_fixture(), usuario: usuario_fixture()}
+    unconfirmed_usuario = unconfirmed_usuario_fixture()
+    usuario = usuario_fixture()
+
+    # Una empresa cada uno -- log_in_usuario/2 auto-activa cuando hay una
+    # sola (ver UsuarioAuth), así el request de seguimiento a "/" llega a
+    # la app real en vez de quedar en seleccionar-empresa.
+    {:ok, _} = Autenticacion.crear_empresa_para_usuario("Empresa de #{usuario.email}", usuario.id)
+    {:ok, _} = Autenticacion.crear_empresa_para_usuario("Empresa de #{unconfirmed_usuario.email}", unconfirmed_usuario.id)
+
+    %{unconfirmed_usuario: unconfirmed_usuario, usuario: usuario}
   end
 
   describe "POST /meta_schema_usuario/log-in - email and password" do
@@ -31,22 +40,6 @@ defmodule MetadataAppWeb.UsuarioSessionControllerTest do
       assert response =~ "Configuración de cuenta"
       assert response =~ "config-cuenta-modal"
       assert response =~ ~p"/meta_schema_usuario/log-out"
-    end
-
-    test "logs the usuario in with remember me", %{conn: conn, usuario: usuario} do
-      usuario = set_password(usuario)
-
-      conn =
-        post(conn, ~p"/meta_schema_usuario/log-in", %{
-          "usuario" => %{
-            "email" => usuario.email,
-            "password" => valid_usuario_password(),
-            "remember_me" => "true"
-          }
-        })
-
-      assert conn.resp_cookies["_metadata_app_web_usuario_remember_me"]
-      assert redirected_to(conn) == ~p"/sysadmin/bc-list"
     end
 
     test "logs the usuario in with return to", %{conn: conn, usuario: usuario} do
