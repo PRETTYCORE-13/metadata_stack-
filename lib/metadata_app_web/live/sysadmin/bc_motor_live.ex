@@ -717,20 +717,21 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     actualizar_campo_y_regenerar(socket, detalle, props, "el valor default")
   end
 
-  # --- Filtros: qué campos numéricos calculan Suma/Promedio/Conteo (y --------
-  # opcionalmente Mín/Máx) en la fila de Resumen del catálogo — sección
-  # aparte de la tabla de campos de arriba, "cantidad" (el campo real, con
-  # su Nombre/Etiqueta/Tipo/Visible) no tiene nada que ver con esto: acá
-  # solo se elige, de la lista de campos numéricos del catálogo, cuáles
-  # participan del Resumen. Guardado inmediato, mismo criterio que
-  # cambiar_mostrar_en_tabla/2 arriba.
-  def handle_event("agregar_filtro_resumen", %{"campo" => campo} = params, socket) do
+  # --- Filtros: qué campos calculan un total en la fila de Resumen del -------
+  # catálogo — sección aparte de la tabla de campos de arriba, "cantidad"
+  # (el campo real, con su Nombre/Etiqueta/Tipo/Visible) no tiene nada que
+  # ver con esto: acá solo se elige, de la lista de campos del catálogo,
+  # cuáles participan del Resumen. Arranca sin "Mín. Máx." (se prende
+  # aparte, en la tabla de abajo, y solo para numéricos — no tiene sentido
+  # pedirlo acá antes de saber si el campo elegido siquiera calificaría).
+  # Guardado inmediato, mismo criterio que cambiar_mostrar_en_tabla/2 arriba.
+  def handle_event("agregar_filtro_resumen", %{"campo" => campo}, socket) do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
 
     props =
       detalle.schema_context_properties
       |> Map.put("agregacion_activa", true)
-      |> Map.put("minmax_recomendado", params["recomendado"] == "true")
+      |> Map.put("minmax_recomendado", false)
 
     case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
       {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
@@ -745,10 +746,62 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       detalle.schema_context_properties
       |> Map.put("agregacion_activa", false)
       |> Map.put("minmax_recomendado", false)
+      |> Map.put("total_pagina_activo", false)
+      |> Map.put("total_general_activo", false)
+      |> Map.delete("filtro_default_valor")
+      |> Map.delete("filtro_default_desde")
+      |> Map.delete("filtro_default_hasta")
+      |> Map.delete("filtro_default_bloqueado")
 
     case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
       {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
       {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo quitar el filtro de \"#{campo}\".")}
+    end
+  end
+
+  # "Valor por default" de un filtro ya agregado (campos boolean/string/
+  # enum, un solo valor) — CatalogoLive lo lee para pre-llenar Y aplicar
+  # ese filtro apenas se abre la tabla (ver filtros_default_desde_columnas/1
+  # ahí), no solo mostrar la fila vacía. "" borra el default (vuelve a
+  # "Cualquiera"/sin acotar).
+  def handle_event("cambiar_filtro_valor_default", %{"campo" => campo, "valor" => valor}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "filtro_default_valor", valor)
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar el valor por default de \"#{campo}\".")}
+    end
+  end
+
+  # Mismo concepto que arriba pero para integer/decimal/date (rango
+  # desde/hasta, dos inputs independientes) — "extremo" es "desde" o
+  # "hasta".
+  def handle_event("cambiar_filtro_rango_default", %{"campo" => campo, "extremo" => extremo, "valor" => valor}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    clave = if extremo == "desde", do: "filtro_default_desde", else: "filtro_default_hasta"
+    props = Map.put(detalle.schema_context_properties, clave, valor)
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar el valor por default de \"#{campo}\".")}
+    end
+  end
+
+  # "Bloqueado" — el usuario final ve este filtro ya puesto pero no puede
+  # tocarlo ni quitarlo (ver panel_filtros/1 y filtro_columna/1 en
+  # catalogo_live.ex, que lo dibujan como texto fijo + input oculto en vez
+  # del control editable normal) — solo puede AGREGAR otros filtros
+  # aparte. No afecta nada acá del lado del admin: "Quitar" de esta tabla
+  # sigue funcionando igual, esto es una restricción para el usuario
+  # final, no para quien configura el catálogo.
+  def handle_event("cambiar_filtro_bloqueado", %{"campo" => campo, "bloqueado" => bloqueado}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "filtro_default_bloqueado", bloqueado == "true")
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar el bloqueo de \"#{campo}\".")}
     end
   end
 
@@ -816,7 +869,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # "Recomendado" de un filtro ya agregado — extra Mín/Máx: si está
+  # "Mín. Máx." de un filtro ya agregado — extra Mín/Máx: si está
   # prendido, CatalogoLive lo muestra siempre junto al cálculo principal
   # en la fila de Resumen (celdas_resumen/1 ahí respeta este flag), no es
   # una elección del usuario final, es on/off.
@@ -826,7 +879,36 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
     case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
       {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
-      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Recomendado\" de \"#{campo}\".")}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Mín. Máx.\" de \"#{campo}\".")}
+    end
+  end
+
+  # "Total 25" — suma de SOLO los registros de la página actual (ver
+  # total_columna_pagina/2 en catalogo_live.ex, calculado del lado del
+  # cliente sobre @filas, sin query nueva). Solo tiene sentido para
+  # integer/decimal — el botón ni se muestra para otros tipos (ver
+  # panel_filtros_resumen/1 abajo).
+  def handle_event("cambiar_total_pagina", %{"campo" => campo, "activo" => activo}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "total_pagina_activo", activo == "true")
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Total 25\" de \"#{campo}\".")}
+    end
+  end
+
+  # "Totalizado" — suma de TODOS los registros que matchean filtro/búsqueda,
+  # no solo la página (ver recalcular_totales_generales/1 en
+  # catalogo_live.ex, misma query de agregación que "Suma", solo que
+  # siempre activa en vez de necesitar elegirla del selector).
+  def handle_event("cambiar_total_general", %{"campo" => campo, "activo" => activo}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "total_general_activo", activo == "true")
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Totalizado\" de \"#{campo}\".")}
     end
   end
 
@@ -2132,25 +2214,30 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     """
   end
 
-  # "Filtros": qué campos numéricos calculan Suma/Promedio/Conteo (fila de
-  # Resumen de CatalogoLive) — sección aparte de la tabla de Get View de
-  # arriba, a propósito: un campo real (ej. "cantidad", con su Nombre/
-  # Etiqueta/Tipo/Visible) es simplemente un dato de la tabla, no tiene
-  # nada que ver con esto. Acá se arma una lista aparte: de los campos
-  # numéricos del catálogo, cuáles participan del Resumen ("+ Agregar
-  # filtro") y cuáles de esos además muestran mínimo/máximo
-  # ("Recomendado").
+  # "Filtros": qué campos participan de la fila de Resumen de CatalogoLive
+  # (Suma/Promedio/Conteo si son numéricos, Conteo si no) — sección aparte
+  # de la tabla de Get View de arriba, a propósito: un campo real (ej.
+  # "cantidad", con su Nombre/Etiqueta/Tipo/Visible) es simplemente un
+  # dato de la tabla, no tiene nada que ver con esto. Acá se arma una
+  # lista aparte: de TODOS los campos del catálogo (dinámico, según
+  # existan — "referencia" queda afuera porque en la fila el valor real
+  # es un id de otra tabla, no algo que sumar/contar de forma útil),
+  # cuáles participan del Resumen ("+ Agregar filtro") y cuáles de esos
+  # además muestran mínimo/máximo ("Mín. Máx.") — CatalogoLive decide qué
+  # funciones ofrecer según el tipo real de cada uno (ver celdas_resumen/1
+  # ahí).
   attr :campos, :list, required: true
 
   defp panel_filtros_resumen(assigns) do
-    numericos = Enum.filter(assigns.campos, &(get_in(&1.schema_context_properties, ["tipo"]) in ["integer", "decimal"]))
-    activos = Enum.filter(numericos, &(get_in(&1.schema_context_properties, ["agregacion_activa"]) == true))
-    disponibles = numericos -- activos
+    agregables = Enum.filter(assigns.campos, &(get_in(&1.schema_context_properties, ["tipo"]) != "referencia"))
+    activos = Enum.filter(agregables, &(get_in(&1.schema_context_properties, ["agregacion_activa"]) == true))
+    disponibles = agregables -- activos
 
     assigns =
       assigns
       |> assign(:filtros_activos, activos)
       |> assign(:campos_disponibles, disponibles)
+      |> assign(:hay_numericos?, Enum.any?(activos, &(get_in(&1.schema_context_properties, ["tipo"]) in ["integer", "decimal"])))
 
     ~H"""
     <div class="border border-gray-200 rounded-lg mt-4">
@@ -2159,7 +2246,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       </div>
       <div class="p-3 pt-4 overflow-x-auto">
         <p class="text-gray-500 mb-2">
-          Qué campos numéricos calculan Suma/Promedio/Conteo en la fila de Resumen del catálogo. "Recomendado" además muestra siempre el mínimo y el máximo.
+          Qué campos calculan un total en la fila de Resumen del catálogo — Suma/Promedio/Conteo si el campo es numérico, Conteo si no. "Mín. Máx.", "Total 25" y "Totalizado" solo aplican a campos numéricos (integer/decimal).
         </p>
 
         <%= if @filtros_activos == [] do %>
@@ -2169,7 +2256,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             <thead class="bg-gray-50">
               <tr>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campo</th>
-                <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Recomendado</th>
+                <th :if={@hay_numericos?} class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Mín. Máx.</th>
+                <th :if={@hay_numericos?} class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Total 25</th>
+                <th :if={@hay_numericos?} class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Totalizado</th>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Valor por default</th>
+                <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Bloqueado</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
             </thead>
@@ -2177,20 +2268,130 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
               <%= for c <- @filtros_activos do %>
                 <% props = c.schema_context_properties || %{} %>
                 <% recomendado? = Map.get(props, "minmax_recomendado") == true %>
+                <% tipo = Map.get(props, "tipo") %>
+                <% numerico? = tipo in ["integer", "decimal"] %>
+                <% total_pagina? = Map.get(props, "total_pagina_activo") == true %>
+                <% total_general? = Map.get(props, "total_general_activo") == true %>
+                <% bloqueado? = Map.get(props, "filtro_default_bloqueado") == true %>
                 <tr class="border-b border-gray-100 hover:bg-gray-50">
                   <td class="px-1.5 py-1 text-gray-900">{Map.get(props, "etiqueta") || c.schema_context_field}</td>
+                  <td :if={@hay_numericos?} class="px-1.5 py-1 text-center">
+                    <%= if numerico? do %>
+                      <button type="button"
+                        phx-click="cambiar_minmax_recomendado"
+                        phx-value-campo={c.schema_context_field}
+                        phx-value-recomendado={to_string(!recomendado?)}
+                        title="Mostrar siempre el mínimo y el máximo en la fila de Resumen del catálogo"
+                        class={[
+                          "text-[9px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 transition-colors",
+                          if(recomendado?, do: "bg-green-600 text-white", else: "bg-red-100 text-red-700 hover:bg-red-200")
+                        ]}
+                      >
+                        Mín. Máx.
+                      </button>
+                    <% else %>
+                      <span class="text-gray-300 text-[11px]">—</span>
+                    <% end %>
+                  </td>
+                  <td :if={@hay_numericos?} class="px-1.5 py-1 text-center">
+                    <%= if numerico? do %>
+                      <button type="button"
+                        phx-click="cambiar_total_pagina"
+                        phx-value-campo={c.schema_context_field}
+                        phx-value-activo={to_string(!total_pagina?)}
+                        title="Mostrar la suma de SOLO los registros de la página actual (25) en la fila de Resumen"
+                        class={[
+                          "text-[9px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 transition-colors",
+                          if(total_pagina?, do: "bg-green-600 text-white", else: "bg-red-100 text-red-700 hover:bg-red-200")
+                        ]}
+                      >
+                        Total 25
+                      </button>
+                    <% else %>
+                      <span class="text-gray-300 text-[11px]">—</span>
+                    <% end %>
+                  </td>
+                  <td :if={@hay_numericos?} class="px-1.5 py-1 text-center">
+                    <%= if numerico? do %>
+                      <button type="button"
+                        phx-click="cambiar_total_general"
+                        phx-value-campo={c.schema_context_field}
+                        phx-value-activo={to_string(!total_general?)}
+                        title="Mostrar la suma de TODOS los registros que matchean el filtro/búsqueda actual, no solo la página"
+                        class={[
+                          "text-[9px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 transition-colors",
+                          if(total_general?, do: "bg-green-600 text-white", else: "bg-red-100 text-red-700 hover:bg-red-200")
+                        ]}
+                      >
+                        Totalizado
+                      </button>
+                    <% else %>
+                      <span class="text-gray-300 text-[11px]">—</span>
+                    <% end %>
+                  </td>
+                  <td class="px-1.5 py-1">
+                    <%= if tipo == "boolean" do %>
+                      <form phx-change="cambiar_filtro_valor_default">
+                        <input type="hidden" name="campo" value={c.schema_context_field} />
+                        <select name="valor" class="text-[11px] border border-gray-300 rounded px-1.5 py-1">
+                          <option value="" selected={Map.get(props, "filtro_default_valor", "") == ""}>Cualquiera</option>
+                          <option value="true" selected={Map.get(props, "filtro_default_valor") == "true"}>Sí</option>
+                          <option value="false" selected={Map.get(props, "filtro_default_valor") == "false"}>No</option>
+                        </select>
+                      </form>
+                    <% else %>
+                      <%= if tipo in ["integer", "decimal", "date"] do %>
+                        <div class="flex items-center gap-1">
+                          <form phx-change="cambiar_filtro_rango_default">
+                            <input type="hidden" name="campo" value={c.schema_context_field} />
+                            <input type="hidden" name="extremo" value="desde" />
+                            <input
+                              type={if tipo == "date", do: "date", else: "number"}
+                              name="valor"
+                              placeholder="Desde"
+                              value={Map.get(props, "filtro_default_desde")}
+                              class="w-24 text-[11px] border border-gray-300 rounded px-1.5 py-1"
+                            />
+                          </form>
+                          <span class="text-gray-300">–</span>
+                          <form phx-change="cambiar_filtro_rango_default">
+                            <input type="hidden" name="campo" value={c.schema_context_field} />
+                            <input type="hidden" name="extremo" value="hasta" />
+                            <input
+                              type={if tipo == "date", do: "date", else: "number"}
+                              name="valor"
+                              placeholder="Hasta"
+                              value={Map.get(props, "filtro_default_hasta")}
+                              class="w-24 text-[11px] border border-gray-300 rounded px-1.5 py-1"
+                            />
+                          </form>
+                        </div>
+                      <% else %>
+                        <form phx-change="cambiar_filtro_valor_default">
+                          <input type="hidden" name="campo" value={c.schema_context_field} />
+                          <input
+                            type="text"
+                            name="valor"
+                            placeholder="Cualquiera"
+                            value={Map.get(props, "filtro_default_valor")}
+                            class="text-[11px] border border-gray-300 rounded px-1.5 py-1 w-full"
+                          />
+                        </form>
+                      <% end %>
+                    <% end %>
+                  </td>
                   <td class="px-1.5 py-1 text-center">
                     <button type="button"
-                      phx-click="cambiar_minmax_recomendado"
+                      phx-click="cambiar_filtro_bloqueado"
                       phx-value-campo={c.schema_context_field}
-                      phx-value-recomendado={to_string(!recomendado?)}
-                      title="Mostrar siempre el mínimo y el máximo en la fila de Resumen del catálogo"
+                      phx-value-bloqueado={to_string(!bloqueado?)}
+                      title="El usuario final no puede cambiar ni quitar este filtro — solo agregar otros aparte"
                       class={[
                         "text-[9px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 transition-colors",
-                        if(recomendado?, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+                        if(bloqueado?, do: "bg-red-600 text-white", else: "bg-gray-100 text-gray-500 hover:bg-gray-200")
                       ]}
                     >
-                      Recomendado
+                      <%= if bloqueado?, do: "🔒 Bloqueado", else: "Bloquear" %>
                     </button>
                   </td>
                   <td class="px-1.5 py-1 text-center">
@@ -2215,12 +2416,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <option value={c.schema_context_field}>{Map.get(c.schema_context_properties, "etiqueta") || c.schema_context_field}</option>
               <% end %>
             </select>
-            <label class="cursor-pointer select-none">
-              <input type="checkbox" name="recomendado" value="true" class="peer sr-only" />
-              <span class="text-[9px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 transition-colors bg-purple-100 text-purple-700 peer-checked:bg-purple-600 peer-checked:text-white">
-                Recomendado
-              </span>
-            </label>
             <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
               + Agregar filtro
             </button>

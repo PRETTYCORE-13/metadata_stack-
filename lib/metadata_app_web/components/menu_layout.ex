@@ -134,7 +134,7 @@ defmodule MetadataAppWeb.MenuLayout do
               />
             </div>
 
-            <nav class="pc-sidebar-nav">
+            <nav class="pc-sidebar-nav" id="pc-sidebar-nav" phx-hook="EvitarToggleNativoCarpetas">
               <.menu_nodos
                 nodos={@menu_items}
                 current_page={@current_page}
@@ -378,14 +378,15 @@ defmodule MetadataAppWeb.MenuLayout do
   attr :nodos, :list, required: true
   attr :current_page, :string, required: true
   attr :nivel, :integer, default: 0
-  # Colapsado (rail de solo íconos), un click en una carpeta expande
-  # primero todo el sidebar Y ESA carpeta puntual (JS.set_attribute más
-  # abajo) — un JS.push (lo que hace toggle_sidebar_js por dentro) le hace
-  # preventDefault al click, así que el toggle NATIVO de <details> (el que
-  # pasaría solo, sin JS, con un click normal en <summary>) nunca llega a
-  # dispararse solo. Sin el set_attribute explícito, cualquier ícono
-  # colapsado solo abría el riel entero, sin abrir la carpeta puntual que
-  # se clickeó.
+  # Una carpeta raíz (es_raiz_flotante) siempre fuerza el riel a colapsado
+  # al abrirse (colapsar_sidebar_js/1) Y abre ESA carpeta puntual
+  # (JS.set_attribute más abajo) — riel expandido (principal) y flyout
+  # (secundario) son mutuamente excluyentes, nunca los dos abiertos a la
+  # vez. Un JS.push le hace preventDefault al click, así que el toggle
+  # NATIVO de <details> (el que pasaría solo, sin JS, con un click normal
+  # en <summary>) nunca llega a dispararse solo — sin el set_attribute
+  # explícito, el click solo colapsaría el riel sin abrir la carpeta
+  # puntual que se clickeó.
   attr :sidebar_open, :boolean, default: true
   attr :menu_event, :string, default: "change_page"
   attr :ruta_padre, :string, default: ""
@@ -424,9 +425,24 @@ defmodule MetadataAppWeb.MenuLayout do
             class={["pc-menu-carpeta-summary", @nivel == 0 && "pc-menu-carpeta-summary-raiz"]}
             style={"padding-left: #{12 + @nivel * 16}px"}
             phx-click={
-              if(!@sidebar_open,
-                do: toggle_sidebar_js(@menu_event) |> JS.set_attribute({"open", "true"}, to: "##{id_carpeta}")
-              )
+              cond do
+                # El toggle NATIVO de <summary> (el navegador abre/cierra el
+                # <details> padre solo, aunque haya phx-click) está
+                # bloqueado en fase de captura por el hook
+                # EvitarToggleNativoCarpetas en app.js — sin eso, competía
+                # con este set_attribute (confirmado con un
+                # MutationObserver: quedaba en true y ~8ms después el
+                # navegador lo revertía solo, sin importar si este phx-click
+                # incluía un push o no).
+                es_raiz_flotante ->
+                  colapsar_sidebar_js(@menu_event) |> JS.set_attribute({"open", "true"}, to: "##{id_carpeta}")
+
+                !@sidebar_open ->
+                  toggle_sidebar_js(@menu_event) |> JS.set_attribute({"open", "true"}, to: "##{id_carpeta}")
+
+                true ->
+                  nil
+              end
             }
           >
             <svg class="pc-menu-carpeta-icono-flecha w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -441,6 +457,11 @@ defmodule MetadataAppWeb.MenuLayout do
                 </svg>
               <% end %>
             </span>
+            <!-- Solo se ve con el riel colapsado (ver .pc-menu-carpeta-nombre-corto
+                 en menu.css) — con el riel expandido el nombre completo de
+                 arriba ya alcanza, esto es para no dejar el ícono solo, sin
+                 ninguna pista de qué sección es, cuando está colapsado. -->
+            <span class="pc-menu-carpeta-nombre-corto">{String.slice(nodo.nombre, 0, 6)}</span>
             <span class="pc-menu-carpeta-nombre">{nodo.nombre}</span>
           </summary>
           <.menu_nodos
@@ -592,6 +613,27 @@ defmodule MetadataAppWeb.MenuLayout do
     JS.push(menu_event, value: %{id: "toggle_sidebar"})
     |> JS.toggle_class("pc-sidebar-visible", to: ".pc-platform-sidebar")
     |> JS.toggle_class("pc-sidebar-overlay-visible", to: ".pc-sidebar-overlay")
+    |> cerrar_flyout_js()
+  end
+
+  # Abrir el riel (principal) cierra cualquier flyout de carpeta
+  # (secundario) que haya quedado abierto — y viceversa, ver
+  # colapsar_sidebar_js/1 más abajo, usado desde el click de una carpeta
+  # raíz. `[name='pc-menu-raiz-group']` agarra el <details> que esté
+  # abierto sin importar cuál — remove_attribute sobre uno ya cerrado no
+  # hace nada, así que esto es seguro llamarlo siempre, se abra o se
+  # cierre el riel.
+  defp cerrar_flyout_js(js) do
+    JS.remove_attribute(js, "open", to: "[name='pc-menu-raiz-group']")
+  end
+
+  # Click en una carpeta raíz del riel (la que dispara el flyout, ver
+  # es_raiz_flotante en menu_nodos/1) — fuerza el riel a colapsado en vez
+  # de tocarlo con un toggle, así abrir el flyout (secundario) siempre
+  # cierra el riel expandido (principal), sin importar en qué estado
+  # estuviera antes de este click.
+  defp colapsar_sidebar_js(menu_event) do
+    JS.push(menu_event, value: %{id: "colapsar_sidebar"})
   end
 
   defp mobile_toggle_js do
