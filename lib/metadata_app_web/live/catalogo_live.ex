@@ -106,6 +106,7 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:agregaciones, %{})
      |> assign(:agregaciones_valores, %{})
      |> assign(:minmax_valores, %{})
+     |> assign(:totales_generales, %{})
      |> assign(:cargar_todos_por_default?, header.cargar_todos_por_default)
      |> assign(
        :filtro_default_fecha_descripcion,
@@ -211,6 +212,7 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:agregaciones, %{})
      |> assign(:agregaciones_valores, %{})
      |> assign(:minmax_valores, %{})
+     |> assign(:totales_generales, %{})
      |> assign(:cargar_todos_por_default?, false)
      |> cargar_filas()}
   end
@@ -371,9 +373,9 @@ defmodule MetadataAppWeb.CatalogoLive do
     socket = assign(socket, :sin_filtro?, not datos_solicitados?(socket))
 
     if socket.assigns.sin_filtro? do
-      socket |> vaciar_filas() |> recalcular_agregaciones() |> recalcular_minmax()
+      socket |> vaciar_filas() |> recalcular_agregaciones() |> recalcular_minmax() |> recalcular_totales_generales()
     else
-      socket |> cargar_filas_real() |> recalcular_agregaciones() |> recalcular_minmax()
+      socket |> cargar_filas_real() |> recalcular_agregaciones() |> recalcular_minmax() |> recalcular_totales_generales()
     end
   end
 
@@ -435,15 +437,20 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   # Mismo criterio que recalcular_agregaciones/1 pero para "Filtros Min."
   # (ver celdas_resumen/1) — a diferencia de @agregaciones, que el usuario
-  # final elige por columna, acá no hay elección: cada columna con
-  # "minmax_recomendado" en el Get View (ver panel_get_view/1 en
+  # final elige por columna, acá no hay elección: cada columna NUMÉRICA
+  # con "minmax_recomendado" en el Get View (ver panel_get_view/1 en
   # bc_motor_live.ex) SIEMPRE muestra su {mínimo, máximo}, calculado de
-  # una.
+  # una. Restringido a integer/decimal a propósito (igual que "Total
+  # 25"/"Totalizado") — el botón para prenderlo ni se muestra para otros
+  # tipos.
   defp recalcular_minmax(socket) do
     {filtros_ecto, busqueda} = filtros_y_busqueda(socket)
 
     columnas_minmax =
-      Enum.filter(socket.assigns.columnas, &(&1.schema_context_properties["minmax_recomendado"] == true))
+      Enum.filter(socket.assigns.columnas, fn columna ->
+        columna.schema_context_properties["tipo"] in ["integer", "decimal"] and
+          columna.schema_context_properties["minmax_recomendado"] == true
+      end)
 
     valores =
       Map.new(columnas_minmax, fn columna ->
@@ -454,6 +461,26 @@ defmodule MetadataAppWeb.CatalogoLive do
       end)
 
     assign(socket, :minmax_valores, valores)
+  end
+
+  # Mismo criterio que recalcular_minmax/1 pero para "Totalizado" (Get
+  # View → Filtros → "Totalizado", bc_motor_live.ex): suma de TODOS los
+  # registros que matchean filtro/búsqueda, no solo la página actual (a
+  # diferencia de "Total 25" — ver total_columna_pagina/2 — que no
+  # necesita query nueva porque suma directo sobre @filas ya cargadas).
+  defp recalcular_totales_generales(socket) do
+    {filtros_ecto, busqueda} = filtros_y_busqueda(socket)
+
+    columnas_total_general =
+      Enum.filter(socket.assigns.columnas, &(&1.schema_context_properties["total_general_activo"] == true))
+
+    valores =
+      Map.new(columnas_total_general, fn columna ->
+        clave = col_key(columna)
+        {clave, calcular_agregacion(socket, clave, "suma", filtros_ecto, busqueda)}
+      end)
+
+    assign(socket, :totales_generales, valores)
   end
 
   defp calcular_agregacion(%{assigns: %{es_consulta?: true, consulta: consulta}}, campo, funcion, filtros_ecto, busqueda) do
@@ -801,6 +828,8 @@ defmodule MetadataAppWeb.CatalogoLive do
                   agregaciones={@agregaciones}
                   valores={@agregaciones_valores}
                   minmax_valores={@minmax_valores}
+                  totales_generales={@totales_generales}
+                  filas={@filas}
                   es_consulta?={@es_consulta?}
                 />
               </tr>
@@ -998,6 +1027,8 @@ defmodule MetadataAppWeb.CatalogoLive do
                   agregaciones={@agregaciones}
                   valores={@agregaciones_valores}
                   minmax_valores={@minmax_valores}
+                  totales_generales={@totales_generales}
+                  filas={@filas}
                 />
                 <td :if={@mostrar_estado?}></td>
                 <td :if={@mostrar_trn?}></td>
@@ -1053,6 +1084,34 @@ defmodule MetadataAppWeb.CatalogoLive do
       (if mostrar_estado?, do: [%{clave: "estado", etiqueta: "Estado"}], else: []) ++
       (if mostrar_trn?, do: [%{clave: "trn", etiqueta: "TRN"}], else: [])
   end
+
+  # "Total 25" (Get View → Filtros → "Total 25", bc_motor_live.ex) — a
+  # diferencia de "Totalizado" (recalcular_totales_generales/1, una query
+  # de SUM sobre TODAS las filas que matchean), esto suma directo sobre
+  # @filas (las ~25 que ya están cargadas para la página actual), sin
+  # pegarle a la base — barato porque nunca son más que @por_pagina filas.
+  defp total_columna_pagina(filas, columna) do
+    filas
+    |> Enum.map(&valor_fila(&1, columna))
+    |> Enum.reduce(nil, &sumar_valor/2)
+  end
+
+  # Misma resolución de clave que usan las filas normales de la tabla —
+  # `columna.clave` (namespaced, solo lo tienen las columnas de una
+  # Consulta con JOIN, ver columna_desde_campo_consulta/1) si existe, si
+  # no el schema_context_field crudo de un catálogo normal.
+  defp valor_fila(fila, columna) do
+    case Map.get(columna, :clave) do
+      nil -> Map.get(fila, String.to_existing_atom(columna.schema_context_field))
+      clave -> Map.get(fila, clave)
+    end
+  end
+
+  defp sumar_valor(nil, acc), do: acc
+  defp sumar_valor(%Decimal{} = valor, nil), do: valor
+  defp sumar_valor(%Decimal{} = valor, acc), do: Decimal.add(acc, valor)
+  defp sumar_valor(valor, nil), do: valor
+  defp sumar_valor(valor, acc), do: valor + acc
 
   # `props` (schema_context_properties del campo) trae la máscara elegida
   # en Get View → Filtros → "Máscara" (solo para tipo "decimal", ver
@@ -1243,6 +1302,8 @@ defmodule MetadataAppWeb.CatalogoLive do
   attr :agregaciones, :map, required: true
   attr :valores, :map, required: true
   attr :minmax_valores, :map, required: true
+  attr :totales_generales, :map, required: true
+  attr :filas, :list, required: true
   attr :es_consulta?, :boolean, default: false
 
   defp celdas_resumen(assigns) do
@@ -1254,7 +1315,9 @@ defmodule MetadataAppWeb.CatalogoLive do
       <% numerico? = props["tipo"] in ["integer", "decimal"] %>
       <% agregable? = props["tipo"] != "referencia" %>
       <% agregacion_activa? = agregable? and props["agregacion_activa"] == true %>
-      <% minmax_recomendado? = agregable? and props["minmax_recomendado"] == true %>
+      <% minmax_recomendado? = numerico? and props["minmax_recomendado"] == true %>
+      <% total_pagina_activo? = numerico? and props["total_pagina_activo"] == true %>
+      <% total_general_activo? = numerico? and props["total_general_activo"] == true %>
       <td data-col={clave} class={["px-4 py-2 align-top", alineacion_columna(columna)]}>
         <%= if agregable? do %>
           <div class={["flex items-center gap-1.5 flex-wrap", if(alineacion_columna(columna) == "text-right", do: "flex-row-reverse", else: "")]}>
@@ -1291,6 +1354,14 @@ defmodule MetadataAppWeb.CatalogoLive do
             <% {minimo, maximo} = @minmax_valores[clave] || {nil, nil} %>
             <span :if={minmax_recomendado?} class="text-[11px] font-bold text-gray-700 tabular-nums whitespace-nowrap">
               Mín. {formatear_agregacion(minimo, props)} / Máx. {formatear_agregacion(maximo, props)}
+            </span>
+
+            <span :if={total_pagina_activo?} class="text-[11px] font-bold text-gray-700 tabular-nums whitespace-nowrap">
+              Total 25: {formatear_agregacion(total_columna_pagina(@filas, columna), props)}
+            </span>
+
+            <span :if={total_general_activo?} class="text-[11px] font-bold text-gray-700 tabular-nums whitespace-nowrap">
+              Totalizado: {formatear_agregacion(@totales_generales[clave], props)}
             </span>
           </div>
         <% end %>
