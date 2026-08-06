@@ -82,7 +82,7 @@ defmodule MetadataAppWeb.CatalogoLive do
     columnas = construir_columnas(header.schema_context_name)
 
     estados_por_id = MetaStateEngine.mapa_nombres_estados(header.schema_context_name)
-    filtros = filtros_por_default(header)
+    filtros = Map.merge(filtros_default_desde_columnas(columnas), filtros_por_default(header))
 
     {:ok,
      socket
@@ -98,7 +98,7 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:estados_por_id, estados_por_id)
      |> assign(:pagina, 1)
      |> assign(:filtros, filtros)
-     |> assign(:filtros_activos, [])
+     |> assign(:filtros_activos, campos_con_agregacion_activa(columnas))
      |> assign(:selector_campo_abierto, false)
      |> assign(:busqueda_campo_filtro, "")
      |> assign(:busqueda_general, "")
@@ -121,6 +121,48 @@ defmodule MetadataAppWeb.CatalogoLive do
     |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
     |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
   end
+
+  # Get View → "Filtros" (bc_motor_live.ex, panel_filtros_resumen/1) — los
+  # campos que el admin agregó ahí (participan del Resumen) arrancan como
+  # filas YA VISIBLES en el popover de Filtros del usuario final
+  # (panel_filtros/1 acá abajo), sin que tenga que buscarlos a mano con
+  # "+ Agregar filtro". La fila arranca vacía salvo que el admin también
+  # haya puesto un "Valor por default" (ver filtros_default_desde_columnas/1
+  # abajo) — ahí sí arranca con ese valor puesto Y aplicado de una.
+  defp campos_con_agregacion_activa(columnas) do
+    columnas
+    |> Enum.filter(&get_in(&1, [:schema_context_properties, "agregacion_activa"]))
+    |> Enum.map(& &1.schema_context_field)
+  end
+
+  # "Valor por default" de un filtro (bc_motor_live.ex, mismo panel que
+  # arriba) — a diferencia de "Filtros por default" (filtros_por_default/1,
+  # una sola fecha de ALTA global), esto es por CAMPO: boolean/string/enum
+  # guardan un solo valor ("filtro_default_valor", mismo formato que
+  # @filtros[campo] ya espera), integer/decimal/date guardan un rango
+  # ("filtro_default_desde"/"_hasta", formato "#{campo}_desde"/"_hasta").
+  # El resultado se mergea directo en @filtros inicial — no es una fila
+  # vacía esperando que alguien tipee, ya arranca filtrando de verdad.
+  defp filtros_default_desde_columnas(columnas) do
+    Enum.reduce(columnas, %{}, fn columna, acc ->
+      props = columna.schema_context_properties
+      campo = columna.schema_context_field
+
+      case props["tipo"] do
+        tipo when tipo in ["integer", "decimal", "date"] ->
+          acc
+          |> poner_si_hay_valor("#{campo}_desde", props["filtro_default_desde"])
+          |> poner_si_hay_valor("#{campo}_hasta", props["filtro_default_hasta"])
+
+        _tipo ->
+          poner_si_hay_valor(acc, campo, props["filtro_default_valor"])
+      end
+    end)
+  end
+
+  defp poner_si_hay_valor(acc, _clave, nil), do: acc
+  defp poner_si_hay_valor(acc, _clave, ""), do: acc
+  defp poner_si_hay_valor(acc, clave, valor), do: Map.put(acc, clave, valor)
 
   # Get View → "Filtros por default" (bc_motor_live.ex): "Agregar todos
   # los registros" + acotar por fecha de alta — arma el @filtros INICIAL
@@ -237,8 +279,12 @@ defmodule MetadataAppWeb.CatalogoLive do
     {:noreply, socket |> assign(:filtros, filtros) |> assign(:pagina, 1) |> cargar_filas()}
   end
 
+  # Un filtro "Bloqueado" (bc_motor_live.ex) sobrevive a "Limpiar filtros"
+  # — el usuario final puede vaciar TODO lo que agregó a mano, pero no lo
+  # que el admin dejó fijo.
   def handle_event("limpiar_filtros", _params, socket) do
-    {:noreply, socket |> assign(:filtros, %{}) |> assign(:pagina, 1) |> cargar_filas()}
+    filtros = preservar_filtros_bloqueados(socket.assigns.filtros, socket.assigns.columnas)
+    {:noreply, socket |> assign(:filtros, filtros) |> assign(:pagina, 1) |> cargar_filas()}
   end
 
   def handle_event("abrir_filtros", _params, socket) do
@@ -275,14 +321,21 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   # Quitar la fila también borra su(s) valor(es) de @filtros — si no, el
   # filtro seguiría aplicándose "invisible" (el usuario ya no lo ve en el
-  # panel pero la query seguiría acotada por él).
+  # panel pero la query seguiría acotada por él). No-op si el campo está
+  # "Bloqueado" (bc_motor_live.ex) — el botón "Quitar" ni se muestra para
+  # esos en el popover, pero este guard cubre igual un evento disparado a
+  # mano (ej. devtools).
   def handle_event("quitar_filtro_campo", %{"campo" => campo}, socket) do
-    {:noreply,
-     socket
-     |> assign(:filtros_activos, List.delete(socket.assigns.filtros_activos, campo))
-     |> assign(:filtros, quitar_valores_filtro(socket.assigns.filtros, campo))
-     |> assign(:pagina, 1)
-     |> cargar_filas()}
+    if campo_bloqueado?(socket.assigns.columnas, campo) do
+      {:noreply, socket}
+    else
+      {:noreply,
+       socket
+       |> assign(:filtros_activos, List.delete(socket.assigns.filtros_activos, campo))
+       |> assign(:filtros, quitar_valores_filtro(socket.assigns.filtros, campo))
+       |> assign(:pagina, 1)
+       |> cargar_filas()}
+    end
   end
 
   # "Resumen" (fila de pie de tabla, ver celdas_resumen/1) — funcion=""
@@ -549,6 +602,29 @@ defmodule MetadataAppWeb.CatalogoLive do
   # panel no sabe de antemano cuál de las dos formas tenía.
   defp quitar_valores_filtro(filtros, campo) do
     Map.drop(filtros, [campo, "#{campo}_desde", "#{campo}_hasta"])
+  end
+
+  defp campo_bloqueado?(columnas, campo) do
+    case Enum.find(columnas, &(&1.schema_context_field == campo)) do
+      nil -> false
+      columna -> columna.schema_context_properties["filtro_default_bloqueado"] == true
+    end
+  end
+
+  # "Limpiar filtros" vacía @filtros por completo salvo las claves que
+  # pertenecen a un campo "Bloqueado" — esas se copian tal cual del estado
+  # actual (nunca cambiaron, porque su input es un <input type="hidden">,
+  # ver filtro_columna/1).
+  defp preservar_filtros_bloqueados(filtros, columnas) do
+    campos_bloqueados =
+      columnas
+      |> Enum.filter(&(&1.schema_context_properties["filtro_default_bloqueado"] == true))
+      |> Enum.map(& &1.schema_context_field)
+
+    Enum.reduce(filtros, %{}, fn {clave, valor}, acc ->
+      campo_base = clave |> String.replace_trailing("_desde", "") |> String.replace_trailing("_hasta", "")
+      if campo_base in campos_bloqueados, do: Map.put(acc, clave, valor), else: acc
+    end)
   end
 
   # Cuenta campos con un valor realmente puesto (no solo agregados al panel
@@ -995,6 +1071,14 @@ defmodule MetadataAppWeb.CatalogoLive do
     (separar_miles(String.to_integer(entero), props) <> separador_decimal <> decimales) |> aplicar_simbolo(props)
   end
 
+  # Mín./Máx./Conteo de un campo NO numérico (string/boolean/date/enum,
+  # desde que "Filtros" dejó de limitarse a integer/decimal) — Postgres
+  # soporta MIN/MAX/COUNT sobre esos tipos igual, así que el valor que
+  # llega acá puede ser cualquier cosa comparable. Sin mask que aplicar
+  # (eso es puramente numérico), to_string/1 alcanza — Date/DateTime ya
+  # implementan String.Chars con un formato legible de por sí.
+  defp formatear_agregacion(valor, _props), do: to_string(valor)
+
   defp separar_miles(numero, props) when numero < 0, do: "-" <> separar_miles(-numero, props)
 
   defp separar_miles(numero, props) do
@@ -1168,10 +1252,11 @@ defmodule MetadataAppWeb.CatalogoLive do
       <% activo? = Map.has_key?(@agregaciones, clave) %>
       <% props = columna.schema_context_properties %>
       <% numerico? = props["tipo"] in ["integer", "decimal"] %>
-      <% agregacion_activa? = numerico? and props["agregacion_activa"] == true %>
-      <% minmax_recomendado? = numerico? and props["minmax_recomendado"] == true %>
+      <% agregable? = props["tipo"] != "referencia" %>
+      <% agregacion_activa? = agregable? and props["agregacion_activa"] == true %>
+      <% minmax_recomendado? = agregable? and props["minmax_recomendado"] == true %>
       <td data-col={clave} class={["px-4 py-2 align-top", alineacion_columna(columna)]}>
-        <%= if numerico? do %>
+        <%= if agregable? do %>
           <div class={["flex items-center gap-1.5 flex-wrap", if(alineacion_columna(columna) == "text-right", do: "flex-row-reverse", else: "")]}>
             <%= if agregacion_activa? do %>
               <form phx-change="cambiar_agregacion">
@@ -1181,8 +1266,8 @@ defmodule MetadataAppWeb.CatalogoLive do
                   class="text-[10px] font-semibold text-purple-700 bg-transparent border-0 p-0 pr-4 focus:outline-none focus:ring-0 cursor-pointer"
                 >
                   <option value="" selected={!activo?}>—</option>
-                  <option value="suma" selected={@agregaciones[clave] == "suma"}>Suma</option>
-                  <option value="promedio" selected={@agregaciones[clave] == "promedio"}>Promedio</option>
+                  <option :if={numerico?} value="suma" selected={@agregaciones[clave] == "suma"}>Suma</option>
+                  <option :if={numerico?} value="promedio" selected={@agregaciones[clave] == "promedio"}>Promedio</option>
                   <option value="conteo" selected={@agregaciones[clave] == "conteo"}>Conteo</option>
                 </select>
               </form>
@@ -1191,7 +1276,7 @@ defmodule MetadataAppWeb.CatalogoLive do
               </span>
             <% end %>
 
-            <form :if={not @es_consulta?} phx-change="cambiar_mascara_totales" class="flex items-center gap-0.5">
+            <form :if={numerico? and not @es_consulta?} phx-change="cambiar_mascara_totales" class="flex items-center gap-0.5">
               <input type="hidden" name="campo" value={clave} />
               <select name="separador" title="Separador de miles" class="text-[9px] text-gray-400 bg-transparent border-0 p-0 pr-2.5 focus:outline-none focus:ring-0 cursor-pointer">
                 <option value="," selected={Map.get(props, "mascara_separador", ",") == ","}>1,234.56</option>
@@ -1205,7 +1290,7 @@ defmodule MetadataAppWeb.CatalogoLive do
 
             <% {minimo, maximo} = @minmax_valores[clave] || {nil, nil} %>
             <span :if={minmax_recomendado?} class="text-[11px] font-bold text-gray-700 tabular-nums whitespace-nowrap">
-              Mín {formatear_agregacion(minimo, props)} / Máx {formatear_agregacion(maximo, props)}
+              Mín. {formatear_agregacion(minimo, props)} / Máx. {formatear_agregacion(maximo, props)}
             </span>
           </div>
         <% end %>
@@ -1307,11 +1392,22 @@ defmodule MetadataAppWeb.CatalogoLive do
           </p>
         <% end %>
         <%= for campo <- @filtros_activos, columna = Enum.find(@columnas, &(&1.schema_context_field == campo)), columna do %>
+          <% bloqueado? = columna.schema_context_properties["filtro_default_bloqueado"] == true %>
           <div class="flex items-start gap-1">
             <div class="flex-1">
-              <.filtro_columna columna={columna} valores={@filtros} />
+              <.filtro_columna columna={columna} valores={@filtros} bloqueado?={bloqueado?} />
+            </div>
+            <div
+              :if={bloqueado?}
+              class="mt-5 w-5 h-5 flex-shrink-0 flex items-center justify-center text-gray-300"
+              title="Este filtro está bloqueado — no se puede cambiar ni quitar"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
             </div>
             <button
+              :if={!bloqueado?}
               type="button"
               phx-click="quitar_filtro_campo"
               phx-value-campo={campo}
@@ -1351,8 +1447,17 @@ defmodule MetadataAppWeb.CatalogoLive do
   # funcionando sin escribir nada a mano por catálogo. Los nombres de los
   # inputs (filtros[campo] / filtros[campo_desde] / filtros[campo_hasta])
   # tienen que calzar con lo que lee construir_filtros_ecto/2.
+  #
+  # `bloqueado?` (bc_motor_live.ex, "Bloqueado" en panel_filtros_resumen/1):
+  # el usuario final ve el valor pero no lo puede tocar — en vez del
+  # control editable normal, dibuja el valor como texto fijo + un
+  # `<input type="hidden">` con el mismo `name` para que el submit del
+  # form ("filtrar", phx-change en el <form> de panel_filtros/1) lo siga
+  # mandando igual (un input con `disabled` NO se manda en absoluto, por
+  # eso hidden en vez de eso).
   attr :columna, :map, required: true
   attr :valores, :map, required: true
+  attr :bloqueado?, :boolean, default: false
 
   defp filtro_columna(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
     campo = assigns.columna.schema_context_field
@@ -1361,11 +1466,18 @@ defmodule MetadataAppWeb.CatalogoLive do
     ~H"""
     <div class="flex flex-col gap-1">
       <label class="text-[11px] font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
-      <select name={"filtros[#{@campo}]"} class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5">
-        <option value="" selected={@valores[@campo] in [nil, ""]}>Todos</option>
-        <option value="true" selected={@valores[@campo] == "true"}>Sí</option>
-        <option value="false" selected={@valores[@campo] == "false"}>No</option>
-      </select>
+      <%= if @bloqueado? do %>
+        <input type="hidden" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
+        <div class="w-full border border-gray-200 rounded bg-gray-50 text-gray-500 text-xs px-2 py-1.5">
+          {texto_filtro_boolean(@valores[@campo])}
+        </div>
+      <% else %>
+        <select name={"filtros[#{@campo}]"} class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5">
+          <option value="" selected={@valores[@campo] in [nil, ""]}>Todos</option>
+          <option value="true" selected={@valores[@campo] == "true"}>Sí</option>
+          <option value="false" selected={@valores[@campo] == "false"}>No</option>
+        </select>
+      <% end %>
     </div>
     """
   end
@@ -1379,25 +1491,33 @@ defmodule MetadataAppWeb.CatalogoLive do
     ~H"""
     <div class="flex flex-col gap-1">
       <label class="text-[11px] font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
-      <div class="flex items-center gap-1">
-        <input
-          type={@tipo_input}
-          name={"filtros[#{@campo}_desde]"}
-          value={@valores["#{@campo}_desde"]}
-          placeholder="Desde"
-          phx-debounce="400"
-          class="w-0 flex-1 min-w-0 border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5"
-        />
-        <span class="text-gray-400 text-xs">–</span>
-        <input
-          type={@tipo_input}
-          name={"filtros[#{@campo}_hasta]"}
-          value={@valores["#{@campo}_hasta"]}
-          placeholder="Hasta"
-          phx-debounce="400"
-          class="w-0 flex-1 min-w-0 border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5"
-        />
-      </div>
+      <%= if @bloqueado? do %>
+        <input type="hidden" name={"filtros[#{@campo}_desde]"} value={@valores["#{@campo}_desde"]} />
+        <input type="hidden" name={"filtros[#{@campo}_hasta]"} value={@valores["#{@campo}_hasta"]} />
+        <div class="w-full border border-gray-200 rounded bg-gray-50 text-gray-500 text-xs px-2 py-1.5">
+          {@valores["#{@campo}_desde"] || "…"} – {@valores["#{@campo}_hasta"] || "…"}
+        </div>
+      <% else %>
+        <div class="flex items-center gap-1">
+          <input
+            type={@tipo_input}
+            name={"filtros[#{@campo}_desde]"}
+            value={@valores["#{@campo}_desde"]}
+            placeholder="Desde"
+            phx-debounce="400"
+            class="w-0 flex-1 min-w-0 border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5"
+          />
+          <span class="text-gray-400 text-xs">–</span>
+          <input
+            type={@tipo_input}
+            name={"filtros[#{@campo}_hasta]"}
+            value={@valores["#{@campo}_hasta"]}
+            placeholder="Hasta"
+            phx-debounce="400"
+            class="w-0 flex-1 min-w-0 border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5"
+          />
+        </div>
+      <% end %>
     </div>
     """
   end
@@ -1409,17 +1529,28 @@ defmodule MetadataAppWeb.CatalogoLive do
     ~H"""
     <div class="flex flex-col gap-1">
       <label class="text-[11px] font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
-      <input
-        type="text"
-        name={"filtros[#{@campo}]"}
-        value={@valores[@campo]}
-        placeholder="Buscar..."
-        phx-debounce="400"
-        class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5"
-      />
+      <%= if @bloqueado? do %>
+        <input type="hidden" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
+        <div class="w-full border border-gray-200 rounded bg-gray-50 text-gray-500 text-xs px-2 py-1.5">
+          {@valores[@campo]}
+        </div>
+      <% else %>
+        <input
+          type="text"
+          name={"filtros[#{@campo}]"}
+          value={@valores[@campo]}
+          placeholder="Buscar..."
+          phx-debounce="400"
+          class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5"
+        />
+      <% end %>
     </div>
     """
   end
+
+  defp texto_filtro_boolean("true"), do: "Sí"
+  defp texto_filtro_boolean("false"), do: "No"
+  defp texto_filtro_boolean(_valor), do: "Todos"
 
 
 end
