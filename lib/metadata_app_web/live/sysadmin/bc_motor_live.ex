@@ -626,6 +626,23 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     actualizar_campo_y_regenerar(socket, detalle, props, "el valor default")
   end
 
+  # Reordenar la tabla de Campos (drag-and-drop, hook ListaOrdenable) —
+  # 2026-08-06, a pedido explícito: antes "orden" solo se fijaba una vez
+  # al crear el campo (length(@campos) + 1), corregirlo después era
+  # borrar y volver a crear. Puramente metadata (MetaSchemaContext.
+  # reordenar_campos/2 no toca la columna física ni corre
+  # CatalogoGenerador.generar/1) — @campos sale ordenado por "orden" ya
+  # en la query de listar_detalles/1, así que cargar_motor/1 alcanza
+  # para reflejar el nuevo orden, no hace falta nada más.
+  def handle_event("mover_a", %{"id" => id, "index" => index}, socket) do
+    orden_actual = Enum.map(socket.assigns.campos, & &1.schema_context_field)
+    nuevo_orden = orden_actual |> List.delete(id) |> List.insert_at(index, id)
+
+    :ok = MetaSchemaContext.reordenar_campos(socket.assigns.header.id, nuevo_orden)
+
+    {:noreply, cargar_motor(socket)}
+  end
+
   # --- Filtros: qué campos calculan un total en la fila de Resumen del -------
   # catálogo — sección aparte de la tabla de campos de arriba, "cantidad"
   # (el campo real, con su Nombre/Etiqueta/Tipo/Visible) no tiene nada que
@@ -733,6 +750,20 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Todos por default\".")}
     end
   end
+
+  # Get View → columnas estructurales (ID/Estado/TRN) — mismo criterio
+  # inmediato que toggle_cargar_todos_por_default/2 de arriba. Estado/TRN
+  # ya se ocultaban solos cuando el catálogo no calificaba (sin motor de
+  # estados / no transaccional, ver CatalogoLive.mount/3); esto agrega el
+  # apagador de admin ENCIMA de esa condición, no en vez de ella.
+  def handle_event("toggle_mostrar_id_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_id_en_tabla, "\"Mostrar ID\"")
+
+  def handle_event("toggle_mostrar_estado_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_estado_en_tabla, "\"Mostrar Estado\"")
+
+  def handle_event("toggle_mostrar_trn_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_trn_en_tabla, "\"Mostrar TRN\"")
 
   # Sub-filtro de fecha de "Filtros por default" — "primer_dia_anio"/
   # "ultimo_dia_anio"/"actual" (una sola fecha por calendario, precargada
@@ -1193,6 +1224,17 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     update(socket, :reglas_mensajes, &Map.put(&1, tipo, mensaje))
   end
 
+  # Compartido por los 3 toggle_mostrar_*_en_tabla/3 de arriba.
+  defp toggle_columna_estructural(socket, campo, etiqueta) do
+    header = socket.assigns.header
+    valor = !Map.fetch!(header, campo)
+
+    case MetaSchemaContext.actualizar_header(header, %{Atom.to_string(campo) => valor}) do
+      {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar #{etiqueta}.")}
+    end
+  end
+
   # Compartido por cambiar_obligatorio_campo/2 y cambiar_valor_default_campo/2
   # — ambos necesitan CatalogoGenerador.generar/1 después de guardar
   # (a diferencia de cambiar_etiqueta_campo/2 y similares) porque tocan
@@ -1552,7 +1594,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       </div>
 
       <div id="motor-panel-getview" class="hidden">
-        <.panel_get_view campos={@campos} />
+        <.panel_get_view campos={@campos} header={@header} />
         <.panel_filtros_resumen campos={@campos} />
         <.panel_campos_default header={@header} />
         <.panel_filtros_default header={@header} />
@@ -1900,6 +1942,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           <table class="min-w-full mb-2">
             <thead class="bg-gray-50">
               <tr>
+                <th class="px-1.5 py-1 border-b border-gray-200"></th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Nombre</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Etiqueta</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
@@ -1910,10 +1953,13 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="tabla-campos-ordenable" phx-hook="ListaOrdenable" data-grupo="campos-catalogo">
               <%= for c <- @campos do %>
                 <% props = c.schema_context_properties || %{} %>
-                <tr class="border-b border-gray-100 hover:bg-gray-50">
+                <tr id={"campos-row-#{c.schema_context_field}"} class="border-b border-gray-100 hover:bg-gray-50" data-id={c.schema_context_field}>
+                  <td class="px-1.5 py-1 text-gray-300 jal-manija cursor-grab" title="Arrastrar para reordenar">
+                    <span class="material-symbols-outlined" style="font-size: 16px">drag_indicator</span>
+                  </td>
                   <td class="px-1.5 py-1 text-gray-900 font-mono">{c.schema_context_field}</td>
                   <td class="px-1.5 py-1">
                     <form phx-change="cambiar_etiqueta_campo">
@@ -2054,6 +2100,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
   attr :campos, :list, required: true
+  attr :header, :any, required: true
 
   # "Get View": qué campos ve el usuario final al consultar este catálogo
   # (tabla de CatalogoLive) — expone TODOS los campos reales, marcados
@@ -2069,6 +2116,34 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         <p class="text-gray-500 mb-2">
           Qué campos ve el usuario final en la tabla de este catálogo. Desmarcar un campo no lo borra ni afecta la API — solo lo oculta de la vista.
         </p>
+
+        <div class="flex flex-wrap gap-2 mb-3">
+          <button type="button" phx-click="toggle_mostrar_id_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_id_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_id_en_tabla, do: "✓ ID", else: "ID (oculto)"}
+          </button>
+          <button type="button" phx-click="toggle_mostrar_estado_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_estado_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_estado_en_tabla, do: "✓ Estado", else: "Estado (oculto)"}
+          </button>
+          <button type="button" phx-click="toggle_mostrar_trn_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_trn_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_trn_en_tabla, do: "✓ TRN", else: "TRN (oculto)"}
+          </button>
+        </div>
+        <p class="text-gray-400 text-[11px] mb-3">
+          Columnas de sistema — Estado/TRN solo aparecen igual si el catálogo tiene motor de estados / es transaccional, esto solo los oculta encima de eso.
+        </p>
+
         <%= if @campos == [] do %>
           <p class="text-gray-400">Este catálogo todavía no tiene campos.</p>
         <% else %>
@@ -2094,16 +2169,20 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             <table class="min-w-full mb-2">
               <thead class="bg-gray-50">
                 <tr>
+                  <th class="px-1.5 py-1 border-b border-gray-200"></th>
                   <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Nombre</th>
                   <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Etiqueta</th>
                   <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
                   <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Visible al usuario</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody id="tabla-get-view-ordenable" phx-hook="ListaOrdenable" data-grupo="campos-catalogo-getview">
                 <%= for c <- @campos do %>
                   <% props = c.schema_context_properties || %{} %>
-                  <tr class="border-b border-gray-100 hover:bg-gray-50">
+                  <tr id={"getview-row-#{c.schema_context_field}"} class="border-b border-gray-100 hover:bg-gray-50" data-id={c.schema_context_field}>
+                    <td class="px-1.5 py-1 text-gray-300 jal-manija cursor-grab" title="Arrastrar para reordenar">
+                      <span class="material-symbols-outlined" style="font-size: 16px">drag_indicator</span>
+                    </td>
                     <td class="px-1.5 py-1 text-gray-900 font-mono">{c.schema_context_field}</td>
                     <td class="px-1.5 py-1 text-gray-700">{Map.get(props, "etiqueta")}</td>
                     <td class="px-1.5 py-1 text-gray-600">{Map.get(props, "tipo")}</td>

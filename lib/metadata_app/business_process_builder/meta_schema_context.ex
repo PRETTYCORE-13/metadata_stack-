@@ -833,6 +833,9 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
           schema_set_permissions: header.schema_set_permissions,
           schema_profiles: header.schema_profiles,
           cargar_todos_por_default: header.cargar_todos_por_default,
+          mostrar_id_en_tabla: header.mostrar_id_en_tabla,
+          mostrar_estado_en_tabla: header.mostrar_estado_en_tabla,
+          mostrar_trn_en_tabla: header.mostrar_trn_en_tabla,
           schema_es_transaccional: header.schema_es_transaccional,
           codigo_trn: header.codigo_trn,
           schema_encabezado_catalogo: nombre_encabezado(header.schema_encabezado_id),
@@ -916,6 +919,29 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
         [Enum.map(nombres, &elem(&1, 0)), Enum.map(nombres, &elem(&1, 1))]
       )
     end
+
+    :ok
+  end
+
+  # Reordenar los CAMPOS (meta_schema_detail) de un catálogo -- no confundir
+  # con reordenar_hermanos/1 de arriba (esa es para Headers/carpetas del
+  # árbol de navegación). "orden" acá vive adentro del JSONB
+  # schema_context_properties, no en una columna propia, por eso
+  # jsonb_set en vez del UPDATE simple de reordenar_hermanos/1. A
+  # propósito NO dispara CatalogoGenerador.generar/1 -- el orden es
+  # puramente de presentación (tabla de Campos, orden del form de Alta,
+  # PostView automático), no afecta el schema Ecto compilado ni requiere
+  # ningún ALTER en la tabla física.
+  def reordenar_campos(header_id, campos_en_orden) do
+    Repo.query!(
+      """
+      UPDATE meta_schema_detail AS d
+      SET schema_context_properties = jsonb_set(d.schema_context_properties, '{orden}', to_jsonb(data.orden))
+      FROM (SELECT unnest($1::text[]) AS schema_context_field, unnest($2::int[]) AS orden) AS data
+      WHERE d.schema_context_field = data.schema_context_field AND d.meta_schema_header_id = $3
+      """,
+      [campos_en_orden, Enum.to_list(0..(length(campos_en_orden) - 1)), header_id]
+    )
 
     :ok
   end

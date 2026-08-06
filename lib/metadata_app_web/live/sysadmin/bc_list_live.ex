@@ -381,13 +381,23 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
            seleccionados: nombres,
            catalogos: catalogos,
            problemas: problemas,
-           error: nil
+           error: nil,
+           procesando?: false
          })}
 
       {:error, mensaje} ->
         {:noreply, put_flash(socket, :error, mensaje)}
     end
   end
+
+  # Ignorado mientras se está publicando (defensa en profundidad — el botón
+  # ya desaparece del modal en ese estado, esto cubre un click que haya
+  # quedado en cola de antes): cerrar el modal a mitad de un publicar_paquete/2
+  # ya disparado no lo cancela (sigue corriendo en el Task de
+  # start_async/3 de abajo), solo le haría perder al usuario la pantalla
+  # de "Procesando" — justo lo que no quiere.
+  def handle_event("cancelar_wizard_publicar", _params, %{assigns: %{wizard_publicar: %{procesando?: true}}} = socket),
+    do: {:noreply, socket}
 
   def handle_event("cancelar_wizard_publicar", _params, socket) do
     {:noreply, assign(socket, :wizard_publicar, nil)}
@@ -399,24 +409,23 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # CatalogoGenerador.generar/1), exporta metadata+autómata, arma el bundle
   # y dispara bc-deploy.yml. Todo o nada: si algo falla, el error queda en
   # el modal en vez de cerrarse solo.
+  #
+  # start_async/3 (no una llamada síncrona directa) a propósito, 2026-08-06
+  # a pedido explícito: publicar_paquete/2 tarda unos segundos de verdad
+  # (tar, llamadas de red a GitHub) — corrido síncrono, el proceso de la
+  # LiveView queda bloqueado y un doble-click en el botón encolaba un
+  # SEGUNDO publish. Con start_async/3 el primer click marca
+  # procesando?:true y repinta el modal (spinner, sin botones) ANTES de
+  # que arranque el trabajo lento, así ya no hay botón que doble-clickear.
   def handle_event("confirmar_publicar", _params, socket) do
     %{seleccionados: seleccionados, catalogos: catalogos} = socket.assigns.wizard_publicar
 
-    case publicar_paquete(seleccionados, catalogos) do
-      {:ok, _salida} ->
-        {:noreply,
-         socket
-         |> assign(:wizard_publicar, nil)
-         |> assign(:seleccionados, MapSet.new())
-         |> put_flash(
-           :info,
-           "Publicado — #{Enum.join(seleccionados, ", ")} va(n) camino a producción. Seguí el progreso con \"gh run watch\" o \"gh run list\"."
-         )
-         |> cargar_headers()}
+    socket =
+      socket
+      |> update(:wizard_publicar, &Map.merge(&1, %{procesando?: true, error: nil}))
+      |> start_async(:publicar_paquete, fn -> publicar_paquete(seleccionados, catalogos) end)
 
-      {:error, mensaje} ->
-        {:noreply, update(socket, :wizard_publicar, &Map.put(&1, :error, mensaje))}
-    end
+    {:noreply, socket}
   end
 
   # "Nueva carpeta" — antes vivía en BcNuevoLive, una ventana emergente
@@ -952,6 +961,35 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   defp adjuntar_puede_desplegar(item),
     do: Map.put(item, :puede_desplegar, MetaEstadosAdmin.puede_desplegar?(item.id))
+
+  # Resultado del Task disparado por confirmar_publicar/3 (start_async/3,
+  # ver ahí el motivo). {:ok, {:ok, _}} y {:ok, {:error, _}} son las dos
+  # ramas normales de publicar_paquete/2 (éxito / error controlado);
+  # {:exit, _} es un crash genuino DENTRO del Task (ej. una excepción no
+  # capturada) — sin esta cláusula, ESE caso dejaría el modal colgado en
+  # "Procesando…" para siempre.
+  def handle_async(:publicar_paquete, {:ok, {:ok, _salida}}, socket) do
+    seleccionados = socket.assigns.wizard_publicar.seleccionados
+
+    {:noreply,
+     socket
+     |> assign(:wizard_publicar, nil)
+     |> assign(:seleccionados, MapSet.new())
+     |> put_flash(
+       :info,
+       "Publicado — #{Enum.join(seleccionados, ", ")} va(n) camino a producción. Seguí el progreso con \"gh run watch\" o \"gh run list\"."
+     )
+     |> cargar_headers()}
+  end
+
+  def handle_async(:publicar_paquete, {:ok, {:error, mensaje}}, socket) do
+    {:noreply, update(socket, :wizard_publicar, &Map.merge(&1, %{error: mensaje, procesando?: false}))}
+  end
+
+  def handle_async(:publicar_paquete, {:exit, razon}, socket) do
+    {:noreply,
+     update(socket, :wizard_publicar, &Map.merge(&1, %{error: "Error inesperado: #{inspect(razon)}", procesando?: false}))}
+  end
 
   # Orquesta el paquete completo desde la UI, sin pasar por ningún
   # Mix.Task (a diferencia de "mix motor.publicar", que sí puede) — esto
@@ -2077,57 +2115,72 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div class="bg-white rounded-xl shadow-lg max-w-lg w-full max-h-[90vh] overflow-y-auto p-6">
         <h2 class="text-lg font-bold text-gray-900 mb-1">Publicar paquete</h2>
-        <p class="text-sm text-gray-600 mb-4">
-          Se va a armar un paquete con {length(@wizard.catalogos)} catálogo(s) y disparar el deploy a producción.
-        </p>
 
-        <div :if={@wizard.error} class="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2">
-          {@wizard.error}
-        </div>
+        <%= if @wizard.procesando? do %>
+          <div class="flex flex-col items-center justify-center py-10 gap-3">
+            <svg class="animate-spin h-8 w-8 text-purple-600" viewBox="0 0 24 24" fill="none">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            <p class="text-sm font-semibold text-gray-700">Procesando…</p>
+            <p class="text-xs text-gray-500 text-center max-w-xs">
+              No cierres esta ventana — se está armando el paquete y disparando el deploy a producción.
+            </p>
+          </div>
+        <% else %>
+          <p class="text-sm text-gray-600 mb-4">
+            Se va a armar un paquete con {length(@wizard.catalogos)} catálogo(s) y disparar el deploy a producción.
+          </p>
 
-        <div class="mb-4">
-          <h3 class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1.5">Seleccionados</h3>
-          <ul class="text-sm text-gray-800 space-y-0.5">
-            <li :for={nombre <- @wizard.seleccionados} class="font-mono">{nombre}</li>
-          </ul>
-        </div>
+          <div :if={@wizard.error} class="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2">
+            {@wizard.error}
+          </div>
 
-        <div :if={@automaticos != []} class="mb-4">
-          <h3 class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1.5">
-            Incluidos automáticamente (detalles / referencias)
-          </h3>
-          <ul class="text-sm text-gray-500 space-y-0.5">
-            <li :for={nombre <- @automaticos} class="font-mono">{nombre}</li>
-          </ul>
-        </div>
+          <div class="mb-4">
+            <h3 class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1.5">Seleccionados</h3>
+            <ul class="text-sm text-gray-800 space-y-0.5">
+              <li :for={nombre <- @wizard.seleccionados} class="font-mono">{nombre}</li>
+            </ul>
+          </div>
 
-        <div :if={@wizard.problemas != []} class="mb-4">
-          <h3 class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1.5">Advertencias</h3>
-          <ul class="text-xs text-gray-600 space-y-0.5">
-            <li :for={p <- @wizard.problemas}>[{p.severidad}] {p.mensaje}</li>
-          </ul>
-        </div>
+          <div :if={@automaticos != []} class="mb-4">
+            <h3 class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1.5">
+              Incluidos automáticamente (detalles / referencias)
+            </h3>
+            <ul class="text-sm text-gray-500 space-y-0.5">
+              <li :for={nombre <- @automaticos} class="font-mono">{nombre}</li>
+            </ul>
+          </div>
 
-        <p class="text-xs text-gray-500 mb-4">
-          Orden de publicación: <span class="font-mono">{Enum.join(@wizard.catalogos, " → ")}</span>
-        </p>
+          <div :if={@wizard.problemas != []} class="mb-4">
+            <h3 class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1.5">Advertencias</h3>
+            <ul class="text-xs text-gray-600 space-y-0.5">
+              <li :for={p <- @wizard.problemas}>[{p.severidad}] {p.mensaje}</li>
+            </ul>
+          </div>
 
-        <div class="flex justify-end gap-3 border-t border-gray-200 pt-4">
-          <button
-            type="button"
-            phx-click="cancelar_wizard_publicar"
-            class="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50"
-          >
-            Cancelar
-          </button>
-          <button
-            type="button"
-            phx-click="confirmar_publicar"
-            class="px-4 py-2 rounded bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700"
-          >
-            Publicar y desplegar
-          </button>
-        </div>
+          <p class="text-xs text-gray-500 mb-4">
+            Orden de publicación: <span class="font-mono">{Enum.join(@wizard.catalogos, " → ")}</span>
+          </p>
+
+          <div class="flex justify-end gap-3 border-t border-gray-200 pt-4">
+            <button
+              type="button"
+              phx-click="cancelar_wizard_publicar"
+              class="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              phx-click="confirmar_publicar"
+              phx-disable-with="Procesando…"
+              class="px-4 py-2 rounded bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700 disabled:opacity-60"
+            >
+              Publicar y desplegar
+            </button>
+          </div>
+        <% end %>
       </div>
     </div>
     """
