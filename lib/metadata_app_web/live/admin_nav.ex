@@ -47,6 +47,13 @@ defmodule MetadataAppWeb.AdminNav do
       "toggle_sidebar" ->
         {:noreply, update(socket, :sidebar_open, &(not &1))}
 
+      # Abrir el flyout de una carpeta raíz (ver menu_nodos/1 en
+      # menu_layout.ex) fuerza el riel a colapsado, no un toggle — abrir
+      # el "secundario" (flyout) siempre cierra el "principal" (riel
+      # expandido), sin importar en qué estado estuviera antes.
+      "colapsar_sidebar" ->
+        {:noreply, update(socket, :sidebar_open, fn _abierto -> false end)}
+
       page when page == current_page ->
         {:noreply, socket}
 

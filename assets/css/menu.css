@@ -782,25 +782,54 @@
 }
 
 /* Íconos del riel principal (colapsado o expandido, ver reglas de arriba)
-   en negrita — trazo más grueso para el ícono genérico de carpeta (SVG,
-   stroke), y más peso de fuente para los configurados por catálogo
-   (Material Symbols). Escapado a .pc-platform-sidebar a propósito: NO
-   afecta a los mismos íconos reusados adentro del flyout. */
+   — trazo más grueso para el ícono genérico de carpeta (SVG, stroke).
+   Los configurados por catálogo (Material Symbols, ej. "storefront" de
+   DEMO-Tienda) quedan en peso NORMAL a propósito (2026-08-06, a pedido
+   explícito) — un símbolo relleno a "wght" alto se ve mucho más pesado
+   que el simple contorno de una carpeta, aunque el número sea "parejo"
+   en la escala de la fuente. Escapado a .pc-platform-sidebar a
+   propósito: NO afecta a los mismos íconos reusados adentro del flyout. */
 .pc-platform-sidebar .pc-menu-carpeta-icono-carpeta svg {
   stroke-width: 2.5;
 }
 
 .pc-platform-sidebar .pc-menu-carpeta-icono-carpeta .material-symbols-outlined {
-  font-variation-settings: "FILL" 0, "wght" 700, "GRAD" 0, "opsz" 24;
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
 }
 
 .pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-menu-carpeta-summary {
+  flex-direction: column;
   justify-content: center;
-  padding: 8px !important;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px !important;
 }
 
 .pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-menu-carpeta-summary > span.pc-menu-carpeta-nombre {
   display: none;
+}
+
+/* Debajo del ícono, solo con el riel colapsado (ver pc-menu-carpeta-nombre-corto
+   en menu_nodos/1, menu_layout.ex) — primeras 6 letras de la sección, para
+   no dejar el ícono solo sin ninguna pista de qué es. Oculto por default
+   (riel expandido, donde ya sobra con el nombre completo de al lado). */
+.pc-menu-carpeta-nombre-corto {
+  display: none;
+}
+
+.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-menu-carpeta-nombre-corto {
+  display: block;
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 1.1;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #9ca3af;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 /* Colapsado, cada carpeta es solo su fila-ícono — el contenido de adentro
@@ -1361,6 +1390,10 @@
 
 :root[data-theme="light"] .pc-menu-carpeta-icono-carpeta-activo {
   color: #7c3aed;
+}
+
+:root[data-theme="light"] .pc-menu-carpeta-nombre-corto {
+  color: #6b7280;
 }
 
 :root[data-theme="light"] .pc-submenu-item {
