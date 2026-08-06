@@ -581,6 +581,46 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
+  # "Obligatorio" de un campo ya existente (2026-08-05, a pedido explícito)
+  # — inverso de "opcional" en schema_context_properties (se guarda con
+  # ese nombre por compatibilidad: CatalogoGenerador/MetaCatalogoGenerico
+  # ya lo leen así en cada regeneración, ver @campos_requeridos en
+  # MetaCatalogoGenerico.__using__/1). A propósito SOLO nivel app
+  # (validate_required vía el schema regenerado) — nunca ALTER COLUMN, la
+  # columna física se queda nullable siempre. Por eso, a diferencia de
+  # cambiar_etiqueta_campo/2, este SÍ necesita CatalogoGenerador.generar/1
+  # después de guardar: es lo que recompila el schema con
+  # @campos_requeridos actualizado (ver comentario en
+  # CatalogoGenerador.generar/1 sobre por qué siempre regenera, no solo
+  # cuando hay columnas nuevas).
+  def handle_event("cambiar_obligatorio_campo", %{"campo" => campo, "obligatorio" => valor}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "opcional", valor != "true")
+    actualizar_campo_y_regenerar(socket, detalle, props, "la obligatoriedad")
+  end
+
+  # "Valor default forzoso" — si el campo es obligatorio Y llega vacío al
+  # guardar, MetaCatalogoGenerico.changeset/2 lo rellena con este valor en
+  # vez de rechazar el cambio (ver forzar_defaults/2 ahí). Es una regla
+  # blanda a propósito: nunca bloquea el guardado, solo garantiza que no
+  # quede vacío. Sin sentido para una referencia (no hay un valor
+  # razonable para inventar una FK a ciegas — mismo criterio que
+  # columna_migracion_agregar/3 en CatalogoGenerador), el input
+  # correspondiente ni se muestra para ese tipo.
+  def handle_event("cambiar_valor_default_campo", %{"campo" => campo, "valor_default" => valor}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    valor = String.trim(valor)
+
+    props =
+      if valor == "" do
+        Map.delete(detalle.schema_context_properties, "valor_default")
+      else
+        Map.put(detalle.schema_context_properties, "valor_default", valor)
+      end
+
+    actualizar_campo_y_regenerar(socket, detalle, props, "el valor default")
+  end
+
   # --- Filtros: qué campos numéricos calculan Suma/Promedio/Conteo (y --------
   # opcionalmente Mín/Máx) en la fila de Resumen del catálogo — sección
   # aparte de la tabla de campos de arriba, "cantidad" (el campo real, con
@@ -1063,6 +1103,28 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   defp put_reglas_mensaje(socket, tipo, mensaje) do
     update(socket, :reglas_mensajes, &Map.put(&1, tipo, mensaje))
+  end
+
+  # Compartido por cambiar_obligatorio_campo/2 y cambiar_valor_default_campo/2
+  # — ambos necesitan CatalogoGenerador.generar/1 después de guardar
+  # (a diferencia de cambiar_etiqueta_campo/2 y similares) porque tocan
+  # @campos_requeridos/@campos_meta del schema compilado, no solo un dato
+  # de presentación.
+  defp actualizar_campo_y_regenerar(socket, detalle, props, etiqueta_error) do
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} ->
+        case CatalogoGenerador.generar(socket.assigns.header.schema_context_name) do
+          {:ok, _resultado} ->
+            {:noreply, cargar_motor(socket)}
+
+          {:error, motivo} ->
+            {:noreply,
+             socket |> cargar_motor() |> put_flash(:error, "Se guardó, pero no se pudo regenerar el catálogo: #{motivo}")}
+        end
+
+      {:error, _changeset} ->
+        {:noreply, put_flash(socket, :error, "No se pudo actualizar #{etiqueta_error} de \"#{detalle.schema_context_field}\".")}
+    end
   end
 
   defp guardar_campo_y_generar(socket, header, nombre, propiedades) do
@@ -1700,7 +1762,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Nombre</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Etiqueta</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
-                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Opcional</th>
+                <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Solo validación de la app (el formulario no deja guardar vacío) — la columna en la base de datos se queda nullable siempre">Obligatorio</th>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si el campo obligatorio llega vacío, se rellena con este valor en vez de rechazar el guardado">Default</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Categoría (Ficha → Detalle)</th>
                 <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si aparece como columna en la tabla del tab Detalle de la Ficha 360° — el formulario de al lado siempre muestra todos los campos, esto es solo la tabla">En tabla</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
@@ -1728,7 +1791,25 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                       {Map.get(props, "tipo")}
                     <% end %>
                   </td>
-                  <td class="px-1.5 py-1 text-gray-600">{if Map.get(props, "opcional"), do: "Sí", else: "—"}</td>
+                  <td class="px-1.5 py-1 text-center">
+                    <form phx-change="cambiar_obligatorio_campo">
+                      <input type="hidden" name="campo" value={c.schema_context_field} />
+                      <input type="hidden" name="obligatorio" value="false" />
+                      <input type="checkbox" name="obligatorio" value="true" checked={Map.get(props, "opcional") != true} class="accent-purple-600" />
+                    </form>
+                  </td>
+                  <td class="px-1.5 py-1">
+                    <%= if Map.get(props, "opcional") != true and Map.get(props, "tipo") != "referencia" do %>
+                      <form phx-change="cambiar_valor_default_campo">
+                        <input type="hidden" name="campo" value={c.schema_context_field} />
+                        <input type="text" name="valor_default" value={Map.get(props, "valor_default")}
+                          placeholder="se fuerza si llega vacío"
+                          class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] text-gray-700 w-full min-w-[110px]" />
+                      </form>
+                    <% else %>
+                      <span class="text-gray-300">—</span>
+                    <% end %>
+                  </td>
                   <td class="px-1.5 py-1">
                     <form phx-change="cambiar_categoria">
                       <input type="hidden" name="campo" value={c.schema_context_field} />

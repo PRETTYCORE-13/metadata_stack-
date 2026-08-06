@@ -62,6 +62,10 @@ defmodule MetadataApp.MetaImportExport do
                 [] -> nil
                 campos -> "etiqueta(s) actualizada(s): #{Enum.join(campos, ", ")}"
               end,
+              case sincronizar_obligatorio_campos(existente, contexto["detalles"] || []) do
+                [] -> nil
+                campos -> "obligatoriedad actualizada: #{Enum.join(campos, ", ")}"
+              end,
               if(sincronizar_cargar_todos_por_default(existente, contexto["cargar_todos_por_default"]),
                 do: "\"traer todo por default\" actualizado"
               ),
@@ -208,6 +212,50 @@ defmodule MetadataApp.MetaImportExport do
 
           {:error, changeset} ->
             raise "Error sincronizando etiqueta de \"#{detalle.schema_context_field}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+        end
+      else
+        []
+      end
+    end)
+  end
+
+  # "Obligatorio" (guardado como "opcional" en la metadata, ver
+  # BcMotorLive.cambiar_obligatorio_campo/2) + "valor default forzoso" de
+  # un campo YA existente (2026-08-05, a pedido explícito) — mismo
+  # criterio que sincronizar_etiquetas_campos/2: es enforcement de nivel
+  # APP nada más (validate_required del schema regenerado), nunca toca la
+  # columna física ni corre ALTER COLUMN, así que sincronizarlo a ciegas
+  # es seguro. El schema .ex bundleado ya sale regenerado con el valor
+  # correcto desde "mix gen.catalogos" (parte de motor.publicar, corre
+  # ANTES de armar el bundle) — esto solo mantiene meta_schema_detail (la
+  # metadata, no el código ya compilado) al día con lo que se publicó.
+  defp sincronizar_obligatorio_campos(header, detalles_json) do
+    existentes =
+      header.schema_context_name
+      |> MetaSchemaContext.listar_detalles()
+      |> Map.new(&{&1.schema_context_field, &1})
+
+    detalles_json
+    |> Enum.filter(&Map.has_key?(existentes, &1["schema_context_field"]))
+    |> Enum.flat_map(fn detalle_json ->
+      detalle = Map.fetch!(existentes, detalle_json["schema_context_field"])
+      opcional_nuevo = get_in(detalle_json, ["schema_context_properties", "opcional"])
+      valor_default_nuevo = get_in(detalle_json, ["schema_context_properties", "valor_default"])
+      opcional_actual = get_in(detalle.schema_context_properties, ["opcional"])
+      valor_default_actual = get_in(detalle.schema_context_properties, ["valor_default"])
+
+      if opcional_nuevo != opcional_actual or valor_default_nuevo != valor_default_actual do
+        props =
+          detalle.schema_context_properties
+          |> Map.put("opcional", opcional_nuevo == true)
+          |> Map.put("valor_default", valor_default_nuevo)
+
+        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+          {:ok, _detalle} ->
+            [detalle.schema_context_field]
+
+          {:error, changeset} ->
+            raise "Error sincronizando obligatoriedad de \"#{detalle.schema_context_field}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
         end
       else
         []
