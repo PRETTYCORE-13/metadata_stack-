@@ -1803,8 +1803,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                       <form phx-change="cambiar_valor_default_campo">
                         <input type="hidden" name="campo" value={c.schema_context_field} />
                         <input type="text" name="valor_default" value={Map.get(props, "valor_default")}
-                          placeholder="se fuerza si llega vacío"
-                          class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] text-gray-700 w-full min-w-[110px]" />
+                          title="Valor si es nulo"
+                          class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] text-gray-700 w-11" />
                       </form>
                     <% else %>
                       <span class="text-gray-300">—</span>
