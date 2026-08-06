@@ -244,6 +244,18 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     {:noreply, entrar_contenedor(socket, if(id == "", do: nil, else: id))}
   end
 
+  # "id" acá es el del contenedor "pestanas" en sí (no el de una pestaña
+  # individual) — ver panel_propiedades/1 del tipo "pestanas" más abajo.
+  def handle_event("agregar_pestana", %{"id" => id}, socket) do
+    definicion = MetaPlantillas.agregar_pestana(socket.assigns.definicion, id)
+    {:noreply, aplicar_cambio_grid(socket, definicion)}
+  end
+
+  def handle_event("eliminar_pestana", %{"id" => id}, socket) do
+    definicion = MetaPlantillas.eliminar_pestana(socket.assigns.definicion, id)
+    {:noreply, aplicar_cambio_grid(socket, definicion)}
+  end
+
   # Clic en una celda VACÍA — la deja como destino para "colocar desde la
   # paleta" (grid_colocar_tipo/grid_colocar_campo) y como segundo punto de
   # "Combinar" (la primera celda es el nodo ya seleccionado, @nodo_seleccionado_id).
@@ -1145,9 +1157,20 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     ~H"""
     <div class="flex flex-col gap-1.5 text-xs">
       <p class="text-gray-500 mb-0.5">Entrá a cada pestaña para editar su contenido.</p>
-      <button :for={p <- @nodo["hijos"]} type="button" phx-click="entrar_contenedor" phx-value-id={p["id"]}
-        class="flex items-center justify-between px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 font-semibold hover:border-purple-400 hover:text-purple-700 hover:bg-purple-50/50">
-        {p["propiedades"]["titulo"] || "Pestaña"} <span>→</span>
+      <div :for={p <- @nodo["hijos"]} class="flex items-center gap-1">
+        <button type="button" phx-click="entrar_contenedor" phx-value-id={p["id"]}
+          class="flex-1 flex items-center justify-between px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 font-semibold hover:border-purple-400 hover:text-purple-700 hover:bg-purple-50/50">
+          {p["propiedades"]["titulo"] || "Pestaña"} <span>→</span>
+        </button>
+        <button :if={length(@nodo["hijos"]) > 1} type="button" phx-click="eliminar_pestana" phx-value-id={p["id"]}
+          title="Quitar esta pestaña (se pierde su contenido)"
+          class="px-2 py-1.5 rounded-lg border border-gray-200 text-gray-400 hover:border-red-300 hover:text-red-600">
+          ✕
+        </button>
+      </div>
+      <button type="button" phx-click="agregar_pestana" phx-value-id={@nodo["id"]}
+        class="mt-1 px-2.5 py-1.5 rounded-lg border border-dashed border-gray-300 text-gray-500 font-semibold hover:border-purple-400 hover:text-purple-700">
+        + Agregar pestaña
       </button>
     </div>
     """

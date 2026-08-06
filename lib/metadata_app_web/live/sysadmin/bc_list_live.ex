@@ -862,12 +862,28 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   end
 
   defp cargar_headers(socket) do
-    filtrados =
-      MetaSchemaContext.listar_headers()
-      |> Enum.map(&MetaSchemaContext.item_de_header/1)
-      |> Enum.filter(&coincide_busqueda?(&1, socket.assigns.busqueda))
+    busqueda = socket.assigns.busqueda
+    todos = MetaSchemaContext.listar_headers() |> Enum.map(&MetaSchemaContext.item_de_header/1)
+    {carpetas, hojas} = Enum.split_with(todos, & &1.es_carpeta)
 
-    arbol_completo = MetaSchemaContext.construir_arbol(filtrados)
+    # La búsqueda de texto solo decide qué HOJAS (catálogos/páginas)
+    # sobreviven -- las carpetas SIEMPRE se pasan TODAS a construir_arbol/1.
+    # Si no, una carpeta real que no matchea por texto pero es ancestro de
+    # algo que sí matchea (ej. buscar "material" bajo CROAC/MASTERDATA/
+    # PRODUCTOS) quedaba afuera de la lista de entrada -- construir_arbol/1
+    # nunca se enteraba de su ícono/etiqueta real y la reconstruía como
+    # carpeta "implícita" (ícono genérico "folder", bug real reportado).
+    # Lo que la búsqueda SÍ recorta son las ramas que terminan vacías
+    # después de armar el árbol completo (podar_carpetas_vacias/2) -- salvo
+    # que la carpeta misma haya matcheado por nombre, en cuyo caso se deja
+    # ver vacía (mismo criterio que antes para buscar una carpeta por nombre).
+    hojas_filtradas = Enum.filter(hojas, &coincide_busqueda?(&1, busqueda))
+    ids_carpetas_que_matchean = carpetas |> Enum.filter(&coincide_busqueda?(&1, busqueda)) |> MapSet.new(& &1.id)
+
+    arbol_completo =
+      (carpetas ++ hojas_filtradas)
+      |> MetaSchemaContext.construir_arbol()
+      |> then(fn arbol -> if busqueda == "", do: arbol, else: podar_carpetas_vacias(arbol, ids_carpetas_que_matchean) end)
 
     total_items = length(arbol_completo)
     total_paginas = max(ceil(total_items / @por_pagina), 1)
@@ -890,6 +906,21 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     |> assign(:total_items, total_items)
     |> assign(:inicio, if(total_items == 0, do: 0, else: offset + 1))
     |> assign(:fin, min(offset + @por_pagina, total_items))
+  end
+
+  # Recorre el árbol de abajo hacia arriba: una carpeta sin hijos después
+  # de podar sus propios hijos se elimina, salvo que su `id` esté en
+  # `ids_que_matchean` (matcheó por nombre, se deja ver vacía a propósito).
+  defp podar_carpetas_vacias(nodos, ids_que_matchean) do
+    nodos
+    |> Enum.map(fn
+      %{tipo: :carpeta} = nodo -> %{nodo | hijos: podar_carpetas_vacias(nodo.hijos, ids_que_matchean)}
+      pagina -> pagina
+    end)
+    |> Enum.reject(fn
+      %{tipo: :carpeta, hijos: [], id: id} -> id not in ids_que_matchean
+      _ -> false
+    end)
   end
 
   # Camina el subárbol de una carpeta raíz de esta página, anotando cada

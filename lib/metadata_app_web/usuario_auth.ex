@@ -289,14 +289,52 @@ defmodule MetadataAppWeb.UsuarioAuth do
   end
 
   defp mount_current_scope(socket, session) do
-    Phoenix.Component.assign_new(socket, :current_scope, fn ->
-      {usuario, _} =
-        if usuario_token = session["usuario_token"] do
-          Autenticacion.get_usuario_by_session_token(usuario_token)
-        end || {nil, nil}
+    socket =
+      Phoenix.Component.assign_new(socket, :current_scope, fn ->
+        {usuario, _} =
+          if usuario_token = session["usuario_token"] do
+            Autenticacion.get_usuario_by_session_token(usuario_token)
+          end || {nil, nil}
 
-      hidratar_empresa_activa(Scope.for_usuario(usuario), session["empresa_activa_id"])
-    end)
+        hidratar_empresa_activa(Scope.for_usuario(usuario), session["empresa_activa_id"])
+      end)
+
+    suscribir_notificaciones(socket)
+  end
+
+  # La campanita (NotifBellComponent, ver menu_layout.ex) solo recalcula su
+  # badge cuando update/2 vuelve a correr — sin esto, un alta desde OTRO
+  # proceso (otra pestaña, otro usuario disparando una auditoría) nunca
+  # llegaba a esta pantalla hasta que el usuario recargaba el navegador a
+  # mano. connected?/1 filtra el mount inicial en HTTP (todavía no hay
+  # socket real al que broadcastear) — el segundo mount, ya sobre
+  # websocket, es el que se suscribe de verdad. attach_hook/4 en vez de un
+  # handle_info propio de cada LiveView: un solo lugar cubre TODAS las
+  # pantallas autenticadas (todas pasan por acá), sin duplicar el mismo
+  # handle_info en cada módulo.
+  defp suscribir_notificaciones(socket) do
+    usuario = socket.assigns.current_scope && socket.assigns.current_scope.usuario
+    # Más de un on_mount de este módulo corre en la misma LiveView (el de
+    # la live_session del router + el que cada módulo declara a mano) —
+    # sin este guard, attach_hook/4 explota la segunda vez con "existing
+    # hook :notif_refresh already attached".
+    ya_suscrita? = Map.has_key?(socket.assigns, :notif_refresh)
+
+    if usuario && Phoenix.LiveView.connected?(socket) && not ya_suscrita? do
+      Phoenix.PubSub.subscribe(MetadataApp.PubSub, MetadataApp.Notificaciones.topic(usuario.id))
+
+      socket
+      |> Phoenix.Component.assign(:notif_refresh, 0)
+      |> Phoenix.LiveView.attach_hook(:notif_refresh, :handle_info, fn
+        :nueva_notificacion, socket ->
+          {:halt, Phoenix.Component.assign(socket, :notif_refresh, socket.assigns.notif_refresh + 1)}
+
+        _mensaje, socket ->
+          {:cont, socket}
+      end)
+    else
+      socket
+    end
   end
 
   # Antes esto distinguía "ya estaba logueado" (-> settings) de "recién se

@@ -12,12 +12,15 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "editar"}}
 
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador, CatalogoGenerico}
+  alias MetadataApp.FiltrosDefault
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaReglasCodigo
   alias MetadataApp.Permissions
   alias MetadataAppWeb.AdminNav
   alias Phoenix.LiveView.JS
+
+  import MetadataAppWeb.FiltrosDefaultComponents, only: [panel_filtros_default: 1]
 
   @menu [
     %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
@@ -583,6 +586,46 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
+  # "Obligatorio" de un campo ya existente (2026-08-05, a pedido explícito)
+  # — inverso de "opcional" en schema_context_properties (se guarda con
+  # ese nombre por compatibilidad: CatalogoGenerador/MetaCatalogoGenerico
+  # ya lo leen así en cada regeneración, ver @campos_requeridos en
+  # MetaCatalogoGenerico.__using__/1). A propósito SOLO nivel app
+  # (validate_required vía el schema regenerado) — nunca ALTER COLUMN, la
+  # columna física se queda nullable siempre. Por eso, a diferencia de
+  # cambiar_etiqueta_campo/2, este SÍ necesita CatalogoGenerador.generar/1
+  # después de guardar: es lo que recompila el schema con
+  # @campos_requeridos actualizado (ver comentario en
+  # CatalogoGenerador.generar/1 sobre por qué siempre regenera, no solo
+  # cuando hay columnas nuevas).
+  def handle_event("cambiar_obligatorio_campo", %{"campo" => campo, "obligatorio" => valor}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "opcional", valor != "true")
+    actualizar_campo_y_regenerar(socket, detalle, props, "la obligatoriedad")
+  end
+
+  # "Valor default forzoso" — si el campo es obligatorio Y llega vacío al
+  # guardar, MetaCatalogoGenerico.changeset/2 lo rellena con este valor en
+  # vez de rechazar el cambio (ver forzar_defaults/2 ahí). Es una regla
+  # blanda a propósito: nunca bloquea el guardado, solo garantiza que no
+  # quede vacío. Sin sentido para una referencia (no hay un valor
+  # razonable para inventar una FK a ciegas — mismo criterio que
+  # columna_migracion_agregar/3 en CatalogoGenerador), el input
+  # correspondiente ni se muestra para ese tipo.
+  def handle_event("cambiar_valor_default_campo", %{"campo" => campo, "valor_default" => valor}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    valor = String.trim(valor)
+
+    props =
+      if valor == "" do
+        Map.delete(detalle.schema_context_properties, "valor_default")
+      else
+        Map.put(detalle.schema_context_properties, "valor_default", valor)
+      end
+
+    actualizar_campo_y_regenerar(socket, detalle, props, "el valor default")
+  end
+
   # --- Filtros: qué campos numéricos calculan Suma/Promedio/Conteo (y --------
   # opcionalmente Mín/Máx) en la fila de Resumen del catálogo — sección
   # aparte de la tabla de campos de arriba, "cantidad" (el campo real, con
@@ -618,21 +661,67 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # "Mostrar todos los registros por default" — a diferencia de los
-  # filtros de arriba (calculan Suma/Promedio/Conteo sobre un CAMPO), esto
-  # es a nivel de todo el catálogo: si está prendido, CatalogoLive trae
-  # todos los registros y columnas apenas se abre la tabla, sin esperar
-  # que el usuario final aplique un filtro/búsqueda primero (ver
-  # datos_solicitados?/1 en catalogo_live.ex). El usuario final igual
-  # puede seguir filtrando después con los filtros normales de la tabla —
-  # esto solo cambia si arranca vacía o ya cargada.
+  # "Todos por default" — a diferencia de los filtros de arriba (calculan
+  # Suma/Promedio/Conteo sobre un CAMPO), esto es a nivel de todo el
+  # catálogo: si está prendido, CatalogoLive trae todos los registros y
+  # columnas apenas se abre la tabla, sin esperar que el usuario final
+  # aplique un filtro/búsqueda primero (ver datos_solicitados?/1 en
+  # catalogo_live.ex). Independiente de "Filtro de fecha" — apagar este no
+  # toca el otro, se pueden combinar o usar por separado. El usuario final
+  # igual puede seguir filtrando después con los filtros normales de la
+  # tabla — esto solo cambia si arranca vacía o ya cargada.
   def handle_event("toggle_cargar_todos_por_default", _params, socket) do
     header = socket.assigns.header
     valor = !header.cargar_todos_por_default
 
     case MetaSchemaContext.actualizar_header(header, %{"cargar_todos_por_default" => valor}) do
       {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
-      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Mostrar todos los registros\".")}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Todos por default\".")}
+    end
+  end
+
+  # Sub-filtro de fecha de "Filtros por default" — "primer_dia_anio"/
+  # "ultimo_dia_anio"/"actual" (una sola fecha por calendario, precargada
+  # con el valor obvio de cada modo — el usuario la puede cambiar
+  # después) / "rango" (necesita desde Y hasta, dos calendarios, sin
+  # precargar porque no hay un valor obvio para ninguno de los dos) o ""
+  # para apagarlo — al cambiar de modo se limpian las fechas viejas para
+  # no dejar pegado un valor de un modo distinto (ver
+  # cambiar_filtro_fecha_valor/2 abajo).
+  def handle_event("cambiar_filtro_fecha_modo", %{"modo" => modo}, socket) do
+    header = socket.assigns.header
+    valor_default = FiltrosDefault.valor_default_para_modo(modo)
+
+    attrs = %{
+      "filtro_default_fecha_modo" => if(modo == "", do: nil, else: modo),
+      "filtro_default_fecha_valor" => valor_default,
+      "filtro_default_fecha_valor_hasta" => nil
+    }
+
+    case MetaSchemaContext.actualizar_header(header, attrs) do
+      {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar el filtro de fecha.")}
+    end
+  end
+
+  # "campo" es "desde"/"hasta" (modo "rango", dos inputs) o siempre
+  # "desde" para los modos de una sola fecha ("actual"/"primer_dia_anio"/
+  # "ultimo_dia_anio"). Para estos dos últimos el <input> ya trae min/max
+  # acotando al año en curso (ver FiltrosDefault.min_calendario_unico/1),
+  # pero se re-valida acá server-side porque el min/max de un <input
+  # type="date"> se puede saltear escribiendo el valor a mano.
+  def handle_event("cambiar_filtro_fecha_valor", %{"campo" => campo, "valor" => valor}, socket) do
+    header = socket.assigns.header
+    clave = if campo == "desde", do: "filtro_default_fecha_valor", else: "filtro_default_fecha_valor_hasta"
+
+    if FiltrosDefault.fecha_fuera_de_anio_actual?(header.filtro_default_fecha_modo, valor) do
+      {:noreply,
+       put_flash(socket, :error, "La fecha tiene que ser del año en curso (#{Date.utc_today().year}).")}
+    else
+      case MetaSchemaContext.actualizar_header(header, %{clave => valor}) do
+        {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
+        {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la fecha.")}
+      end
     end
   end
 
@@ -1021,6 +1110,28 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     update(socket, :reglas_mensajes, &Map.put(&1, tipo, mensaje))
   end
 
+  # Compartido por cambiar_obligatorio_campo/2 y cambiar_valor_default_campo/2
+  # — ambos necesitan CatalogoGenerador.generar/1 después de guardar
+  # (a diferencia de cambiar_etiqueta_campo/2 y similares) porque tocan
+  # @campos_requeridos/@campos_meta del schema compilado, no solo un dato
+  # de presentación.
+  defp actualizar_campo_y_regenerar(socket, detalle, props, etiqueta_error) do
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} ->
+        case CatalogoGenerador.generar(socket.assigns.header.schema_context_name) do
+          {:ok, _resultado} ->
+            {:noreply, cargar_motor(socket)}
+
+          {:error, motivo} ->
+            {:noreply,
+             socket |> cargar_motor() |> put_flash(:error, "Se guardó, pero no se pudo regenerar el catálogo: #{motivo}")}
+        end
+
+      {:error, _changeset} ->
+        {:noreply, put_flash(socket, :error, "No se pudo actualizar #{etiqueta_error} de \"#{detalle.schema_context_field}\".")}
+    end
+  end
+
   defp guardar_campo_y_generar(socket, header, nombre, propiedades) do
     case MetaSchemaContext.agregar_detalle(header, %{"schema_context_field" => nombre, "schema_context_properties" => propiedades}) do
       {:ok, _detalle} ->
@@ -1359,7 +1470,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       <div id="motor-panel-getview" class="hidden">
         <.panel_get_view campos={@campos} />
-        <.panel_filtros_resumen campos={@campos} cargar_todos_por_default={@header.cargar_todos_por_default} />
+        <.panel_filtros_resumen campos={@campos} />
+        <.panel_campos_default header={@header} />
+        <.panel_filtros_default header={@header} />
       </div>
 
       <div id="motor-panel-get" class="hidden">
@@ -1707,7 +1820,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Nombre</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Etiqueta</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
-                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Opcional</th>
+                <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Solo validación de la app (el formulario no deja guardar vacío) — la columna en la base de datos se queda nullable siempre">Obligatorio</th>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si el campo obligatorio llega vacío, se rellena con este valor en vez de rechazar el guardado">Default</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Categoría (Ficha → Detalle)</th>
                 <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si aparece como columna en la tabla del tab Detalle de la Ficha 360° — el formulario de al lado siempre muestra todos los campos, esto es solo la tabla">En tabla</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
@@ -1735,7 +1849,25 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                       {Map.get(props, "tipo")}
                     <% end %>
                   </td>
-                  <td class="px-1.5 py-1 text-gray-600">{if Map.get(props, "opcional"), do: "Sí", else: "—"}</td>
+                  <td class="px-1.5 py-1 text-center">
+                    <form phx-change="cambiar_obligatorio_campo">
+                      <input type="hidden" name="campo" value={c.schema_context_field} />
+                      <input type="hidden" name="obligatorio" value="false" />
+                      <input type="checkbox" name="obligatorio" value="true" checked={Map.get(props, "opcional") != true} class="accent-purple-600" />
+                    </form>
+                  </td>
+                  <td class="px-1.5 py-1">
+                    <%= if Map.get(props, "opcional") != true and Map.get(props, "tipo") != "referencia" do %>
+                      <form phx-change="cambiar_valor_default_campo">
+                        <input type="hidden" name="campo" value={c.schema_context_field} />
+                        <input type="text" name="valor_default" value={Map.get(props, "valor_default")}
+                          title="Valor si es nulo"
+                          class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] text-gray-700 w-11" />
+                      </form>
+                    <% else %>
+                      <span class="text-gray-300">—</span>
+                    <% end %>
+                  </td>
                   <td class="px-1.5 py-1">
                     <form phx-change="cambiar_categoria">
                       <input type="hidden" name="campo" value={c.schema_context_field} />
@@ -1916,7 +2048,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # filtro") y cuáles de esos además muestran mínimo/máximo
   # ("Recomendado").
   attr :campos, :list, required: true
-  attr :cargar_todos_por_default, :boolean, required: true
 
   defp panel_filtros_resumen(assigns) do
     numericos = Enum.filter(assigns.campos, &(get_in(&1.schema_context_properties, ["tipo"]) in ["integer", "decimal"]))
@@ -2004,23 +2135,45 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         <% else %>
           <p :if={@filtros_activos != []} class="text-gray-400">Ya agregaste todos los campos numéricos disponibles.</p>
         <% end %>
+      </div>
+    </div>
+    """
+  end
 
-        <hr class="border-gray-200 my-3" />
+  # "Filtros por default": qué ve el usuario final apenas ABRE la tabla
+  # del catálogo, antes de elegir nada — aparte de "Filtros" de arriba
+  # (que calcula Suma/Promedio/Conteo, no filtra filas). Dos opciones
+  # INDEPENDIENTES entre sí (una no depende de la otra prendida, cada una
+  # se puede usar sola o las dos juntas), cada una en su propia caja:
+  #   - "Campos por default": trae TODOS los registros y columnas sin
+  #     esperar filtro/búsqueda.
+  #   - "Filtros por default": acota por fecha de alta (ver Header y
+  #     MetaAuditoria.ids_creados_en_rango/3 — los catálogos generados no
+  #     tienen columna de timestamp propia, se resuelve vía auditoría).
+  attr :header, :any, required: true
 
-        <p class="text-gray-500 mb-2">
-          Traer todos los registros y columnas apenas se abre la tabla, sin esperar un filtro o búsqueda primero. El usuario final igual puede filtrar después con los filtros normales de la tabla.
+  defp panel_campos_default(assigns) do
+    ~H"""
+    <div class="border border-gray-200 rounded-lg mt-4">
+      <div class="px-1.5 ml-2 -mb-2 relative">
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Campos por default</span>
+      </div>
+      <div class="p-3 pt-4 overflow-x-auto">
+        <p class="text-gray-500 mb-3">
+          Trae todos los registros y columnas apenas se abre la tabla, sin esperar un filtro o búsqueda primero. El usuario final igual puede filtrar después con los filtros normales de la tabla.
         </p>
+
         <button type="button"
           phx-click="toggle_cargar_todos_por_default"
           class={[
-            "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors",
-            if(@cargar_todos_por_default, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+            if(@header.cargar_todos_por_default, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
           ]}
         >
-          <%= if @cargar_todos_por_default do %>
-            ✓ Mostrando todos los registros por default — Quitar
+          <%= if @header.cargar_todos_por_default do %>
+            ✓ Campos por default — Quitar
           <% else %>
-            + Agregar todos los registros
+            + Campos por default
           <% end %>
         </button>
       </div>

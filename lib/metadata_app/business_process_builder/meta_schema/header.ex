@@ -20,6 +20,22 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # esto solo cambia el estado inicial.
     field :cargar_todos_por_default, :boolean, default: false
 
+    # "Filtros por default" (bc_motor_live.ex, independiente de
+    # cargar_todos_por_default) — acota lo que ve el usuario final por
+    # fecha de ALTA (cuándo se creó cada uno, ver
+    # MetaAuditoria.ids_creados_en_rango/3 — los catálogos generados no
+    # tienen columna de timestamp propia, se resuelve vía la tabla de
+    # auditoría). Modos: "primer_dia_anio" (desde el 1/1 del AÑO de
+    # filtro_default_fecha_valor, elegido por calendario), "ultimo_dia_anio"
+    # (hasta el 31/12 del año de filtro_default_fecha_valor), "actual" (el
+    # día exacto de filtro_default_fecha_valor, elegido por calendario —
+    # ya no siempre "hoy"), "rango" (usa filtro_default_fecha_valor como
+    # desde y filtro_default_fecha_valor_hasta como hasta, ambos
+    # obligatorios). nil = sin acotar por fecha.
+    field :filtro_default_fecha_modo, :string
+    field :filtro_default_fecha_valor, :date
+    field :filtro_default_fecha_valor_hasta, :date
+
     # PrettyCore TRN (Transaction Reference Number) — separado a propósito
     # de schema_context_type (que ya usa 2 para "carpeta", una dimensión
     # distinta a "es transaccional"). codigo_trn (ej. "VENT") solo es
@@ -70,7 +86,10 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
           :codigo_trn,
           :schema_encabezado_id,
           :orden,
-          :cargar_todos_por_default
+          :cargar_todos_por_default,
+          :filtro_default_fecha_modo,
+          :filtro_default_fecha_valor,
+          :filtro_default_fecha_valor_hasta
         ]
     )
     |> validate_required(@requeridos)
