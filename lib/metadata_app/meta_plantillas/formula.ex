@@ -47,6 +47,7 @@ defmodule MetadataApp.MetaPlantillas.Formula do
   """
 
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerico}
+  alias MetadataApp.MetaPlantillas.FormulaCache
 
   @funciones_agregado ~w(SUM COUNT AVG MIN MAX)
 
@@ -124,6 +125,134 @@ defmodule MetadataApp.MetaPlantillas.Formula do
   end
 
   def tokens_para_mostrar(_formula), do: []
+
+  @doc """
+  Mezcla en `base` (mapa con los valores YA resueltos: campos reales del
+  registro + pseudo-campos de Contexto) el resultado de evaluar TODOS los
+  nodos "campo_calculado" de `definicion` (bajo su propia etiqueta),
+  resolviendo dependencias entre ellos (uno puede referenciar a otro con
+  `{OtroCampo}`, misma sintaxis que un campo real) con guarda anti-ciclos:
+  un campo que depende de sí mismo, directa o indirectamente, se corta sin
+  recursión infinita y queda sin resolver (fail-open, mismo criterio que
+  el resto de este módulo — la fórmula que dependía de eso da error de
+  campo no numérico, no rompe nada).
+
+  Reusado tanto por la Ficha 360° (`FichaLive`, contra los valores reales
+  del registro) como por el Constructor (vista previa de una fórmula
+  ANTES de publicarla, contra un registro de muestra) — un solo lugar de
+  verdad para esta resolución, así nunca se desincronizan entre sí.
+  """
+  @spec resolver_calculados(map() | nil, map()) :: map()
+  def resolver_calculados(definicion, base) do
+    nodos = MetadataApp.MetaPlantillas.nodos_de_tipo(definicion, "campo_calculado")
+
+    Enum.reduce(nodos, base, fn nodo, valores ->
+      nombre = nodo["propiedades"]["etiqueta"]
+
+      if nombre in [nil, ""] or Map.has_key?(valores, nombre) do
+        valores
+      else
+        {_valor, valores2} = resolver_uno(nombre, nodos, valores, MapSet.new())
+        valores2
+      end
+    end)
+  end
+
+  defp resolver_uno(nombre, _nodos, valores, _en_progreso) when is_map_key(valores, nombre) do
+    {Map.get(valores, nombre), valores}
+  end
+
+  defp resolver_uno(nombre, nodos, valores, en_progreso) do
+    if MapSet.member?(en_progreso, nombre) do
+      {nil, valores}
+    else
+      case Enum.find(nodos, &(&1["propiedades"]["etiqueta"] == nombre)) do
+        nil ->
+          {nil, valores}
+
+        nodo ->
+          formula = nodo["propiedades"]["formula"] || ""
+          dependencias = formula |> tokens_para_mostrar() |> Enum.flat_map(&campo_referenciado/1)
+          en_progreso2 = MapSet.put(en_progreso, nombre)
+
+          valores_con_deps =
+            Enum.reduce(dependencias, valores, fn dep, acc ->
+              {_valor, acc2} = resolver_uno(dep, nodos, acc, en_progreso2)
+              acc2
+            end)
+
+          resultado =
+            case evaluar(formula, valores_con_deps) do
+              {:ok, v} -> v
+              {:error, _motivo} -> nil
+            end
+
+          {resultado, Map.put(valores_con_deps, nombre, resultado)}
+      end
+    end
+  end
+
+  defp campo_referenciado({:campo, nombre}), do: [nombre]
+  defp campo_referenciado(_token), do: []
+
+  @doc """
+  Formatea el resultado de `evaluar/2` para mostrarlo — mismo criterio
+  para la Ficha 360° y para la vista previa del Constructor (un solo
+  lugar de verdad, así el Constructor nunca muestra algo distinto de lo
+  que después va a aparecer publicado). `propiedades` es
+  `nodo["propiedades"]` de un "campo_calculado" (`"formato"`:
+  `"numero"`|`"moneda"`|`"porcentaje"`, `"decimales"`: entero 0-10).
+  """
+  @spec formatear({:ok, float() | String.t()} | {:error, term()}, map()) :: String.t()
+  def formatear({:ok, texto}, _propiedades) when is_binary(texto), do: texto
+
+  def formatear({:ok, numero}, propiedades) when is_number(numero) do
+    decimales =
+      case Integer.parse(to_string(propiedades["decimales"] || "2")) do
+        {n, _} when n in 0..10 -> n
+        _ -> 2
+      end
+
+    texto = :erlang.float_to_binary(numero * 1.0, decimals: decimales)
+
+    case propiedades["formato"] do
+      "moneda" -> "$" <> con_separador_miles(texto)
+      "porcentaje" -> texto <> "%"
+      _ -> texto
+    end
+  end
+
+  def formatear({:error, _motivo}, _propiedades), do: "—"
+
+  # "12345.67" -> "12,345.67" (y "-12345.67" -> "-12,345.67") — sin
+  # dependencia nueva, solo para "moneda". Nunca se usa antes de pasar por
+  # float_to_binary/2 arriba, así que siempre llega con "." como separador
+  # decimal (nunca ninguno si decimales: 0).
+  defp con_separador_miles(numero_texto) do
+    case String.split(numero_texto, ".", parts: 2) do
+      [entero, decimales] -> separar_miles(entero) <> "." <> decimales
+      [entero] -> separar_miles(entero)
+    end
+  end
+
+  defp separar_miles(entero) do
+    {signo, digitos} =
+      if String.starts_with?(entero, "-") do
+        {"-", String.trim_leading(entero, "-")}
+      else
+        {"", entero}
+      end
+
+    agrupado =
+      digitos
+      |> String.reverse()
+      |> String.graphemes()
+      |> Enum.chunk_every(3)
+      |> Enum.map_join(",", &Enum.join/1)
+      |> String.reverse()
+
+    signo <> agrupado
+  end
 
   # --- Tokenizer -----------------------------------------------------
 
@@ -318,31 +447,72 @@ defmodule MetadataApp.MetaPlantillas.Formula do
   end
 
   # --- SUM/COUNT/AVG/MIN/MAX(catalogo[.campo]) — agregado, otro catálogo -
+  #
+  # Cacheado con TTL corto (FormulaCache, `@ttl_agregado_ms`): sin esto,
+  # un "campo_calculado" con un agregado recorre el catálogo referenciado
+  # ENTERO en memoria (vía CatalogoGenerico.listar/1 o contar/1) en CADA
+  # evaluación — y en la Ficha 360°, `evaluar/2` se llama en cada render,
+  # que a su vez dispara con CADA tecla tipeada en CUALQUIER campo del
+  # formulario (phx-change="validar"), tenga o no que ver con la fórmula.
+  # Unos pocos segundos de vida alcanzan para absorber una ráfaga de
+  # teclas sin sentir el catálogo entero recorriéndose de nuevo en cada
+  # una — esto no es un dato que tenga que ser exacto al segundo, es un
+  # cálculo en pantalla. Los errores NUNCA se cachean (son baratos: fallan
+  # antes de llegar a listar/contar nada, ver resolver_modulo/2 y
+  # a_atomo_existente/2 más abajo).
+
+  @ttl_agregado_ms :timer.seconds(5)
 
   defp evaluar_agregado("COUNT", arg) do
-    with {:ok, catalogo} <- parse_solo_catalogo(arg),
-         {:ok, modulo} <- resolver_modulo(catalogo) do
-      {:ok, CatalogoGenerico.contar(modulo) * 1.0}
+    with {:ok, catalogo} <- parse_solo_catalogo(arg) do
+      con_cache({"COUNT", catalogo}, fn ->
+        with {:ok, modulo} <- resolver_modulo(catalogo) do
+          {:ok, CatalogoGenerico.contar(modulo) * 1.0}
+        end
+      end)
     end
   end
 
   defp evaluar_agregado(nombre, arg) when nombre in @funciones_agregado do
-    with {:ok, {catalogo, campo}} <- parse_catalogo_campo(arg),
-         {:ok, modulo} <- resolver_modulo(catalogo),
-         {:ok, campo_atom} <- a_atomo_existente(campo, catalogo) do
-      numeros =
-        modulo
-        |> CatalogoGenerico.listar()
-        |> Enum.map(&Map.get(&1, campo_atom))
-        |> Enum.map(&a_numero/1)
-        |> Enum.filter(&match?({:ok, _}, &1))
-        |> Enum.map(fn {:ok, n} -> n end)
+    with {:ok, {catalogo, campo}} <- parse_catalogo_campo(arg) do
+      con_cache({nombre, catalogo, campo}, fn ->
+        with {:ok, modulo} <- resolver_modulo(catalogo),
+             {:ok, campo_atom} <- a_atomo_existente(campo, catalogo) do
+          numeros =
+            modulo
+            |> CatalogoGenerico.listar()
+            |> Enum.map(&Map.get(&1, campo_atom))
+            |> Enum.map(&a_numero/1)
+            |> Enum.filter(&match?({:ok, _}, &1))
+            |> Enum.map(fn {:ok, n} -> n end)
 
-      agregar(nombre, numeros)
+          agregar(nombre, numeros)
+        end
+      end)
     end
   end
 
   defp evaluar_agregado(nombre, _arg), do: {:error, {:funcion_desconocida, nombre}}
+
+  defp con_cache(clave, calculo) do
+    tabla = FormulaCache.tabla()
+    agora = System.monotonic_time(:millisecond)
+
+    case :ets.lookup(tabla, clave) do
+      [{^clave, valor, expira_en}] when expira_en > agora ->
+        {:ok, valor}
+
+      _ ->
+        case calculo.() do
+          {:ok, valor} = ok ->
+            :ets.insert(tabla, {clave, valor, agora + @ttl_agregado_ms})
+            ok
+
+          error ->
+            error
+        end
+    end
+  end
 
   defp agregar(_nombre, []), do: {:ok, 0.0}
   defp agregar("SUM", numeros), do: {:ok, Enum.sum(numeros)}

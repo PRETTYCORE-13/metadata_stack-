@@ -23,6 +23,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
   on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "editar"}}
 
+  alias MetadataApp.Autenticacion.Scope
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerico}
   alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaPlantillas.Formula
@@ -1009,7 +1010,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
             resumen_catalogo={@resumen_catalogo} resumen_funcion={@resumen_funcion} resumen_campo={@resumen_campo}
             lookup_catalogo={@lookup_catalogo} lookup_id={@lookup_id} lookup_campo={@lookup_campo} definicion={@definicion}
             herramienta_calculado={@herramienta_calculado}
-            nombre={@nombre} registro_muestra_id={@registro_muestra_id} />
+            nombre={@nombre} registro_muestra_id={@registro_muestra_id} current_scope={@current_scope} />
           <p :if={!@nodo_seleccionado_id} class="text-xs text-gray-400">Elegí una celda ocupada del grid.</p>
           <.panel_condicion :if={@nodo_seleccionado_id} nodo={MetaPlantillas.buscar_nodo(@definicion, @nodo_seleccionado_id)} campos={@campos} estados={@estados} />
         </div>
@@ -1077,6 +1078,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   attr :definicion, :map, default: %{}
   attr :nombre, :string, default: nil
   attr :registro_muestra_id, :any, default: nil
+  attr :current_scope, :any, default: nil
 
   defp panel_propiedades(%{nodo: %{"tipo" => "seccion"}} = assigns) do
     ~H"""
@@ -1226,7 +1228,14 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   # nunca se desincroniza de lo que realmente se va a evaluar.
   defp panel_propiedades(%{nodo: %{"tipo" => "campo_calculado"}} = assigns) do
     formula_tokens = Formula.tokens_para_mostrar(assigns.nodo["propiedades"]["formula"] || "")
-    assigns = assign(assigns, :formula_tokens, formula_tokens)
+
+    vista_previa =
+      vista_previa_calculado(assigns.nombre, assigns.registro_muestra_id, assigns.campos, assigns.definicion, assigns.nodo, assigns.current_scope)
+
+    assigns =
+      assigns
+      |> assign(:formula_tokens, formula_tokens)
+      |> assign(:vista_previa, vista_previa)
 
     ~H"""
     <div class="flex flex-col gap-2.5 text-xs">
@@ -1410,6 +1419,18 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           <input type="number" name="decimales" min="0" max="10" value={@nodo["propiedades"]["decimales"]} class="w-24 border border-gray-300 rounded px-2 py-1.5" />
         </div>
       </form>
+
+      <div class="mt-1 pt-2.5 border-t border-gray-100">
+        <p class="text-gray-500 font-semibold mb-1">Vista previa — contra un registro real</p>
+        <div class="rounded-lg border border-gray-200 overflow-hidden">
+          <div :if={match?({:ok, _}, @vista_previa)} class="px-2.5 py-2 bg-white">
+            <span class="text-gray-900 font-bold text-sm">{Formula.formatear(@vista_previa, @nodo["propiedades"])}</span>
+          </div>
+          <p :if={match?({:error, _}, @vista_previa)} class="px-2.5 py-2 text-amber-700 bg-amber-50">
+            {mensaje_error_formula(@vista_previa)}
+          </p>
+        </div>
+      </div>
     </div>
     """
   end
@@ -2092,6 +2113,73 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   defp mensaje_vista_previa({:error, :incompleto}), do: "Completá el paso 1 y elegí al menos un campo en el paso 2."
   defp mensaje_vista_previa({:error, :sin_valor}), do: "El registro de muestra no tiene un valor numérico en ese campo."
   defp mensaje_vista_previa({:error, :no_encontrado}), do: "No se encontró un registro con ese id en el catálogo destino."
+
+  # Vista previa de "campo_calculado": a diferencia de la Ficha 360° real
+  # (fail-open, cualquier error se ve como "—", ver Formula.formatear/2),
+  # acá el objetivo es EXACTAMENTE lo contrario — mostrar qué salió mal
+  # (mensaje_error_formula/1) para poder corregir la fórmula antes de
+  # publicarla. Se evalúa contra el registro de muestra de ESTE catálogo
+  # (el mismo que usa el link "Vista previa" del header) + el resultado de
+  # los DEMÁS campo_calculado de @definicion (Formula.resolver_calculados/2,
+  # la misma resolución de dependencias que usa la Ficha real) — así una
+  # fórmula que referencia "{OtroCampo}" con el botón "∑" también se puede
+  # probar acá, con las fórmulas tal como están en memoria ahora mismo
+  # (incluyan o no cambios todavía sin guardar).
+  defp vista_previa_calculado(_nombre, nil, _campos, _definicion, _nodo, _current_scope),
+    do: {:error, :sin_registro_de_muestra}
+
+  defp vista_previa_calculado(nombre, registro_muestra_id, campos, definicion, nodo, current_scope) do
+    formula = nodo["propiedades"]["formula"] || ""
+
+    with modulo when not is_nil(modulo) <- MetaSchemaContext.modulo_por_nombre(nombre) do
+      registro = CatalogoGenerico.obtener!(modulo, registro_muestra_id)
+      valores_reales = Map.new(campos, &{&1.schema_context_field, Map.get(registro, String.to_existing_atom(&1.schema_context_field))})
+      base = Map.merge(contexto_actual(current_scope), valores_reales)
+      valores = Formula.resolver_calculados(definicion, base)
+      Formula.evaluar(formula, valores)
+    else
+      _ -> {:error, :sin_registro_de_muestra}
+    end
+  rescue
+    _ -> {:error, :sin_registro_de_muestra}
+  end
+
+  defp mensaje_error_formula({:error, :sin_registro_de_muestra}), do: "Este catálogo todavía no tiene registros para probar."
+  defp mensaje_error_formula({:error, :formula_invalida}), do: "Fórmula vacía o inválida."
+  defp mensaje_error_formula({:error, :tokens_sobrantes}), do: "Sobran caracteres al final de la fórmula."
+  defp mensaje_error_formula({:error, :condicion_mal_formada}), do: "La condición SI/ENTONCES/SI NO está incompleta o mal armada."
+  defp mensaje_error_formula({:error, :division_por_cero}), do: "División por cero."
+  defp mensaje_error_formula({:error, :parentesis_sin_cerrar}), do: "Falta cerrar un paréntesis."
+  defp mensaje_error_formula({:error, :llave_sin_cerrar}), do: "Falta cerrar una llave { }."
+  defp mensaje_error_formula({:error, :comilla_sin_cerrar}), do: "Falta cerrar una comilla."
+  defp mensaje_error_formula({:error, :expresion_incompleta}), do: "La fórmula quedó incompleta."
+  defp mensaje_error_formula({:error, :token_inesperado}), do: "Hay un carácter o símbolo fuera de lugar."
+  defp mensaje_error_formula({:error, {:campo_no_numerico, nombre}}), do: "\"#{nombre}\" no tiene un valor numérico en el registro de muestra."
+  defp mensaje_error_formula({:error, {:campo_inexistente, catalogo, campo}}), do: "El catálogo \"#{catalogo}\" no tiene un campo \"#{campo}\"."
+  defp mensaje_error_formula({:error, {:registro_no_encontrado, catalogo, id}}), do: "No se encontró el registro ##{id} en \"#{catalogo}\"."
+  defp mensaje_error_formula({:error, {:catalogo_desconocido, catalogo}}), do: "No existe un catálogo \"#{catalogo}\"."
+  defp mensaje_error_formula({:error, {:numero_invalido, texto}}), do: "\"#{texto}\" no es un número válido."
+  defp mensaje_error_formula({:error, {:caracter_invalido, c}}), do: "Carácter no permitido: \"#{c}\"."
+  defp mensaje_error_formula({:error, {:funcion_sin_parentesis, nombre}}), do: "A #{nombre} le falta \"(...)\"."
+  defp mensaje_error_formula({:error, {:funcion_desconocida, nombre}}), do: "\"#{nombre}\" no es una función reconocida — usá SUM/COUNT/AVG/MIN/MAX."
+  defp mensaje_error_formula({:error, {:argumento_invalido, arg}}), do: "Argumento inválido: \"#{arg}\"."
+  defp mensaje_error_formula({:error, motivo}), do: "No se pudo calcular (#{inspect(motivo)})."
+
+  # Mismos pseudo-campos de "Contexto" que la Ficha 360° real (ver
+  # FichaLive.contexto_actual/1) — duplicado a propósito, cada LiveView es
+  # dueño de su propia función privada, la única pieza compartida entre
+  # ambos es el evaluador (Formula).
+  defp contexto_actual(%Scope{usuario: usuario, empresa_activa: empresa}) do
+    %{
+      "hoy" => Date.utc_today(),
+      "usuario_actual" => (usuario && (usuario.alias || usuario.email)) || "",
+      "empresa_activa" => (empresa && empresa.nombre) || ""
+    }
+  end
+
+  defp contexto_actual(_sin_scope) do
+    %{"hoy" => Date.utc_today(), "usuario_actual" => "", "empresa_activa" => ""}
+  end
 
   # Disponible para CUALQUIER tipo de nodo (no solo algunos, a diferencia de
   # panel_propiedades/1) — por eso vive aparte, con su propio evento
