@@ -231,6 +231,41 @@ defmodule MetadataApp.MetaPlantillas do
   end
 
   @doc """
+  Agrega una pestaña nueva al final de un contenedor "pestanas" (`id` es
+  el del contenedor "pestanas" mismo, no el de una pestaña individual —
+  ver panel_propiedades/1 del tipo "pestanas" en el Constructor). El
+  título arranca en "Pestaña N" (N = cuántas ya había + 1), editable
+  después igual que las 2 iniciales.
+  """
+  def agregar_pestana(definicion, id) do
+    mapear_nodos(definicion, fn
+      %{"id" => ^id, "tipo" => "pestanas", "hijos" => hijos} = n ->
+        nueva = put_in(nuevo_nodo("pestana"), ["propiedades", "titulo"], "Pestaña #{length(hijos) + 1}")
+        Map.put(n, "hijos", hijos ++ [nueva])
+
+      n ->
+        n
+    end)
+  end
+
+  @doc """
+  Quita una pestaña (`id` es el de la pestaña individual) de su
+  contenedor "pestanas" padre, junto con todo su contenido. No hace nada
+  si es la última pestaña que queda (un conmutador de una sola pestaña no
+  tiene sentido — el Constructor ya oculta el botón de quitar en ese caso,
+  esto es el respaldo del lado del servidor).
+  """
+  def eliminar_pestana(definicion, id) do
+    mapear_nodos(definicion, fn
+      %{"tipo" => "pestanas", "hijos" => hijos} = n when length(hijos) > 1 ->
+        Map.put(n, "hijos", Enum.reject(hijos, &(&1["id"] == id)))
+
+      n ->
+        n
+    end)
+  end
+
+  @doc """
   Plantilla inicial automática para un catálogo recién generado (llamada
   desde `CatalogoGenerador.generar/1`, solo la primera vez que un catálogo
   se genera — nunca en el resync de "ya existía", para no crear una
