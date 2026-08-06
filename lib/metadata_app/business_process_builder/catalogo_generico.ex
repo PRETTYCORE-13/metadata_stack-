@@ -154,6 +154,22 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     renglones_spec = Keyword.get(opciones, :renglones, %{})
     contexto = Keyword.get(opciones, :contexto, %{})
 
+    # NOTA (2026-08-06): acá debería ir el contexto real (usuario_id/
+    # empresa_id), no `attrs` de nuevo — MetaStateEngine.dar_de_alta/5
+    # nunca ve quién hizo el alta, así que ningún TransicionEvento de
+    # "alta" queda con usuario (ver tab Historial de la Ficha 360°) y el
+    # chequeo automático de permisos por transición
+    # (MetaStateEngine.verificar_permiso_transicion/3) se salta siempre
+    # (mira `Map.has_key?(contexto, "usuario_id")`, y `attrs` no trae esa
+    # llave). Detectado al investigar por qué el Historial no mostraba
+    # usuario — el arreglo (pasar `Map.merge(attrs, contexto_confiable)`,
+    # mismo criterio que aplicar_encabezado/6 en ficha_live.ex) queda
+    # pendiente a propósito: activar el chequeo real de permisos deja sin
+    # poder dar de alta a pty_marcas/pty_productos/pty_prueba/pty_prueba2/
+    # pty_prueba3 (ningún rol tiene el permiso "alta" registrado ahí
+    # todavía) hasta que alguien lo registre y conceda desde Permisos —
+    # corregir esto sin ese paso antes rompe esos catálogos para todos,
+    # incluido administrador.
     resultado =
       case MetadataApp.MetaStateEngine.transicion_alta(catalogo) do
         nil -> crear_simple(schema_mod, attrs, renglones_spec)
@@ -470,10 +486,20 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # MetaSchemaContext). Tope de 500 registros a propósito: un <select> con
   # más opciones que eso deja de ser usable de todos modos (búsqueda con
   # filtro real es Fase 2, ver docs/roadmap-campos-acompanamiento.md).
-  def opciones_referencia(props) do
+  def opciones_referencia(props), do: opciones_referencia(props, %{})
+
+  @doc """
+  Igual que `opciones_referencia/1` pero acotando el catálogo destino con
+  `filtros` (mismo mapa que `listar/4` — ver `aplicar_filtros/2`) antes de
+  traer las filas — usado por un campo "referencia" con "dependencias"
+  configuradas (ver `MetaSchemaContext.resolver_filtros/3`) para traer
+  SOLO las opciones válidas para el valor actual de su campo padre, en vez
+  del catálogo destino entero.
+  """
+  def opciones_referencia(props, filtros) do
     case MetadataApp.BusinessProcessBuilder.MetaSchemaContext.modulo_por_nombre(props["catalogo"]) do
       nil -> []
-      modulo -> modulo |> listar(%{}, limit: 500) |> Enum.map(&{&1.id, etiqueta_para_referencia(&1, props)})
+      modulo -> modulo |> listar(filtros, limit: 500) |> Enum.map(&{&1.id, etiqueta_para_referencia(&1, props)})
     end
   end
 

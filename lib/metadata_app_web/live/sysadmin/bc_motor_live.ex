@@ -58,6 +58,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       |> assign(:campo_form, nil)
       |> assign(:eliminar_campo_form, nil)
       |> assign(:relacion_form, nil)
+      |> assign(:dependencia_form, nil)
       |> assign(:estado_form, nil)
       |> assign(:transicion_form, nil)
       |> assign(:header, header)
@@ -536,23 +537,113 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # Categoría de un campo (acordeón donde cae en la Ficha 360° → tab
-  # Detalle) — sin modal, cambio directo apenas se elige la opción, mismo
-  # criterio inmediato que guardar_get_view/2 de abajo.
-  def handle_event("cambiar_categoria", %{"campo" => campo, "categoria" => categoria}, socket) do
+  # --- Dependencias ("combos en cascada") de un campo referencia -------------
+  # Genérico: no hay ningún nombre de campo fijo acá — "campo_padre" tiene
+  # que ser OTRO campo "referencia" de este mismo catálogo, "campo_remoto"
+  # una columna del catálogo DESTINO de `campo` (mismo `campos_destino` que
+  # ya arma abrir_form_relacion/1, no duplicado). Ver
+  # MetaSchemaContext.resolver_filtros/3 (runtime) y validar_sin_ciclo/3
+  # (acá, antes de guardar).
+  def handle_event("abrir_form_dependencia", %{"campo" => campo}, socket) do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
-    props = Map.put(detalle.schema_context_properties, "categoria", categoria)
+    props = detalle.schema_context_properties
+    catalogo = socket.assigns.header.schema_context_name
 
-    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
-      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
-      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la categoría de \"#{campo}\".")}
+    campos_destino =
+      props["catalogo"]
+      |> MetaSchemaContext.listar_detalles()
+      |> Enum.filter(& &1.schema_context_properties["visible"])
+
+    # Un campo que YA depende (directa o transitivamente) de `campo` no
+    # puede ofrecerse como su padre — sería un ciclo inmediato. Filtro acá
+    # para que el <select> ni siquiera lo muestre; validar_sin_ciclo/3
+    # vuelve a chequear al guardar, por las dudas (ej. dos pestañas
+    # abiertas a la vez).
+    descendientes = catalogo |> MetaSchemaContext.descendientes(campo) |> MapSet.new()
+
+    otros_referencia =
+      socket.assigns.campos
+      |> Enum.filter(&(&1.schema_context_properties["tipo"] == "referencia" and &1.schema_context_field != campo))
+      |> Enum.reject(&MapSet.member?(descendientes, &1.schema_context_field))
+
+    {:noreply,
+     assign(socket, :dependencia_form, %{
+       "campo" => campo,
+       "catalogo" => catalogo,
+       "catalogo_destino_label" => MetaSchemaContext.obtener_header_por_nombre(props["catalogo"]).schema_context_label,
+       "campos_destino" => campos_destino,
+       "otros_referencia" => otros_referencia,
+       "dependencias" => props["dependencias"] || [],
+       "descendientes" => MetaSchemaContext.descendientes(catalogo, campo),
+       "error" => nil
+     })}
+  end
+
+  def handle_event("cerrar_form_dependencia", _params, socket) do
+    {:noreply, assign(socket, :dependencia_form, nil)}
+  end
+
+  def handle_event("dependencia_agregar", _params, socket) do
+    nueva = %{"campo_padre" => "", "campo_remoto" => "", "obligatorio" => true}
+    {:noreply, update(socket, :dependencia_form, &Map.update!(&1, "dependencias", fn deps -> deps ++ [nueva] end))}
+  end
+
+  def handle_event("dependencia_quitar", %{"indice" => indice}, socket) do
+    i = String.to_integer(indice)
+    {:noreply, update(socket, :dependencia_form, &Map.update!(&1, "dependencias", fn deps -> List.delete_at(deps, i) end))}
+  end
+
+  # phx-change del form entero — llega con TODAS las filas de una
+  # (`dependencias[0][campo_padre]`, `dependencias[1][campo_padre]`, ...),
+  # Plug ya las decodifica como mapa con llaves "0"/"1"/... (mismo truco
+  # que renglones[IDX][...] en FichaLive) — se reordena acá una sola vez.
+  def handle_event("dependencia_cambiar", %{"dependencias" => deps_params}, socket) do
+    dependencias =
+      deps_params
+      |> Enum.sort_by(fn {indice, _valores} -> String.to_integer(indice) end)
+      |> Enum.map(fn {_indice, valores} ->
+        %{
+          "campo_padre" => valores["campo_padre"],
+          "campo_remoto" => valores["campo_remoto"],
+          "obligatorio" => valores["obligatorio"] == "true"
+        }
+      end)
+
+    {:noreply, update(socket, :dependencia_form, &Map.put(&1, "dependencias", dependencias))}
+  end
+
+  def handle_event("guardar_dependencia", _params, socket) do
+    %{"campo" => campo, "catalogo" => catalogo, "dependencias" => dependencias} = socket.assigns.dependencia_form
+
+    dependencias_validas =
+      Enum.filter(dependencias, &(&1["campo_padre"] not in [nil, ""] and &1["campo_remoto"] not in [nil, ""]))
+
+    case MetaSchemaContext.validar_sin_ciclo(catalogo, campo, dependencias_validas) do
+      :ok ->
+        detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+        props = Map.put(detalle.schema_context_properties, "dependencias", dependencias_validas)
+
+        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+          {:ok, _detalle} ->
+            {:noreply,
+             socket
+             |> assign(:dependencia_form, nil)
+             |> put_flash(:info, "Dependencia de \"#{campo}\" actualizada.")
+             |> cargar_motor()}
+
+          {:error, changeset} ->
+            {:noreply, update(socket, :dependencia_form, &Map.put(&1, "error", resumen_errores(changeset)))}
+        end
+
+      {:error, motivo} ->
+        {:noreply, update(socket, :dependencia_form, &Map.put(&1, "error", motivo))}
     end
   end
 
   # "En tabla" de un campo — si aparece como columna en la tabla del tab
   # Detalle de la Ficha 360° (catálogos con muchos campos quieren mostrar
   # solo un subconjunto ahí; el formulario de al lado siempre muestra
-  # todos). Mismo criterio inmediato que cambiar_categoria/2 arriba.
+  # todos). Guardado inmediato, sin modal.
   def handle_event("cambiar_mostrar_en_tabla", %{"campo" => campo, "mostrar_en_tabla" => valor}, socket) do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
     props = Map.put(detalle.schema_context_properties, "mostrar_en_tabla", valor == "true")
@@ -564,8 +655,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
   # Etiqueta de un campo ya existente (2026-08-04, a pedido explícito) —
-  # mismo criterio inmediato que cambiar_categoria/cambiar_mostrar_en_tabla
-  # de arriba: sin modal, guarda directo al perder foco (evento "change"
+  # mismo criterio inmediato que cambiar_mostrar_en_tabla de arriba: sin
+  # modal, guarda directo al perder foco (evento "change"
   # nativo de un <input type="text">, no dispara por cada tecla). Antes
   # solo se podía definir al crear el campo — ver
   # MetaImportExport.sincronizar_etiquetas_campos/2 para la otra mitad
@@ -632,7 +723,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # su Nombre/Etiqueta/Tipo/Visible) no tiene nada que ver con esto: acá
   # solo se elige, de la lista de campos numéricos del catálogo, cuáles
   # participan del Resumen. Guardado inmediato, mismo criterio que
-  # cambiar_categoria/2 y cambiar_mostrar_en_tabla/2 arriba.
+  # cambiar_mostrar_en_tabla/2 arriba.
   def handle_event("agregar_filtro_resumen", %{"campo" => campo} = params, socket) do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
 
@@ -1527,6 +1618,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     <.modal_estado :if={@estado_form} form={@estado_form} />
     <.modal_transicion :if={@transicion_form} form={@transicion_form} estados={@estados} campos={@campos} catalogos_detalle={@catalogos_detalle} />
     <.modal_relacion :if={@relacion_form} form={@relacion_form} local_label={@header.schema_context_label} />
+    <.modal_dependencia :if={@dependencia_form} form={@dependencia_form} />
     """
   end
 
@@ -1822,7 +1914,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
                 <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Solo validación de la app (el formulario no deja guardar vacío) — la columna en la base de datos se queda nullable siempre">Obligatorio</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si el campo obligatorio llega vacío, se rellena con este valor en vez de rechazar el guardado">Default</th>
-                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Categoría (Ficha → Detalle)</th>
                 <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si aparece como columna en la tabla del tab Detalle de la Ficha 360° — el formulario de al lado siempre muestra todos los campos, esto es solo la tabla">En tabla</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
@@ -1867,15 +1958,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                     <% else %>
                       <span class="text-gray-300">—</span>
                     <% end %>
-                  </td>
-                  <td class="px-1.5 py-1">
-                    <form phx-change="cambiar_categoria">
-                      <input type="hidden" name="campo" value={c.schema_context_field} />
-                      <select name="categoria" class="border border-gray-300 rounded px-1 py-0.5 text-[11px]">
-                        <option :for={{codigo, etiqueta} <- MetaSchemaContext.categorias_campo()} value={codigo}
-                          selected={MetaSchemaContext.categoria_campo(props) == codigo}>{etiqueta}</option>
-                      </select>
-                    </form>
                   </td>
                   <td class="px-1.5 py-1 text-center">
                     <form phx-change="cambiar_mostrar_en_tabla">
@@ -1931,6 +2013,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Catálogo destino</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campos que trae</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campos que muestra allá</th>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Combo en cascada: qué otro campo referencia de este catálogo tiene que elegirse primero">Depende de</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
             </thead>
@@ -1939,6 +2022,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <% props = c.schema_context_properties %>
                 <% traidos = Map.get(props, "campos_acompanamiento", []) %>
                 <% mostrados = Map.get(props, "campos_relacion", []) %>
+                <% dependencias = Map.get(props, "dependencias", []) %>
                 <tr class="border-b border-gray-100 hover:bg-gray-50">
                   <td class="px-1.5 py-1 text-gray-900 font-mono">{c.schema_context_field}</td>
                   <td class="px-1.5 py-1 text-gray-700 font-mono">{Map.get(props, "catalogo")}</td>
@@ -1956,9 +2040,18 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                       {Enum.join(mostrados, ", ")}
                     <% end %>
                   </td>
-                  <td class="px-1.5 py-1">
+                  <td class="px-1.5 py-1 text-gray-600">
+                    <%= if dependencias == [] do %>
+                      <span class="text-gray-400">—</span>
+                    <% else %>
+                      {dependencias |> Enum.map(& &1["campo_padre"]) |> Enum.join(" + ")}
+                    <% end %>
+                  </td>
+                  <td class="px-1.5 py-1 whitespace-nowrap">
                     <button type="button" phx-click="abrir_form_relacion" phx-value-campo={c.schema_context_field}
-                      class="text-blue-600 hover:text-blue-800 text-[11px] font-semibold">Configurar</button>
+                      class="text-blue-600 hover:text-blue-800 text-[11px] font-semibold mr-2">Configurar</button>
+                    <button type="button" phx-click="abrir_form_dependencia" phx-value-campo={c.schema_context_field}
+                      class="text-purple-600 hover:text-purple-800 text-[11px] font-semibold">Cascada</button>
                   </td>
                 </tr>
               <% end %>
@@ -3315,6 +3408,120 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
   attr :form, :map, required: true
+
+  # "Dependencia o filtro en cascada" de un campo referencia (combos en
+  # cascada, ver MetaSchemaContext.resolver_filtros/3 y
+  # validar_sin_ciclo/3) — lanzado desde el botón "Cascada" del panel
+  # "Relaciones". Genérico: "campo_padre" siempre es OTRO campo
+  # "referencia" YA CREADO en este mismo catálogo (nunca un nombre fijo
+  # como "estado_id"), "campo_remoto" siempre una columna real del
+  # catálogo DESTINO de `campo` — Estado/Municipio/Localidad es apenas un
+  # caso posible entre muchos (Empresa→Sucursal→Almacén, Marca→Modelo,
+  # etc.), no hay nada acá que lo asuma.
+  defp modal_dependencia(assigns) do
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-lg w-full text-xs max-h-[90vh] overflow-y-auto">
+        <div class="px-4 pt-4 pb-3 border-b border-gray-100 flex items-start justify-between gap-3">
+          <div class="flex items-start gap-2.5">
+            <span class="material-symbols-outlined text-purple-600 mt-0.5" style="font-size:20px">stacked_line_chart</span>
+            <div>
+              <h2 class="text-sm font-bold text-gray-900">Dependencia o filtro en cascada</h2>
+              <p class="text-gray-500 mt-0.5">
+                De qué otro campo depende <strong class="font-mono">{@form["campo"]}</strong> para acotar sus opciones — ej.
+                Municipio solo trae los que pertenecen al Estado ya elegido.
+              </p>
+            </div>
+          </div>
+          <button type="button" phx-click="cerrar_form_dependencia" class="text-gray-400 hover:text-gray-700 flex-shrink-0">
+            <span class="material-symbols-outlined" style="font-size:20px">close</span>
+          </button>
+        </div>
+
+        <div class="p-4">
+          <div :if={@form["error"]} class="bg-red-50 text-red-700 rounded-lg px-2.5 py-1.5 mb-3">{@form["error"]}</div>
+
+          <%= if @form["otros_referencia"] == [] do %>
+            <p class="text-gray-400 mb-3">
+              Este catálogo no tiene otro campo tipo <span class="font-mono">referencia</span> (que no dependa ya de
+              <strong class="font-mono">{@form["campo"]}</strong>) del que pueda depender todavía.
+            </p>
+            <div class="flex justify-end">
+              <button type="button" phx-click="cerrar_form_dependencia" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
+                Cerrar
+              </button>
+            </div>
+          <% else %>
+            <form phx-change="dependencia_cambiar" phx-submit="guardar_dependencia">
+              <%= if @form["dependencias"] == [] do %>
+                <p class="text-gray-400 mb-3">
+                  <strong class="font-mono">{@form["campo"]}</strong> no depende de nada todavía — siempre trae
+                  <strong>{@form["catalogo_destino_label"]}</strong> entero.
+                </p>
+              <% else %>
+                <div class="flex flex-col gap-2 mb-3">
+                  <%= for {dep, i} <- Enum.with_index(@form["dependencias"]) do %>
+                    <div class="border border-gray-200 rounded-lg p-2.5">
+                      <div class="flex items-center justify-between mb-1.5">
+                        <span class="text-gray-500 font-semibold">Depende de</span>
+                        <button type="button" phx-click="dependencia_quitar" phx-value-indice={i} class="text-red-600 hover:text-red-800 font-semibold">
+                          Quitar
+                        </button>
+                      </div>
+                      <div class="grid grid-cols-2 gap-2">
+                        <div>
+                          <label class="block text-gray-500 mb-0.5">Campo padre</label>
+                          <select name={"dependencias[#{i}][campo_padre]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                            <option value="">— Elegir —</option>
+                            <option :for={c <- @form["otros_referencia"]} value={c.schema_context_field} selected={dep["campo_padre"] == c.schema_context_field}>
+                              {c.schema_context_properties["etiqueta"] || c.schema_context_field}
+                            </option>
+                          </select>
+                        </div>
+                        <div>
+                          <label class="block text-gray-500 mb-0.5">Filtrar {@form["catalogo_destino_label"]} por</label>
+                          <select name={"dependencias[#{i}][campo_remoto]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                            <option value="">— Elegir —</option>
+                            <option :for={c <- @form["campos_destino"]} value={c.schema_context_field} selected={dep["campo_remoto"] == c.schema_context_field}>
+                              {c.schema_context_properties["etiqueta"] || c.schema_context_field}
+                            </option>
+                          </select>
+                        </div>
+                      </div>
+                      <label class="flex items-center gap-1.5 mt-1.5">
+                        <input type="hidden" name={"dependencias[#{i}][obligatorio]"} value="false" />
+                        <input type="checkbox" name={"dependencias[#{i}][obligatorio]"} value="true" checked={dep["obligatorio"] != false} class="accent-purple-600" />
+                        <span class="text-gray-600">Obligatorio — deshabilitar {@form["campo"]} hasta elegir esto</span>
+                      </label>
+                    </div>
+                  <% end %>
+                </div>
+              <% end %>
+
+              <button type="button" phx-click="dependencia_agregar" class="text-purple-700 hover:text-purple-900 font-semibold mb-3">
+                + Agregar dependencia
+              </button>
+
+              <div :if={@form["descendientes"] != []} class="bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 mb-3">
+                <p class="text-gray-500">Campos que ya dependen de <strong class="font-mono">{@form["campo"]}</strong> (se limpian solos si este cambia):</p>
+                <p class="font-semibold text-gray-800">{Enum.join(@form["descendientes"], " → ")}</p>
+              </div>
+
+              <div class="flex justify-end gap-2">
+                <button type="button" phx-click="cerrar_form_dependencia" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
+                  Cancelar
+                </button>
+                <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">
+                  Guardar
+                </button>
+              </div>
+            </form>
+          <% end %>
+        </div>
+      </div>
+    </div>
+    """
+  end
 
   defp modal_estado(assigns) do
     ~H"""

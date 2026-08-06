@@ -86,6 +86,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
         |> cast(MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.forzar_defaults(attrs, @campos_meta), @campos)
         |> validate_required(@campos_requeridos, message: "no puede quedar vacío")
         |> MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.aplicar_validaciones(@campos_meta)
+        |> MetadataApp.BusinessProcessBuilder.MetaSchemaContext.validar_dependencias_referencia(unquote(tabla))
         |> unique_constraint(@campos, name: @nombre_indice, message: "ya existe un registro con estos valores")
       end
     end

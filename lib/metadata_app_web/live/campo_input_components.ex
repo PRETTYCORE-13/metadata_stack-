@@ -28,6 +28,7 @@ defmodule MetadataAppWeb.CampoInputComponents do
   attr :opciones, :list, default: []
   attr :id, :string, default: nil
   attr :disabled, :boolean, default: false
+  attr :mensaje_dependencia, :string, default: nil
 
   def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
     assigns = assign_name(assigns)
@@ -99,14 +100,16 @@ defmodule MetadataAppWeb.CampoInputComponents do
       |> assign(:dom_id, assigns.id || "campo-#{String.replace(assigns.name, ~r/[\[\]]/, "-")}")
       |> assign(:opciones_json, Jason.encode!(Enum.map(assigns.opciones, fn {id, etiqueta} -> %{id: to_string(id), etiqueta: etiqueta} end)))
       |> assign(:etiqueta_actual, etiqueta_para_valor(assigns.opciones, assigns.valor))
+      |> assign(:placeholder, (assigns.disabled && assigns.mensaje_dependencia) || "Escribí o F2 para buscar…")
 
     ~H"""
     <div>
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
-      <div id={@dom_id} phx-hook="ReferenciaField" data-opciones={@opciones_json} class="relative">
+      <div id={@dom_id} phx-hook="ReferenciaField" data-opciones={@opciones_json}
+        data-disabled={to_string(@disabled)} data-mensaje={@mensaje_dependencia} class="relative">
         <input type="hidden" name={@name} value={@valor} disabled={@disabled} data-campo-hidden />
         <input type="text" autocomplete="off" value={@etiqueta_actual} required={@required} disabled={@disabled} data-campo-texto
-          placeholder="Escribí o F2 para buscar…"
+          placeholder={@placeholder}
           class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
         <ul data-campo-lista role="listbox"
           class="hidden absolute left-0 right-0 z-20 mt-0.5 max-h-40 overflow-auto rounded border border-gray-200 bg-white shadow-lg"></ul>

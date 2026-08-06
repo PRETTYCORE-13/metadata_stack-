@@ -21,17 +21,47 @@ function escaparHtml(valor) {
 
 export default {
   mounted() {
-    this.opciones = JSON.parse(this.el.dataset.opciones || "[]")
     this.hidden = this.el.querySelector("[data-campo-hidden]")
     this.texto = this.el.querySelector("[data-campo-texto]")
     this.lista = this.el.querySelector("[data-campo-lista]")
     this.resaltado = -1
     this.filtradas = []
+    this.leerDataset()
 
     this.texto.addEventListener("keydown", (e) => this.onKeydown(e))
     this.texto.addEventListener("input", () => this.filtrar(this.texto.value))
     this.texto.addEventListener("blur", () => this.cerrar())
     this.lista.addEventListener("mousedown", (e) => this.onMousedownLista(e))
+  },
+
+  // Referencia dependiente ("combo en cascada", ver
+  // MetaSchemaContext.resolver_filtros/3): a diferencia del resto de este
+  // hook (que nunca vuelve a tocar el servidor), `data-opciones` SÍ puede
+  // cambiar entre renders para un campo con dependencias — cuando el
+  // usuario elige/cambia su campo padre (ej. Estado), el server recalcula
+  // las opciones del hijo (Municipio) y LiveView parchea este mismo <div>
+  // (id estable, nunca se remonta). Sin esto, `this.opciones` quedaba
+  // congelada con el dataset del primer mount para siempre.
+  updated() {
+    this.leerDataset()
+    // Cualquier lista abierta mostraría opciones del padre anterior —
+    // nunca queda colgada entre un cambio de padre y el siguiente F2/tecla.
+    this.cerrar()
+
+    // Red de seguridad: si el valor ya elegido dejó de estar entre las
+    // opciones nuevas (el server debería haberlo limpiado él mismo, ver
+    // MetaSchemaContext.limpiar_descendientes/3, pero un hook robusto no
+    // depende solo de eso), se limpia acá también.
+    if (this.hidden.value && !this.opciones.some((o) => String(o.id) === this.hidden.value)) {
+      this.hidden.value = ""
+      this.texto.value = ""
+    }
+  },
+
+  leerDataset() {
+    this.opciones = JSON.parse(this.el.dataset.opciones || "[]")
+    this.deshabilitado = this.el.dataset.disabled === "true"
+    this.texto.placeholder = this.deshabilitado && this.el.dataset.mensaje ? this.el.dataset.mensaje : "Escribí o F2 para buscar…"
   },
 
   abierta() {
