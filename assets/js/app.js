@@ -180,6 +180,31 @@ const PersistirSidebarAbierto = {
   },
 }
 
+// Una carpeta raíz del riel (.pc-menu-carpeta-summary-raiz, ver
+// menu_nodos/1 en menu_layout.ex) controla su propio [open] a mano —
+// abrir el flyout siempre colapsa el riel (o viceversa), un
+// JS.set_attribute/JS.remove_attribute explícito en el phx-click. El
+// problema: un <summary> dentro de un <details> SIEMPRE togglea su
+// padre como "acción por default" del click, sin importar qué haga
+// el phx-click — carrera confirmada con un MutationObserver: el
+// atributo queda en true, y ~6-10ms después el toggle nativo lo
+// revierte (o lo vuelve a poner, según el estado de arranque),
+// pisando lo que se acababa de pedir. preventDefault() acá, en fase de
+// CAPTURA (antes de que el navegador dispare esa acción por default),
+// lo bloquea del todo — no hace stopPropagation, así que el phx-click
+// de LiveView (que escucha en burbuja) sigue disparando normal.
+const EvitarToggleNativoCarpetas = {
+  mounted() {
+    this._alClick = (e) => {
+      if (e.target.closest(".pc-menu-carpeta-summary-raiz")) e.preventDefault()
+    }
+    this.el.addEventListener("click", this._alClick, true)
+  },
+  destroyed() {
+    this.el.removeEventListener("click", this._alClick, true)
+  },
+}
+
 // Filtra el árbol del menú sin ir al servidor — el menú se pinta en varias
 // pantallas (InicioLive, CatalogoLive, BcListLive, BcMotorLive...), así que
 // resolverlo del lado del cliente evita cablear el mismo estado de búsqueda
@@ -674,7 +699,7 @@ const AbrirVistaPrevia = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario},
 })
 
 // Show progress bar on live navigation and form submits
