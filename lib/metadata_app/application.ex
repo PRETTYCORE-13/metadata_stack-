@@ -18,6 +18,12 @@ defmodule MetadataApp.Application do
       # Dueño de la tabla ETS de permisos efectivos (RBAC) — separado del
       # proceso que consulta para que la cache sobreviva su muerte.
       MetadataApp.Permissions.Cache,
+      # Idem, para los agregados (SUM/COUNT/AVG/MIN/MAX) que Formula
+      # calcula sobre otro catálogo dentro de un "campo_calculado" — sin
+      # esto, cada tecla tipeada en la Ficha 360° dispara un recorrido
+      # completo del catálogo referenciado, tenga o no que ver con lo que
+      # se está tipeando.
+      MetadataApp.MetaPlantillas.FormulaCache,
       # Start a worker by calling: MetadataApp.Worker.start_link(arg)
       # {MetadataApp.Worker, arg},
       # Start to serve requests, typically the last entry

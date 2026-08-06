@@ -10,6 +10,10 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
   #   :tabla_referenciada — FK a otro catálogo (tipo Ecto queda :integer)
   #   :unico_en          — {tabla_externa, campo_externo}, unicidad cross-tabla
   #   :opcional          — true: no entra a validate_required (default: todo campo es obligatorio)
+  #   :valor_default     — solo con opcional != true: si el campo llega vacío,
+  #                        se fuerza este valor en vez de rechazar el cambio
+  #                        (ver forzar_defaults/2) — "obligatorio" blando, sin
+  #                        tocar la columna física (esa sigue nullable)
   defmacro __using__(opts) do
     tabla = Keyword.fetch!(opts, :tabla)
     campos_ast = Keyword.fetch!(opts, :campos)
@@ -79,7 +83,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
 
       def changeset(struct, attrs) do
         struct
-        |> cast(attrs, @campos)
+        |> cast(MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.forzar_defaults(attrs, @campos_meta), @campos)
         |> validate_required(@campos_requeridos, message: "no puede quedar vacío")
         |> MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.aplicar_validaciones(@campos_meta)
         |> unique_constraint(@campos, name: @nombre_indice, message: "ya existe un registro con estos valores")
@@ -116,6 +120,39 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
   end
 
   import Ecto.Changeset
+
+  # "Obligatorio + valor default forzoso" (2026-08-05, a pedido explícito)
+  # — regla de negocio BLANDA, no de integridad de datos: la columna
+  # física se queda nullable siempre (sin ALTER COLUMN, sin verificar
+  # NULLs existentes en producción antes de nada). Opera sobre `attrs`
+  # ANTES de cast/2 a propósito, no con put_change/3 después: así el valor
+  # default (guardado como texto plano en la metadata) pasa por el mismo
+  # casteo de tipo que cualquier valor que llegara de un formulario real
+  # (string -> integer/decimal/date/etc.), en vez de tener que reimplementar
+  # ese casteo acá a mano. Un campo opcional que llega vacío se queda
+  # vacío -- es una elección legítima de quien carga el dato, no un hueco
+  # que forzar a rellenar.
+  def forzar_defaults(attrs, campos_meta) do
+    Enum.reduce(campos_meta, attrs, fn {campo, _tipo, opciones}, acc ->
+      aplicar_default_forzoso(acc, campo, opciones)
+    end)
+  end
+
+  defp aplicar_default_forzoso(attrs, campo, %{opcional: opcional, valor_default: valor_default})
+       when opcional != true and valor_default not in [nil, ""] do
+    if valor_en_blanco?(attrs, campo) do
+      attrs |> Map.delete(campo) |> Map.put(Atom.to_string(campo), valor_default)
+    else
+      attrs
+    end
+  end
+
+  defp aplicar_default_forzoso(attrs, _campo, _opciones), do: attrs
+
+  defp valor_en_blanco?(attrs, campo) do
+    valor = Map.get(attrs, campo, Map.get(attrs, Atom.to_string(campo)))
+    valor in [nil, ""]
+  end
 
   def aplicar_validaciones(changeset, campos_meta) do
     Enum.reduce(campos_meta, changeset, fn {campo, _tipo, opciones}, cs ->

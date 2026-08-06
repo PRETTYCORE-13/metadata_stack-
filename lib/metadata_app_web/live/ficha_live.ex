@@ -1525,7 +1525,7 @@ defmodule MetadataAppWeb.FichaLive do
   # el evaluador es un campo más del mapa, como cualquier {campo} real).
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "campo_calculado"}} = assigns) do
     formula = assigns.nodo["propiedades"]["formula"] || ""
-    resultado = formula |> Formula.evaluar(assigns.edicion.calculados) |> formatear_calculado(assigns.nodo["propiedades"])
+    resultado = formula |> Formula.evaluar(assigns.edicion.calculados) |> Formula.formatear(assigns.nodo["propiedades"])
     assigns = assign(assigns, :resultado, resultado)
 
     ~H"""
@@ -1898,118 +1898,9 @@ defmodule MetadataAppWeb.FichaLive do
   defp valores_con_calculados(_columnas, _registro, _valores_form, _contexto, nil), do: %{}
 
   defp valores_con_calculados(columnas, registro, valores_form, contexto, plantilla) do
-    base = valores_efectivos(columnas, registro, valores_form, contexto)
-    nodos = MetaPlantillas.nodos_de_tipo(plantilla.definicion, "campo_calculado")
-
-    Enum.reduce(nodos, base, fn nodo, valores ->
-      nombre = nodo["propiedades"]["etiqueta"]
-
-      if nombre in [nil, ""] or Map.has_key?(valores, nombre) do
-        valores
-      else
-        {_valor, valores2} = resolver_calculado(nombre, nodos, valores, MapSet.new())
-        valores2
-      end
-    end)
-  end
-
-  # Resolución perezosa con memoria (una vez resuelto, se guarda en
-  # `valores` bajo su propia etiqueta) y con guarda de ciclos: `en_progreso`
-  # lleva las etiquetas que ya se están resolviendo MÁS ARRIBA en esta
-  # misma cadena de dependencias — si "nombre" ya está ahí, hay un ciclo
-  # (A depende de B que depende de A, directo o indirecto) y se corta sin
-  # recursión infinita, dejando esa dependencia sin resolver (fail-open,
-  # mismo criterio que el resto de Formula: la fórmula que dependía de eso
-  # simplemente da error de campo no numérico, no tumba la ficha).
-  defp resolver_calculado(nombre, _nodos, valores, _en_progreso) when is_map_key(valores, nombre) do
-    {Map.get(valores, nombre), valores}
-  end
-
-  defp resolver_calculado(nombre, nodos, valores, en_progreso) do
-    if MapSet.member?(en_progreso, nombre) do
-      {nil, valores}
-    else
-      case Enum.find(nodos, &(&1["propiedades"]["etiqueta"] == nombre)) do
-        nil ->
-          {nil, valores}
-
-        nodo ->
-          formula = nodo["propiedades"]["formula"] || ""
-          dependencias = formula |> Formula.tokens_para_mostrar() |> Enum.flat_map(&campo_referenciado/1)
-          en_progreso2 = MapSet.put(en_progreso, nombre)
-
-          valores_con_deps =
-            Enum.reduce(dependencias, valores, fn dep, acc ->
-              {_valor, acc2} = resolver_calculado(dep, nodos, acc, en_progreso2)
-              acc2
-            end)
-
-          resultado =
-            case Formula.evaluar(formula, valores_con_deps) do
-              {:ok, v} -> v
-              {:error, _motivo} -> nil
-            end
-
-          {resultado, Map.put(valores_con_deps, nombre, resultado)}
-      end
-    end
-  end
-
-  defp campo_referenciado({:campo, nombre}), do: [nombre]
-  defp campo_referenciado(_token), do: []
-
-  # Un "IF ... THEN ... ELSE ..." puede devolver texto (ej. "Disponible" /
-  # "Agotado") en vez de un número — Formula.evaluar/2 ahora puede dar
-  # cualquiera de los dos, así que este clause tiene que ir ANTES del
-  # numérico (que asume que puede multiplicar el resultado).
-  defp formatear_calculado({:ok, texto}, _propiedades) when is_binary(texto), do: texto
-
-  defp formatear_calculado({:ok, numero}, propiedades) when is_number(numero) do
-    decimales =
-      case Integer.parse(to_string(propiedades["decimales"] || "2")) do
-        {n, _} when n in 0..10 -> n
-        _ -> 2
-      end
-
-    texto = :erlang.float_to_binary(numero * 1.0, decimals: decimales)
-
-    case propiedades["formato"] do
-      "moneda" -> "$" <> con_separador_miles(texto)
-      "porcentaje" -> texto <> "%"
-      _ -> texto
-    end
-  end
-
-  defp formatear_calculado({:error, _motivo}, _propiedades), do: "—"
-
-  # "12345.67" -> "12,345.67" (y "-12345.67" -> "-12,345.67") — sin
-  # dependencia nueva, solo para "moneda". Nunca se usa antes de pasar por
-  # float_to_binary/2 arriba, así que siempre llega con "." como separador
-  # decimal (nunca ninguno si decimales: 0).
-  defp con_separador_miles(numero_texto) do
-    case String.split(numero_texto, ".", parts: 2) do
-      [entero, decimales] -> separar_miles(entero) <> "." <> decimales
-      [entero] -> separar_miles(entero)
-    end
-  end
-
-  defp separar_miles(entero) do
-    {signo, digitos} =
-      if String.starts_with?(entero, "-") do
-        {"-", String.trim_leading(entero, "-")}
-      else
-        {"", entero}
-      end
-
-    agrupado =
-      digitos
-      |> String.reverse()
-      |> String.graphemes()
-      |> Enum.chunk_every(3)
-      |> Enum.map_join(",", &Enum.join/1)
-      |> String.reverse()
-
-    signo <> agrupado
+    columnas
+    |> valores_efectivos(registro, valores_form, contexto)
+    |> then(&Formula.resolver_calculados(plantilla.definicion, &1))
   end
 
   # id dinámico (lo que el usuario tipeó en el campo referencia) en vez de
