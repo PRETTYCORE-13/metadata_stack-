@@ -445,34 +445,39 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   # --- Relaciones: qué campos de OTRO catálogo (el referenciado) trae de
   # prestado un campo tipo "referencia" de este ------------------------------
-
-  @modos_visualizacion [
-    {"sin_configurar", "Sin configurar (usar los campos de arriba)"},
-    {"descripcion", "Solo descripción"},
-    {"codigo_descripcion", "Código y descripción"},
-    {"plantilla", "Plantilla personalizada"},
-    {"calculado", "Expresión calculada"}
-  ]
+  #
+  # Modos válidos de "campo_visualizacion" (persistidos tal cual en
+  # schema_context_properties, ver aplicar_campo_visualizacion/2 más
+  # abajo): "sin_configurar" (default del motor, sin nada elegido acá
+  # todavía), "descripcion" (un solo campo), "codigo_descripcion" (dos
+  # campos, en el orden que se quiera), "plantilla" (texto libre con
+  # variables) y "calculado" (fórmula — ver MetaPlantillas.Formula). El
+  # modal (modal_relacion/1) los presenta como 3 tarjetas de radio
+  # ("Un solo dato" / "Dos datos combinados" / "Personalizado") más un
+  # "Avanzado" colapsado para "calculado" — nunca como un <select> con
+  # estos 5 nombres técnicos.
 
   def handle_event("abrir_form_relacion", %{"campo" => campo}, socket) do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
     props = detalle.schema_context_properties
-    campos_destino = MetaSchemaContext.listar_detalles(props["catalogo"]) |> Enum.map(& &1.schema_context_field)
 
-    campos_propios =
-      socket.assigns.campos
+    campos_destino =
+      props["catalogo"]
+      |> MetaSchemaContext.listar_detalles()
       |> Enum.filter(& &1.schema_context_properties["visible"])
-      |> Enum.map(& &1.schema_context_field)
+
+    campos_propios = Enum.filter(socket.assigns.campos, & &1.schema_context_properties["visible"])
 
     {:noreply,
      assign(socket, :relacion_form, %{
        "campo" => campo,
        "catalogo_destino" => props["catalogo"],
+       "catalogo_destino_label" => MetaSchemaContext.obtener_header_por_nombre(props["catalogo"]).schema_context_label,
        "campos_destino" => campos_destino,
        "seleccionados" => props["campos_acompanamiento"] || [],
        "campos_propios" => campos_propios,
        "seleccionados_propios" => props["campos_relacion"] || [],
-       "campo_visualizacion" => props["campo_visualizacion"] || %{"modo" => "sin_configurar"},
+       "campo_visualizacion" => props["campo_visualizacion"] || campo_visualizacion_por_defecto(campos_destino),
        "registro_muestra" => registro_muestra_de(props["catalogo"]),
        "error" => nil
      })}
@@ -1127,6 +1132,59 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
+  # Antes, una relación nunca tocada arrancaba en "sin_configurar" (el
+  # modal viejo lo mostraba como un <select> más, sin vista previa) — la
+  # premisa de este modal nuevo es que SIEMPRE haya algo que mostrar
+  # apenas se abre, así que arranca en "descripcion" con el primer campo
+  # visible del catálogo relacionado ya elegido (casi siempre es el
+  # "nombre" o equivalente). Se puede cambiar de una — esto es solo el
+  # punto de partida, nunca se persiste hasta que alguien aprieta Guardar.
+  defp campo_visualizacion_por_defecto([]), do: %{"modo" => "descripcion"}
+
+  defp campo_visualizacion_por_defecto([primero | _resto]),
+    do: %{"modo" => "descripcion", "campo_descripcion" => primero.schema_context_field}
+
+  # Ícono cosmético por campo para las columnas 1/2 del modal — primero
+  # por patrones comunes de nombre de negocio (más específico y más útil
+  # a simple vista que el tipo real), si no matchea nada cae al tipo real
+  # del campo (campo_input/1 sigue siendo la única fuente de verdad de qué
+  # tipo ES un campo; esto es solo decorativo).
+  defp icono_campo(campo) do
+    nombre = campo.schema_context_field
+    tipo = campo.schema_context_properties["tipo"]
+
+    cond do
+      String.contains?(nombre, "telefono") -> "call"
+      String.contains?(nombre, ["correo", "email"]) -> "mail"
+      String.contains?(nombre, "direccion") -> "location_on"
+      String.contains?(nombre, ["representante", "contacto", "responsable", "ejecutivo"]) -> "person"
+      tipo == "referencia" -> "link"
+      tipo in ["integer", "decimal"] -> "tag"
+      tipo == "date" -> "calendar_month"
+      tipo == "boolean" -> "toggle_on"
+      true -> "text_fields"
+    end
+  end
+
+  # Agrupa una lista de campos por su categoría real (MetaSchemaContext.
+  # categoria_campo/1 — la misma que ya se configura en "Campos" arriba,
+  # nunca una taxonomía inventada para este modal). Si TODOS caen en la
+  # misma categoría (catálogo chico, nadie configuró categorías todavía)
+  # se devuelve un único grupo SIN etiqueta — una sola sección de
+  # acordeón no aporta nada, mejor una lista plana.
+  defp agrupar_campos(campos) do
+    agrupados =
+      campos
+      |> Enum.group_by(&MetaSchemaContext.categoria_campo/1)
+      |> Enum.map(fn {codigo, campos_grupo} -> {MetaSchemaContext.etiqueta_categoria_campo(codigo), campos_grupo} end)
+      |> Enum.sort_by(fn {etiqueta, _campos} -> etiqueta end)
+
+    case agrupados do
+      [{_etiqueta, campos_unicos}] -> [{nil, campos_unicos}]
+      varios -> varios
+    end
+  end
+
   # --- Tab API: ejemplos de payload por verbo ---------------------------------
   # Documentación generada a partir de los campos REALES del catálogo (no
   # texto fijo) — CatalogoController (lib/metadata_app_web/controllers/
@@ -1355,7 +1413,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     <.modal_eliminar_campo :if={@eliminar_campo_form} form={@eliminar_campo_form} />
     <.modal_estado :if={@estado_form} form={@estado_form} />
     <.modal_transicion :if={@transicion_form} form={@transicion_form} estados={@estados} campos={@campos} catalogos_detalle={@catalogos_detalle} />
-    <.modal_relacion :if={@relacion_form} form={@relacion_form} />
+    <.modal_relacion :if={@relacion_form} form={@relacion_form} local_label={@header.schema_context_label} />
     """
   end
 
@@ -2787,158 +2845,319 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
   attr :form, :map, required: true
+  attr :local_label, :string, required: true
 
   # Qué campos del catálogo REFERENCIADO trae de prestado este campo tipo
-  # "referencia" — lanzado desde el panel Relaciones.
+  # "referencia" — lanzado desde el panel Relaciones. Presentado como 3
+  # preguntas de negocio en columnas (no como una configuración de tablas):
+  # 1) qué ves del catálogo relacionado, 2) qué le mandás vos de este, 3)
+  # cómo se ve el registro al elegirlo/mostrarlo. El "stepper" de arriba es
+  # solo decorativo/orientativo — las 3 columnas están siempre visibles
+  # juntas, no hay paginado real (menos clics: nadie tiene que ir y volver
+  # para comparar qué tildó en el paso 1 mientras decide el 2).
   defp modal_relacion(assigns) do
-    assigns = assign(assigns, :modos_visualizacion, @modos_visualizacion)
-
     ~H"""
-    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div class="bg-white rounded-xl shadow-lg max-w-xl w-full p-4 text-xs max-h-[90vh] overflow-y-auto">
-        <h2 class="text-sm font-bold text-gray-900 mb-1">Configurar relación</h2>
-        <p class="text-gray-600 mb-3">
-          Campos de <strong class="font-mono">{@form["catalogo_destino"]}</strong> que <strong class="font-mono">{@form["campo"]}</strong> trae de prestado al listar/consultar este catálogo.
-        </p>
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-5xl w-full text-xs max-h-[92vh] flex flex-col overflow-hidden">
+        <div class="px-5 pt-4 pb-3 border-b border-gray-100 flex items-start justify-between gap-3 flex-shrink-0">
+          <div class="flex items-start gap-2.5">
+            <span class="material-symbols-outlined text-purple-600 mt-0.5" style="font-size:20px">sync_alt</span>
+            <div>
+              <h2 class="text-sm font-bold text-gray-900">Configurar relación</h2>
+              <p class="text-gray-500 mt-0.5">Define qué información se comparte entre este catálogo y <strong>{@form["catalogo_destino_label"]}</strong>.</p>
+            </div>
+          </div>
+          <button type="button" phx-click="cerrar_form_relacion" class="text-gray-400 hover:text-gray-700 flex-shrink-0">
+            <span class="material-symbols-outlined" style="font-size:20px">close</span>
+          </button>
+        </div>
 
-        <%= if @form["error"] do %>
-          <div class="bg-red-50 text-red-700 rounded-lg px-2 py-1.5 mb-2">{@form["error"]}</div>
-        <% end %>
+        <div class="px-5 py-3 border-b border-gray-100 bg-gray-50/70 flex items-center gap-2 overflow-x-auto flex-shrink-0">
+          <.paso_diagrama numero="1" titulo="Datos que verás" subtitulo={"De " <> @form["catalogo_destino_label"]} />
+          <span class="flex-1 h-px bg-gray-200 min-w-[14px]"></span>
+          <.paso_diagrama numero="2" titulo="Datos que envías" subtitulo={"A " <> @form["catalogo_destino_label"]} />
+          <span class="flex-1 h-px bg-gray-200 min-w-[14px]"></span>
+          <.paso_diagrama numero="3" titulo="Visualización" subtitulo="Cómo se muestra" />
+        </div>
+
+        <div :if={@form["error"]} class="mx-5 mt-3 bg-red-50 text-red-700 rounded-lg px-2.5 py-1.5 flex-shrink-0">{@form["error"]}</div>
 
         <%= if @form["campos_destino"] == [] do %>
-          <p class="text-amber-600 mb-3">
-            <strong class="font-mono">{@form["catalogo_destino"]}</strong> todavía no tiene campos propios.
-          </p>
-          <div class="flex justify-end">
-            <button type="button" phx-click="cerrar_form_relacion" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
+          <div class="p-10 flex flex-col items-center gap-2 text-center">
+            <span class="material-symbols-outlined text-amber-500" style="font-size:30px">warning</span>
+            <p class="text-amber-700"><strong>{@form["catalogo_destino_label"]}</strong> todavía no tiene campos propios visibles.</p>
+            <button type="button" phx-click="cerrar_form_relacion" class="mt-2 px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
               Cerrar
             </button>
           </div>
         <% else %>
-          <form phx-change="previsualizar_visualizacion" phx-submit="guardar_relacion">
-            <div class="flex flex-col gap-1.5 mb-3">
-              <%= for campo <- @form["campos_destino"] do %>
-                <label class="flex items-center gap-1.5">
-                  <input type="checkbox" name="campos[]" value={campo}
-                    checked={campo in @form["seleccionados"]} class="accent-purple-600" />
-                  <span class="font-mono">{campo}</span>
-                </label>
-              <% end %>
-            </div>
+          <form phx-change="previsualizar_visualizacion" phx-submit="guardar_relacion" id="form-relacion" phx-hook="RelacionCampos" class="flex-1 min-h-0 flex flex-col">
+            <div class="flex-1 min-h-0 overflow-y-auto grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-100">
+              <!-- ---------------- COLUMNA 1: qué ves del relacionado ---------------- -->
+              <div class="p-4 flex flex-col gap-2.5 min-h-0" data-columna="1">
+                <div>
+                  <p class="font-bold text-gray-800">1. Datos que verás de {@form["catalogo_destino_label"]}</p>
+                  <p class="text-gray-400 mt-0.5">Va a aparecer como columnas extra cada vez que este catálogo muestre el relacionado.</p>
+                </div>
 
-            <div class="border-t border-gray-200 pt-2.5 mt-1 mb-3">
-              <p class="text-gray-600 mb-1.5">
-                Campos propios (de este catálogo) que se muestran cuando aparece como relacionado en la ficha de
-                <strong class="font-mono">{@form["catalogo_destino"]}</strong> (tab "Relaciones").
-              </p>
-              <p :if={@form["campos_propios"] == []} class="text-gray-400">Este catálogo no tiene campos visibles todavía.</p>
-              <div class="flex flex-col gap-1.5">
-                <%= for campo <- @form["campos_propios"] do %>
-                  <label class="flex items-center gap-1.5">
-                    <input type="checkbox" name="campos_relacion[]" value={campo}
-                      checked={campo in @form["seleccionados_propios"]} class="accent-purple-600" />
-                    <span class="font-mono">{campo}</span>
-                  </label>
+                <.toolbar_campos_relacion columna="1" placeholder={"Buscar en " <> @form["catalogo_destino_label"] <> "…"} />
+
+                <div class="flex flex-col gap-3 overflow-y-auto pr-0.5" data-lista="1" style="max-height: 340px">
+                  <.grupo_campos :for={{etiqueta_grupo, campos_grupo} <- agrupar_campos(@form["campos_destino"])} etiqueta={etiqueta_grupo}>
+                    <.fila_campo :for={c <- campos_grupo} campo={c} name="campos[]" checked={c.schema_context_field in @form["seleccionados"]} />
+                  </.grupo_campos>
+                  <p class="hidden text-gray-400 text-center py-6" data-vacio="1">Ningún campo coincide con la búsqueda.</p>
+                </div>
+              </div>
+
+              <!-- ---------------- COLUMNA 2: qué mandás vos ---------------- -->
+              <div class="p-4 flex flex-col gap-2.5 min-h-0" data-columna="2">
+                <div>
+                  <p class="font-bold text-gray-800">2. Datos que envías a {@form["catalogo_destino_label"]}</p>
+                  <p class="text-gray-400 mt-0.5">Va a aparecer en la pestaña "Relaciones" de <strong>{@form["catalogo_destino_label"]}</strong>, dentro de la tarjeta de <strong>{@local_label}</strong>.</p>
+                </div>
+
+                <%= if @form["campos_propios"] == [] do %>
+                  <p class="text-gray-400">Este catálogo no tiene campos visibles todavía.</p>
+                <% else %>
+                  <.toolbar_campos_relacion columna="2" placeholder={"Buscar en " <> @local_label <> "…"} />
+
+                  <div class="flex flex-col gap-3 overflow-y-auto pr-0.5" data-lista="2" style="max-height: 340px">
+                    <.grupo_campos :for={{etiqueta_grupo, campos_grupo} <- agrupar_campos(@form["campos_propios"])} etiqueta={etiqueta_grupo}>
+                      <.fila_campo :for={c <- campos_grupo} campo={c} name="campos_relacion[]" checked={c.schema_context_field in @form["seleccionados_propios"]} />
+                    </.grupo_campos>
+                    <p class="hidden text-gray-400 text-center py-6" data-vacio="2">Ningún campo coincide con la búsqueda.</p>
+                  </div>
+
+                  <p :if={@form["seleccionados_propios"] == []} class="text-gray-400">Sin nada tildado, se muestra la descripción de siempre + el id.</p>
                 <% end %>
               </div>
-              <p :if={@form["campos_propios"] != [] and @form["seleccionados_propios"] == []} class="text-gray-400 mt-1">
-                Sin nada tildado, se muestra la descripción de siempre + el id.
-              </p>
+
+              <!-- ---------------- COLUMNA 3: cómo se ve ---------------- -->
+              <% cv = @form["campo_visualizacion"] %>
+              <div class="p-4 flex flex-col gap-2.5 min-h-0" data-columna="3">
+                <div>
+                  <p class="font-bold text-gray-800">3. ¿Cómo se mostrará el registro?</p>
+                  <p class="text-gray-400 mt-0.5">Define el texto que se ve al elegir o consultar {@form["catalogo_destino_label"]} desde acá.</p>
+                </div>
+
+                <div class="flex flex-col gap-1.5">
+                  <.opcion_visualizacion valor="descripcion" cv={cv} titulo="Un solo dato" descripcion="Ej.: solo el nombre.">
+                    <div :if={cv["modo"] == "descripcion"} class="mt-2">
+                      <select name="campo_visualizacion[campo_descripcion]" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                        <option value="">— Elegir campo —</option>
+                        <option :for={c <- @form["campos_destino"]} value={c.schema_context_field} selected={cv["campo_descripcion"] == c.schema_context_field}>
+                          {c.schema_context_properties["etiqueta"] || c.schema_context_field}
+                        </option>
+                      </select>
+                    </div>
+                  </.opcion_visualizacion>
+
+                  <.opcion_visualizacion valor="codigo_descripcion" cv={cv} titulo="Dos datos combinados" descripcion="Ej.: nombre + RFC, en el orden que quieras.">
+                    <div :if={cv["modo"] == "codigo_descripcion"} class="mt-2 flex flex-col gap-1.5">
+                      <select name="campo_visualizacion[campo_codigo]" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                        <option value="">— Primer dato —</option>
+                        <option :for={c <- @form["campos_destino"]} value={c.schema_context_field} selected={cv["campo_codigo"] == c.schema_context_field}>
+                          {c.schema_context_properties["etiqueta"] || c.schema_context_field}
+                        </option>
+                      </select>
+                      <div class="flex items-center gap-1.5">
+                        <button type="button" data-swap-visualizacion title="Invertir el orden"
+                          class="flex-shrink-0 w-7 h-7 rounded-lg border border-gray-300 text-gray-500 hover:border-purple-400 hover:text-purple-700 flex items-center justify-center">
+                          <span class="material-symbols-outlined" style="font-size:15px">swap_vert</span>
+                        </button>
+                        <select name="campo_visualizacion[campo_descripcion]" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                          <option value="">— Segundo dato —</option>
+                          <option :for={c <- @form["campos_destino"]} value={c.schema_context_field} selected={cv["campo_descripcion"] == c.schema_context_field}>
+                            {c.schema_context_properties["etiqueta"] || c.schema_context_field}
+                          </option>
+                        </select>
+                      </div>
+                    </div>
+                  </.opcion_visualizacion>
+
+                  <.opcion_visualizacion valor="plantilla" cv={cv} titulo="Personalizado" descripcion="Armalo vos combinando los datos que quieras.">
+                    <div :if={cv["modo"] == "plantilla"} class="mt-2">
+                      <input type="text" name="campo_visualizacion[plantilla]" value={cv["plantilla"]} placeholder="{campo_a} - {campo_b}"
+                        class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono" />
+                      <p class="text-gray-400 mt-1.5">Insertar dato:</p>
+                      <div class="flex flex-wrap gap-1 mt-0.5">
+                        <button :for={c <- @form["campos_destino"]} type="button" phx-click="insertar_variable_visualizacion"
+                          phx-value-campo={c.schema_context_field} phx-value-destino="plantilla"
+                          class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-mono hover:bg-indigo-100">
+                          +{"{" <> c.schema_context_field <> "}"}
+                        </button>
+                      </div>
+                    </div>
+                  </.opcion_visualizacion>
+
+                  <details class="mt-0.5">
+                    <summary class="cursor-pointer text-gray-400 hover:text-gray-600 select-none">Avanzado — fórmula condicional</summary>
+                    <div class="mt-1.5 pl-0.5">
+                      <label class="flex items-center gap-1.5 mb-1.5">
+                        <input type="radio" name="campo_visualizacion[modo]" value="calculado" checked={cv["modo"] == "calculado"} class="accent-purple-600" />
+                        <span class="text-gray-600">Usar una fórmula (ej. mostrar "Vencido" si aplica)</span>
+                      </label>
+                      <div :if={cv["modo"] == "calculado"}>
+                        <input type="text" name="campo_visualizacion[formula]" value={cv["formula"]}
+                          placeholder="IF {campo} > 0 THEN &quot;Sí&quot; ELSE &quot;No&quot;"
+                          class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono" />
+                        <p class="text-gray-400 mt-1.5">Insertar dato:</p>
+                        <div class="flex flex-wrap gap-1 mt-0.5">
+                          <button :for={c <- @form["campos_destino"]} type="button" phx-click="insertar_variable_visualizacion"
+                            phx-value-campo={c.schema_context_field} phx-value-destino="formula"
+                            class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-mono hover:bg-indigo-100">
+                            +{"{" <> c.schema_context_field <> "}"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+
+                <div class="mt-1 border-t border-gray-100 pt-2.5">
+                  <p class="text-gray-400 font-semibold uppercase tracking-wide mb-1.5" style="font-size:10px">Vista previa</p>
+                  <div :if={@form["registro_muestra"]} class="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-2">
+                    <span class="material-symbols-outlined text-purple-500 flex-shrink-0" style="font-size:16px">apartment</span>
+                    <p class="font-semibold text-gray-900 truncate">{CatalogoGenerico.etiqueta_para_referencia(@form["registro_muestra"], %{"campo_visualizacion" => cv})}</p>
+                  </div>
+                  <p :if={!@form["registro_muestra"]} class="text-gray-400">
+                    <strong>{@form["catalogo_destino_label"]}</strong> todavía no tiene registros para previsualizar.
+                  </p>
+                </div>
+              </div>
             </div>
 
-            <% cv = @form["campo_visualizacion"] %>
-            <div class="border-t border-gray-200 pt-2.5 mt-1 mb-3">
-              <p class="font-semibold text-gray-700 mb-1.5">Configuración de visualización</p>
-              <p class="text-gray-500 mb-2">
-                El valor guardado siempre es el id de <strong class="font-mono">{@form["catalogo_destino"]}</strong> — esto solo define el TEXTO que se muestra al elegir/ver este campo.
-              </p>
-
-              <div>
-                <label class="block text-gray-700 mb-0.5">Tipo de visualización</label>
-                <select name="campo_visualizacion[modo]" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
-                  <option :for={{valor, etiqueta} <- @modos_visualizacion} value={valor} selected={cv["modo"] == valor}>{etiqueta}</option>
-                </select>
-              </div>
-
-              <div :if={cv["modo"] == "descripcion"} class="mt-2">
-                <label class="block text-gray-700 mb-0.5">Campo de descripción</label>
-                <select name="campo_visualizacion[campo_descripcion]" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
-                  <option value="">— Elegir —</option>
-                  <option :for={campo <- @form["campos_destino"]} value={campo} selected={cv["campo_descripcion"] == campo}>{campo}</option>
-                </select>
-              </div>
-
-              <div :if={cv["modo"] == "codigo_descripcion"} class="mt-2 grid grid-cols-2 gap-2">
-                <div>
-                  <label class="block text-gray-700 mb-0.5">Campo de código</label>
-                  <select name="campo_visualizacion[campo_codigo]" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
-                    <option value="">— Elegir —</option>
-                    <option :for={campo <- @form["campos_destino"]} value={campo} selected={cv["campo_codigo"] == campo}>{campo}</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="block text-gray-700 mb-0.5">Campo de descripción</label>
-                  <select name="campo_visualizacion[campo_descripcion]" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
-                    <option value="">— Elegir —</option>
-                    <option :for={campo <- @form["campos_destino"]} value={campo} selected={cv["campo_descripcion"] == campo}>{campo}</option>
-                  </select>
-                </div>
-              </div>
-
-              <div :if={cv["modo"] == "plantilla"} class="mt-2">
-                <label class="block text-gray-700 mb-0.5">Plantilla de visualización</label>
-                <input type="text" name="campo_visualizacion[plantilla]" value={cv["plantilla"]} placeholder="{campo_a} - {campo_b}"
-                  class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono" />
-                <p class="text-gray-400 mt-1">Insertar campo:</p>
-                <div class="flex flex-wrap gap-1 mt-0.5">
-                  <button :for={campo <- @form["campos_destino"]} type="button" phx-click="insertar_variable_visualizacion"
-                    phx-value-campo={campo} phx-value-destino="plantilla"
-                    class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-mono hover:bg-indigo-100">+{"{" <> campo <> "}"}</button>
-                </div>
-              </div>
-
-              <div :if={cv["modo"] == "calculado"} class="mt-2">
-                <label class="block text-gray-700 mb-0.5">Fórmula</label>
-                <input type="text" name="campo_visualizacion[formula]" value={cv["formula"]}
-                  placeholder="IF {campo} > 0 THEN &quot;Sí&quot; ELSE &quot;No&quot;"
-                  class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono" />
-                <p class="text-gray-400 mt-1">Insertar campo:</p>
-                <div class="flex flex-wrap gap-1 mt-0.5">
-                  <button :for={campo <- @form["campos_destino"]} type="button" phx-click="insertar_variable_visualizacion"
-                    phx-value-campo={campo} phx-value-destino="formula"
-                    class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-mono hover:bg-indigo-100">+{"{" <> campo <> "}"}</button>
-                </div>
-              </div>
-
-              <%= if cv["modo"] != "sin_configurar" do %>
-                <div :if={@form["registro_muestra"]} class="mt-2 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5">
-                  <p class="text-gray-500">Vista previa (con un registro real):</p>
-                  <p class="font-semibold text-gray-900">{CatalogoGenerico.etiqueta_para_referencia(@form["registro_muestra"], %{"campo_visualizacion" => cv})}</p>
-                </div>
-                <p :if={!@form["registro_muestra"]} class="mt-2 text-gray-400">
-                  <strong class="font-mono">{@form["catalogo_destino"]}</strong> todavía no tiene registros para previsualizar.
-                </p>
-              <% end %>
-
-              <div :if={cv["modo"] in ["plantilla", "calculado"]} class="mt-2 text-gray-400">
-                <p class="font-semibold text-gray-500">Ejemplos</p>
-                <p>Plantilla: <span class="font-mono">{"{codigo} - {nombre}"}</span> → "K001 - Coca-Cola"</p>
-                <p>Fórmula: <span class="font-mono">{~s(IF {stock} > 0 THEN "Disponible" ELSE "Agotado")}</span></p>
-              </div>
-            </div>
-
-            <div class="flex justify-end gap-2">
+            <div class="flex justify-end gap-2 px-5 py-3 border-t border-gray-100 bg-gray-50/70 flex-shrink-0">
               <button type="button" phx-click="cerrar_form_relacion" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
                 Cancelar
               </button>
               <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">
-                Guardar
+                Guardar relación
               </button>
             </div>
           </form>
         <% end %>
       </div>
     </div>
+    """
+  end
+
+  attr :numero, :string, required: true
+  attr :titulo, :string, required: true
+  attr :subtitulo, :string, required: true
+
+  # Paso del "stepper" decorativo de arriba del modal_relacion/1 — las 3
+  # columnas están siempre visibles juntas (menos clics que un wizard
+  # paginado real), esto es solo orientación visual de qué contesta cada
+  # columna.
+  defp paso_diagrama(assigns) do
+    ~H"""
+    <div class="flex items-center gap-2 flex-shrink-0">
+      <span class="w-5 h-5 rounded-full bg-purple-600 text-white flex items-center justify-center font-bold flex-shrink-0" style="font-size:10px">{@numero}</span>
+      <div class="leading-tight whitespace-nowrap">
+        <p class="font-semibold text-gray-700" style="font-size:11px">{@titulo}</p>
+        <p class="text-gray-400" style="font-size:10px">{@subtitulo}</p>
+      </div>
+    </div>
+    """
+  end
+
+  attr :columna, :string, required: true
+  attr :placeholder, :string, required: true
+
+  # Buscador + "Todos"/"Limpiar" + contador de una columna de campos — el
+  # hook JS RelacionCampos (assets/js/hooks/relacion_campos.js) es el
+  # dueño real de este comportamiento (filtra, tilda, cuenta), todo del
+  # lado del cliente: los checkboxes de esta columna nunca tuvieron
+  # phx-change por campo (solo se leen al Guardar), así que no hay razón
+  # para ida y vuelta al servidor por tipear en el buscador o tildar
+  # "Todos".
+  defp toolbar_campos_relacion(assigns) do
+    ~H"""
+    <div class="flex flex-col gap-1.5">
+      <div class="flex items-center gap-1.5">
+        <label class="flex-1 flex items-center gap-1.5 border border-gray-300 rounded-lg px-2 py-1.5 text-gray-400 focus-within:border-purple-400">
+          <span class="material-symbols-outlined" style="font-size:14px">search</span>
+          <input type="text" data-buscador={@columna} placeholder={@placeholder}
+            class="border-none outline-none text-gray-700 w-full bg-transparent" />
+        </label>
+        <button type="button" data-todos={@columna} class="text-purple-700 font-semibold hover:text-purple-900 whitespace-nowrap flex-shrink-0">Todos</button>
+        <button type="button" data-limpiar={@columna} class="text-gray-400 font-semibold hover:text-gray-600 whitespace-nowrap flex-shrink-0">Limpiar</button>
+      </div>
+      <p class="text-gray-400" data-contador={@columna}></p>
+    </div>
+    """
+  end
+
+  attr :etiqueta, :string, default: nil
+  slot :inner_block, required: true
+
+  defp grupo_campos(assigns) do
+    ~H"""
+    <div data-grupo>
+      <button :if={@etiqueta} type="button" data-grupo-toggle
+        class="w-full flex items-center justify-between text-gray-400 font-bold uppercase tracking-wide mb-1.5 hover:text-gray-600" style="font-size:10px">
+        <span>{@etiqueta}</span>
+        <span class="material-symbols-outlined" style="font-size:15px" data-grupo-icono>expand_more</span>
+      </button>
+      <div class="flex flex-col gap-1" data-grupo-body>
+        {render_slot(@inner_block)}
+      </div>
+    </div>
+    """
+  end
+
+  attr :campo, :map, required: true
+  attr :name, :string, required: true
+  attr :checked, :boolean, required: true
+
+  defp fila_campo(assigns) do
+    props = assigns.campo.schema_context_properties
+    etiqueta = props["etiqueta"] || assigns.campo.schema_context_field
+
+    assigns =
+      assigns
+      |> assign(:etiqueta, etiqueta)
+      |> assign(:icono, icono_campo(assigns.campo))
+      |> assign(:buscable, String.downcase(etiqueta <> " " <> assigns.campo.schema_context_field))
+
+    ~H"""
+    <label class="flex items-center gap-2 rounded-lg border border-transparent hover:bg-gray-50 px-1.5 py-1 cursor-pointer" data-fila data-buscable={@buscable}>
+      <input type="checkbox" name={@name} value={@campo.schema_context_field} checked={@checked} class="accent-purple-600 rounded flex-shrink-0" data-fila-input />
+      <span class="material-symbols-outlined text-gray-400 flex-shrink-0" style="font-size:15px">{@icono}</span>
+      <span class="flex-1 min-w-0">
+        <span class="block text-gray-800 font-medium truncate">{@etiqueta}</span>
+        <span class="block text-gray-400 font-mono truncate" style="font-size:10px">{@campo.schema_context_field}</span>
+      </span>
+    </label>
+    """
+  end
+
+  attr :valor, :string, required: true
+  attr :cv, :map, required: true
+  attr :titulo, :string, required: true
+  attr :descripcion, :string, required: true
+  slot :inner_block, required: true
+
+  # Tarjeta de radio de la columna 3 (modo de campo_visualizacion) — clic
+  # en cualquier parte de la tarjeta selecciona el radio (comportamiento
+  # nativo de <label>); los controles anidados en el slot (selects,
+  # input, botones +variable) siguen funcionando normal, un <label> nunca
+  # les roba el clic a sus propios hijos interactivos.
+  defp opcion_visualizacion(assigns) do
+    ~H"""
+    <label class={[
+      "flex flex-col gap-0.5 border rounded-lg px-2.5 py-2 cursor-pointer transition-colors",
+      if(@cv["modo"] == @valor, do: "border-purple-400 bg-purple-50", else: "border-gray-200 hover:border-gray-300")
+    ]}>
+      <div class="flex items-center gap-2">
+        <input type="radio" name="campo_visualizacion[modo]" value={@valor} checked={@cv["modo"] == @valor} class="accent-purple-600" />
+        <span class="font-semibold text-gray-800">{@titulo}</span>
+      </div>
+      <span class="text-gray-400 pl-5">{@descripcion}</span>
+      {render_slot(@inner_block)}
+    </label>
     """
   end
 
