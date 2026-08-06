@@ -527,6 +527,269 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     |> Repo.all()
   end
 
+  # --- Referencias dependientes ("combos en cascada") ------------------------
+  #
+  # Un campo tipo "referencia" puede traer una lista "dependencias" en su
+  # schema_context_properties: [%{"campo_padre" => ..., "campo_remoto" =>
+  # ..., "obligatorio" => bool}, ...] — "campo_padre" es OTRO campo
+  # "referencia" del MISMO catálogo (ej. "Estado" en el formulario de
+  # "Municipio"), "campo_remoto" es una columna del catálogo DESTINO de
+  # ESTE campo (ej. "estado_id" en la tabla "municipios") que tiene que
+  # coincidir con el valor actual del padre. Encadenable a cualquier
+  # profundidad (Estado→Municipio→Localidad) simplemente configurando cada
+  # eslabón por separado — no hay ningún nombre de campo fijo en este
+  # motor, todo sale de la metadata.
+
+  @doc "Campos tipo \"referencia\" de `catalogo` que tienen \"dependencias\" configuradas (lista no vacía)."
+  def campos_con_dependencias(catalogo) do
+    catalogo
+    |> listar_detalles()
+    |> Enum.filter(fn d ->
+      props = d.schema_context_properties
+      props["tipo"] == "referencia" and is_list(props["dependencias"]) and props["dependencias"] != []
+    end)
+  end
+
+  @doc """
+  Campos de `catalogo` que dependen de `campo`, directa o
+  transitivamente (Municipio Y Localidad si `campo` es Estado) — para
+  limpiarlos en cascada cuando el usuario cambia el valor de `campo`.
+  BFS sobre el grafo campo→dependientes armado con `listar_detalles/1`;
+  auto-termina aunque el grafo tuviera un ciclo (cada nombre se visita
+  una sola vez).
+  """
+  def descendientes(catalogo, campo) do
+    todos = listar_detalles(catalogo)
+
+    hijos_de = fn nombre ->
+      todos
+      |> Enum.filter(fn d ->
+        props = d.schema_context_properties
+        is_list(props["dependencias"]) and Enum.any?(props["dependencias"], &(&1["campo_padre"] == nombre))
+      end)
+      |> Enum.map(& &1.schema_context_field)
+    end
+
+    descendientes_bfs([campo], hijos_de, MapSet.new())
+  end
+
+  defp descendientes_bfs([], _hijos_de, acumulado), do: MapSet.to_list(acumulado)
+
+  defp descendientes_bfs([nombre | resto], hijos_de, acumulado) do
+    nuevos = nombre |> hijos_de.() |> Enum.reject(&MapSet.member?(acumulado, &1))
+    descendientes_bfs(resto ++ nuevos, hijos_de, Enum.reduce(nuevos, acumulado, &MapSet.put(&2, &1)))
+  end
+
+  @doc """
+  Vacía en `valores` (mapa `%{"campo" => valor}` del registro/renglón que
+  se está editando) cualquier campo que dependa de `campo_cambiado` — se
+  llama cuando el usuario le cambia el valor a un campo referencia, para
+  que sus hijos no queden con un valor que dejó de ser válido para el
+  nuevo padre (ej. cambiar Estado vacía Municipio y Localidad).
+  """
+  def limpiar_descendientes(catalogo, campo_cambiado, valores) do
+    catalogo
+    |> descendientes(campo_cambiado)
+    |> Enum.reduce(valores, &Map.put(&2, &1, ""))
+  end
+
+  @doc """
+  Valida que configurar `dependencias_propuestas` en `campo` (dentro de
+  `catalogo`) no arme un ciclo (A depende de B que depende de A, directo
+  o indirecto) — se llama ANTES de persistir la config (a diferencia del
+  resto de este motor, acá NO es fail-open: un ciclo mal configurado se
+  rechaza con un mensaje claro, nunca se guarda). Mismo patrón `MapSet`
+  "en_progreso" que `MetaPlantillas.Formula.resolver_uno/4` usa para
+  cortar ciclos entre campos calculados.
+  """
+  def validar_sin_ciclo(catalogo, campo, dependencias_propuestas) do
+    todos = listar_detalles(catalogo)
+
+    padres_de = fn
+      ^campo ->
+        dependencias_propuestas |> Enum.map(& &1["campo_padre"]) |> Enum.reject(&(&1 in [nil, ""]))
+
+      nombre ->
+        case Enum.find(todos, &(&1.schema_context_field == nombre)) do
+          nil ->
+            []
+
+          detalle ->
+            (detalle.schema_context_properties["dependencias"] || [])
+            |> Enum.map(& &1["campo_padre"])
+            |> Enum.reject(&(&1 in [nil, ""]))
+        end
+    end
+
+    case buscar_ciclo(campo, padres_de, MapSet.new()) do
+      :ok -> :ok
+      {:ciclo, cadena} -> {:error, "\"#{campo}\" formaría un ciclo de dependencias: #{Enum.join(cadena, " → ")}"}
+    end
+  end
+
+  defp buscar_ciclo(nombre, padres_de, en_progreso) do
+    if MapSet.member?(en_progreso, nombre) do
+      {:ciclo, [nombre]}
+    else
+      en_progreso2 = MapSet.put(en_progreso, nombre)
+
+      nombre
+      |> padres_de.()
+      |> Enum.reduce_while(:ok, fn padre, :ok ->
+        case buscar_ciclo(padre, padres_de, en_progreso2) do
+          :ok -> {:cont, :ok}
+          {:ciclo, cadena} -> {:halt, {:ciclo, [nombre | cadena]}}
+        end
+      end)
+    end
+  end
+
+  @doc """
+  Dado un campo referencia con `"dependencias"` (`props`, su
+  `schema_context_properties`) y el mapa de valores actuales de sus
+  campos hermanos (`valores_hermanos`, del registro/renglón en edición —
+  header o renglón, mismo mapa que ya reciben `campo_row/1`/
+  `formulario_renglon/1`), resuelve si puede calcularse sus opciones
+  ahora: `{:ok, filtros}` (mapa listo para
+  `CatalogoGenerico.opciones_referencia/2`) o `{:disabled, mensaje}` si
+  falta el valor de un padre `"obligatorio"` (default `true` si la
+  dependencia no dice nada — mismo criterio "obligatoria salvo que se
+  diga lo contrario" que el resto del contrato). `campos_hermanos`
+  (structs `Detail`, opcional) solo se usa para armar un mensaje
+  automático con la ETIQUETA del padre en vez de su nombre técnico,
+  cuando no hay `"mensaje_sin_padre"` configurado a mano.
+  """
+  def resolver_filtros(props, valores_hermanos, campos_hermanos \\ []) do
+    dependencias = props["dependencias"] || []
+
+    Enum.reduce_while(dependencias, {:ok, %{}}, fn dep, {:ok, filtros} ->
+      campo_padre = dep["campo_padre"]
+      campo_remoto = dep["campo_remoto"]
+      obligatorio? = dep["obligatorio"] != false
+      valor_padre = valor_no_vacio(Map.get(valores_hermanos, campo_padre))
+
+      cond do
+        valor_padre != nil and campo_remoto not in [nil, ""] ->
+          {:cont, {:ok, Map.put(filtros, campo_remoto, valor_padre)}}
+
+        obligatorio? ->
+          mensaje = props["mensaje_sin_padre"] || mensaje_sin_padre_por_defecto(campo_padre, campos_hermanos)
+          {:halt, {:disabled, mensaje}}
+
+        true ->
+          {:cont, {:ok, filtros}}
+      end
+    end)
+  end
+
+  defp valor_no_vacio(nil), do: nil
+  defp valor_no_vacio(""), do: nil
+  defp valor_no_vacio(valor), do: valor
+
+  defp mensaje_sin_padre_por_defecto(campo_padre, campos_hermanos) do
+    etiqueta =
+      case Enum.find(campos_hermanos, &(&1.schema_context_field == campo_padre)) do
+        nil -> campo_padre
+        detalle -> detalle.schema_context_properties["etiqueta"] || campo_padre
+      end
+
+    "Selecciona primero \"#{etiqueta}\""
+  end
+
+  @doc """
+  Validación de INTEGRIDAD (no confiar en lo que mandó el navegador): por
+  cada campo referencia de `catalogo` con `"dependencias"` que tenga
+  valor en `changeset`, confirma que el registro destino realmente
+  cumple `campo_remoto == valor_actual_del_padre` para cada dependencia
+  — si no, agrega un error legible al campo. Corre en runtime (consulta
+  `listar_detalles/1` fresco) porque la config de dependencias se guarda
+  como cualquier otra propiedad de campo (`actualizar_detalle/2`, sin
+  regenerar el schema) — `@campos_meta` del schema generado queda
+  congelado en el momento de creación del catálogo y nunca la vería.
+  Fail-safe ante datos mal formados (campo/catálogo destino inexistente,
+  etc.): esos casos agregan error en vez de crashear el guardado.
+  """
+  def validar_dependencias_referencia(changeset, catalogo) do
+    catalogo
+    |> campos_con_dependencias()
+    |> Enum.reduce(changeset, &validar_una_dependencia_referencia(&2, &1))
+  end
+
+  defp validar_una_dependencia_referencia(changeset, detalle) do
+    campo = detalle.schema_context_field
+    props = detalle.schema_context_properties
+    campo_atom = String.to_existing_atom(campo)
+    valor = Ecto.Changeset.get_field(changeset, campo_atom)
+
+    if valor in [nil, ""] do
+      changeset
+    else
+      Enum.reduce(props["dependencias"] || [], changeset, fn dep, cs ->
+        validar_dependencia_contra_registro(cs, campo_atom, valor, props["catalogo"], dep)
+      end)
+    end
+  end
+
+  # Separa a propósito "no se pudo determinar" (metadata incompleta, padre
+  # todavía sin valor, destino no encontrado — se ignora en silencio,
+  # fail-safe) de "se determinó y NO coincide" (el único caso que agrega
+  # error) — un `with`/`else` que colapsara ambos en el mismo valor
+  # (ej. `false`) los confundiría y podría rechazar guardados válidos
+  # solo porque la metadata está incompleta.
+  defp validar_dependencia_contra_registro(changeset, campo_atom, valor_hijo, catalogo_destino, dep) do
+    campo_padre = dep["campo_padre"]
+    campo_remoto = dep["campo_remoto"]
+
+    if es_texto_no_vacio?(campo_padre) and es_texto_no_vacio?(campo_remoto) do
+      padre_atom = String.to_existing_atom(campo_padre)
+      valor_padre = Ecto.Changeset.get_field(changeset, padre_atom)
+
+      if valor_padre in [nil, ""] do
+        changeset
+      else
+        case resolver_valor_remoto(catalogo_destino, valor_hijo, campo_remoto) do
+          {:ok, valor_remoto} ->
+            if to_string(valor_remoto) == to_string(valor_padre) do
+              changeset
+            else
+              Ecto.Changeset.add_error(changeset, campo_atom, "el valor seleccionado no corresponde a la selección anterior")
+            end
+
+          :error ->
+            changeset
+        end
+      end
+    else
+      changeset
+    end
+  rescue
+    ArgumentError -> changeset
+  end
+
+  defp es_texto_no_vacio?(valor), do: is_binary(valor) and valor != ""
+
+  defp resolver_valor_remoto(catalogo_destino, valor_hijo, campo_remoto) do
+    with modulo when not is_nil(modulo) <- modulo_por_nombre(catalogo_destino),
+         id_hijo when not is_nil(id_hijo) <- a_entero_seguro(valor_hijo),
+         registro_destino when not is_nil(registro_destino) <- Repo.get(modulo, id_hijo),
+         remoto_atom <- String.to_existing_atom(campo_remoto) do
+      {:ok, Map.get(registro_destino, remoto_atom)}
+    else
+      _ -> :error
+    end
+  end
+
+  defp a_entero_seguro(valor) when is_integer(valor), do: valor
+
+  defp a_entero_seguro(valor) when is_binary(valor) do
+    case Integer.parse(valor) do
+      {n, ""} -> n
+      _ -> nil
+    end
+  end
+
+  defp a_entero_seguro(_valor), do: nil
+
   @doc """
   A partir de una lista de catálogos raíz, calcula el paquete completo a
   publicar: agrega los detalles de cada maestro, el cierre transitivo de
