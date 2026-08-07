@@ -831,6 +831,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
 
     cond do
       valor in [nil, ""] -> changeset
+      props["tipo"] == "string" and formato["modo"] in ["numero", "moneda"] -> validar_formato_numerico_texto(changeset, campo_atom, valor, formato)
       props["tipo"] == "string" -> validar_formato_texto(changeset, campo_atom, valor, formato)
       props["tipo"] in ["integer", "decimal"] -> validar_formato_numerico(changeset, campo_atom, valor, formato)
       true -> changeset
@@ -899,6 +900,46 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
 
   defp construir_incompleto([]), do: ""
   defp construir_incompleto([t | resto]), do: t <> "(?:" <> construir_incompleto(resto) <> ")?"
+
+  # "Número"/"Moneda" en un campo tipo "string" (a diferencia de
+  # validar_formato_numerico/4 más abajo, que valida un %Decimal{}/integer
+  # YA tipado de una columna numérica real): acá `valor` es texto crudo
+  # ("1234.50" o, con guardar_formato, "$1,234.50"), así que se valida
+  # entero con UN regex — separadores de miles y símbolo solo se admiten
+  # cuando `guardar_formato` está activo, igual que ese mismo interruptor
+  # decide si un campo posicional persiste sus literales o no.
+  defp validar_formato_numerico_texto(changeset, campo_atom, valor, formato) do
+    if Regex.match?(regex_numero_texto(formato), valor) do
+      changeset
+    else
+      Ecto.Changeset.add_error(changeset, campo_atom, mensaje_formato_invalido(formato))
+    end
+  end
+
+  defp regex_numero_texto(formato) do
+    decimales = if is_integer(formato["decimales"]), do: formato["decimales"], else: 0
+    con_formato? = formato["guardar_formato"] == true
+
+    signo = if formato["permitir_negativos"] == true, do: "-?", else: ""
+    parte_decimal = if decimales > 0, do: "(?:\\.\\d{1,#{decimales}})?", else: ""
+
+    parte_entera =
+      if con_formato? and formato["separador_miles"] == true,
+        do: "(?:\\d{1,3}(?:,\\d{3})*|\\d+)",
+        else: "\\d+"
+
+    cuerpo = signo <> parte_entera <> parte_decimal
+
+    cuerpo =
+      if con_formato? and formato["modo"] == "moneda" and es_texto_no_vacio?(formato["simbolo"]) do
+        simbolo = Regex.escape(formato["simbolo"])
+        if formato["simbolo_posicion"] == "sufijo", do: cuerpo <> " ?" <> simbolo, else: simbolo <> cuerpo
+      else
+        cuerpo
+      end
+
+    Regex.compile!("^" <> cuerpo <> "$")
+  end
 
   defp validar_formato_numerico(changeset, campo_atom, valor, formato) do
     decimales = formato["decimales"]

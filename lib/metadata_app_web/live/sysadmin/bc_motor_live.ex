@@ -1428,6 +1428,26 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   defp construir_formato_captura(%{"habilitada" => false}), do: {:ok, %{"habilitada" => false}}
 
+  # "Número"/"Moneda" en un campo tipo "string" — a diferencia del caso
+  # integer/decimal de abajo, acá SÍ aplica "guardar_formato" (la columna
+  # es texto de verdad, puede persistir "1234.50" o "$1,234.50" tal cual).
+  defp construir_formato_captura(%{"tipo" => "string", "modo" => modo} = form) when modo in ["numero", "moneda"] do
+    {:ok,
+     %{
+       "habilitada" => true,
+       "modo" => modo,
+       "decimales" => form["decimales"],
+       "separador_miles" => form["separador_miles"],
+       "simbolo" => if(modo == "moneda", do: form["simbolo"]),
+       "simbolo_posicion" => form["simbolo_posicion"],
+       "permitir_negativos" => form["permitir_negativos"],
+       "guardar_formato" => form["guardar_formato"],
+       "estricto" => form["estricto"],
+       "permitir_incompleto" => form["permitir_incompleto"],
+       "mensaje_invalido" => form["mensaje_invalido"]
+     }}
+  end
+
   defp construir_formato_captura(%{"tipo" => "string"} = form) do
     cond do
       form["modo"] == "sin_mascara" ->
@@ -1450,6 +1470,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
+  # integer/decimal: siempre numero/moneda — sin "guardar_formato", la
+  # columna numérica real siempre guarda el número crudo.
   defp construir_formato_captura(form) do
     {:ok,
      %{
@@ -3966,7 +3988,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     {"cp", "Código postal"},
     {"rfc", "RFC"},
     {"fecha", "Fecha libre"},
-    {"personalizada", "Personalizada"}
+    {"personalizada", "Personalizada"},
+    {"numero", "Número"},
+    {"moneda", "Moneda"}
   ]
   @presets_formato_numerico [{"numero", "Número"}, {"moneda", "Moneda"}]
 
@@ -4023,29 +4047,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 </div>
               </div>
 
-              <%= if @form["tipo"] == "string" do %>
-                <div>
-                  <label class="block text-gray-500 mb-0.5 font-semibold">Patrón</label>
-                  <input type="text" name="patron" value={@form["patron"]} readonly={@form["modo"] != "personalizada"}
-                    placeholder="(999) 999-9999" spellcheck="false"
-                    class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono read-only:bg-gray-50 read-only:text-gray-500" />
-                  <p class="mt-0.5 text-gray-500"><b class="font-mono">A</b> letra · <b class="font-mono">9</b> número · <b class="font-mono">*</b> cualquiera — el resto se inserta solo.</p>
-                </div>
-
-                <div>
-                  <p class="text-gray-500 mb-1 font-semibold">Guardar valor como</p>
-                  <div class="grid grid-cols-2 gap-1.5">
-                    <label class={["flex flex-col gap-0.5 border rounded-lg px-2 py-1.5 cursor-pointer", @form["guardar_formato"] != true && "border-purple-500 bg-purple-50" || "border-gray-200"]}>
-                      <span class="flex items-center gap-1.5"><input type="radio" name="guardar_formato" value="false" checked={@form["guardar_formato"] != true} class="accent-purple-600" /> Solo datos</span>
-                      <span class="font-mono text-gray-500">{formato_ejemplo(@form, false)}</span>
-                    </label>
-                    <label class={["flex flex-col gap-0.5 border rounded-lg px-2 py-1.5 cursor-pointer", @form["guardar_formato"] == true && "border-purple-500 bg-purple-50" || "border-gray-200"]}>
-                      <span class="flex items-center gap-1.5"><input type="radio" name="guardar_formato" value="true" checked={@form["guardar_formato"] == true} class="accent-purple-600" /> Con formato</span>
-                      <span class="font-mono text-gray-500">{formato_ejemplo(@form, true)}</span>
-                    </label>
-                  </div>
-                </div>
-              <% else %>
+              <%= if @form["modo"] in ["numero", "moneda"] do %>
                 <div class="grid grid-cols-2 gap-2">
                   <div>
                     <label class="block text-gray-500 mb-0.5 font-semibold">Decimales</label>
@@ -4073,17 +4075,57 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                   <input type="checkbox" name="permitir_negativos" value="true" checked={@form["permitir_negativos"]} class="accent-purple-600" />
                   Permitir negativos
                 </label>
-                <p class="text-gray-500">Ejemplo: <span class="font-mono text-gray-700">{formato_ejemplo(@form, true)}</span></p>
+
+                <%= if @form["tipo"] == "string" do %>
+                  <div>
+                    <p class="text-gray-500 mb-1 font-semibold">Guardar valor como</p>
+                    <div class="grid grid-cols-2 gap-1.5">
+                      <label class={["flex flex-col gap-0.5 border rounded-lg px-2 py-1.5 cursor-pointer", @form["guardar_formato"] != true && "border-purple-500 bg-purple-50" || "border-gray-200"]}>
+                        <span class="flex items-center gap-1.5"><input type="radio" name="guardar_formato" value="false" checked={@form["guardar_formato"] != true} class="accent-purple-600" /> Solo datos</span>
+                        <span class="font-mono text-gray-500">{formato_ejemplo(@form, false)}</span>
+                      </label>
+                      <label class={["flex flex-col gap-0.5 border rounded-lg px-2 py-1.5 cursor-pointer", @form["guardar_formato"] == true && "border-purple-500 bg-purple-50" || "border-gray-200"]}>
+                        <span class="flex items-center gap-1.5"><input type="radio" name="guardar_formato" value="true" checked={@form["guardar_formato"] == true} class="accent-purple-600" /> Con formato</span>
+                        <span class="font-mono text-gray-500">{formato_ejemplo(@form, true)}</span>
+                      </label>
+                    </div>
+                  </div>
+                <% else %>
+                  <p class="text-gray-500">Ejemplo: <span class="font-mono text-gray-700">{formato_ejemplo(@form, true)}</span></p>
+                <% end %>
+              <% else %>
+                <div>
+                  <label class="block text-gray-500 mb-0.5 font-semibold">Patrón</label>
+                  <input type="text" name="patron" value={@form["patron"]} readonly={@form["modo"] != "personalizada"}
+                    placeholder="(999) 999-9999" spellcheck="false"
+                    class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono read-only:bg-gray-50 read-only:text-gray-500" />
+                  <p class="mt-0.5 text-gray-500"><b class="font-mono">A</b> letra · <b class="font-mono">9</b> número · <b class="font-mono">*</b> cualquiera — el resto se inserta solo.</p>
+                  <p :if={@form["modo"] == "fecha"} class="mt-0.5 text-gray-500">También suma un ícono de calendario junto al campo para elegir la fecha en vez de tipearla.</p>
+                </div>
+
+                <div>
+                  <p class="text-gray-500 mb-1 font-semibold">Guardar valor como</p>
+                  <div class="grid grid-cols-2 gap-1.5">
+                    <label class={["flex flex-col gap-0.5 border rounded-lg px-2 py-1.5 cursor-pointer", @form["guardar_formato"] != true && "border-purple-500 bg-purple-50" || "border-gray-200"]}>
+                      <span class="flex items-center gap-1.5"><input type="radio" name="guardar_formato" value="false" checked={@form["guardar_formato"] != true} class="accent-purple-600" /> Solo datos</span>
+                      <span class="font-mono text-gray-500">{formato_ejemplo(@form, false)}</span>
+                    </label>
+                    <label class={["flex flex-col gap-0.5 border rounded-lg px-2 py-1.5 cursor-pointer", @form["guardar_formato"] == true && "border-purple-500 bg-purple-50" || "border-gray-200"]}>
+                      <span class="flex items-center gap-1.5"><input type="radio" name="guardar_formato" value="true" checked={@form["guardar_formato"] == true} class="accent-purple-600" /> Con formato</span>
+                      <span class="font-mono text-gray-500">{formato_ejemplo(@form, true)}</span>
+                    </label>
+                  </div>
+                </div>
               <% end %>
 
               <div class="border-t border-gray-100 pt-2.5 flex flex-col gap-2">
                 <label class="flex items-center gap-1.5">
                   <input type="hidden" name="estricto" value="false" />
                   <input type="checkbox" name="estricto" value="true" checked={@form["estricto"]} class="accent-purple-600" />
-                  <%= if @form["tipo"] == "string" do %>
-                    Máscara estricta — no deja tipear un carácter que no calza
-                  <% else %>
+                  <%= if @form["modo"] in ["numero", "moneda"] do %>
                     No deja tipear letras ni más decimales de los configurados
+                  <% else %>
+                    Máscara estricta — no deja tipear un carácter que no calza
                   <% end %>
                 </label>
                 <label class="flex items-center gap-1.5">
@@ -4117,8 +4159,23 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # Línea de ejemplo estática (server-side — LiveView ya re-renderiza en
   # cada phx-change, no hace falta JS de preview acá como en el mockup de
   # referencia). `con_formato?` distingue las dos columnas de "Guardar
-  # valor como" (irrelevante para número/moneda, siempre se llama con
-  # `true` ahí — la BD guarda el número crudo sea cual sea el toggle).
+  # valor como" — irrelevante para número/moneda en un campo integer/
+  # decimal real (la BD siempre guarda el número crudo, se llama con
+  # `true` ahí para la línea "Ejemplo:"), pero SÍ importa cuando número/
+  # moneda vive en un campo string (separadores/símbolo solo aparecen si
+  # se decide persistir "con formato").
+  defp formato_ejemplo(%{"modo" => modo} = form, con_formato?) when modo in ["numero", "moneda"] do
+    decimales = form["decimales"] || 0
+    entero_agrupado = if con_formato?, do: agrupar_miles("1234567", form["separador_miles"]), else: "1234567"
+    numero = if decimales > 0, do: "#{entero_agrupado}.#{String.duplicate("5", decimales)}", else: entero_agrupado
+
+    if con_formato? and modo == "moneda" and form["simbolo"] not in [nil, ""] do
+      if form["simbolo_posicion"] == "sufijo", do: "#{numero} #{form["simbolo"]}", else: "#{form["simbolo"]}#{numero}"
+    else
+      numero
+    end
+  end
+
   defp formato_ejemplo(%{"tipo" => "string", "modo" => modo} = form, con_formato?) do
     patron = patron_por_defecto(modo) || form["patron"] || ""
 
@@ -4135,18 +4192,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       |> Enum.join()
 
     if con_formato?, do: cruda, else: patron |> String.graphemes() |> Enum.zip(String.graphemes(cruda)) |> Enum.filter(fn {p, _c} -> p in ["A", "9", "*"] end) |> Enum.map(&elem(&1, 1)) |> Enum.join()
-  end
-
-  defp formato_ejemplo(%{"modo" => modo} = form, _con_formato?) do
-    decimales = form["decimales"] || 0
-    entero_agrupado = agrupar_miles("1234567", form["separador_miles"])
-    numero = if decimales > 0, do: "#{entero_agrupado}.#{String.duplicate("5", decimales)}", else: entero_agrupado
-
-    if modo == "moneda" and form["simbolo"] not in [nil, ""] do
-      if form["simbolo_posicion"] == "sufijo", do: "#{numero} #{form["simbolo"]}", else: "#{form["simbolo"]}#{numero}"
-    else
-      numero
-    end
   end
 
   defp agrupar_miles(entero, true) do

@@ -109,6 +109,61 @@ defmodule MetadataApp.BusinessProcessBuilder.FormatoCapturaTest do
     end
   end
 
+  describe "validar_formato_captura/2 — número/moneda en un campo string" do
+    setup do
+      con_formato_captura("meta_fixture_cliente_nombre", %{
+        "habilitada" => true,
+        "modo" => "moneda",
+        "decimales" => 2,
+        "separador_miles" => true,
+        "simbolo" => "$",
+        "simbolo_posicion" => "prefijo",
+        "permitir_negativos" => false,
+        "guardar_formato" => false
+      })
+    end
+
+    test "solo datos: acepta un número plano, rechaza símbolo/separadores" do
+      assert changeset_nombre("1234567.50").valid?
+      refute changeset_nombre("$1,234,567.50").valid?
+    end
+
+    test "solo datos: rechaza más decimales de los configurados" do
+      refute changeset_nombre("1234567.505").valid?
+    end
+
+    test "solo datos: rechaza negativo cuando permitir_negativos es falso" do
+      refute changeset_nombre("-1234567.50").valid?
+    end
+  end
+
+  describe "validar_formato_captura/2 — número/moneda en un campo string (con formato)" do
+    setup do
+      con_formato_captura("meta_fixture_cliente_nombre", %{
+        "habilitada" => true,
+        "modo" => "moneda",
+        "decimales" => 2,
+        "separador_miles" => true,
+        "simbolo" => "$",
+        "simbolo_posicion" => "prefijo",
+        "permitir_negativos" => true,
+        "guardar_formato" => true
+      })
+    end
+
+    test "con formato: acepta símbolo + separadores de miles" do
+      assert changeset_nombre("$1,234,567.50").valid?
+    end
+
+    test "con formato: rechaza el número plano sin separadores (no es lo que se pidió guardar)" do
+      refute changeset_nombre("1234567.50").valid?
+    end
+
+    test "con formato: acepta negativo cuando permitir_negativos es verdadero (símbolo antes del signo, como arma FormatoNumericoField)" do
+      assert changeset_nombre("$-1,234,567.50").valid?
+    end
+  end
+
   describe "validar_formato_captura/2 — numérico (decimales)" do
     setup do
       con_formato_captura("meta_fixture_cliente_venta", %{

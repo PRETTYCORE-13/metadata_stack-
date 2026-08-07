@@ -173,7 +173,12 @@ defmodule MetadataAppWeb.CampoInputComponents do
   # caracteres que no calzan con la clase A/9/*) — el `<input>` sigue
   # siendo el mismo que se somete, sin par hidden/visible como
   # ReferenciaField (acá no hay id vs. etiqueta, el valor tipeado ES el
-  # valor real).
+  # valor real). Modo "fecha" suma un selector de calendario nativo al
+  # lado (mismo hook AbrirCalendario que ya usa "Filtros por default" en
+  # BcMotorLive) — oculto por accesibilidad (sr-only) detrás de su
+  # <label>, elegir una fecha ahí escribe el valor YA formateado en el
+  # input de texto en vez de reemplazarlo por un input de fecha nativo
+  # (que perdería la posibilidad de seguir tipeando el patrón a mano).
   def campo_input(
         %{
           columna: %{
@@ -195,13 +200,65 @@ defmodule MetadataAppWeb.CampoInputComponents do
     ~H"""
     <div>
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
-      <input type="text" name={@name} value={@valor} required={@required} disabled={@disabled}
-        maxlength={@columna.schema_context_properties["longitud"]}
-        id={@dom_id} phx-hook="FormatoCapturaField"
-        data-patron={@formato["patron"]}
-        data-guardar-formato={to_string(@formato["guardar_formato"] != false)}
-        data-estricto={to_string(@formato["estricto"] != false)}
-        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+      <div class="flex items-center gap-1">
+        <input type="text" name={@name} value={@valor} required={@required} disabled={@disabled}
+          maxlength={@columna.schema_context_properties["longitud"]}
+          id={@dom_id} phx-hook="FormatoCapturaField"
+          data-patron={@formato["patron"]}
+          data-guardar-formato={to_string(@formato["guardar_formato"] != false)}
+          data-estricto={to_string(@formato["estricto"] != false)}
+          class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+        <div :if={@formato["modo"] == "fecha" and !@disabled} class="relative flex-none">
+          <label for={"#{@dom_id}-calendario"} class="material-symbols-outlined text-gray-400 hover:text-purple-600 cursor-pointer" style="font-size:18px">calendar_month</label>
+          <input type="date" id={"#{@dom_id}-calendario"} phx-hook="AbrirCalendario" data-destino={@dom_id} tabindex="-1" class="sr-only" />
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  # "Formato de captura" numérico/moneda en un campo tipo "string" (a
+  # diferencia de la cláusula "integer"/"decimal" de arriba, acá la
+  # columna es texto de verdad — no hay un <input type="number"> nativo
+  # que lo proteja solo, así que FormatoNumericoField también filtra los
+  # caracteres inválidos al tipear). `guardar_formato` decide si, al
+  # perder foco, el valor tipeado se reemplaza por su versión formateada
+  # ("$1,234.50") o se deja como dígitos crudos — igual que en el modo
+  # posicional de arriba.
+  def campo_input(
+        %{
+          columna: %{
+            schema_context_properties: %{
+              "tipo" => "string",
+              "formato_captura" => %{"habilitada" => true, "modo" => modo} = formato
+            }
+          }
+        } = assigns
+      )
+      when modo in ["numero", "moneda"] do
+    assigns = assign_name(assigns)
+
+    assigns =
+      assigns
+      |> assign(:formato, formato)
+      |> assign(:dom_id, assigns.id || "campo-#{String.replace(assigns.name, ~r/[\[\]]/, "-")}")
+
+    ~H"""
+    <div>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <div class="flex items-center gap-1.5">
+        <input type="text" inputmode="decimal" name={@name} value={@valor} required={@required} disabled={@disabled}
+          id={@dom_id} phx-hook="FormatoNumericoField"
+          data-decimales={@formato["decimales"] || 0}
+          data-separador-miles={to_string(@formato["separador_miles"] == true)}
+          data-simbolo={@formato["modo"] == "moneda" && @formato["simbolo"]}
+          data-simbolo-posicion={@formato["simbolo_posicion"] || "prefijo"}
+          data-permitir-negativos={to_string(@formato["permitir_negativos"] == true)}
+          data-guardar-formato={to_string(@formato["guardar_formato"] == true)}
+          data-preview-de={"#{@dom_id}-preview"}
+          class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+        <span id={"#{@dom_id}-preview"} class="text-gray-400 text-[11px] whitespace-nowrap"></span>
+      </div>
     </div>
     """
   end
