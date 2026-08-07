@@ -549,7 +549,8 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # validar_campo_visualizacion/1 ya impide guardar una plantilla con
   # variables que no existen, esto es la segunda capa de defensa en tiempo
   # de lectura (fail-open, nunca rompe el picker por una config vieja).
-  defp sustituir_variables(plantilla, registro) do
+  @doc "Pública para Integraciones.ejecutar/2 (Fase 4, 2026-08-07) — mismo templating \"{campo}\" para url/headers/body de una acción externa, sin reinventar el reemplazo acá."
+  def sustituir_variables(plantilla, registro) do
     Regex.replace(~r/\{(\w+)\}/, plantilla, fn original, campo ->
       valor_campo(registro, campo) || original
     end)

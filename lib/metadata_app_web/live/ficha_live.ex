@@ -37,6 +37,7 @@ defmodule MetadataAppWeb.FichaLive do
   alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaPlantillas.Formula
   alias MetadataApp.MetaSchema.TransicionEvento
+  alias MetadataApp.Integraciones
   alias MetadataAppWeb.AdminNav
   alias MetadataAppWeb.GridEditableComponents
 
@@ -76,6 +77,8 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:form_values, %{})
          |> assign(:errores_campos, %{})
          |> assign(:error_guardado, nil)
+         |> assign(:accion_externa_en_curso, nil)
+         |> assign(:resultado_accion_externa, nil)
          |> cargar_registro(registro)}
     end
   end
@@ -149,6 +152,12 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:form_values, %{})
          |> assign(:errores_campos, %{})
          |> assign(:error_guardado, nil)
+         # Sin registro todavía (modo alta) no hay contra qué resolver
+         # {campo} en una url_template -- los botones de Acciones externas
+         # solo tienen sentido en modo :ver (ver header_acciones_externas/1).
+         |> assign(:acciones_externas, [])
+         |> assign(:accion_externa_en_curso, nil)
+         |> assign(:resultado_accion_externa, nil)
          # Todavía no hay id de encabezado para listar renglones YA
          # persistidos, pero sí se puede dejar capturar renglones "al
          # vuelo" (R6, alta atómica: MetaStateEngine.dar_de_alta/5 acepta
@@ -232,6 +241,49 @@ defmodule MetadataAppWeb.FichaLive do
       {:error, razon} ->
         {:noreply, assign(socket, :error_guardado, formatear_error(razon))}
     end
+  end
+
+  # Botón "Acciones externas" (Fase 6 de "Integraciones", 2026-08-07) —
+  # dispara la llamada HTTP configurada vía start_async/3, NUNCA síncrono:
+  # a diferencia de una regla post (dentro de la transacción, con timeout
+  # corto, ver Integraciones.ejecutar/2), esto es un botón que un humano
+  # clickea con el timeout default (15s) — bloquear el proceso de la
+  # LiveView ese tiempo dejaría toda la pantalla congelada. Un solo
+  # @accion_externa_en_curso (no por id): dos acciones a la vez sobre el
+  # mismo registro no tiene un caso de uso real y complica innecesariamente
+  # el manejo de errores parciales.
+  def handle_event("ejecutar_accion_externa", %{"accion_id" => accion_id}, socket) do
+    accion_id = String.to_integer(accion_id)
+    %{registro: registro, header: header, current_scope: current_scope} = socket.assigns
+
+    # Busca contra TODAS las acciones del catálogo (no solo
+    # @acciones_externas, ya filtrada por permiso) para poder distinguir
+    # "no existe" de "no tenés permiso" -- defensa en profundidad contra un
+    # permiso revocado en OTRA pestaña/sesión mientras esta ficha seguía
+    # abierta con la lista vieja en memoria, no el camino normal (el botón
+    # ya no aparece si @acciones_externas no la incluye).
+    accion = header.id |> Integraciones.listar_acciones() |> Enum.find(&(&1.id == accion_id))
+
+    cond do
+      is_nil(accion) ->
+        {:noreply, socket}
+
+      not Permissions.can?(current_scope, "ejecutar_#{accion.nombre}", header.schema_context_name) ->
+        {:noreply, put_flash(socket, :error, "No tienes permiso para ejecutar esta acción.")}
+
+      true ->
+        opts_log = [origen: "usuario", usuario_id: current_scope.usuario.id]
+
+        {:noreply,
+         socket
+         |> assign(:accion_externa_en_curso, accion_id)
+         |> assign(:resultado_accion_externa, nil)
+         |> start_async(:accion_externa, fn -> {accion.nombre, Integraciones.ejecutar_accion(accion, registro, opts_log)} end)}
+    end
+  end
+
+  def handle_event("cerrar_resultado_accion_externa", _params, socket) do
+    {:noreply, assign(socket, :resultado_accion_externa, nil)}
   end
 
   # En modo alta no hay registro que releer — "Actualizar ficha" acá solo
@@ -520,6 +572,36 @@ defmodule MetadataAppWeb.FichaLive do
          |> push_event("grid_resaltar_fila", %{catalogo: catalogo, renglon_id: fila.renglon_id})}
     end
   end
+
+  # Resultado del Task disparado por "ejecutar_accion_externa" (start_async/3,
+  # ver ahí el motivo). {:exit, _} es un crash genuino dentro del Task —
+  # sin esta cláusula el botón quedaría "en curso" para siempre si algo
+  # revienta fuera del try/rescue que ya tiene Integraciones.ejecutar_accion/3.
+  def handle_async(:accion_externa, {:ok, {nombre, {:ok, %{status: status, body: body}}}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:accion_externa_en_curso, nil)
+     |> assign(:resultado_accion_externa, %{nombre: nombre, ok?: status in 200..299, status: status, body: body, error: nil})}
+  end
+
+  def handle_async(:accion_externa, {:ok, {nombre, {:error, motivo}}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:accion_externa_en_curso, nil)
+     |> assign(:resultado_accion_externa, %{nombre: nombre, ok?: false, status: nil, body: nil, error: formatear_error_accion_externa(motivo)})}
+  end
+
+  def handle_async(:accion_externa, {:exit, razon}, socket) do
+    {:noreply,
+     socket
+     |> assign(:accion_externa_en_curso, nil)
+     |> assign(:resultado_accion_externa, %{nombre: nil, ok?: false, status: nil, body: nil, error: "Error inesperado: #{inspect(razon)}"})}
+  end
+
+  defp formatear_error_accion_externa(:timeout), do: "La API externa no respondió a tiempo."
+  defp formatear_error_accion_externa({:conexion, motivo}), do: "No se pudo conectar: #{inspect(motivo)}"
+  defp formatear_error_accion_externa({:excepcion, mensaje}), do: mensaje
+  defp formatear_error_accion_externa(motivo), do: inspect(motivo)
 
   defp columnas_de_catalogo(catalogos_detalle, nombre) do
     catalogos_detalle |> Enum.find(%{columnas: []}, &(&1.nombre == nombre)) |> Map.get(:columnas)
@@ -978,6 +1060,18 @@ defmodule MetadataAppWeb.FichaLive do
     |> assign(:detalle_renglones_eliminados, %{})
     |> assign(:detalle_seleccion, %{})
     |> assign(:detalle_form_error, nil)
+    |> assign(:acciones_externas, acciones_externas_permitidas(socket, header))
+  end
+
+  # RBAC (Fase 7 de "Integraciones") — mismo criterio que
+  # verificar_permiso_transicion/3 del motor de estados: deny-by-default,
+  # el botón directamente no aparece si falta {recurso: catálogo, accion:
+  # "ejecutar_<nombre>"} (ver Integraciones.registrar_permiso_ejecucion/1,
+  # que la registra sola al crear/editar la acción).
+  defp acciones_externas_permitidas(socket, header) do
+    header.id
+    |> Integraciones.listar_acciones()
+    |> Enum.filter(&Permissions.can?(socket.assigns.current_scope, "ejecutar_#{&1.nombre}", header.schema_context_name))
   end
 
   defp cargar_catalogos_detalle(header_id) do
@@ -1299,6 +1393,17 @@ defmodule MetadataAppWeb.FichaLive do
           </div>
 
           <div class="flex items-center gap-2 flex-wrap">
+            <button :for={accion <- @acciones_externas} type="button"
+              phx-click="ejecutar_accion_externa" phx-value-accion_id={accion.id}
+              disabled={!is_nil(@accion_externa_en_curso)}
+              data-confirm={if accion.confirmar_antes, do: "¿Ejecutar \"#{accion.etiqueta || accion.nombre}\"? Esto llama a #{accion.credencial.sistema_externo || accion.credencial.nombre} y puede modificar datos ahí."}
+              class={[
+                "px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors border border-purple-200 text-purple-700 hover:bg-purple-50",
+                !is_nil(@accion_externa_en_curso) && "opacity-50 cursor-not-allowed"
+              ]}>
+              {if @accion_externa_en_curso == accion.id, do: "Ejecutando…", else: accion.etiqueta || accion.nombre}
+            </button>
+
             <button :for={t <- @otras_transiciones} type="button"
               phx-click="ejecutar_transicion" phx-value-accion={t.accion} disabled={!t.disponible}
               title={if !t.disponible, do: Enum.map_join(t.razones, "; ", & &1.mensaje)}
@@ -1345,6 +1450,8 @@ defmodule MetadataAppWeb.FichaLive do
         </div>
       </div>
 
+      <.modal_resultado_accion_externa :if={@resultado_accion_externa} resultado={@resultado_accion_externa} />
+
       <div class="flex gap-5 border-b border-gray-200 mb-4 text-sm">
         <button type="button" phx-click="cambiar_tab" phx-value-tab="datos"
           class={["pb-2 -mb-px font-semibold", @tab == "datos" && "text-purple-700 border-b-2 border-purple-600", @tab != "datos" && "text-gray-400"]}>
@@ -1375,6 +1482,44 @@ defmodule MetadataAppWeb.FichaLive do
     </div>
     """
   end
+
+  # Respuesta CRUDA de la API externa (Fase 6, "Integraciones") — a
+  # propósito sin interpretar/traducir el body: quien pone el botón (el
+  # constructor del catálogo, vía AccionesExternasLive) es responsable de
+  # que la URL/método tengan sentido; este modal solo demuestra que el
+  # viaje de ida y vuelta ocurrió, para debug o confirmación visual.
+  attr :resultado, :map, required: true
+
+  defp modal_resultado_accion_externa(assigns) do
+    ~H"""
+    <div class="fixed inset-0 bg-black/30 flex items-center justify-center z-50" phx-click="cerrar_resultado_accion_externa">
+      <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full mx-4 p-4" onclick="event.stopPropagation()">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-bold text-gray-900 flex items-center gap-2">
+            <span class={["w-2 h-2 rounded-full", @resultado.ok? && "bg-green-500", !@resultado.ok? && "bg-red-500"]}></span>
+            {@resultado.nombre || "Acción externa"}
+          </h3>
+          <button type="button" phx-click="cerrar_resultado_accion_externa" class="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+        </div>
+
+        <p :if={@resultado.status} class="text-xs text-gray-500 mb-2">HTTP {@resultado.status}</p>
+        <p :if={@resultado.error} class="text-xs text-red-600 mb-2">{@resultado.error}</p>
+
+        <pre :if={@resultado.body} class="bg-gray-50 border border-gray-200 rounded-lg p-2 text-[11px] font-mono overflow-auto max-h-64 whitespace-pre-wrap">{formatear_body_accion_externa(@resultado.body)}</pre>
+
+        <div class="flex justify-end mt-3">
+          <button type="button" phx-click="cerrar_resultado_accion_externa"
+            class="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700 text-xs font-semibold hover:bg-gray-200">
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp formatear_body_accion_externa(body) when is_map(body) or is_list(body), do: Jason.encode!(body, pretty: true)
+  defp formatear_body_accion_externa(body), do: to_string(body)
 
   attr :columnas, :list, required: true
   attr :registro, :map, required: true

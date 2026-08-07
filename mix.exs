@@ -62,6 +62,7 @@ defmodule MetadataApp.MixProject do
       {:gen_smtp, "~> 1.0"},
       {:pbkdf2_elixir, "~> 2.0"},
       {:req, "~> 0.5"},
+      {:cloak_ecto, "~> 1.3"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 0.26"},

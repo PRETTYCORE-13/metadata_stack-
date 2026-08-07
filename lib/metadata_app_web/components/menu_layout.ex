@@ -276,6 +276,12 @@ defmodule MetadataAppWeb.MenuLayout do
                 <.link navigate="/sysadmin/catalogos/permisos" class="pc-user-menu-item pc-user-menu-subitem">
                   Permission Sets
                 </.link>
+                <.link navigate="/sysadmin/credenciales" class="pc-user-menu-item pc-user-menu-subitem">
+                  Credenciales
+                </.link>
+                <.link navigate="/sysadmin/acciones-externas" class="pc-user-menu-item pc-user-menu-subitem">
+                  Acciones externas
+                </.link>
               </details>
               <button
                 type="button"
