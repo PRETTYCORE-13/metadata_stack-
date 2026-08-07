@@ -120,10 +120,14 @@ defmodule MetadataAppWeb.Router do
     # exige sesión — decisión explícita 2026-07-31, revierte la apertura
     # interina de Fase 1 (2026-07-25, ver docs/roadmap RBAC) ahora que Fase 2
     # RBAC ya está completa. Sin sesión, redirect directo a
-    # /meta_schema_usuario/log-in (UsuarioAuth.on_mount/4 :require_authenticated)
-    # — nunca se llega a ver "Bienvenido" ni ninguna otra página de negocio.
+    # /meta_schema_usuario/log-in. Además exige empresa_activa resuelta
+    # (2026-08-06) -- sin eso el sidebar se mostraba SIN podar por
+    # permisos (menu_layout.ex cae a "sin scope, mostrar completo") pero
+    # cualquier catálogo bloqueaba igual (Permissions.can?/3 con
+    # empresa_activa: nil siempre da false) -- ver
+    # UsuarioAuth.on_mount/4 :require_authenticated_con_empresa.
     live_session :app_autenticada,
-      on_mount: [{MetadataAppWeb.UsuarioAuth, :require_authenticated}] do
+      on_mount: [{MetadataAppWeb.UsuarioAuth, :require_authenticated_con_empresa}] do
       live "/", InicioLive
 
       # Ni existen en producción — ni la ruta ni el link del Frame (ver

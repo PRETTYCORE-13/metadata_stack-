@@ -69,6 +69,10 @@ defmodule MetadataApp.MetaImportExport do
               if(sincronizar_cargar_todos_por_default(existente, contexto["cargar_todos_por_default"]),
                 do: "\"traer todo por default\" actualizado"
               ),
+              case sincronizar_columnas_estructurales(existente, contexto) do
+                [] -> nil
+                campos -> "columnas estructurales actualizadas: #{Enum.join(campos, ", ")}"
+              end,
               if(
                 sincronizar_transaccional(
                   existente,
@@ -123,6 +127,47 @@ defmodule MetadataApp.MetaImportExport do
 
       {:error, changeset} ->
         raise "Error sincronizando \"cargar_todos_por_default\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+    end
+  end
+
+  # Get View → columnas estructurales (ID/Estado/TRN, 2026-08-06) -- mismo
+  # criterio que sincronizar_cargar_todos_por_default/2: es puro flag de
+  # presentación, no toca la columna física ni corre migración, seguro
+  # sobreescribirlo a ciegas. Los 3 juntos en una sola función porque son
+  # la misma categoría de cambio (nada estructural), a diferencia de
+  # separarlos como sincronizar_etiquetas_campos/sincronizar_obligatorio_campos
+  # (esos sí son por-campo, con su propia lista de "cuáles cambiaron").
+  defp sincronizar_columnas_estructurales(header, contexto) do
+    campos = [
+      {:mostrar_id_en_tabla, "mostrar_id_en_tabla", "ID"},
+      {:mostrar_estado_en_tabla, "mostrar_estado_en_tabla", "Estado"},
+      {:mostrar_trn_en_tabla, "mostrar_trn_en_tabla", "TRN"}
+    ]
+
+    # OJO: nunca "valor = Map.get(...)" como cláusula de un for -- Elixir
+    # trata cualquier cláusula que no sea un generador como FILTRO por
+    # veracidad, y estos valores son booleanos legítimamente `false` --
+    # esa forma descartaba la iteración entera en silencio apenas el
+    # nuevo valor fuera `false` (encontrado real, probado en vivo).
+    cambios =
+      campos
+      |> Enum.map(fn {campo_atom, campo_json, etiqueta} -> {campo_atom, campo_json, etiqueta, Map.get(contexto, campo_json)} end)
+      |> Enum.reject(fn {_atom, _json, _etiqueta, valor_nuevo} -> is_nil(valor_nuevo) end)
+      |> Enum.filter(fn {campo_atom, _json, _etiqueta, valor_nuevo} -> Map.get(header, campo_atom) != valor_nuevo end)
+      |> Enum.map(fn {_atom, campo_json, etiqueta, valor_nuevo} -> {campo_json, etiqueta, valor_nuevo} end)
+
+    if cambios == [] do
+      []
+    else
+      attrs = Map.new(cambios, fn {campo_json, _etiqueta, valor} -> {campo_json, valor} end)
+
+      case MetaSchemaContext.actualizar_header(header, attrs) do
+        {:ok, _header} ->
+          Enum.map(cambios, fn {_campo_json, etiqueta, _valor} -> etiqueta end)
+
+        {:error, changeset} ->
+          raise "Error sincronizando columnas estructurales de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+      end
     end
   end
 

@@ -572,6 +572,23 @@ defmodule MetadataApp.Autenticacion do
     :ok
   end
 
+  @doc """
+  Revoca TODAS las sesiones activas de un usuario -- uso administrativo
+  (despido, salida de urgencia: cortar acceso YA, sin esperar a que
+  expire el token por tiempo). A diferencia de delete_usuario_session_token/1
+  (una sola sesión, la propia, en logout normal), esto borra TODOS los
+  tokens del usuario sin importar en qué dispositivo/navegador se
+  emitieron. Devuelve los tokens borrados para que el caller pueda además
+  desconectar los sockets LiveView ya abiertos (ver
+  MetadataAppWeb.UsuarioAuth.disconnect_sessions/1) -- borrar el token no
+  tumba por sí solo una conexión ya establecida.
+  """
+  def revocar_sesiones_de_usuario(usuario_id) do
+    tokens = Repo.all_by(UsuarioToken, usuario_id: usuario_id)
+    Repo.delete_all(from(t in UsuarioToken, where: t.id in ^Enum.map(tokens, & &1.id)))
+    tokens
+  end
+
   ## Token helper
 
   defp update_usuario_and_delete_all_tokens(changeset) do

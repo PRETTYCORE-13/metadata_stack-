@@ -18,7 +18,7 @@ defmodule MetadataAppWeb.UsuarioLive.ConfirmationTest do
         end)
 
       {:ok, _lv, html} = live(conn, ~p"/meta_schema_usuario/log-in/#{token}")
-      assert html =~ "Confirm and stay logged in"
+      assert html =~ "Confirm"
     end
 
     test "renders login page for confirmed usuario", %{conn: conn, confirmed_usuario: usuario} do
@@ -29,7 +29,7 @@ defmodule MetadataAppWeb.UsuarioLive.ConfirmationTest do
 
       {:ok, _lv, html} = live(conn, ~p"/meta_schema_usuario/log-in/#{token}")
       refute html =~ "Confirm my account"
-      assert html =~ "Keep me logged in on this device"
+      assert html =~ "Log in"
     end
 
     test "renders login page for already logged in usuario", %{conn: conn, confirmed_usuario: usuario} do

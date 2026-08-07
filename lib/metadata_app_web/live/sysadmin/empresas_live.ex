@@ -69,7 +69,7 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
         socket = socket |> assign(form_nueva_empresa: nil, error_form: nil) |> cargar_empresas()
 
         # `empresa_activa` solo se fija en la sesión al momento de loguearse
-        # (ver UsuarioAuth.log_in_usuario/3) — si el usuario entró sin
+        # (ver UsuarioAuth.log_in_usuario/2) — si el usuario entró sin
         # ninguna empresa todavía (como cualquiera recién registrado, ver
         # el bootstrap de arriba), crearla acá no actualiza esa sesión. Sin
         # este redirect quedaría con acceso a "sus empresas" pero sin poder

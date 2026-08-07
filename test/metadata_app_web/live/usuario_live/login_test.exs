@@ -50,7 +50,7 @@ defmodule MetadataAppWeb.UsuarioLive.LoginTest do
 
       form =
         form(lv, "#login_form_password",
-          usuario: %{email: usuario.email, password: valid_usuario_password(), remember_me: true}
+          usuario: %{email: usuario.email, password: valid_usuario_password()}
         )
 
       conn = submit_form(form, conn)
@@ -66,7 +66,7 @@ defmodule MetadataAppWeb.UsuarioLive.LoginTest do
       form =
         form(lv, "#login_form_password", usuario: %{email: "test@email.com", password: "123456"})
 
-      render_submit(form, %{user: %{remember_me: true}})
+      render_submit(form)
 
       conn = follow_trigger_action(form, conn)
       assert Phoenix.Flash.get(conn.assigns.flash, :error) == "Invalid email or password"

@@ -148,7 +148,10 @@ defmodule MetadataApp.BusinessProcessBuilder.DependenciasReferenciaTest do
       |> Repo.insert!()
 
       opciones =
-        CatalogoGenerico.opciones_referencia(%{"catalogo" => "meta_fixture_cliente"}, %{"meta_fixture_cliente_edad" => 99})
+        CatalogoGenerico.opciones_referencia(
+          %{"catalogo" => "meta_fixture_cliente", "campos_acompanamiento" => ["meta_fixture_cliente_nombre"]},
+          %{"meta_fixture_cliente_edad" => 99}
+        )
 
       etiquetas = Enum.map(opciones, fn {_id, etiqueta} -> etiqueta end)
       assert Enum.any?(etiquetas, &(&1 =~ "match #{sufijo}"))

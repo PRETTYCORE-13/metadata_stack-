@@ -7,24 +7,20 @@ defmodule MetadataAppWeb.UsuarioAuth do
   alias MetadataApp.Autenticacion
   alias MetadataApp.Autenticacion.Scope
 
-  # Make the remember me cookie valid for 14 days. This should match
-  # the session validity setting in UsuarioToken.
-  @max_cookie_age_in_days 14
-  @remember_me_cookie "_metadata_app_web_usuario_remember_me"
-  @remember_me_options [
-    sign: true,
-    max_age: @max_cookie_age_in_days * 24 * 60 * 60,
-    same_site: "Lax"
-  ]
+  # Sin "recordarme" -- decisión explícita 2026-08-06 (ERP transaccional
+  # con datos sensibles): la cookie de sesión (Plug.Session, sin max_age,
+  # ver endpoint.ex) ya muere sola al cerrar el navegador de verdad; un
+  # cookie persistente aparte solo agrega superficie de riesgo (laptop
+  # robada, empleado despedido) por una comodidad menor. Ver
+  # UsuarioToken.@session_validity_in_hours para el límite real de cuánto
+  # dura un token, independiente de si el navegador "recuerda" la cookie.
 
-  # How old the session token should be before a new one is issued. When a request is made
-  # with a session token older than this value, then a new session token will be created
-  # and the session and remember-me cookies (if set) will be updated with the new token.
-  # Lowering this value will result in more tokens being created by active users. Increasing
-  # it will result in less time before a session token expires for a user to get issued a new
-  # token. This can be set to a value greater than `@max_cookie_age_in_days` to disable
-  # the reissuing of tokens completely.
-  @session_reissue_age_in_days 7
+  # Reissue a mitad de camino de la ventana de validez del token (ver
+  # UsuarioToken.@session_validity_in_hours, 12h): una sesión ACTIVA nunca
+  # llega al corte duro (se renueva antes), mientras que una sesión
+  # abandonada (nadie hace requests, nada la reissuea) sí expira -- esto
+  # funciona como timeout por inactividad sin necesitar tracking aparte.
+  @session_reissue_age_in_hours 6
 
   @doc """
   Logs the usuario in.
@@ -32,9 +28,9 @@ defmodule MetadataAppWeb.UsuarioAuth do
   Redirects to the session's `:usuario_return_to` path
   or falls back to the `signed_in_path/1`.
   """
-  def log_in_usuario(conn, usuario, params \\ %{}) do
+  def log_in_usuario(conn, usuario) do
     usuario_return_to = get_session(conn, :usuario_return_to)
-    conn = create_or_extend_session(conn, usuario, params)
+    conn = create_or_extend_session(conn, usuario)
 
     # usuario_return_to se lee una sola vez y se borra explícito acá — si no,
     # queda pegado para siempre en sesiones donde el usuario que se
@@ -82,12 +78,11 @@ defmodule MetadataAppWeb.UsuarioAuth do
 
     conn
     |> renew_session(nil)
-    |> delete_resp_cookie(@remember_me_cookie, @remember_me_options)
     |> redirect(to: ~p"/meta_schema_usuario/log-in")
   end
 
   @doc """
-  Authenticates the usuario by looking into the session and remember me token.
+  Authenticates the usuario by looking into the session.
 
   Will reissue the session token if it is older than the configured age.
   """
@@ -121,23 +116,15 @@ defmodule MetadataAppWeb.UsuarioAuth do
   defp ensure_usuario_token(conn) do
     if token = get_session(conn, :usuario_token) do
       {token, conn}
-    else
-      conn = fetch_cookies(conn, signed: [@remember_me_cookie])
-
-      if token = conn.cookies[@remember_me_cookie] do
-        {token, conn |> put_token_in_session(token) |> put_session(:usuario_remember_me, true)}
-      else
-        nil
-      end
     end
   end
 
   # Reissue the session token if it is older than the configured reissue age.
   defp maybe_reissue_usuario_session_token(conn, usuario, token_inserted_at) do
-    token_age = DateTime.diff(DateTime.utc_now(:second), token_inserted_at, :day)
+    token_age = DateTime.diff(DateTime.utc_now(:second), token_inserted_at, :hour)
 
-    if token_age >= @session_reissue_age_in_days do
-      create_or_extend_session(conn, usuario, %{})
+    if token_age >= @session_reissue_age_in_hours do
+      create_or_extend_session(conn, usuario)
     else
       conn
     end
@@ -151,14 +138,12 @@ defmodule MetadataAppWeb.UsuarioAuth do
   # When the session is created, rather than extended, the renew_session
   # function will clear the session to avoid fixation attacks. See the
   # renew_session function to customize this behaviour.
-  defp create_or_extend_session(conn, usuario, params) do
+  defp create_or_extend_session(conn, usuario) do
     token = Autenticacion.generate_usuario_session_token(usuario)
-    remember_me = get_session(conn, :usuario_remember_me)
 
     conn
     |> renew_session(usuario)
     |> put_token_in_session(token)
-    |> maybe_write_remember_me_cookie(token, params, remember_me)
   end
 
   # Do not renew session if the usuario is already logged in
@@ -189,20 +174,6 @@ defmodule MetadataAppWeb.UsuarioAuth do
     conn
     |> configure_session(renew: true)
     |> clear_session()
-  end
-
-  defp maybe_write_remember_me_cookie(conn, token, %{"remember_me" => "true"}, _),
-    do: write_remember_me_cookie(conn, token)
-
-  defp maybe_write_remember_me_cookie(conn, token, _params, true),
-    do: write_remember_me_cookie(conn, token)
-
-  defp maybe_write_remember_me_cookie(conn, _token, _params, _), do: conn
-
-  defp write_remember_me_cookie(conn, token) do
-    conn
-    |> put_session(:usuario_remember_me, true)
-    |> put_resp_cookie(@remember_me_cookie, token, @remember_me_options)
   end
 
   defp put_token_in_session(conn, token) do
@@ -270,6 +241,34 @@ defmodule MetadataAppWeb.UsuarioAuth do
         |> Phoenix.LiveView.redirect(to: ~p"/meta_schema_usuario/log-in")
 
       {:halt, socket}
+    end
+  end
+
+  # Igual que :require_authenticated, pero ADEMÁS exige empresa_activa
+  # resuelta (2026-08-06, bug real encontrado: una sesión con usuario_token
+  # válido pero SIN empresa_activa_id -- ej. una cookie vieja de antes de
+  # elegir empresa -- pasaba :require_authenticated igual, current_scope
+  # quedaba con empresa_activa: nil, y desde ahí dos cosas se
+  # contradecían en silencio: podar_menu_por_permisos/1 (menu_layout.ex)
+  # cae a "sin scope resuelto, mostrar completo" -- el sidebar se ve
+  # ENTERO sin podar -- mientras que Permissions.can?/3 con
+  # empresa_activa: nil siempre da false -- CUALQUIER catálogo redirige
+  # con "No tienes permiso". El usuario ve todo el menú pero no puede
+  # usar nada. Usado solo por la live_session "real" de la app
+  # (router.ex, :app_autenticada) -- NO por :require_authenticated_usuario
+  # de arriba (settings/seleccionar-empresa), que seguiría en loop
+  # infinito si exigiera empresa activa para poder llegar a elegir una.
+  def on_mount(:require_authenticated_con_empresa, params, session, socket) do
+    case on_mount(:require_authenticated, params, session, socket) do
+      {:cont, socket} ->
+        if socket.assigns.current_scope.empresa_activa do
+          {:cont, socket}
+        else
+          {:halt, Phoenix.LiveView.redirect(socket, to: ~p"/meta_schema_usuario/seleccionar-empresa")}
+        end
+
+      {:halt, _socket} = resultado ->
+        resultado
     end
   end
 

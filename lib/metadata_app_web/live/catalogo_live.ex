@@ -90,8 +90,9 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:encontrado?, true)
      |> assign(:label, header.schema_context_label)
      |> assign(:columnas, columnas)
-     |> assign(:mostrar_estado?, estados_por_id != %{})
-     |> assign(:mostrar_trn?, header.schema_es_transaccional)
+     |> assign(:mostrar_id?, header.mostrar_id_en_tabla)
+     |> assign(:mostrar_estado?, estados_por_id != %{} and header.mostrar_estado_en_tabla)
+     |> assign(:mostrar_trn?, header.schema_es_transaccional and header.mostrar_trn_en_tabla)
      |> assign(:modulo, modulo)
      |> assign(:es_detalle?, es_detalle?)
      |> assign(:campos_alta, campos_alta)
@@ -933,7 +934,7 @@ defmodule MetadataAppWeb.CatalogoLive do
               busqueda_campo_filtro={@busqueda_campo_filtro}
             />
           </div>
-          <.panel_campos campos={campos_selector(@columnas, @mostrar_estado?, @mostrar_trn?)} tabla_id="tabla-catalogo" />
+          <.panel_campos campos={campos_selector(@columnas, @mostrar_id?, @mostrar_estado?, @mostrar_trn?)} tabla_id="tabla-catalogo" />
         </div>
 
         <div :if={@filtro_default_fecha_descripcion} class="flex items-center gap-1.5 text-[11px] font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-2.5 py-1.5 mb-4 w-fit">
@@ -947,7 +948,9 @@ defmodule MetadataAppWeb.CatalogoLive do
           <table id="tabla-catalogo" class="min-w-full divide-y divide-gray-200 text-xs">
             <thead class="bg-gray-50">
               <tr>
-                <th data-col="id" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">ID</th>
+                <%= if @mostrar_id? do %>
+                  <th data-col="id" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">ID</th>
+                <% end %>
                 <%= for columna <- @columnas do %>
                   <th data-col={col_key(columna)} class={[
                     "px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide",
@@ -974,9 +977,11 @@ defmodule MetadataAppWeb.CatalogoLive do
               <%= for fila <- @filas do %>
                 <tr class="hover:bg-purple-50/60 transition-colors cursor-pointer"
                   ondblclick={"window.location='/registro/#{@current_page}/#{fila.id}'"}>
-                  <td data-col="id" class="px-4 py-1.5 text-[10px] text-gray-700">
-                    {fila.id}
-                  </td>
+                  <%= if @mostrar_id? do %>
+                    <td data-col="id" class="px-4 py-1.5 text-[10px] text-gray-700">
+                      {fila.id}
+                    </td>
+                  <% end %>
                   <%= for columna <- @columnas do %>
                     <% valor = Map.get(fila, String.to_existing_atom(columna.schema_context_field)) %>
                     <td data-col={col_key(columna)} class={[
@@ -1008,7 +1013,10 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <tr>
                   <td
                     class="px-4 py-10 text-center text-gray-400 text-sm"
-                    colspan={2 + (if @mostrar_trn?, do: 1, else: 0) + length(@columnas) + if @mostrar_estado?, do: 1, else: 0}
+                    colspan={
+                      1 + (if @mostrar_id?, do: 1, else: 0) + (if @mostrar_trn?, do: 1, else: 0) + length(@columnas) +
+                        if(@mostrar_estado?, do: 1, else: 0)
+                    }
                   >
                     <%= if @sin_filtro? do %>
                       Seleccioná un filtro o buscá algo para ver los datos.
@@ -1021,7 +1029,7 @@ defmodule MetadataAppWeb.CatalogoLive do
             </tbody>
             <tfoot class="bg-gray-50 border-t-2 border-gray-300">
               <tr>
-                <td class="px-4 py-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 whitespace-nowrap">Resumen</td>
+                <td :if={@mostrar_id?} class="px-4 py-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 whitespace-nowrap">Resumen</td>
                 <.celdas_resumen
                   columnas={@columnas}
                   agregaciones={@agregaciones}
@@ -1078,8 +1086,8 @@ defmodule MetadataAppWeb.CatalogoLive do
     Enum.map(columnas, &%{clave: col_key(&1), etiqueta: &1.schema_context_properties["etiqueta"]})
   end
 
-  defp campos_selector(columnas, mostrar_estado?, mostrar_trn?) do
-    [%{clave: "id", etiqueta: "ID"}] ++
+  defp campos_selector(columnas, mostrar_id?, mostrar_estado?, mostrar_trn?) do
+    (if mostrar_id?, do: [%{clave: "id", etiqueta: "ID"}], else: []) ++
       campos_selector(columnas) ++
       (if mostrar_estado?, do: [%{clave: "estado", etiqueta: "Estado"}], else: []) ++
       (if mostrar_trn?, do: [%{clave: "trn", etiqueta: "TRN"}], else: [])

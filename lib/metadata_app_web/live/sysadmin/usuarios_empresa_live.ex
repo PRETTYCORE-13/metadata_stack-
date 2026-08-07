@@ -33,7 +33,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
   alias MetadataApp.Autenticacion.Usuario
   alias MetadataApp.Permissions
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
-  alias MetadataAppWeb.AdminNav
+  alias MetadataAppWeb.{AdminNav, UsuarioAuth}
 
   @menu [
     %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
@@ -215,6 +215,20 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
        empresas_estado: [],
        bcs_lectura: []
      )}
+  end
+
+  # Uso administrativo (despido, salida de urgencia): corta acceso YA, sin
+  # esperar a que el token expire por tiempo (ver
+  # UsuarioToken.@session_validity_in_hours, 2026-08-06). Borra los tokens
+  # de sesión Y desconecta cualquier socket LiveView ya abierto -- lo uno
+  # sin lo otro no alcanza, un socket ya conectado sigue vivo hasta el
+  # próximo request aunque su token en DB ya no exista.
+  def handle_event("cerrar_sesiones_de_usuario", _params, socket) do
+    usuario = socket.assigns.usuario_seleccionado
+    tokens = Autenticacion.revocar_sesiones_de_usuario(usuario.id)
+    UsuarioAuth.disconnect_sessions(tokens)
+
+    {:noreply, put_flash(socket, :info, "Se cerraron todas las sesiones de #{usuario.email}.")}
   end
 
   def handle_event("quitar_rol_de_usuario", %{"rol_id" => rol_id}, socket) do
@@ -488,6 +502,14 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
                       Sin confirmar
                     </span>
                   </dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-gray-400 mb-1">Sesiones activas</dt>
+                  <button type="button" phx-click="cerrar_sesiones_de_usuario"
+                    data-confirm={"¿Cerrar TODAS las sesiones activas de #{@usuario_seleccionado.email} en cualquier dispositivo? Va a tener que volver a loguearse."}
+                    class="px-3 py-1 rounded-lg bg-red-50 text-red-700 border border-red-100 text-xs font-semibold hover:bg-red-100">
+                    Cerrar todas las sesiones
+                  </button>
                 </div>
               </dl>
               <p class="text-xs text-gray-400 mt-4">Desactivar/bloquear cuenta: próximamente.</p>

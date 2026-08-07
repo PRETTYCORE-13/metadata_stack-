@@ -43,6 +43,18 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :schema_es_transaccional, :boolean, default: false
     field :codigo_trn, :string
 
+    # Get View → columnas ESTRUCTURALES (bc_motor_live.ex, 2026-08-06) — a
+    # diferencia de cargar_todos_por_default/filtro_default_fecha_* (qué
+    # filas trae), esto es qué COLUMNAS de sistema muestra CatalogoLive:
+    # ID siempre existía sin ningún gate, Estado/TRN ya se ocultaban solos
+    # cuando el catálogo no calificaba (sin motor de estados / no
+    # transaccional) pero sin forma de que un admin los ocultara aunque
+    # calificaran. default: true en los 3 preserva el comportamiento de
+    # siempre para catálogos ya publicados.
+    field :mostrar_id_en_tabla, :boolean, default: true
+    field :mostrar_estado_en_tabla, :boolean, default: true
+    field :mostrar_trn_en_tabla, :boolean, default: true
+
     # Catálogo Maestro-Detalle (ver docs/catalogo-maestro-detalle-requerimientos.md,
     # R1/R16) — no nulo implica "este catálogo es detalle de otro". No se
     # reusó schema_context_type (ya usa 2 para "carpeta", otra dimensión)
@@ -89,7 +101,10 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
           :cargar_todos_por_default,
           :filtro_default_fecha_modo,
           :filtro_default_fecha_valor,
-          :filtro_default_fecha_valor_hasta
+          :filtro_default_fecha_valor_hasta,
+          :mostrar_id_en_tabla,
+          :mostrar_estado_en_tabla,
+          :mostrar_trn_en_tabla
         ]
     )
     |> validate_required(@requeridos)
