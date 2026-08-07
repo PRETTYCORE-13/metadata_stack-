@@ -59,6 +59,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       |> assign(:eliminar_campo_form, nil)
       |> assign(:relacion_form, nil)
       |> assign(:dependencia_form, nil)
+      |> assign(:formato_form, nil)
       |> assign(:estado_form, nil)
       |> assign(:transicion_form, nil)
       |> assign(:header, header)
@@ -637,6 +638,94 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       {:error, motivo} ->
         {:noreply, update(socket, :dependencia_form, &Map.put(&1, "error", motivo))}
+    end
+  end
+
+  # --- Formato de captura (máscaras de texto, número/moneda) -----------------
+  # Config libre en schema_context_properties["formato_captura"], sin
+  # regenerar el schema — mismo criterio que "dependencias" arriba (ver
+  # MetaSchemaContext.validar_formato_captura/2). Un solo panel (no el
+  # wizard de 4 pasos del mockup de referencia) con los campos que aplican
+  # según el `tipo` real del campo: posicional para "string", numérico
+  # para "integer"/"decimal".
+  def handle_event("abrir_form_formato", %{"campo" => campo}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = detalle.schema_context_properties
+    tipo = props["tipo"]
+    actual = props["formato_captura"] || %{}
+    modo = actual["modo"] || modo_por_defecto(tipo)
+
+    {:noreply,
+     assign(socket, :formato_form, %{
+       "campo" => campo,
+       "tipo" => tipo,
+       "habilitada" => actual["habilitada"] == true,
+       "modo" => modo,
+       "patron" => actual["patron"] || patron_por_defecto(modo) || "",
+       "guardar_formato" => actual["guardar_formato"] != false,
+       "decimales" => actual["decimales"] || 2,
+       "separador_miles" => actual["separador_miles"] != false,
+       "simbolo" => actual["simbolo"] || "$",
+       "simbolo_posicion" => actual["simbolo_posicion"] || "prefijo",
+       "permitir_negativos" => actual["permitir_negativos"] == true,
+       "estricto" => actual["estricto"] != false,
+       "permitir_incompleto" => actual["permitir_incompleto"] != false,
+       "mensaje_invalido" => actual["mensaje_invalido"] || "",
+       "error" => nil
+     })}
+  end
+
+  def handle_event("cerrar_form_formato", _params, socket) do
+    {:noreply, assign(socket, :formato_form, nil)}
+  end
+
+  # phx-change del panel entero — a diferencia de "dependencia_cambiar" no
+  # hay filas repetidas que reordenar, así que se puede leer `params`
+  # directo campo por campo.
+  def handle_event("formato_cambiar", params, socket) do
+    {:noreply,
+     update(socket, :formato_form, fn form ->
+       modo = params["modo"] || form["modo"]
+
+       form
+       |> Map.put("habilitada", params["habilitada"] == "true")
+       |> Map.put("modo", modo)
+       |> Map.put("patron", patron_por_defecto(modo) || Map.get(params, "patron", form["patron"]))
+       |> Map.put("guardar_formato", params["guardar_formato"] != "false")
+       |> Map.put("decimales", to_entero_seguro(params["decimales"], form["decimales"]))
+       |> Map.put("separador_miles", params["separador_miles"] == "true")
+       |> Map.put("simbolo", Map.get(params, "simbolo", form["simbolo"]))
+       |> Map.put("simbolo_posicion", params["simbolo_posicion"] || form["simbolo_posicion"])
+       |> Map.put("permitir_negativos", params["permitir_negativos"] == "true")
+       |> Map.put("estricto", params["estricto"] == "true")
+       |> Map.put("permitir_incompleto", params["permitir_incompleto"] == "true")
+       |> Map.put("mensaje_invalido", Map.get(params, "mensaje_invalido", form["mensaje_invalido"]))
+     end)}
+  end
+
+  def handle_event("guardar_formato", _params, socket) do
+    form = socket.assigns.formato_form
+    campo = form["campo"]
+
+    case construir_formato_captura(form) do
+      {:ok, formato} ->
+        detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+        props = Map.put(detalle.schema_context_properties, "formato_captura", formato)
+
+        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+          {:ok, _detalle} ->
+            {:noreply,
+             socket
+             |> assign(:formato_form, nil)
+             |> put_flash(:info, "Formato de captura de \"#{campo}\" actualizado.")
+             |> cargar_motor()}
+
+          {:error, changeset} ->
+            {:noreply, update(socket, :formato_form, &Map.put(&1, "error", resumen_errores(changeset)))}
+        end
+
+      {:error, motivo} ->
+        {:noreply, update(socket, :formato_form, &Map.put(&1, "error", motivo))}
     end
   end
 
@@ -1283,6 +1372,69 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     update(socket, :reglas_mensajes, &Map.put(&1, tipo, mensaje))
   end
 
+  defp modo_por_defecto("string"), do: "telefono"
+  defp modo_por_defecto(tipo) when tipo in ["integer", "decimal"], do: "numero"
+  defp modo_por_defecto(_tipo), do: "sin_mascara"
+
+  # Patrón fijo de los presets no editables — "personalizada" es el único
+  # modo donde el patrón sale de lo que tipeó quien configura el campo
+  # (ver formato_cambiar/2 y construir_formato_captura/1 abajo, y
+  # formato_ejemplo/2 que reusa esto mismo para la línea de ejemplo).
+  defp patron_por_defecto("telefono"), do: "(999) 999-9999"
+  defp patron_por_defecto("cp"), do: "99999"
+  defp patron_por_defecto("rfc"), do: "AAAA999999AA9"
+  defp patron_por_defecto("fecha"), do: "99/99/9999"
+  defp patron_por_defecto(_modo), do: nil
+
+  defp to_entero_seguro(valor, default) when is_binary(valor) do
+    case Integer.parse(valor) do
+      {n, ""} -> n
+      _ -> default
+    end
+  end
+
+  defp to_entero_seguro(_valor, default), do: default
+
+  defp construir_formato_captura(%{"habilitada" => false}), do: {:ok, %{"habilitada" => false}}
+
+  defp construir_formato_captura(%{"tipo" => "string"} = form) do
+    cond do
+      form["modo"] == "sin_mascara" ->
+        {:ok, %{"habilitada" => false}}
+
+      form["patron"] in [nil, ""] ->
+        {:error, "Definí un patrón para la máscara."}
+
+      true ->
+        {:ok,
+         %{
+           "habilitada" => true,
+           "modo" => form["modo"],
+           "patron" => form["patron"],
+           "guardar_formato" => form["guardar_formato"],
+           "estricto" => form["estricto"],
+           "permitir_incompleto" => form["permitir_incompleto"],
+           "mensaje_invalido" => form["mensaje_invalido"]
+         }}
+    end
+  end
+
+  defp construir_formato_captura(form) do
+    {:ok,
+     %{
+       "habilitada" => true,
+       "modo" => form["modo"],
+       "decimales" => form["decimales"],
+       "separador_miles" => form["separador_miles"],
+       "simbolo" => if(form["modo"] == "moneda", do: form["simbolo"]),
+       "simbolo_posicion" => form["simbolo_posicion"],
+       "permitir_negativos" => form["permitir_negativos"],
+       "estricto" => form["estricto"],
+       "permitir_incompleto" => form["permitir_incompleto"],
+       "mensaje_invalido" => form["mensaje_invalido"]
+     }}
+  end
+
   # Compartido por cambiar_obligatorio_campo/2 y cambiar_valor_default_campo/2
   # — ambos necesitan CatalogoGenerador.generar/1 después de guardar
   # (a diferencia de cambiar_etiqueta_campo/2 y similares) porque tocan
@@ -1701,6 +1853,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     <.modal_transicion :if={@transicion_form} form={@transicion_form} estados={@estados} campos={@campos} catalogos_detalle={@catalogos_detalle} />
     <.modal_relacion :if={@relacion_form} form={@relacion_form} local_label={@header.schema_context_label} />
     <.modal_dependencia :if={@dependencia_form} form={@dependencia_form} />
+    <.modal_formato_captura :if={@formato_form} form={@formato_form} />
     """
   end
 
@@ -1997,6 +2150,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Solo validación de la app (el formulario no deja guardar vacío) — la columna en la base de datos se queda nullable siempre">Obligatorio</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si el campo obligatorio llega vacío, se rellena con este valor en vez de rechazar el guardado">Default</th>
                 <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si aparece como columna en la tabla del tab Detalle de la Ficha 360° — el formulario de al lado siempre muestra todos los campos, esto es solo la tabla">En tabla</th>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Máscara de texto (teléfono, RFC, personalizada…) o formato numérico/moneda (decimales, separador de miles, negativos)">Formato</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
             </thead>
@@ -2047,6 +2201,16 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                       <input type="hidden" name="mostrar_en_tabla" value="false" />
                       <input type="checkbox" name="mostrar_en_tabla" value="true" checked={MetaSchemaContext.mostrar_en_tabla?(props)} class="accent-purple-600" />
                     </form>
+                  </td>
+                  <td class="px-1.5 py-1">
+                    <%= if Map.get(props, "tipo") in ["string", "integer", "decimal"] do %>
+                      <button type="button" phx-click="abrir_form_formato" phx-value-campo={c.schema_context_field}
+                        class="text-purple-600 hover:text-purple-800 text-[11px] font-semibold">
+                        <%= if get_in(props, ["formato_captura", "habilitada"]) == true, do: "Configurado", else: "Configurar" %>
+                      </button>
+                    <% else %>
+                      <span class="text-gray-300">—</span>
+                    <% end %>
                   </td>
                   <td class="px-1.5 py-1">
                     <button type="button" phx-click="abrir_eliminar_campo" phx-value-campo={c.schema_context_field}
@@ -3717,6 +3881,206 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     </div>
     """
   end
+
+  @presets_formato_string [
+    {"telefono", "Teléfono"},
+    {"cp", "Código postal"},
+    {"rfc", "RFC"},
+    {"fecha", "Fecha libre"},
+    {"personalizada", "Personalizada"}
+  ]
+  @presets_formato_numerico [{"numero", "Número"}, {"moneda", "Moneda"}]
+
+  attr :form, :map, required: true
+
+  # Panel único (no el wizard de 4 pasos del mockup de referencia — ver
+  # modal_dependencia/1 arriba, mismo criterio de "versión condensada para
+  # LiveView server-rendered"): qué se ofrece depende del `tipo` real del
+  # campo, nunca un <select> de "tipo de formato" genérico que mezcle
+  # texto y número.
+  defp modal_formato_captura(assigns) do
+    assigns =
+      assign(assigns, :presets, if(assigns.form["tipo"] == "string", do: @presets_formato_string, else: @presets_formato_numerico))
+
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-md w-full text-xs max-h-[90vh] overflow-y-auto">
+        <div class="px-4 pt-4 pb-3 border-b border-gray-100 flex items-start justify-between gap-3">
+          <div class="flex items-start gap-2.5">
+            <span class="material-symbols-outlined text-purple-600 mt-0.5" style="font-size:20px">dialpad</span>
+            <div>
+              <h2 class="text-sm font-bold text-gray-900">Formato de captura</h2>
+              <p class="text-gray-500 mt-0.5">
+                Cómo se escribe y se guarda <strong class="font-mono">{@form["campo"]}</strong>.
+              </p>
+            </div>
+          </div>
+          <button type="button" phx-click="cerrar_form_formato" class="text-gray-400 hover:text-gray-700 flex-shrink-0">
+            <span class="material-symbols-outlined" style="font-size:20px">close</span>
+          </button>
+        </div>
+
+        <div class="p-4">
+          <div :if={@form["error"]} class="bg-red-50 text-red-700 rounded-lg px-2.5 py-1.5 mb-3">{@form["error"]}</div>
+
+          <form phx-change="formato_cambiar" phx-submit="guardar_formato" class="flex flex-col gap-3">
+            <label class="flex items-center gap-1.5">
+              <input type="hidden" name="habilitada" value="false" />
+              <input type="checkbox" name="habilitada" value="true" checked={@form["habilitada"]} class="accent-purple-600" />
+              <span class="text-gray-700 font-semibold">Habilitar formato de captura</span>
+            </label>
+
+            <%= if @form["habilitada"] do %>
+              <div>
+                <p class="text-gray-500 mb-1 font-semibold">Formato</p>
+                <div class="grid grid-cols-2 gap-1.5">
+                  <label :for={{valor, etiqueta} <- @presets} class={[
+                    "flex items-center gap-1.5 border rounded-lg px-2 py-1.5 cursor-pointer",
+                    @form["modo"] == valor && "border-purple-500 bg-purple-50" || "border-gray-200"
+                  ]}>
+                    <input type="radio" name="modo" value={valor} checked={@form["modo"] == valor} class="accent-purple-600" />
+                    {etiqueta}
+                  </label>
+                </div>
+              </div>
+
+              <%= if @form["tipo"] == "string" do %>
+                <div>
+                  <label class="block text-gray-500 mb-0.5 font-semibold">Patrón</label>
+                  <input type="text" name="patron" value={@form["patron"]} readonly={@form["modo"] != "personalizada"}
+                    placeholder="(999) 999-9999" spellcheck="false"
+                    class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono read-only:bg-gray-50 read-only:text-gray-500" />
+                  <p class="mt-0.5 text-gray-500"><b class="font-mono">A</b> letra · <b class="font-mono">9</b> número · <b class="font-mono">*</b> cualquiera — el resto se inserta solo.</p>
+                </div>
+
+                <div>
+                  <p class="text-gray-500 mb-1 font-semibold">Guardar valor como</p>
+                  <div class="grid grid-cols-2 gap-1.5">
+                    <label class={["flex flex-col gap-0.5 border rounded-lg px-2 py-1.5 cursor-pointer", @form["guardar_formato"] != true && "border-purple-500 bg-purple-50" || "border-gray-200"]}>
+                      <span class="flex items-center gap-1.5"><input type="radio" name="guardar_formato" value="false" checked={@form["guardar_formato"] != true} class="accent-purple-600" /> Solo datos</span>
+                      <span class="font-mono text-gray-500">{formato_ejemplo(@form, false)}</span>
+                    </label>
+                    <label class={["flex flex-col gap-0.5 border rounded-lg px-2 py-1.5 cursor-pointer", @form["guardar_formato"] == true && "border-purple-500 bg-purple-50" || "border-gray-200"]}>
+                      <span class="flex items-center gap-1.5"><input type="radio" name="guardar_formato" value="true" checked={@form["guardar_formato"] == true} class="accent-purple-600" /> Con formato</span>
+                      <span class="font-mono text-gray-500">{formato_ejemplo(@form, true)}</span>
+                    </label>
+                  </div>
+                </div>
+              <% else %>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <label class="block text-gray-500 mb-0.5 font-semibold">Decimales</label>
+                    <input type="number" name="decimales" value={@form["decimales"]} min="0" max="6"
+                      class="w-full border border-gray-300 rounded-lg px-2 py-1.5" />
+                  </div>
+                  <div :if={@form["modo"] == "moneda"}>
+                    <label class="block text-gray-500 mb-0.5 font-semibold">Símbolo</label>
+                    <div class="flex gap-1">
+                      <input type="text" name="simbolo" value={@form["simbolo"]} maxlength="4" class="w-14 border border-gray-300 rounded-lg px-2 py-1.5" />
+                      <select name="simbolo_posicion" class="flex-1 border border-gray-300 rounded-lg px-1.5 py-1.5">
+                        <option value="prefijo" selected={@form["simbolo_posicion"] == "prefijo"}>Antes</option>
+                        <option value="sufijo" selected={@form["simbolo_posicion"] == "sufijo"}>Después</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+                <label class="flex items-center gap-1.5">
+                  <input type="hidden" name="separador_miles" value="false" />
+                  <input type="checkbox" name="separador_miles" value="true" checked={@form["separador_miles"]} class="accent-purple-600" />
+                  Separador de miles
+                </label>
+                <label class="flex items-center gap-1.5">
+                  <input type="hidden" name="permitir_negativos" value="false" />
+                  <input type="checkbox" name="permitir_negativos" value="true" checked={@form["permitir_negativos"]} class="accent-purple-600" />
+                  Permitir negativos
+                </label>
+                <p class="text-gray-500">Ejemplo: <span class="font-mono text-gray-700">{formato_ejemplo(@form, true)}</span></p>
+              <% end %>
+
+              <div class="border-t border-gray-100 pt-2.5 flex flex-col gap-2">
+                <label class="flex items-center gap-1.5">
+                  <input type="hidden" name="estricto" value="false" />
+                  <input type="checkbox" name="estricto" value="true" checked={@form["estricto"]} class="accent-purple-600" />
+                  <%= if @form["tipo"] == "string" do %>
+                    Máscara estricta — no deja tipear un carácter que no calza
+                  <% else %>
+                    No deja tipear letras ni más decimales de los configurados
+                  <% end %>
+                </label>
+                <label class="flex items-center gap-1.5">
+                  <input type="hidden" name="permitir_incompleto" value="false" />
+                  <input type="checkbox" name="permitir_incompleto" value="true" checked={@form["permitir_incompleto"]} class="accent-purple-600" />
+                  Permitir guardar un valor incompleto
+                </label>
+                <div :if={!@form["permitir_incompleto"]}>
+                  <label class="block text-gray-500 mb-0.5">Mensaje si el valor no es válido</label>
+                  <input type="text" name="mensaje_invalido" value={@form["mensaje_invalido"]}
+                    class="w-full border border-gray-300 rounded-lg px-2 py-1.5" />
+                </div>
+              </div>
+            <% end %>
+
+            <div class="flex justify-end gap-2 pt-1">
+              <button type="button" phx-click="cerrar_form_formato" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
+                Cancelar
+              </button>
+              <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">
+                Guardar
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  # Línea de ejemplo estática (server-side — LiveView ya re-renderiza en
+  # cada phx-change, no hace falta JS de preview acá como en el mockup de
+  # referencia). `con_formato?` distingue las dos columnas de "Guardar
+  # valor como" (irrelevante para número/moneda, siempre se llama con
+  # `true` ahí — la BD guarda el número crudo sea cual sea el toggle).
+  defp formato_ejemplo(%{"tipo" => "string", "modo" => modo} = form, con_formato?) do
+    patron = patron_por_defecto(modo) || form["patron"] || ""
+
+    cruda =
+      patron
+      |> String.graphemes()
+      |> Enum.with_index()
+      |> Enum.map(fn
+        {"A", i} -> Enum.at(~w(A B C D E F G H J), rem(i, 9))
+        {"9", i} -> Integer.to_string(rem(i, 10))
+        {"*", _i} -> "X"
+        {c, _i} -> c
+      end)
+      |> Enum.join()
+
+    if con_formato?, do: cruda, else: patron |> String.graphemes() |> Enum.zip(String.graphemes(cruda)) |> Enum.filter(fn {p, _c} -> p in ["A", "9", "*"] end) |> Enum.map(&elem(&1, 1)) |> Enum.join()
+  end
+
+  defp formato_ejemplo(%{"modo" => modo} = form, _con_formato?) do
+    decimales = form["decimales"] || 0
+    entero_agrupado = agrupar_miles("1234567", form["separador_miles"])
+    numero = if decimales > 0, do: "#{entero_agrupado}.#{String.duplicate("5", decimales)}", else: entero_agrupado
+
+    if modo == "moneda" and form["simbolo"] not in [nil, ""] do
+      if form["simbolo_posicion"] == "sufijo", do: "#{numero} #{form["simbolo"]}", else: "#{form["simbolo"]}#{numero}"
+    else
+      numero
+    end
+  end
+
+  defp agrupar_miles(entero, true) do
+    entero
+    |> String.reverse()
+    |> String.graphemes()
+    |> Enum.chunk_every(3)
+    |> Enum.map(&Enum.join/1)
+    |> Enum.join(",")
+    |> String.reverse()
+  end
+
+  defp agrupar_miles(entero, _separador_miles), do: entero
 
   defp modal_estado(assigns) do
     ~H"""

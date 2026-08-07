@@ -30,6 +30,8 @@ defmodule MetadataAppWeb.CampoInputComponents do
   attr :disabled, :boolean, default: false
   attr :mensaje_dependencia, :string, default: nil
 
+  @modos_posicionales ~w(telefono cp rfc fecha personalizada)
+
   def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
     assigns = assign_name(assigns)
 
@@ -53,6 +55,52 @@ defmodule MetadataAppWeb.CampoInputComponents do
         class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed">
         <option :for={v <- @columna.schema_context_properties["valores"]} value={v} selected={v == @valor}>{v}</option>
       </select>
+    </div>
+    """
+  end
+
+  # "Formato de captura" numérico/moneda (opcional, ver
+  # MetaSchemaContext.validar_formato_captura/2): el input real SIGUE
+  # siendo un <input type="number"> nativo (el navegador ya bloquea
+  # letras solo) — nunca se reformatea en caliente con comas/símbolo,
+  # porque insertar separadores mientras el cursor está a mitad de tipeo
+  # lo hace saltar de lugar. En cambio, un <span> hermano de solo lectura
+  # (hook FormatoNumericoField) muestra "$1,234.00" en vivo al lado, sin
+  # tocar el valor que en definitiva viaja en el submit.
+  def campo_input(
+        %{
+          columna: %{
+            schema_context_properties: %{
+              "tipo" => tipo,
+              "formato_captura" => %{"habilitada" => true, "modo" => modo} = formato
+            }
+          }
+        } = assigns
+      )
+      when tipo in ["integer", "decimal"] and modo in ["numero", "moneda"] do
+    assigns = assign_name(assigns)
+
+    assigns =
+      assigns
+      |> assign(:step, paso_numerico(formato))
+      |> assign(:formato, formato)
+      |> assign(:dom_id, assigns.id || "campo-#{String.replace(assigns.name, ~r/[\[\]]/, "-")}")
+
+    ~H"""
+    <div>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <div class="flex items-center gap-1.5">
+        <input type="number" step={@step} min={if @formato["permitir_negativos"] != true, do: "0"}
+          name={@name} value={@valor} required={@required} disabled={@disabled}
+          id={@dom_id} phx-hook="FormatoNumericoField"
+          data-decimales={@formato["decimales"] || 0}
+          data-separador-miles={to_string(@formato["separador_miles"] == true)}
+          data-simbolo={@formato["modo"] == "moneda" && @formato["simbolo"]}
+          data-simbolo-posicion={@formato["simbolo_posicion"] || "prefijo"}
+          data-preview-de={"#{@dom_id}-preview"}
+          class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+        <span id={"#{@dom_id}-preview"} class="text-gray-400 text-[11px] whitespace-nowrap"></span>
+      </div>
     </div>
     """
   end
@@ -118,6 +166,46 @@ defmodule MetadataAppWeb.CampoInputComponents do
     """
   end
 
+  # "Formato de captura" posicional (Teléfono/CP/RFC/Fecha libre/
+  # Personalizada, ver MetaSchemaContext.validar_formato_captura/2): el
+  # hook FormatoCapturaField reformatea `el.value` en cada tecla cuando
+  # `estricto` está activo (inserta los literales del patrón, descarta
+  # caracteres que no calzan con la clase A/9/*) — el `<input>` sigue
+  # siendo el mismo que se somete, sin par hidden/visible como
+  # ReferenciaField (acá no hay id vs. etiqueta, el valor tipeado ES el
+  # valor real).
+  def campo_input(
+        %{
+          columna: %{
+            schema_context_properties: %{
+              "tipo" => "string",
+              "formato_captura" => %{"habilitada" => true, "modo" => modo} = formato
+            }
+          }
+        } = assigns
+      )
+      when modo in @modos_posicionales do
+    assigns = assign_name(assigns)
+
+    assigns =
+      assigns
+      |> assign(:formato, formato)
+      |> assign(:dom_id, assigns.id || "campo-#{String.replace(assigns.name, ~r/[\[\]]/, "-")}")
+
+    ~H"""
+    <div>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <input type="text" name={@name} value={@valor} required={@required} disabled={@disabled}
+        maxlength={@columna.schema_context_properties["longitud"]}
+        id={@dom_id} phx-hook="FormatoCapturaField"
+        data-patron={@formato["patron"]}
+        data-guardar-formato={to_string(@formato["guardar_formato"] != false)}
+        data-estricto={to_string(@formato["estricto"] != false)}
+        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+    </div>
+    """
+  end
+
   # Default (string).
   def campo_input(assigns) do
     assigns = assign_name(assigns)
@@ -134,6 +222,11 @@ defmodule MetadataAppWeb.CampoInputComponents do
 
   defp assign_name(%{name: nil} = assigns), do: assign(assigns, :name, "campos[#{assigns.columna.schema_context_field}]")
   defp assign_name(assigns), do: assigns
+
+  defp paso_numerico(%{"decimales" => decimales}) when is_integer(decimales) and decimales > 0,
+    do: "0." <> String.duplicate("0", decimales - 1) <> "1"
+
+  defp paso_numerico(_formato), do: "1"
 
   defp etiqueta_para_valor(opciones, valor) do
     case Enum.find(opciones, fn {id, _etiqueta} -> to_string(id) == valor end) do

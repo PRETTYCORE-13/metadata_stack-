@@ -790,6 +790,146 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
 
   defp a_entero_seguro(_valor), do: nil
 
+  # --- Formato de captura (máscaras de texto, número/moneda) -----------------
+  #
+  # Un campo puede traer "formato_captura" en su schema_context_properties:
+  # %{"habilitada" => bool, "modo" => "telefono"|"cp"|"rfc"|"fecha"|
+  # "personalizada"|"numero"|"moneda", "patron" => "(999) 999-9999" (modos
+  # posicionales, tipo "string" — A=letra, 9=número, *=cualquiera, el resto
+  # literal), "guardar_formato" => bool (solo "string": persistir con o sin
+  # los literales del patrón), "decimales"/"permitir_negativos" (modos
+  # "numero"/"moneda", tipo "integer"/"decimal"), "permitir_incompleto",
+  # "mensaje_invalido". Mismo criterio que "dependencias" arriba: metadata
+  # libre en el mapa ya existente, sin migración, validada en runtime.
+
+  @doc "Campos de `catalogo` con \"formato_captura\" habilitado."
+  def campos_con_formato_captura(catalogo) do
+    catalogo
+    |> listar_detalles()
+    |> Enum.filter(fn d -> get_in(d.schema_context_properties, ["formato_captura", "habilitada"]) == true end)
+  end
+
+  @doc """
+  Validación de integridad del valor capturado contra la config de
+  "formato_captura" de cada campo — corre en runtime (`listar_detalles/1`
+  fresco), mismo motivo que `validar_dependencias_referencia/2`: la config
+  se guarda vía `actualizar_detalle/2`, sin regenerar el schema, así que
+  `@campos_meta` (congelado al crear el catálogo) nunca la vería.
+  Fail-safe: metadata mal formada o campo sin valor no rompe, se salta.
+  """
+  def validar_formato_captura(changeset, catalogo) do
+    catalogo
+    |> campos_con_formato_captura()
+    |> Enum.reduce(changeset, &validar_un_formato_captura(&2, &1))
+  end
+
+  defp validar_un_formato_captura(changeset, detalle) do
+    props = detalle.schema_context_properties
+    campo_atom = String.to_existing_atom(detalle.schema_context_field)
+    valor = Ecto.Changeset.get_field(changeset, campo_atom)
+    formato = props["formato_captura"]
+
+    cond do
+      valor in [nil, ""] -> changeset
+      props["tipo"] == "string" -> validar_formato_texto(changeset, campo_atom, valor, formato)
+      props["tipo"] in ["integer", "decimal"] -> validar_formato_numerico(changeset, campo_atom, valor, formato)
+      true -> changeset
+    end
+  rescue
+    ArgumentError -> changeset
+  end
+
+  # Compara `valor` contra el patrón completo (nunca contra un regex
+  # ingenuo `patron == valor`, porque distingue "con formato" de "solo
+  # datos" — ver `guardar_formato`) construyendo, char a char, una
+  # alternativa regex "anidada-opcional" cuando `permitir_incompleto` está
+  # activo: cada token es seguido por el resto del patrón envuelto en un
+  # grupo opcional, así el valor puede cortar en cualquier borde de token
+  # (nunca a mitad de una clase) sin tener que reimplementar el motor de
+  # máscara del cliente acá.
+  defp validar_formato_texto(changeset, campo_atom, valor, formato) do
+    patron = formato["patron"]
+
+    if es_texto_no_vacio?(patron) do
+      tokens =
+        if formato["guardar_formato"] == false,
+          do: patron_tokens_solo_datos(patron),
+          else: patron_tokens(patron)
+
+      regex =
+        if formato["permitir_incompleto"] == true,
+          do: patron_regex_incompleto(tokens),
+          else: patron_regex_completo(tokens)
+
+      if Regex.match?(regex, valor) do
+        changeset
+      else
+        Ecto.Changeset.add_error(changeset, campo_atom, mensaje_formato_invalido(formato))
+      end
+    else
+      changeset
+    end
+  end
+
+  defp patron_tokens(patron) do
+    patron
+    |> String.graphemes()
+    |> Enum.map(fn
+      "A" -> "[A-Za-z]"
+      "9" -> "[0-9]"
+      "*" -> "."
+      c -> Regex.escape(c)
+    end)
+  end
+
+  defp patron_tokens_solo_datos(patron) do
+    patron
+    |> String.graphemes()
+    |> Enum.filter(&(&1 in ["A", "9", "*"]))
+    |> Enum.map(fn
+      "A" -> "[A-Za-z]"
+      "9" -> "[0-9]"
+      "*" -> "."
+    end)
+  end
+
+  defp patron_regex_completo(tokens), do: Regex.compile!("^" <> Enum.join(tokens) <> "$")
+
+  defp patron_regex_incompleto(tokens), do: Regex.compile!("^" <> construir_incompleto(tokens) <> "$")
+
+  defp construir_incompleto([]), do: ""
+  defp construir_incompleto([t | resto]), do: t <> "(?:" <> construir_incompleto(resto) <> ")?"
+
+  defp validar_formato_numerico(changeset, campo_atom, valor, formato) do
+    decimales = formato["decimales"]
+    permitir_negativos? = formato["permitir_negativos"] == true
+
+    cond do
+      is_integer(decimales) and excede_decimales?(valor, decimales) ->
+        Ecto.Changeset.add_error(changeset, campo_atom, mensaje_formato_invalido(formato, "no puede tener más de #{decimales} decimales"))
+
+      not permitir_negativos? and negativo?(valor) ->
+        Ecto.Changeset.add_error(changeset, campo_atom, mensaje_formato_invalido(formato, "no puede ser negativo"))
+
+      true ->
+        changeset
+    end
+  end
+
+  defp excede_decimales?(%Decimal{} = valor, decimales), do: Decimal.scale(valor) > decimales
+  defp excede_decimales?(_valor, _decimales), do: false
+
+  defp negativo?(%Decimal{} = valor), do: Decimal.negative?(valor)
+  defp negativo?(valor) when is_integer(valor), do: valor < 0
+  defp negativo?(_valor), do: false
+
+  defp mensaje_formato_invalido(formato, default \\ "no tiene el formato esperado") do
+    case formato["mensaje_invalido"] do
+      msg when is_binary(msg) and msg != "" -> msg
+      _ -> default
+    end
+  end
+
   @doc """
   A partir de una lista de catálogos raíz, calcula el paquete completo a
   publicar: agrega los detalles de cada maestro, el cierre transitivo de
