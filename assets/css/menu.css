@@ -464,53 +464,6 @@
   box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15);
 }
 
-/* Aviso "cambiaste de Unidad Operativa" (2026-08-13) — toast fijo abajo a
-   la derecha, arriba de la banda de pie, no bloquea la pantalla (a
-   diferencia de un modal centrado con overlay). Lo togglea
-   UnidadOperativaWatcher (app.js), 100% client-side. */
-.pc-modal-unidad-operativa {
-  position: fixed;
-  right: 16px;
-  bottom: 56px;
-  z-index: 60;
-  transition: opacity 0.2s ease, transform 0.2s ease;
-}
-
-.pc-modal-unidad-operativa.hidden {
-  display: none;
-}
-
-.pc-modal-unidad-operativa-caja {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  max-width: 300px;
-  padding: 12px 14px;
-  background: #111827;
-  color: #fff;
-  border-radius: 10px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
-}
-
-.pc-modal-unidad-operativa-icono {
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  color: #a78bfa;
-  margin-top: 1px;
-}
-
-.pc-modal-unidad-operativa-titulo {
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.pc-modal-unidad-operativa-detalle {
-  font-size: 11px;
-  color: #d1d5db;
-  margin-top: 2px;
-}
-
 /* Buscador TRN compacto (PrettyCore TRN, Fase 3) — a propósito sin
    descripción ni placeholder largo, solo la etiqueta + input + botón.
    margin-left: auto lo empuja al extremo derecho de la banda, mismo

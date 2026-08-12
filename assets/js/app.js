@@ -540,17 +540,27 @@ const UnidadOperativaWatcher = {
 
   avisar() {
     const modal = document.getElementById("modal-unidad-operativa")
-    const detalle = document.getElementById("modal-unidad-operativa-detalle")
     if (!modal) return
 
-    if (detalle) {
-      const partes = [this.el.dataset.empresa, this.el.dataset.branch, this.el.dataset.inventory].filter(Boolean)
-      detalle.textContent = partes.join(" · ")
-    }
+    this.setTexto("modal-unidad-operativa-empresa", this.el.dataset.empresa)
+    this.setTexto("modal-unidad-operativa-branch", this.el.dataset.branch)
+    this.setTexto("modal-unidad-operativa-inventory", this.el.dataset.inventory)
+    // Unidad de Venta es opcional -- vacía en vez de omitirse, a
+    // propósito (pedido explícito: "XX o vacía si es el caso").
+    this.setTexto("modal-unidad-operativa-sales-unit", this.el.dataset.salesUnit || "")
 
     modal.classList.remove("hidden")
+    // 5 segundos bloqueando la pantalla (overlay, no un toast que se
+    // pueda ignorar de reojo) -- fricción deliberada para que el usuario
+    // registre el cambio antes de seguir operando y evitar que arranque
+    // a hacer algo en la Unidad Operativa equivocada por apuro.
     clearTimeout(this.temporizador)
-    this.temporizador = setTimeout(() => modal.classList.add("hidden"), 4500)
+    this.temporizador = setTimeout(() => modal.classList.add("hidden"), 5000)
+  },
+
+  setTexto(id, valor) {
+    const el = document.getElementById(id)
+    if (el) el.textContent = valor || ""
   },
 
   destroyed() {

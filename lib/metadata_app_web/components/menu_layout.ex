@@ -423,7 +423,9 @@ defmodule MetadataAppWeb.MenuLayout do
              diff de LiveView, solo lo lee el hook al montar) que carga la
              firma ACTUAL; el hook compara contra la firma guardada en el
              navegador y decide si mostrar el aviso. Ver
-             firma_unidad_operativa/1 y UnidadOperativaWatcher en app.js. -->
+             firma_unidad_operativa/1 y UnidadOperativaWatcher en app.js.
+             Sales Unit se muestra igual (no aplica para la FIRMA, sí para
+             el contenido del aviso -- pedido explícito). -->
         <div
           id="unidad-operativa-watcher"
           phx-hook="UnidadOperativaWatcher"
@@ -432,18 +434,42 @@ defmodule MetadataAppWeb.MenuLayout do
           data-empresa={@current_scope && @current_scope.empresa_activa && @current_scope.empresa_activa.nombre}
           data-branch={@current_scope && @current_scope.branch_activo && @current_scope.branch_activo.branch_name}
           data-inventory={@current_scope && @current_scope.inventory_location_activo && @current_scope.inventory_location_activo.inventory_name}
+          data-sales-unit={@current_scope && @current_scope.sales_unit_activo && @current_scope.sales_unit_activo.sales_unit_name}
           class="hidden"
         >
         </div>
 
-        <div id="modal-unidad-operativa" class="pc-modal-unidad-operativa hidden">
-          <div class="pc-modal-unidad-operativa-caja">
-            <svg class="pc-modal-unidad-operativa-icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
-            </svg>
-            <div>
-              <p class="pc-modal-unidad-operativa-titulo">Cambiaste tu Unidad Operativa</p>
-              <p class="pc-modal-unidad-operativa-detalle" id="modal-unidad-operativa-detalle"></p>
+        <!-- Mismo lenguaje visual que modal_publicar/1 (BcListLive, wizard
+             de "Publicar paquete") a propósito: overlay que bloquea la
+             pantalla unos segundos con un spinner -- fricción deliberada
+             para que el usuario REGISTRE el cambio antes de seguir
+             operando, no una notificación que se pueda ignorar de reojo. -->
+        <div id="modal-unidad-operativa" class="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999] p-4 hidden">
+          <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+            <div class="flex flex-col items-center text-center gap-3">
+              <svg class="animate-spin h-8 w-8 text-purple-600" viewBox="0 0 24 24" fill="none">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+              <p class="text-sm font-bold text-gray-900">Cambiando a Unidad Operativa</p>
+              <dl class="text-xs text-gray-600 w-full text-left space-y-1 mt-1">
+                <div class="flex justify-between gap-2">
+                  <dt class="font-semibold text-gray-500">Empresa:</dt>
+                  <dd id="modal-unidad-operativa-empresa" class="text-gray-900 font-medium text-right"></dd>
+                </div>
+                <div class="flex justify-between gap-2">
+                  <dt class="font-semibold text-gray-500">Sucursal:</dt>
+                  <dd id="modal-unidad-operativa-branch" class="text-gray-900 font-medium text-right"></dd>
+                </div>
+                <div class="flex justify-between gap-2">
+                  <dt class="font-semibold text-gray-500">Almacén:</dt>
+                  <dd id="modal-unidad-operativa-inventory" class="text-gray-900 font-medium text-right"></dd>
+                </div>
+                <div class="flex justify-between gap-2">
+                  <dt class="font-semibold text-gray-500">Unidad de Venta:</dt>
+                  <dd id="modal-unidad-operativa-sales-unit" class="text-gray-900 font-medium text-right"></dd>
+                </div>
+              </dl>
             </div>
           </div>
         </div>
