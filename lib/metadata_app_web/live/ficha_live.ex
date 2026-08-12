@@ -847,6 +847,26 @@ defmodule MetadataAppWeb.FichaLive do
     campo.schema_context_field in campos_editables
   end
 
+  # "Campo calculado" en la grilla de renglones: mismo criterio que
+  # campo_row/1 (recalcula en vivo con Formula.evaluar/2, el guardado real
+  # de todas formas lo vuelve a calcular server-side — ver
+  # MetaSchemaContext.aplicar_campos_calculados/2) pero acotado a los
+  # valores del renglón actual (sin pseudo-campos de Contexto como {hoy} —
+  # cubre el caso común, "cantidad * precio", sin threadear @contexto_formula
+  # hasta acá).
+  defp valor_renglon_con_calculado(campo, valores_renglon) do
+    case campo.schema_context_properties["formula"] do
+      formula when is_binary(formula) and formula != "" ->
+        case Formula.evaluar(formula, valores_renglon) do
+          {:ok, valor} -> {to_string(valor), true}
+          {:error, _motivo} -> {Map.get(valores_renglon, campo.schema_context_field, ""), true}
+        end
+
+      _ ->
+        {Map.get(valores_renglon, campo.schema_context_field, ""), false}
+    end
+  end
+
   defp campos_modificados(registro, campos_params, campos_editables) do
     Enum.reduce(campos_editables, %{}, fn campo, acc ->
       nuevo = Map.get(campos_params, campo)
@@ -1403,7 +1423,7 @@ defmodule MetadataAppWeb.FichaLive do
         No se pudo guardar: revisá los campos marcados en rojo.
       </div>
       <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
-        <.campo_row :for={col <- @columnas} col={col} registro={@registro} campos_editables={@campos_editables} edicion={@edicion} />
+        <.campo_row :for={col <- @columnas} col={col} registro={@registro} campos_editables={@campos_editables} edicion={@edicion} columnas={@columnas} />
         <p :if={@columnas == []} class="px-4 py-8 text-center text-gray-400 text-sm">Este catálogo no tiene campos visibles.</p>
       </div>
     </form>
@@ -1594,7 +1614,7 @@ defmodule MetadataAppWeb.FichaLive do
     assigns = assign(assigns, :col, col)
 
     ~H"""
-    <.campo_row :if={@col} col={@col} registro={@registro} campos_editables={@campos_editables} edicion={@edicion} />
+    <.campo_row :if={@col} col={@col} registro={@registro} campos_editables={@campos_editables} edicion={@edicion} columnas={@columnas} />
     """
   end
 
@@ -1821,7 +1841,7 @@ defmodule MetadataAppWeb.FichaLive do
     ~H"""
     <div :if={@celda["visible"] != false} style={@estilo_celda} class={@clases_celda}
       data-celda-colspan-movil={@responsive["colspan_movil"]} data-celda-orden-movil={@responsive["orden_movil"]}>
-      <.campo_row :if={@campo_col} col={@campo_col} registro={@registro} campos_editables={@campos_editables} edicion={@edicion} compacto={true} />
+      <.campo_row :if={@campo_col} col={@campo_col} registro={@registro} campos_editables={@campos_editables} edicion={@edicion} compacto={true} columnas={@columnas} />
       <.nodo_plantilla :if={is_nil(@campo_col)} nodo={@hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
         relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
     </div>
@@ -2034,6 +2054,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :campos_editables, :list, required: true
   attr :edicion, :map, required: true
   attr :compacto, :boolean, default: false
+  attr :columnas, :list, default: []
 
   # Edición en el lugar, siempre: si el campo es editable, la columna de
   # "valor" ya ES el input real (campo_input/1, el mismo que comparten
@@ -2062,6 +2083,26 @@ defmodule MetadataAppWeb.FichaLive do
       resolver_info_dependencia(props, Map.get(assigns.col, :opciones, []), fn campo ->
         Map.get(assigns.edicion.valores, campo) || valor_registro_seguro(assigns.registro, campo)
       end)
+
+    # "Campo calculado" (Diseñador de campos): se recalcula en cada render
+    # con los mismos valores efectivos que ya usa "campo_calculado" del
+    # Constructor (valores_efectivos/4) — el guardado real de todas formas
+    # lo vuelve a calcular server-side sin confiar en esto (ver
+    # MetaSchemaContext.aplicar_campos_calculados/2), acá es solo para que
+    # se vea actualizado mientras se completan los otros campos.
+    {valor_mostrado, deshabilitado_dependencia} =
+      case props["formula"] do
+        formula when is_binary(formula) and formula != "" ->
+          valores = valores_efectivos(assigns.columnas, assigns.registro, assigns.edicion.valores, assigns.edicion.contexto)
+
+          case Formula.evaluar(formula, valores) do
+            {:ok, valor} -> {to_string(valor), true}
+            {:error, _motivo} -> {valor_mostrado, true}
+          end
+
+        _ ->
+          {valor_mostrado, deshabilitado_dependencia}
+      end
 
     valor_legible = if props["tipo"] == "referencia", do: etiqueta_opcion(opciones_referencia, valor_actual), else: valor_actual
 
@@ -2322,11 +2363,12 @@ defmodule MetadataAppWeb.FichaLive do
           <div class="px-3 py-2 flex flex-wrap items-end gap-2">
             <div :for={campo <- @cat.columnas} class="flex-1 min-w-[120px]">
               <% {opciones_campo, deshabilitado_dep?, mensaje_dep} = resolver_info_dependencia(campo.schema_context_properties, opciones_para_campo(campo), &Map.get(@seleccion.valores, &1)) %>
+              <% {valor_campo, calculado?} = valor_renglon_con_calculado(campo, @seleccion.valores) %>
               <.campo_input columna={campo} mostrar_etiqueta={true}
-                valor={Map.get(@seleccion.valores, campo.schema_context_field, "")}
+                valor={valor_campo}
                 name={"renglon[#{campo.schema_context_field}]"} opciones={opciones_campo}
                 id={"campo-#{@cat.nombre}-#{campo.schema_context_field}"}
-                disabled={!campo_detalle_editable?(campo, @seleccion, @campos_editables) or deshabilitado_dep?}
+                disabled={!campo_detalle_editable?(campo, @seleccion, @campos_editables) or deshabilitado_dep? or calculado?}
                 mensaje_dependencia={mensaje_dep} />
             </div>
             <div class="flex items-center gap-1.5 flex-none pb-0.5">

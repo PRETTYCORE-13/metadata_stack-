@@ -971,6 +971,75 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     end
   end
 
+  # --- Campos calculados (Diseñador de campos, capacidad "Campo calculado") --
+  #
+  # A diferencia del "campo_calculado" del Constructor de plantillas
+  # (MetaPlantillas.Formula + FichaLive.valores_efectivos/4, para texto de
+  # reporte de solo lectura), esto es el VALOR REAL de un campo capturado
+  # del catálogo — se recalcula y persiste en cada guardado, nunca confía
+  # en lo que mandó el navegador (el input llega deshabilitado, pero
+  # tampoco importa lo que llegue: acá se pisa siempre). Reusa
+  # `MetaPlantillas.Formula.evaluar/2` tal cual, cero motor de fórmulas
+  # nuevo — la única pieza nueva es esta integración con el changeset.
+  #
+  # Corre INMEDIATAMENTE después de `cast/3` (ver
+  # MetaCatalogoGenerico.__using__/1), antes de `validate_required/2` — así
+  # un campo calculado obligatorio no rechaza el guardado por llegar vacío
+  # del formulario: para cuando `validate_required` lo mira, ya tiene su
+  # valor. El orden de evaluación es el de `listar_detalles/1` (por
+  # "orden" de campo) — una fórmula que depende de OTRO campo calculado
+  # que aparece más abajo en el catálogo no lo ve resuelto todavía
+  # (limitación conocida, no hay resolución de dependencias entre
+  # calculados).
+  @doc "Campos de `catalogo` con \"formula\" configurada."
+  def campos_con_formula(catalogo) do
+    catalogo
+    |> listar_detalles()
+    |> Enum.filter(fn d -> es_texto_no_vacio?(d.schema_context_properties["formula"]) end)
+  end
+
+  @doc """
+  Recalcula y pisa (`put_change/3`) el valor de cada campo con "formula"
+  configurada, sin importar lo que haya llegado en `changeset` para ese
+  campo. Fail-safe: fórmula inválida, campo/tipo que no castea el
+  resultado, etc. — se deja el changeset como estaba, nunca rompe el
+  guardado.
+  """
+  def aplicar_campos_calculados(changeset, catalogo) do
+    catalogo
+    |> campos_con_formula()
+    |> Enum.reduce(changeset, &aplicar_un_campo_calculado(&2, &1))
+  end
+
+  defp aplicar_un_campo_calculado(changeset, detalle) do
+    campo_atom = String.to_existing_atom(detalle.schema_context_field)
+    formula = detalle.schema_context_properties["formula"]
+    tipo_ecto = changeset.data.__struct__.__schema__(:type, campo_atom)
+
+    with {:ok, valor} <- MetadataApp.MetaPlantillas.Formula.evaluar(formula, valores_del_changeset(changeset)),
+         {:ok, valor_casteado} <- Ecto.Type.cast(tipo_ecto, preparar_valor_calculado(valor, tipo_ecto)) do
+      Ecto.Changeset.put_change(changeset, campo_atom, valor_casteado)
+    else
+      _ -> changeset
+    end
+  rescue
+    ArgumentError -> changeset
+  end
+
+  # Formula.evaluar/2 siempre devuelve float en la rama aritmética (es una
+  # calculadora genérica, no conoce el tipo Ecto del campo destino) —
+  # Ecto.Type.cast(:integer, _) rechaza cualquier float aunque sea un
+  # entero exacto (11.0), así que hay que redondear ANTES de castear.
+  # :decimal sí acepta un float directo (lo convierte solo), no hace
+  # falta tocarlo.
+  defp preparar_valor_calculado(valor, :integer) when is_float(valor), do: round(valor)
+  defp preparar_valor_calculado(valor, _tipo_ecto), do: valor
+
+  defp valores_del_changeset(changeset) do
+    changeset.data.__struct__.__schema__(:fields)
+    |> Map.new(fn campo -> {Atom.to_string(campo), Ecto.Changeset.get_field(changeset, campo)} end)
+  end
+
   @doc """
   A partir de una lista de catálogos raíz, calcula el paquete completo a
   publicar: agrega los detalles de cada maestro, el cierre transitivo de

@@ -30,7 +30,7 @@ defmodule MetadataAppWeb.CampoInputComponents do
   attr :disabled, :boolean, default: false
   attr :mensaje_dependencia, :string, default: nil
 
-  @modos_posicionales ~w(telefono cp rfc fecha personalizada)
+  @modos_posicionales ~w(telefono cp rfc curp fecha personalizada)
 
   def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
     assigns = assign_name(assigns)
@@ -113,6 +113,7 @@ defmodule MetadataAppWeb.CampoInputComponents do
     <div>
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
       <input type="number" step={@step} name={@name} value={@valor} required={@required} disabled={@disabled}
+        placeholder={@columna.schema_context_properties["placeholder"]}
         class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
     </div>
     """
@@ -126,6 +127,35 @@ defmodule MetadataAppWeb.CampoInputComponents do
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
       <input type="date" name={@name} value={@valor} required={@required} disabled={@disabled}
         class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+    </div>
+    """
+  end
+
+  def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "hora"}}} = assigns) do
+    assigns = assign_name(assigns)
+
+    ~H"""
+    <div>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <input type="time" name={@name} value={@valor} required={@required} disabled={@disabled}
+        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+    </div>
+    """
+  end
+
+  # "Texto largo" (memo/comentarios) — a diferencia del texto corto no
+  # tiene `longitud` (columna :text sin límite, ver
+  # CatalogoGenerador.columna_migracion/3) ni `formato_captura` (es para
+  # texto libre, no un dato con patrón).
+  def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "texto_largo"}}} = assigns) do
+    assigns = assign_name(assigns)
+
+    ~H"""
+    <div>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <textarea name={@name} required={@required} disabled={@disabled} rows="3"
+        placeholder={@columna.schema_context_properties["placeholder"]}
+        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-1 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed">{@valor}</textarea>
     </div>
     """
   end
@@ -272,6 +302,7 @@ defmodule MetadataAppWeb.CampoInputComponents do
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
       <input type="text" name={@name} value={@valor} required={@required} disabled={@disabled}
         maxlength={@columna.schema_context_properties["longitud"]}
+        placeholder={@columna.schema_context_properties["placeholder"]}
         class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
     </div>
     """

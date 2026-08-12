@@ -84,6 +84,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
       def changeset(struct, attrs) do
         struct
         |> cast(MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.forzar_defaults(attrs, @campos_meta), @campos)
+        |> MetadataApp.BusinessProcessBuilder.MetaSchemaContext.aplicar_campos_calculados(unquote(tabla))
         |> validate_required(@campos_requeridos, message: "no puede quedar vacío")
         |> MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.aplicar_validaciones(@campos_meta)
         |> MetadataApp.BusinessProcessBuilder.MetaSchemaContext.validar_dependencias_referencia(unquote(tabla))
@@ -159,6 +160,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
   def aplicar_validaciones(changeset, campos_meta) do
     Enum.reduce(campos_meta, changeset, fn {campo, _tipo, opciones}, cs ->
       cs
+      |> aplicar_transformacion(campo, opciones)
       |> aplicar_longitud(campo, opciones)
       |> aplicar_formato(campo, opciones)
       |> aplicar_rango(campo, opciones)
@@ -169,10 +171,41 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
     end)
   end
 
-  defp aplicar_longitud(cs, campo, %{longitud: longitud}) when is_integer(longitud),
+  # Corre ANTES que el resto (longitud/formato validan el valor YA
+  # transformado — ej. una "Mayúsculas" + un regex que exige mayúsculas
+  # tienen que ver lo mismo). update_change/3 no hace nada si el campo no
+  # tiene cambio, así que es seguro para cualquier campo sin tocar.
+  defp aplicar_transformacion(cs, campo, %{transformacion: transformacion})
+       when transformacion in ["mayusculas", "minusculas", "capitalizar"] do
+    update_change(cs, campo, &transformar_texto(&1, transformacion))
+  end
+
+  defp aplicar_transformacion(cs, _campo, _opciones), do: cs
+
+  defp transformar_texto(valor, "mayusculas") when is_binary(valor), do: String.upcase(valor)
+  defp transformar_texto(valor, "minusculas") when is_binary(valor), do: String.downcase(valor)
+
+  defp transformar_texto(valor, "capitalizar") when is_binary(valor) do
+    valor |> String.downcase() |> String.split(" ") |> Enum.map_join(" ", &String.capitalize/1)
+  end
+
+  defp transformar_texto(valor, _transformacion), do: valor
+
+  defp aplicar_longitud(cs, campo, opciones) do
+    cs
+    |> aplicar_longitud_maxima(campo, opciones[:longitud])
+    |> aplicar_longitud_minima(campo, opciones[:longitud_minima])
+  end
+
+  defp aplicar_longitud_maxima(cs, campo, longitud) when is_integer(longitud),
     do: validate_length(cs, campo, max: longitud, message: "no puede tener más de %{count} caracteres")
 
-  defp aplicar_longitud(cs, _campo, _opciones), do: cs
+  defp aplicar_longitud_maxima(cs, _campo, _longitud), do: cs
+
+  defp aplicar_longitud_minima(cs, campo, longitud) when is_integer(longitud),
+    do: validate_length(cs, campo, min: longitud, message: "tiene que tener al menos %{count} caracteres")
+
+  defp aplicar_longitud_minima(cs, _campo, _longitud), do: cs
 
   defp aplicar_formato(cs, campo, %{formato: formato}) when is_binary(formato),
     do: validate_format(cs, campo, Regex.compile!(formato), message: "no tiene el formato correcto")
