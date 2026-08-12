@@ -2,7 +2,7 @@ defmodule MetadataAppWeb.FichaLiveAccionExternaTest do
   @moduledoc """
   Fase 6 de "Integraciones" (2026-08-07) — prueba de punta a punta del
   botón interactivo en la Ficha 360°: click real -> start_async/3 ->
-  Integraciones.ejecutar_accion/3 -> llamada de red real a httpbin.org ->
+  Integraciones.ejecutar_accion/4 -> llamada de red real a httpbin.org ->
   modal con la respuesta cruda. Mismo criterio de la Fase 4/5: sin mocks.
   """
   use MetadataAppWeb.ConnCase, async: true

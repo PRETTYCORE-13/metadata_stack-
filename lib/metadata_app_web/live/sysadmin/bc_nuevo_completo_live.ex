@@ -34,7 +34,8 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
     %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"},
     %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
-    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"}
+    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
+    %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
   ]
 
   @tipos_campo ~w(string integer decimal boolean date enum referencia)

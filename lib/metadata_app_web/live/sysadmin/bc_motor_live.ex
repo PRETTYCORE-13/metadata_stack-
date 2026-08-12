@@ -11,7 +11,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
   on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "editar"}}
 
-  alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador, CatalogoGenerico}
+  alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador, CatalogoGenerico, AlcanceBackfill}
   alias MetadataApp.FiltrosDefault
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.MetaPlantillas
@@ -30,7 +30,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
     %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"},
     %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
-    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"}
+    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
+    %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
   ]
 
 
@@ -848,6 +849,57 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # ya se ocultaban solos cuando el catálogo no calificaba (sin motor de
   # estados / no transaccional, ver CatalogoLive.mount/3); esto agrega el
   # apagador de admin ENCIMA de esa condición, no en vez de ella.
+  # Alcance de Datos (Fase 6, 2026-08-11) — default false: prenderlo no
+  # cambia nada por sí solo, solo habilita que Permission Sets ofrezca
+  # asignar un alcance_tipo por rol para ESTE catálogo (deny-by-default:
+  # sin fila en meta_schema_rol_alcance, cada rol queda en :propio, el más
+  # restrictivo). Mismo criterio inmediato que toggle_cargar_todos_por_default.
+  def handle_event("toggle_alcance_habilitado", _params, socket) do
+    header = socket.assigns.header
+    valor = !header.alcance_habilitado
+
+    case MetaSchemaContext.actualizar_header(header, %{"alcance_habilitado" => valor}) do
+      {:ok, header_actualizado} ->
+        socket = if valor, do: provisionar_alcance_y_avisar(socket, header_actualizado), else: socket
+        {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
+
+      {:error, _changeset} ->
+        {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Alcance de datos\".")}
+    end
+  end
+
+  # Al prender el flag: 1) CatalogoGenerador.generar/1 agrega las 4
+  # columnas físicas (branch_id/sales_unit_id/inventory_id/creado_por_id,
+  # ver CatalogoGenerador.asegurar_columnas_alcance/1) y recompila el
+  # schema -- sin esto, alcance_habilitado quedaría en `true` pero
+  # con_columna/4 (CatalogoGenerico) nunca encontraría las columnas y el
+  # enforcement sería un no-op silencioso (hallazgo de Fase 9, 2026-08-11).
+  # 2) backfillea creado_por_id desde auditoría, best-effort. Todo esto
+  # DESPUÉS de que la fila de meta_schema_header ya quedó guardada -- si
+  # la generación falla, el catálogo queda marcado alcance_habilitado sin
+  # las columnas listas todavía; se avisa y el admin puede reintentar
+  # (el toggle es idempotente, apagar+prender vuelve a intentar generar/1).
+  defp provisionar_alcance_y_avisar(socket, header) do
+    case CatalogoGenerador.generar(header.schema_context_name) do
+      {:ok, _resultado} ->
+        case MetaSchemaContext.modulo_por_nombre(header.schema_context_name) do
+          nil ->
+            socket
+
+          modulo ->
+            case AlcanceBackfill.backfillear_creado_por(modulo) do
+              0 -> socket
+              n -> put_flash(socket, :info, "Alcance de datos activado. Se completó \"creado por\" en #{n} registro(s) existentes a partir de la auditoría.")
+            end
+        end
+
+      {:error, motivo} ->
+        put_flash(socket, :error, "Alcance de datos activado, pero no se pudieron preparar las columnas: #{motivo}")
+    end
+  rescue
+    _ -> socket
+  end
+
   def handle_event("toggle_mostrar_id_en_tabla", _params, socket),
     do: toggle_columna_estructural(socket, :mostrar_id_en_tabla, "\"Mostrar ID\"")
 
@@ -1453,7 +1505,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         nil
 
       modulo ->
-        case CatalogoGenerico.listar(modulo, %{}, limit: 1) do
+        # :sistema (Fase 4a) -- registro de muestra para el Constructor,
+        # no un listado real para un usuario final.
+        case CatalogoGenerico.listar(modulo, :sistema, %{}, limit: 1) do
           [registro] -> registro
           [] -> nil
         end
@@ -1690,6 +1744,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         <.panel_filtros_resumen campos={@campos} />
         <.panel_campos_default header={@header} />
         <.panel_filtros_default header={@header} />
+        <.panel_alcance_datos header={@header} />
       </div>
 
       <div id="motor-panel-get" class="hidden">
@@ -2545,6 +2600,50 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             + Campos por default
           <% end %>
         </button>
+      </div>
+    </div>
+    """
+  end
+
+  # Alcance de Datos (Fase 6 del modelo de Alcance de Datos, 2026-08-11) —
+  # el flag vive acá (por catálogo), pero el "QUÉ TIPO" por rol se
+  # configura en Permission Sets (mismo lugar que ya administra
+  # leer/crear/editar/eliminar de este catálogo, para no fragmentar la
+  # configuración de RBAC en dos pantallas) — ver
+  # CatalogoPermisosLive.panel_alcance_de_rol/1.
+  attr :header, :any, required: true
+
+  defp panel_alcance_datos(assigns) do
+    ~H"""
+    <div class="border border-gray-200 rounded-lg mt-4">
+      <div class="px-1.5 ml-2 -mb-2 relative">
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Alcance de datos</span>
+      </div>
+      <div class="p-3 pt-4 overflow-x-auto">
+        <p class="text-gray-500 mb-3">
+          Restringe QUÉ FILAS de este catálogo puede ver/operar cada usuario (propio/sucursal/unidad de ventas/ubicación de inventario/empresa/todas) — independiente de qué ACCIONES puede hacer (eso lo sigue resolviendo Permission Sets). Sin esto activado, el catálogo se comporta como siempre, sin ningún filtro nuevo.
+        </p>
+
+        <div class="flex items-center gap-3">
+          <button type="button"
+            phx-click="toggle_alcance_habilitado"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.alcance_habilitado, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}
+          >
+            <%= if @header.alcance_habilitado do %>
+              ✓ Alcance de datos — Quitar
+            <% else %>
+              + Alcance de datos
+            <% end %>
+          </button>
+
+          <.link :if={@header.alcance_habilitado} navigate={~p"/sysadmin/catalogos/#{@header.schema_context_name}/permisos"}
+            class="text-[11px] text-purple-700 font-semibold hover:underline">
+            Configurar el tipo por rol en Permission Sets →
+          </.link>
+        </div>
       </div>
     </div>
     """

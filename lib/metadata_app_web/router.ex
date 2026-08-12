@@ -94,10 +94,22 @@ defmodule MetadataAppWeb.Router do
       live "/meta_schema_usuario/settings", UsuarioLive.Settings, :edit
       live "/meta_schema_usuario/settings/confirm-email/:token", UsuarioLive.Settings, :confirm_email
       live "/meta_schema_usuario/seleccionar-empresa", UsuarioLive.SeleccionarEmpresa, :new
+      live "/meta_schema_usuario/seleccionar-jerarquia", UsuarioLive.SeleccionarJerarquia, :new
     end
 
     post "/meta_schema_usuario/update-password", UsuarioSessionController, :update_password
+    # Empresa tiene 2 rutas a la MISMA acción: con :id en el path (los
+    # links de UsuarioLive.SeleccionarEmpresa, un link por empresa) y sin
+    # -- el selector de la banda de pie (Fase 4) manda "id" en el body de
+    # un <select> auto-enviado, más simple que reescribir la URL por JS.
+    # Phoenix mezcla path_params y body_params en `params` por igual, así
+    # que EmpresaSessionController.activar/2 no necesita saber cuál se usó.
     post "/meta_schema_usuario/empresa/:id/activar", EmpresaSessionController, :activar
+    post "/meta_schema_usuario/empresa/activar", EmpresaSessionController, :activar
+    post "/meta_schema_usuario/jerarquia/activar", JerarquiaSessionController, :activar
+    post "/meta_schema_usuario/branch/activar", JerarquiaSessionController, :activar_branch
+    post "/meta_schema_usuario/inventory-location/activar", JerarquiaSessionController, :activar_inventory_location
+    post "/meta_schema_usuario/sales-unit/activar", JerarquiaSessionController, :activar_sales_unit
   end
 
   scope "/", MetadataAppWeb do
@@ -159,6 +171,7 @@ defmodule MetadataAppWeb.Router do
       live "/sysadmin/empresas", Sysadmin.EmpresasLive
       live "/sysadmin/credenciales", Sysadmin.CredencialesLive
       live "/sysadmin/acciones-externas", Sysadmin.AccionesExternasLive
+      live "/sysadmin/jerarquia", Sysadmin.JerarquiaOrganizacionalLive
       live "/sysadmin/catalogos/permisos", Sysadmin.CatalogoPermisosLive
       live "/sysadmin/catalogos/:recurso/permisos", Sysadmin.CatalogoPermisosLive
 

@@ -2,6 +2,16 @@ defmodule MetadataApp.Autenticacion.Usuario do
   use Ecto.Schema
   import Ecto.Changeset
 
+  @type t :: %__MODULE__{
+          id: integer() | nil,
+          email: String.t() | nil,
+          alias: String.t() | nil,
+          avatar_seed: String.t() | nil,
+          hashed_password: String.t() | nil,
+          confirmed_at: DateTime.t() | nil,
+          super_admin: boolean()
+        }
+
   schema "meta_schema_usuario" do
     field :email, :string
     field :alias, :string

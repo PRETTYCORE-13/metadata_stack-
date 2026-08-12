@@ -57,3 +57,4 @@ priv/repo/migrations/*demo100_*.exs
 # toque. Esto es solo por si un crash justo en el medio deja uno tirado.
 bc-bundle-*.tar.gz
 
+priv/plts/

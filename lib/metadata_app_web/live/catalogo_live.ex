@@ -490,8 +490,8 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   defp calcular_agregacion(%{assigns: %{modulo: nil}}, _campo, _funcion, _filtros_ecto, _busqueda), do: nil
 
-  defp calcular_agregacion(%{assigns: %{modulo: modulo}}, campo, funcion, filtros_ecto, busqueda) do
-    CatalogoGenerico.agregar(modulo, campo, funcion_agregada(funcion), filtros_ecto, busqueda)
+  defp calcular_agregacion(%{assigns: %{modulo: modulo} = assigns}, campo, funcion, filtros_ecto, busqueda) do
+    CatalogoGenerico.agregar(modulo, assigns[:current_scope], campo, funcion_agregada(funcion), filtros_ecto, busqueda)
   end
 
   defp funcion_agregada("suma"), do: :sum
@@ -546,12 +546,13 @@ defmodule MetadataAppWeb.CatalogoLive do
       campos_busqueda = Enum.map(columnas, & &1.schema_context_field)
       busqueda = {busqueda_general, campos_busqueda}
 
-      total_filas = CatalogoGenerico.contar(modulo, filtros_ecto, busqueda)
+      total_filas = CatalogoGenerico.contar(modulo, socket.assigns[:current_scope], filtros_ecto, busqueda)
       total_paginas = max(ceil(total_filas / @por_pagina), 1)
       pagina = socket.assigns.pagina |> max(1) |> min(total_paginas)
       offset = (pagina - 1) * @por_pagina
 
-      registros = CatalogoGenerico.listar(modulo, filtros_ecto, [limit: @por_pagina, offset: offset], busqueda)
+      registros =
+        CatalogoGenerico.listar(modulo, socket.assigns[:current_scope], filtros_ecto, [limit: @por_pagina, offset: offset], busqueda)
       acompanamiento = CatalogoGenerico.mapa_acompanamiento(catalogo, registros)
 
       filas = Enum.map(registros, &CatalogoGenerico.serializar(&1, estados_por_id, acompanamiento))

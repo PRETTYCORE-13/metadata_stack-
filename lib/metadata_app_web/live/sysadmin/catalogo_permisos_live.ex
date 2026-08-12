@@ -26,6 +26,19 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
 
   @acciones_crud ~w(leer crear editar eliminar)
 
+  # Fase 6 del modelo de Alcance de Datos (2026-08-11) -- valores válidos
+  # de <select>, en el mismo orden que la jerarquía real (de más
+  # restrictivo a más amplio), para que el dropdown se lea de arriba a
+  # abajo como una escala.
+  @tipos_alcance [
+    {"Solo lo propio", "propio"},
+    {"Su ubicación de inventario", "inventory_location"},
+    {"Su unidad de ventas", "sales_unit"},
+    {"Su sucursal", "branch"},
+    {"Toda la empresa", "empresa"},
+    {"Todas las empresas", "global"}
+  ]
+
   @menu [
     %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
     %{tipo: :pagina, id: "buscar_trn", label: "Buscar TRN", nav: "/sysadmin/buscar-trn"},
@@ -34,7 +47,8 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
     %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"},
     %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
-    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"}
+    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
+    %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
   ]
 
   # Esta LiveView NUNCA define handle_params/3 — a propósito. También se
@@ -53,7 +67,17 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   # el picker de abajo usa push_navigate/2 (remonta entero) en vez de
   # push_patch/2 (que dependía de handle_params para reaccionar).
   def mount(%{"recurso" => recurso}, _session, socket) do
-    socket = socket |> montar_base() |> assign(:embebido?, false) |> montar_catalogo(recurso)
+    socket =
+      socket
+      |> montar_base()
+      |> assign(:embebido?, false)
+      |> assign(:current_page, "roles")
+      |> assign(:menu_items, AdminNav.filtrar_menu(@menu))
+      |> assign(:sidebar_open, false)
+      |> assign(:show_programacion_children, false)
+      |> assign(:show_clientes_children, false)
+      |> assign(:show_prettycore_children, false)
+      |> montar_catalogo(recurso)
 
     socket =
       if socket.assigns.catalogo do
@@ -104,6 +128,8 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     |> assign(:usuario_seleccionado, nil)
     |> assign(:roles, [])
     |> assign(:estado, %{})
+    |> assign(:alcance_por_rol, %{})
+    |> assign(:tipos_alcance, @tipos_alcance)
   end
 
   defp montar_catalogo(socket, recurso) do
@@ -202,6 +228,19 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     {:noreply, cargar_matriz(socket)}
   end
 
+  # Fase 6 del modelo de Alcance de Datos -- upsert directo, mismo criterio
+  # inmediato (sin confirmar) que toggle_permiso/2. "propio" con un select
+  # vacío no debería pasar (el <select> siempre manda un valor), pero por
+  # las dudas: nunca revoca la fila si tipo viene vacío, mejor dejarla
+  # como estaba que perder la concesión por un evento raro.
+  def handle_event("cambiar_alcance_tipo", %{"rol_id" => rol_id, "tipo" => tipo}, socket) when tipo != "" do
+    rol_id = String.to_integer(rol_id)
+    Permissions.definir_alcance_de_rol(rol_id, socket.assigns.catalogo.id, tipo)
+    {:noreply, cargar_matriz(socket)}
+  end
+
+  def handle_event("cambiar_alcance_tipo", _params, socket), do: {:noreply, socket}
+
   defp todas_las_acciones(socket), do: socket.assigns.acciones_crud ++ Enum.map(socket.assigns.transiciones, & &1.accion)
 
   defp cargar_matriz(socket) do
@@ -236,8 +275,13 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     acciones_transiciones = Enum.map(socket.assigns.transiciones, & &1.accion)
     rol_ids = Enum.map(roles, & &1.id)
     estado = Permissions.estado_permisos_para_roles(recurso, rol_ids, acciones_crud ++ acciones_transiciones)
+    alcance_por_rol = Permissions.alcance_de_catalogo(socket.assigns.catalogo.id)
 
-    socket |> assign(:roles, roles) |> assign(:estado, estado) |> assign(:acciones_crud, acciones_crud)
+    socket
+    |> assign(:roles, roles)
+    |> assign(:estado, estado)
+    |> assign(:acciones_crud, acciones_crud)
+    |> assign(:alcance_por_rol, alcance_por_rol)
   end
 
   def render(assigns) do
@@ -410,6 +454,60 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
           </table>
         </div>
       </div>
+
+      <.panel_alcance_de_rol :if={@catalogo && @catalogo.alcance_habilitado}
+        roles={@roles} alcance_por_rol={@alcance_por_rol} tipos_alcance={@tipos_alcance} />
+    </div>
+    """
+  end
+
+  # Fase 6 del modelo de Alcance de Datos (2026-08-11) — sección aparte,
+  # NO otra columna de la matriz de arriba, a propósito: es un concepto
+  # distinto (QUÉ FILAS, no QUÉ ACCIONES) y solo aparece si el catálogo
+  # activó alcance_habilitado (BcMotorLive → Get View), la mayoría de los
+  # catálogos hoy no lo tiene prendido.
+  attr :roles, :list, required: true
+  attr :alcance_por_rol, :map, required: true
+  attr :tipos_alcance, :list, required: true
+
+  defp panel_alcance_de_rol(assigns) do
+    ~H"""
+    <div class="mt-6 overflow-x-auto rounded-xl border border-gray-200">
+      <div class="px-4 py-3 bg-gray-50 border-b border-gray-200">
+        <h2 class="text-xs font-bold text-gray-700 uppercase tracking-wide">Alcance de datos por rol</h2>
+        <p class="text-[11px] text-gray-500 mt-0.5">
+          Qué filas de este catálogo puede ver/operar cada rol. Sin elegir nada, un rol queda en "Solo lo propio" (el más restrictivo) — "administrador" siempre ve todo, sin importar esto.
+        </p>
+      </div>
+
+      <table class="min-w-full divide-y divide-gray-200">
+        <tbody class="divide-y divide-gray-100">
+          <tr :for={rol <- @roles} class="hover:bg-purple-50/60">
+            <td class="px-4 py-2 text-sm font-medium text-gray-900 whitespace-nowrap">{rol.nombre}</td>
+            <td class="px-4 py-2">
+              <form id={"alcance-rol-#{rol.id}"} phx-change="cambiar_alcance_tipo">
+                <input type="hidden" name="rol_id" value={rol.id} />
+                <select
+                  name="tipo"
+                  disabled={rol.nombre == "administrador"}
+                  class="text-xs border border-gray-300 rounded-lg px-2 py-1 disabled:bg-gray-100 disabled:text-gray-400"
+                >
+                  <option
+                    :for={{etiqueta, valor} <- @tipos_alcance}
+                    value={valor}
+                    selected={Map.get(@alcance_por_rol, rol.id, :propio) == String.to_existing_atom(valor)}
+                  >
+                    {etiqueta}
+                  </option>
+                </select>
+              </form>
+            </td>
+          </tr>
+          <tr :if={@roles == []}>
+            <td colspan="2" class="px-4 py-6 text-center text-sm text-gray-400">Todavía no hay roles en esta empresa.</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
     """
   end

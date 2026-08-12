@@ -1,7 +1,7 @@
 defmodule MetadataApp.Integraciones.AccionLog do
   @moduledoc """
   Fase 8 de "Integraciones" (2026-08-07) — una fila por ejecución real de
-  una AccionExterna (ver Integraciones.ejecutar_accion/3, que la escribe).
+  una AccionExterna (ver Integraciones.ejecutar_accion/4, que la escribe).
   Sin changeset propio -- se crea SIEMPRE con Ecto.Changeset.change/2
   directo desde código interno del contexto, nunca desde un form.
   """

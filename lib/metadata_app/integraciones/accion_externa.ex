@@ -13,7 +13,7 @@ defmodule MetadataApp.Integraciones.AccionExterna do
     field :metodo, :string
     # Con {campo} como placeholder -- ver MetadataApp.BusinessProcessBuilder.
     # CatalogoGenerico.sustituir_variables/2, reusado tal cual por
-    # Integraciones.ejecutar/2 (Fase 4).
+    # Integraciones.ejecutar/4 (Fase 4).
     field :url_template, :string
     field :headers_template, :map, default: %{}
     field :body_template, :string

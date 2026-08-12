@@ -15,6 +15,7 @@ defmodule MetadataApp.Integraciones do
   alias MetadataApp.Integraciones.{Credencial, AccionExterna, AccionLog}
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.Permissions
+  alias MetadataApp.Autenticacion.Scope
 
   ## Credenciales
 
@@ -52,7 +53,7 @@ defmodule MetadataApp.Integraciones do
 
   @doc """
   Registra el resultado de la última ejecución contra esta credencial
-  (ultimo_error: nil si salió bien) -- usado por Integraciones.ejecutar/2
+  (ultimo_error: nil si salió bien) -- usado por Integraciones.ejecutar/4
   (Fase 4) para que la pantalla de Credenciales pueda mostrar "esto lleva
   fallando desde tal fecha" sin que nadie tenga que revisar las 50 a
   mano. No pasa por Credencial.changeset_edicion/2 a propósito -- eso
@@ -149,14 +150,28 @@ defmodule MetadataApp.Integraciones do
   del schema del registro) y la ejecuta. Pensado para el caso más común,
   llamado desde una regla post:
 
-      MetadataApp.Integraciones.ejecutar("validar_credito", registro)
+      MetadataApp.Integraciones.ejecutar("validar_credito", registro, :sistema)
+
+  `scope` es obligatorio (Fase 8 del modelo de Alcance de Datos,
+  2026-08-11) -- mismo criterio estructural que
+  `CatalogoGenerico.crear/2` etc: ningún artefacto de la plataforma
+  ejecuta sin declarar quién/qué lo pide. No filtra filas acá (Credencial/
+  AccionExterna/AccionLog son config global de sysadmin, no datos de
+  negocio por branch/sales_unit/inventory_location) -- se usa solo para
+  `AccionLog.usuario_id`/`origen` (ver `registrar_log/5`), reemplazando el
+  `opts[:usuario_id]`/`opts[:origen]` de antes (opcional, fácil de
+  olvidar) por un dato que el compilador exige. Una regla post no tiene
+  un `%Scope{}` real a mano (el `contexto` del motor de estados es un
+  mapa suelto, no un Scope hidratado) -- pasa `:sistema`, mismo sentinel
+  que ya usa `Renglones.crear_cada_renglon/3`.
 
   Para el caso "regla post síncrona, dentro de la transacción" (ver
   conversación 2026-08-06), pasar `timeout: 5_000..8_000` explícito en
   `opts` -- el default (15s) es para el botón interactivo async (Fase 6),
   demasiado largo para tener abierta una conexión de Postgres del pool.
   """
-  def ejecutar(nombre_accion, registro, opts \\ []) when is_binary(nombre_accion) do
+  def ejecutar(nombre_accion, registro, scope, opts \\ [])
+      when is_binary(nombre_accion) and (scope == :sistema or is_struct(scope, Scope)) do
     catalogo = registro.__struct__.__schema__(:source)
 
     case MetadataApp.BusinessProcessBuilder.MetaSchemaContext.obtener_header_por_nombre(catalogo) do
@@ -172,13 +187,14 @@ defmodule MetadataApp.Integraciones do
 
         case Repo.one(query) do
           nil -> {:error, {:accion_no_encontrada, nombre_accion}}
-          accion -> ejecutar_accion(accion, registro, opts)
+          accion -> ejecutar_accion(accion, registro, scope, opts)
         end
     end
   end
 
-  @doc "Igual que ejecutar/3 pero con la %AccionExterna{} ya resuelta (ver Fase 6, botón interactivo, que ya la tiene a mano)."
-  def ejecutar_accion(%AccionExterna{} = accion, registro, opts \\ []) do
+  @doc "Igual que ejecutar/4 pero con la %AccionExterna{} ya resuelta (ver Fase 6, botón interactivo, que ya la tiene a mano)."
+  def ejecutar_accion(%AccionExterna{} = accion, registro, scope, opts \\ [])
+      when scope == :sistema or is_struct(scope, Scope) do
     # Siempre fresca de DB (nunca confiar en un preload que puede o no
     # venir cargado según cómo el caller haya resuelto `accion`) -- el
     # costo de una consulta más es insignificante al lado de la llamada
@@ -249,42 +265,48 @@ defmodule MetadataApp.Integraciones do
       end
 
     registrar_resultado_ejecucion(credencial, error_para_registrar)
-    registrar_log(accion, registro, resultado, System.monotonic_time(:millisecond) - inicio, opts)
+    registrar_log(accion, registro, resultado, System.monotonic_time(:millisecond) - inicio, scope)
 
     resultado
   end
 
-  # Fase 8 ("Integraciones") -- best-effort a propósito (rescue, nunca
-  # tumba la llamada real por un problema de logging): a diferencia de
-  # registrar_resultado_ejecucion/2 (un solo UPDATE, "estado actual" de la
-  # credencial), esto es un INSERT append-only, pensado para responder
-  # "¿esta acción de verdad corrió cuando alguien la clickeó?" (ver
-  # AccionesExternasLive, panel "Últimas ejecuciones", y el badge de
-  # CredencialesLive). `origen`/`usuario_id` en `opts` -- FichaLive pasa
-  # origen: "usuario" + el id de quien clickeó; una regla post (Fase 5) no
-  # pasa nada y cae al default "regla_post" (ver moduledoc de ejecutar/2:
-  # ese es el caso pensado de entrada). Corre con el mismo Repo que el
-  # resto de la función -- si esto se llama DENTRO de la transacción de una
-  # regla post (Fase 5) y esa transacción termina revirtiendo, esta fila se
-  # revierte con ella (mismo límite ya aceptado en Fase 4 para
-  # registrar_resultado_ejecucion/2 -- separarlo de la transacción exigiría
-  # una conexión/proceso aparte, fuera de alcance acá).
-  defp registrar_log(accion, registro, resultado, duracion_ms, opts) do
+  # Fase 8 ("Integraciones", observabilidad) -- best-effort a propósito
+  # (rescue, nunca tumba la llamada real por un problema de logging): a
+  # diferencia de registrar_resultado_ejecucion/2 (un solo UPDATE, "estado
+  # actual" de la credencial), esto es un INSERT append-only, pensado para
+  # responder "¿esta acción de verdad corrió cuando alguien la clickeó?"
+  # (ver AccionesExternasLive, panel "Últimas ejecuciones", y el badge de
+  # CredencialesLive). `origen`/`usuario_id` se derivan de `scope` (Fase 8
+  # del modelo de Alcance de Datos, 2026-08-11) en vez de venir sueltos en
+  # `opts` -- :sistema (regla post) -> "regla_post"/nil, un %Scope{} real
+  # (botón de FichaLive) -> "usuario"/el id de quien clickeó. Corre con el
+  # mismo Repo que el resto de la función -- si esto se llama DENTRO de la
+  # transacción de una regla post y esa transacción termina revirtiendo,
+  # esta fila se revierte con ella (mismo límite ya aceptado en Fase 4
+  # para registrar_resultado_ejecucion/2 -- separarlo de la transacción
+  # exigiría una conexión/proceso aparte, fuera de alcance acá).
+  defp registrar_log(accion, registro, resultado, duracion_ms, scope) do
     {ok?, status, error} =
       case resultado do
         {:ok, %{status: status}} -> {status in 200..299, status, nil}
         {:error, motivo} -> {false, nil, inspect(motivo)}
       end
 
+    {origen, usuario_id} =
+      case scope do
+        :sistema -> {"regla_post", nil}
+        %Scope{usuario: usuario} -> {"usuario", usuario.id}
+      end
+
     %AccionLog{}
     |> Ecto.Changeset.change(%{
       accion_id: accion.id,
       credencial_id: accion.credencial_id,
-      usuario_id: Keyword.get(opts, :usuario_id),
+      usuario_id: usuario_id,
       accion_nombre: accion.nombre,
       catalogo: registro.__struct__.__schema__(:source),
       registro_id: registro.id,
-      origen: Keyword.get(opts, :origen, "regla_post"),
+      origen: origen,
       ok: ok?,
       status_http: status,
       error: error,

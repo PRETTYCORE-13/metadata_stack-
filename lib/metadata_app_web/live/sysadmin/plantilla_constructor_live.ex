@@ -137,7 +137,10 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         registro_muestra_id =
           case MetaSchemaContext.modulo_por_nombre(nombre) do
             nil -> nil
-            modulo -> case CatalogoGenerico.listar(modulo, %{}, limit: 1) do
+            # :sistema (Fase 4a) -- herramienta de Constructor, busca
+            # CUALQUIER fila de muestra para previsualizar la plantilla,
+            # no datos de negocio para un usuario final.
+            modulo -> case CatalogoGenerico.listar(modulo, :sistema, %{}, limit: 1) do
               [r] -> r.id
               [] -> nil
             end
@@ -2074,12 +2077,15 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   defp vista_previa_autocompletar(_nombre, _id, _campo_ref, _catalogo, [], _campos_del_destino), do: {:error, :incompleto}
 
   defp vista_previa_autocompletar(nombre, registro_muestra_id, campo_ref, catalogo, campos_destino, campos_del_destino) do
+    # :sistema en ambos obtener! (Fase 4a) -- herramienta de Constructor
+    # (vista previa contra el registro de muestra), no un listado real para
+    # un usuario final.
     with modulo_local when not is_nil(modulo_local) <- MetaSchemaContext.modulo_por_nombre(nombre),
-         registro_local <- CatalogoGenerico.obtener!(modulo_local, registro_muestra_id),
+         registro_local <- CatalogoGenerico.obtener!(modulo_local, :sistema, registro_muestra_id),
          id_valor when not is_nil(id_valor) <- Map.get(registro_local, String.to_existing_atom(campo_ref)),
          id_entero when not is_nil(id_entero) <- a_entero(id_valor),
          modulo_destino when not is_nil(modulo_destino) <- MetaSchemaContext.modulo_por_nombre(catalogo) do
-      registro_destino = CatalogoGenerico.obtener!(modulo_destino, id_entero)
+      registro_destino = CatalogoGenerico.obtener!(modulo_destino, :sistema, id_entero)
 
       filas =
         Enum.map(campos_destino, fn campo ->
@@ -2132,7 +2138,8 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     formula = nodo["propiedades"]["formula"] || ""
 
     with modulo when not is_nil(modulo) <- MetaSchemaContext.modulo_por_nombre(nombre) do
-      registro = CatalogoGenerico.obtener!(modulo, registro_muestra_id)
+      # :sistema (Fase 4a) -- mismo criterio que vista_previa_autocompletar/6.
+      registro = CatalogoGenerico.obtener!(modulo, :sistema, registro_muestra_id)
       valores_reales = Map.new(campos, &{&1.schema_context_field, Map.get(registro, String.to_existing_atom(&1.schema_context_field))})
       base = Map.merge(contexto_actual(current_scope), valores_reales)
       valores = Formula.resolver_calculados(definicion, base)

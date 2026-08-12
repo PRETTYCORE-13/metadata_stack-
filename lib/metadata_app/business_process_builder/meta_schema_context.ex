@@ -512,19 +512,44 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     |> Enum.group_by(fn {nombre, _detalle} -> nombre end, fn {_nombre, detalle} -> detalle end)
   end
 
-  # schema_context_name de todo catálogo que tenga un detalle tipo
-  # "referencia" apuntando a schema_context_name — bloquean su borrado total.
+  # schema_context_name de todo catálogo que bloquea el borrado total de
+  # schema_context_name -- dos motivos distintos, unificados en una sola
+  # lista porque ambos usan el mismo mensaje/UX ("catálogo(s)
+  # dependientes, borralos primero"):
+  #
+  #   1) tiene un detalle tipo "referencia" apuntando acá (de siempre).
+  #   2) es un catálogo DETALLE de este maestro (schema_encabezado_id
+  #      apunta acá) -- encontrado en vivo (2026-08-11): meta_schema_header.
+  #      schema_encabezado_id SÍ tiene FK real (RESTRICT, sin ON DELETE)
+  #      contra meta_schema_header(id), pero nada acá lo chequeaba antes
+  #      de intentar el DELETE -- el borrado de un maestro con detalle
+  #      vivo llegaba hasta el DROP TABLE/DELETE real y explotaba con un
+  #      error crudo de Postgres en vez de bloquearse limpio como
+  #      cualquier otro dependiente.
   def listar_dependientes(schema_context_name) do
-    from(d in Detail,
-      join: h in assoc(d, :header),
-      where: is_nil(d.delete_guid),
-      where: is_nil(h.delete_guid),
-      where: fragment("?->>'tipo'", d.schema_context_properties) == "referencia",
-      where: fragment("?->>'catalogo'", d.schema_context_properties) == ^schema_context_name,
-      distinct: true,
-      select: h.schema_context_name
-    )
-    |> Repo.all()
+    referencias =
+      from(d in Detail,
+        join: h in assoc(d, :header),
+        where: is_nil(d.delete_guid),
+        where: is_nil(h.delete_guid),
+        where: fragment("?->>'tipo'", d.schema_context_properties) == "referencia",
+        where: fragment("?->>'catalogo'", d.schema_context_properties) == ^schema_context_name,
+        distinct: true,
+        select: h.schema_context_name
+      )
+      |> Repo.all()
+
+    detalles =
+      from(h in Header,
+        join: maestro in Header,
+        on: maestro.id == h.schema_encabezado_id,
+        where: is_nil(h.delete_guid) and is_nil(maestro.delete_guid),
+        where: maestro.schema_context_name == ^schema_context_name,
+        select: h.schema_context_name
+      )
+      |> Repo.all()
+
+    Enum.uniq(referencias ++ detalles)
   end
 
   # --- Referencias dependientes ("combos en cascada") ------------------------
@@ -769,8 +794,13 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   defp es_texto_no_vacio?(valor), do: is_binary(valor) and valor != ""
 
   defp resolver_valor_remoto(catalogo_destino, valor_hijo, campo_remoto) do
+    # Gap conocido (Fase 5, no corregido acá) -- helper de DISPLAY (resuelve
+    # el valor legible de un campo "referencia"), mismo criterio ya
+    # aceptado para Formula/opciones_referencia en la Fase 4a: no
+    # threadea Scope, marcado como mejora pendiente real.
     with modulo when not is_nil(modulo) <- modulo_por_nombre(catalogo_destino),
          id_hijo when not is_nil(id_hijo) <- a_entero_seguro(valor_hijo),
+         # credo:disable-for-next-line MetadataApp.CredoChecks.RepoDirectoConVariable
          registro_destino when not is_nil(registro_destino) <- Repo.get(modulo, id_hijo),
          remoto_atom <- String.to_existing_atom(campo_remoto) do
       {:ok, Map.get(registro_destino, remoto_atom)}

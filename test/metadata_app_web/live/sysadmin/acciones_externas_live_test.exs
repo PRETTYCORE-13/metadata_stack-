@@ -11,7 +11,7 @@ defmodule MetadataAppWeb.Sysadmin.AccionesExternasLiveTest do
   import MetadataApp.AutenticacionFixtures
 
   alias MetadataApp.Repo
-  alias MetadataApp.Autenticacion.{Empresa, Rol, UsuarioEmpresa}
+  alias MetadataApp.Autenticacion.{Empresa, Rol, Scope, UsuarioEmpresa}
   alias MetadataApp.Permissions
   alias MetadataApp.Integraciones
 
@@ -39,7 +39,7 @@ defmodule MetadataAppWeb.Sysadmin.AccionesExternasLiveTest do
         base_url: "https://httpbin.org"
       })
 
-    %{conn: conn, credencial: credencial}
+    %{conn: conn, credencial: credencial, usuario: usuario, empresa: empresa}
   end
 
   test "crea una acción con headers JSON válidos", %{conn: conn, credencial: credencial} do
@@ -111,7 +111,12 @@ defmodule MetadataAppWeb.Sysadmin.AccionesExternasLiveTest do
   # badge de la lista de CredencialesLive (test aparte, mismo archivo de
   # abajo) tienen que reflejar ejecuciones REALES, no un mock — mismo
   # criterio de la Fase 4/5/6: llamadas de red reales a httpbin.org.
-  test "el panel de últimas ejecuciones muestra corridas reales (éxito y error)", %{conn: conn, credencial: credencial} do
+  test "el panel de últimas ejecuciones muestra corridas reales (éxito y error)", %{
+    conn: conn,
+    credencial: credencial,
+    usuario: usuario,
+    empresa: empresa
+  } do
     header = Repo.get_by!(MetadataApp.BusinessProcessBuilder.MetaSchema.Header, schema_context_name: "meta_fixture_cliente")
 
     {:ok, accion} =
@@ -134,8 +139,9 @@ defmodule MetadataAppWeb.Sysadmin.AccionesExternasLiveTest do
       |> Ecto.Changeset.put_change(:insert_guid, Ecto.UUID.generate() |> String.replace("-", ""))
       |> Repo.insert!()
 
-    {:ok, %{status: 200}} = Integraciones.ejecutar_accion(accion, registro, origen: "usuario")
-    {:error, _} = Integraciones.ejecutar_accion(%{accion | url_template: "https://esto-no-existe.invalid/x"}, registro)
+    scope = %Scope{usuario: usuario, empresa_activa: empresa}
+    {:ok, %{status: 200}} = Integraciones.ejecutar_accion(accion, registro, scope)
+    {:error, _} = Integraciones.ejecutar_accion(%{accion | url_template: "https://esto-no-existe.invalid/x"}, registro, :sistema)
 
     {:ok, view, _html} = live(conn, "/sysadmin/acciones-externas")
     html = view |> element("button", "Log test") |> render_click()
@@ -168,7 +174,7 @@ defmodule MetadataAppWeb.Sysadmin.AccionesExternasLiveTest do
       |> Ecto.Changeset.put_change(:insert_guid, Ecto.UUID.generate() |> String.replace("-", ""))
       |> Repo.insert!()
 
-    {:ok, %{status: 200}} = Integraciones.ejecutar_accion(accion, registro)
+    {:ok, %{status: 200}} = Integraciones.ejecutar_accion(accion, registro, :sistema)
 
     {:ok, _view, html} = live(conn, "/sysadmin/credenciales")
 

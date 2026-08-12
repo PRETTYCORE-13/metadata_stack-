@@ -22,6 +22,16 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     * BC — de solo lectura: catálogos que el usuario puede "leer" por
       herencia de sus roles en la empresa activa (mismo permiso que ya
       poda el menú, ver MenuLayout.podar_menu_por_permisos/1).
+    * Alcance — Fase 7 del modelo de Alcance de Datos (2026-08-11): QUÉ
+      branches/sales_units/inventory_locations puede VER/OPERAR este
+      usuario (la asignación N:N de Autenticacion.asignar_branch/2 etc.,
+      la que hidrata Scope.branches_permitidos/sales_units_permitidas/
+      inventory_locations_permitidas). Distinto del "alcance_tipo" por
+      rol (eso se configura en CatalogoPermisosLive, es "QUÉ TIPO de
+      filtro aplica", no "cuáles ids concretos" — ver moduledoc de
+      MetadataApp.Autenticacion.Scope). Árbol Branch -> {SalesUnit,
+      InventoryLocation}, un toggle por nodo, mismo patrón visual que las
+      demás pestañas (botón "Asignado"/"+ Asignar", no checkbox real).
   """
 
   use MetadataAppWeb, :live_view_admin
@@ -43,7 +53,8 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
     %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"},
     %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
-    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"}
+    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
+    %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
   ]
 
   def mount(_params, _session, socket) do
@@ -65,6 +76,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
      |> assign(:empresas_estado, [])
      |> assign(:empresa_para_agregar, nil)
      |> assign(:bcs_lectura, [])
+     |> assign(:jerarquia_alcance, [])
      |> assign(:alias_form, nil)
      |> assign(:crear_usuario_error, nil)
      # empresa_en_foco: cuál empresa está gestionando esta pantalla (usuarios/
@@ -96,7 +108,8 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
          busqueda_rol: "",
          roles_busqueda_resultado: [],
          empresas_estado: [],
-         bcs_lectura: []
+         bcs_lectura: [],
+         jerarquia_alcance: []
        )
        |> cargar_usuarios()}
     else
@@ -215,7 +228,8 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
        busqueda_rol: "",
        roles_busqueda_resultado: [],
        empresas_estado: [],
-       bcs_lectura: []
+       bcs_lectura: [],
+       jerarquia_alcance: []
      )}
   end
 
@@ -296,12 +310,58 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
          busqueda_rol: "",
          roles_busqueda_resultado: [],
          empresas_estado: [],
-         bcs_lectura: []
+         bcs_lectura: [],
+         jerarquia_alcance: []
        )
        |> cargar_usuarios()}
     else
       {:noreply, cargar_detalle_usuario(socket)}
     end
+  end
+
+  # Fase 7 del modelo de Alcance de Datos -- 3 handlers gemelos, uno por
+  # dimensión de la jerarquía. "asignado" llega como el estado ACTUAL
+  # (calculado server-side al armar jerarquia_alcance, no confiar en un
+  # valor que el cliente pudiera mandar distinto): si ya está asignado,
+  # el click revoca; si no, asigna. asignar_*/2 es idempotente
+  # (on_conflict: :nothing), así que no hace falta chequear de nuevo acá.
+  def handle_event("toggle_branch_alcance", %{"branch_id" => branch_id, "asignado" => asignado}, socket) do
+    usuario_id = socket.assigns.usuario_seleccionado.id
+    branch_id = String.to_integer(branch_id)
+
+    if asignado == "true" do
+      Autenticacion.revocar_branch(usuario_id, branch_id)
+    else
+      Autenticacion.asignar_branch(usuario_id, branch_id)
+    end
+
+    {:noreply, cargar_detalle_usuario(socket)}
+  end
+
+  def handle_event("toggle_sales_unit_alcance", %{"sales_unit_id" => sales_unit_id, "asignado" => asignado}, socket) do
+    usuario_id = socket.assigns.usuario_seleccionado.id
+    sales_unit_id = String.to_integer(sales_unit_id)
+
+    if asignado == "true" do
+      Autenticacion.revocar_sales_unit(usuario_id, sales_unit_id)
+    else
+      Autenticacion.asignar_sales_unit(usuario_id, sales_unit_id)
+    end
+
+    {:noreply, cargar_detalle_usuario(socket)}
+  end
+
+  def handle_event("toggle_inventory_location_alcance", %{"inventory_id" => inventory_id, "asignado" => asignado}, socket) do
+    usuario_id = socket.assigns.usuario_seleccionado.id
+    inventory_id = String.to_integer(inventory_id)
+
+    if asignado == "true" do
+      Autenticacion.revocar_inventory_location(usuario_id, inventory_id)
+    else
+      Autenticacion.asignar_inventory_location(usuario_id, inventory_id)
+    end
+
+    {:noreply, cargar_detalle_usuario(socket)}
   end
 
   defp cargar_usuarios(socket) do
@@ -334,7 +394,42 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     |> assign(:empresas_estado, empresas_del_usuario)
     |> assign(:empresas_disponibles, empresas_disponibles)
     |> assign(:bcs_lectura, bcs_lectura)
+    |> assign(:jerarquia_alcance, cargar_jerarquia_alcance(usuario, empresa))
     |> assign(:alias_form, to_form(Autenticacion.change_usuario_alias(usuario)))
+  end
+
+  # Árbol Branch -> {SalesUnit, InventoryLocation} de la empresa en foco,
+  # con qué nodos tiene asignados el usuario (Fase 7). Se arma desde 0 en
+  # cada carga -- son listas chicas (decenas, no miles, por empresa) y así
+  # se evita cualquier desincronización con lo que Autenticacion.alcance_de_usuario/2
+  # ya reporta como fuente de verdad.
+  defp cargar_jerarquia_alcance(usuario, empresa) do
+    %{
+      branches_permitidos: branch_ids,
+      sales_units_permitidas: sales_unit_ids,
+      inventory_locations_permitidas: inventory_ids
+    } = Autenticacion.alcance_de_usuario(usuario.id, empresa.id)
+
+    branch_ids = MapSet.new(branch_ids)
+    sales_unit_ids = MapSet.new(sales_unit_ids)
+    inventory_ids = MapSet.new(inventory_ids)
+
+    empresa.id
+    |> Autenticacion.listar_branches()
+    |> Enum.map(fn branch ->
+      %{
+        branch: branch,
+        asignado: MapSet.member?(branch_ids, branch.id),
+        sales_units:
+          branch.id
+          |> Autenticacion.listar_sales_units()
+          |> Enum.map(&%{sales_unit: &1, asignado: MapSet.member?(sales_unit_ids, &1.id)}),
+        inventory_locations:
+          branch.id
+          |> Autenticacion.listar_inventory_locations()
+          |> Enum.map(&%{inventory_location: &1, asignado: MapSet.member?(inventory_ids, &1.id)})
+      }
+    end)
   end
 
   defp usuarios_filtrados(usuarios, ""), do: usuarios
@@ -466,7 +561,8 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
               %{key: "generales", label: "Generales"},
               %{key: "empresas", label: "Empresas"},
               %{key: "roles", label: "Roles"},
-              %{key: "bc", label: "BC"}
+              %{key: "bc", label: "BC"},
+              %{key: "alcance", label: "Alcance"}
             ]} />
 
             <div id="usuario-detalle-panel-generales">
@@ -591,6 +687,79 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
                 </li>
                 <li :if={@bcs_lectura == []} class="px-3 py-4 text-center text-xs text-gray-400">Sin catálogos.</li>
               </ul>
+            </div>
+
+            <div id="usuario-detalle-panel-alcance" class="hidden">
+              <p class="text-xs text-gray-400 mb-3">
+                Sucursales, unidades de venta y ubicaciones de almacén que {@usuario_seleccionado.email} puede ver/operar en {@empresa_en_foco.nombre}.
+              </p>
+
+              <div :for={nodo <- @jerarquia_alcance} class="mb-3 border border-gray-100 rounded-lg overflow-hidden">
+                <div class="flex items-center justify-between px-3 py-2 bg-gray-50">
+                  <span class="text-sm font-semibold text-gray-800">{nodo.branch.branch_name}</span>
+                  <button
+                    type="button"
+                    phx-click="toggle_branch_alcance"
+                    phx-value-branch_id={nodo.branch.id}
+                    phx-value-asignado={to_string(nodo.asignado)}
+                    class={[
+                      "text-xs font-semibold rounded-lg px-2 py-1 transition-colors",
+                      nodo.asignado && "bg-purple-600 text-white",
+                      !nodo.asignado && "bg-purple-100 text-purple-700 hover:bg-purple-200"
+                    ]}
+                  >
+                    {if nodo.asignado, do: "✓ Asignado", else: "+ Asignar"}
+                  </button>
+                </div>
+
+                <div :if={nodo.sales_units != [] or nodo.inventory_locations != []} class="px-3 py-2 grid grid-cols-2 gap-3">
+                  <div>
+                    <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Unidades de venta</p>
+                    <div :for={su <- nodo.sales_units} class="flex items-center justify-between py-0.5">
+                      <span class="text-xs text-gray-700">{su.sales_unit.sales_unit_name}</span>
+                      <button
+                        type="button"
+                        phx-click="toggle_sales_unit_alcance"
+                        phx-value-sales_unit_id={su.sales_unit.id}
+                        phx-value-asignado={to_string(su.asignado)}
+                        class={[
+                          "text-[11px] font-semibold rounded-lg px-2 py-0.5 transition-colors",
+                          su.asignado && "bg-purple-600 text-white",
+                          !su.asignado && "bg-purple-100 text-purple-700 hover:bg-purple-200"
+                        ]}
+                      >
+                        {if su.asignado, do: "✓", else: "+"}
+                      </button>
+                    </div>
+                    <p :if={nodo.sales_units == []} class="text-xs text-gray-400">—</p>
+                  </div>
+
+                  <div>
+                    <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Ubicaciones de almacén</p>
+                    <div :for={il <- nodo.inventory_locations} class="flex items-center justify-between py-0.5">
+                      <span class="text-xs text-gray-700">{il.inventory_location.inventory_name}</span>
+                      <button
+                        type="button"
+                        phx-click="toggle_inventory_location_alcance"
+                        phx-value-inventory_id={il.inventory_location.id}
+                        phx-value-asignado={to_string(il.asignado)}
+                        class={[
+                          "text-[11px] font-semibold rounded-lg px-2 py-0.5 transition-colors",
+                          il.asignado && "bg-purple-600 text-white",
+                          !il.asignado && "bg-purple-100 text-purple-700 hover:bg-purple-200"
+                        ]}
+                      >
+                        {if il.asignado, do: "✓", else: "+"}
+                      </button>
+                    </div>
+                    <p :if={nodo.inventory_locations == []} class="text-xs text-gray-400">—</p>
+                  </div>
+                </div>
+              </div>
+
+              <p :if={@jerarquia_alcance == []} class="px-3 py-4 text-center text-xs text-gray-400">
+                Esta empresa todavía no tiene sucursales — configurá la jerarquía organizacional primero.
+              </p>
             </div>
           <% else %>
             <p class="text-center text-sm text-gray-400 py-24">Elegí un usuario de la izquierda.</p>

@@ -55,6 +55,13 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :mostrar_estado_en_tabla, :boolean, default: true
     field :mostrar_trn_en_tabla, :boolean, default: true
 
+    # Alcance de Datos (Fase 3, 2026-08-11) -- default false: filas de este
+    # catálogo se ven/editan sin ningún filtro adicional hasta que un admin
+    # lo prenda a mano (BcMotorLive, Fase 6). El "QUÉ TIPO" de alcance no
+    # vive acá -- es por (rol, catálogo), ver meta_schema_rol_alcance /
+    # MetadataApp.Permissions.alcance_tipo_efectivo/2.
+    field :alcance_habilitado, :boolean, default: false
+
     # Catálogo Maestro-Detalle (ver docs/catalogo-maestro-detalle-requerimientos.md,
     # R1/R16) — no nulo implica "este catálogo es detalle de otro". No se
     # reusó schema_context_type (ya usa 2 para "carpeta", otra dimensión)
@@ -104,7 +111,8 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
           :filtro_default_fecha_valor_hasta,
           :mostrar_id_en_tabla,
           :mostrar_estado_en_tabla,
-          :mostrar_trn_en_tabla
+          :mostrar_trn_en_tabla,
+          :alcance_habilitado
         ]
     )
     |> validate_required(@requeridos)

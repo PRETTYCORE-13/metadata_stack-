@@ -4,7 +4,7 @@ defmodule MetadataAppWeb.Sysadmin.AccionesExternasLive do
   2026-08-07) — maestro-detalle, mismo patrón que CredencialesLive. Una
   acción es la config de UNA llamada HTTP reusable (método + url_template
   con placeholders `{campo}`/`{api_key}`/`{base_url}` — ver
-  CatalogoGenerico.sustituir_variables/2 e Integraciones.ejecutar_accion/3)
+  CatalogoGenerico.sustituir_variables/2 e Integraciones.ejecutar_accion/4)
   atada a una credencial (obligatoria) y, opcionalmente, a un catálogo — si
   tiene catálogo, FichaLive la ofrece como botón en la Ficha 360° de ese
   catálogo (ver FichaLive."ejecutar_accion_externa").

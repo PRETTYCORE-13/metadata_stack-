@@ -11,7 +11,19 @@ defmodule MetadataApp.MixProject do
       aliases: aliases(),
       deps: deps(),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
-      listeners: [Phoenix.CodeReloader]
+      listeners: [Phoenix.CodeReloader],
+      dialyzer: dialyzer()
+    ]
+  end
+
+  # Fase 5 del modelo de Alcance de Datos (2026-08-11) — PLT en
+  # priv/plts (no en _build, que mix clean puede borrar) para no
+  # reconstruirlo desde cero cada vez. plt_add_apps: :ecto porque las
+  # specs nuevas de CatalogoGenerico usan Ecto.Query.t() en sus tipos.
+  defp dialyzer do
+    [
+      plt_file: {:no_warn, "priv/plts/dialyzer.plt"},
+      plt_add_apps: [:ecto, :ex_unit]
     ]
   end
 
@@ -69,7 +81,13 @@ defmodule MetadataApp.MixProject do
       {:jason, "~> 1.2"},
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
-      {:ulid, "~> 0.2.0"}
+      {:ulid, "~> 0.2.0"},
+      # Fase 5 del modelo de Alcance de Datos (2026-08-11) — guardrails
+      # estructurales: Credo (check custom que prohíbe Repo.* directo
+      # fuera de CatalogoGenerico) + Dialyzer (typespecs de Scope/scope
+      # obligatorio ya agregados en CatalogoGenerico).
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -92,7 +110,20 @@ defmodule MetadataApp.MixProject do
         "esbuild metadata_app --minify",
         "phx.digest"
       ],
-      precommit: ["compile --warning-as-errors", "deps.unlock --unused", "format", "test"]
+      # Fase 5 del modelo de Alcance de Datos (2026-08-11) — check acotado
+      # a MetadataApp.CredoChecks.RepoDirectoConVariable, NO `credo --strict`
+      # completo: el repo tiene ~460 issues preexistentes de estilo/diseño
+      # sin relación (line-endings, nesting, etc.) que agregar acá
+      # bloquearía a todo el equipo por deuda técnica ajena a este
+      # guardrail. Corre en ~0.3s, hoy en cero hallazgos.
+      "credo.alcance": ["credo suggest --strict --only MetadataApp.CredoChecks.RepoDirectoConVariable"],
+      precommit: [
+        "compile --warning-as-errors",
+        "deps.unlock --unused",
+        "format",
+        "credo.alcance",
+        "test"
+      ]
     ]
   end
 end

@@ -1,7 +1,7 @@
 defmodule MetadataApp.IntegracionesReglasPostTest do
   @moduledoc """
   Fase 5 de "Integraciones" (2026-08-07) — prueba de punta a punta que una
-  regla post puede llamar MetadataApp.Integraciones.ejecutar/2 de forma
+  regla post puede llamar MetadataApp.Integraciones.ejecutar/4 de forma
   SÍNCRONA, dentro de la misma transacción de la transición (ver
   MetadataApp.MetaBusinessProcess.Reglas.MetaFixtureCliente.Post, en
   test/support), y que:
@@ -109,7 +109,7 @@ defmodule MetadataApp.IntegracionesReglasPostTest do
     accion
   end
 
-  describe "regla post síncrona -> Integraciones.ejecutar/2 (dentro de la transacción)" do
+  describe "regla post síncrona -> Integraciones.ejecutar/4 (dentro de la transacción)" do
     @describetag :external_http
 
     test "éxito de la API externa: la transición se aplica normal", %{conn: conn} do

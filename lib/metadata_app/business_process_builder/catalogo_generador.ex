@@ -23,6 +23,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
     if File.exists?(schema_path) do
       asegurar_estado_id(schema_context_name)
+      asegurar_columnas_alcance(schema_context_name)
       asegurar_campos_nuevos(schema_context_name)
       {:ok, %{tabla: schema_context_name, ya_existia: true}}
     else
@@ -662,6 +663,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     nombre_indice = nombre_indice_unico(schema_context_name)
     {columnas_trn, indices_trn} = columnas_trn(schema_context_name, header)
     {columnas_encab, indices_encab} = columnas_encabezado_detalle(schema_context_name, header)
+    columnas_alcance = columnas_alcance(header)
 
     contenido = """
     defmodule MetadataApp.Repo.Migrations.#{modulo_migracion} do
@@ -676,7 +678,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
           add :delete_guid, :string, size: 32, null: true
 
           add :estado_id, references(:meta_schema_estados), null: true
-    #{columnas_trn}#{columnas_encab}
+    #{columnas_trn}#{columnas_encab}#{columnas_alcance}
         end
 
         create unique_index(:#{schema_context_name}, [#{nombres_campos}], name: :#{nombre_indice})
@@ -739,6 +741,62 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   @doc "Nombre determinista del índice único (encabezado_id, renglon_id) de un catálogo detalle — misma fuente de verdad para la migración y para MetadataApp.Renglones."
   def nombre_indice_renglon(tabla), do: "#{tabla}_encabezado_renglon_unico_index"
 
+  # Fase 9 del modelo de Alcance de Datos (2026-08-11) — las 4 dimensiones
+  # (branch_id/sales_unit_id/inventory_id/creado_por_id) solo se agregan a
+  # un catálogo NUEVO si ya nació con alcance_habilitado: true (caso raro
+  # -- hoy el toggle de BcMotorLive solo se prende DESPUÉS de crear el
+  # catálogo). El caso normal -- prender el toggle sobre un catálogo YA
+  # generado -- lo cubre asegurar_columnas_alcance/1 más abajo, vía ALTER
+  # TABLE. Nullable a nivel columna a propósito (mismo criterio que
+  # estado_id/trn): filas viejas nunca tuvieron estos datos, no hay forma
+  # de inferirlos retroactivos salvo el backfill best-effort de
+  # AlcanceBackfill.backfillear_creado_por/1 (creado_por_id únicamente).
+  # SIN `references(...)` a propósito (encontrado en vivo, Fase 9): un FK
+  # nuevo exige que Postgres tome lock también sobre la tabla REFERENCIADA
+  # (meta_schema_branch/sales_unit/inventory_location/usuario), y esas
+  # tablas las tocan decenas de tests concurrentes del propio modelo de
+  # Alcance de Datos -- causaba deadlocks reales (40P01) bajo carga async,
+  # sin importar qué catálogo dedicado se usara del otro lado. La
+  # integridad referencial ya la garantiza CatalogoGenerico en la capa de
+  # aplicación (branch_id solo puede ser uno de scope.branches_permitidos,
+  # que a su vez solo contiene ids de branches reales) -- un FK físico acá
+  # sería defensa en profundidad, no la única barrera.
+  defp columnas_alcance(%{alcance_habilitado: true}) do
+    """
+
+          add :branch_id, :integer, null: true
+          add :sales_unit_id, :integer, null: true
+          add :inventory_id, :integer, null: true
+          add :creado_por_id, :integer, null: true
+    """
+  end
+
+  defp columnas_alcance(_header), do: ""
+
+  # Contraparte de columnas_alcance/1 para un catálogo YA generado --
+  # llamada desde generar/1 en cada regeneración (idempotente, IF NOT
+  # EXISTS, mismo patrón que asegurar_estado_id/1). Es el camino real: el
+  # toggle "Alcance de datos" de BcMotorLive prende alcance_habilitado y
+  # dispara CatalogoGenerador.generar/1, que pasa por acá y agrega las 4
+  # columnas físicas antes de que asegurar_campos_nuevos/1 regenere el
+  # ".ex" con `alcance: true` (ver MetaCatalogoGenerico.alcance_field_asts/1).
+  # No-op si el catálogo no tiene alcance_habilitado (incluye el caso
+  # "todavía no existe el header", defensivo). Sin REFERENCES -- ver la
+  # nota de columnas_alcance/1 arriba (deadlocks reales con FK).
+  defp asegurar_columnas_alcance(schema_context_name) do
+    case MetaSchemaContext.obtener_header_por_nombre(schema_context_name) do
+      %{alcance_habilitado: true} ->
+        Repo.query!("ALTER TABLE #{schema_context_name} ADD COLUMN IF NOT EXISTS branch_id integer")
+        Repo.query!("ALTER TABLE #{schema_context_name} ADD COLUMN IF NOT EXISTS sales_unit_id integer")
+        Repo.query!("ALTER TABLE #{schema_context_name} ADD COLUMN IF NOT EXISTS inventory_id integer")
+        Repo.query!("ALTER TABLE #{schema_context_name} ADD COLUMN IF NOT EXISTS creado_por_id integer")
+        :ok
+
+      _ ->
+        :ok
+    end
+  end
+
   defp crear_schema(schema_context_name, modulo, campos, header) do
     path = "lib/metadata_app/meta_business_process/catalogos/#{schema_context_name}.ex"
 
@@ -751,10 +809,11 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
     opciones_trn = opciones_trn_use(header)
     opciones_detalle = opciones_detalle_use(header)
+    opciones_alcance = opciones_alcance_use(header)
 
     contenido = """
     defmodule MetadataApp.MetaBusinessProcess.Catalogos.#{modulo} do
-      use MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico, tabla: "#{schema_context_name}", campos: [#{campos_literal}]#{opciones_trn}#{opciones_detalle}
+      use MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico, tabla: "#{schema_context_name}", campos: [#{campos_literal}]#{opciones_trn}#{opciones_detalle}#{opciones_alcance}
     end
     """
 
@@ -789,6 +848,9 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   end
 
   defp opciones_detalle_use(_header), do: ""
+
+  defp opciones_alcance_use(%{alcance_habilitado: true}), do: ", alcance: true"
+  defp opciones_alcance_use(_header), do: ""
 
   # Con solo segundos de resolución, dos catálogos creados/borrados en el
   # mismo segundo generan el mismo número de versión — Ecto trata la segunda

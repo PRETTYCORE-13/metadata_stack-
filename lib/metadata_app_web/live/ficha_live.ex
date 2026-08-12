@@ -56,7 +56,7 @@ defmodule MetadataAppWeb.FichaLive do
 
       schema_mod ->
         header = MetaSchemaContext.obtener_header_por_nombre(tabla)
-        registro = CatalogoGenerico.obtener!(schema_mod, id)
+        registro = CatalogoGenerico.obtener!(schema_mod, socket.assigns[:current_scope], id)
 
         {:ok,
          socket
@@ -246,7 +246,7 @@ defmodule MetadataAppWeb.FichaLive do
   # Botón "Acciones externas" (Fase 6 de "Integraciones", 2026-08-07) —
   # dispara la llamada HTTP configurada vía start_async/3, NUNCA síncrono:
   # a diferencia de una regla post (dentro de la transacción, con timeout
-  # corto, ver Integraciones.ejecutar/2), esto es un botón que un humano
+  # corto, ver Integraciones.ejecutar/4), esto es un botón que un humano
   # clickea con el timeout default (15s) — bloquear el proceso de la
   # LiveView ese tiempo dejaría toda la pantalla congelada. Un solo
   # @accion_externa_en_curso (no por id): dos acciones a la vez sobre el
@@ -272,13 +272,11 @@ defmodule MetadataAppWeb.FichaLive do
         {:noreply, put_flash(socket, :error, "No tienes permiso para ejecutar esta acción.")}
 
       true ->
-        opts_log = [origen: "usuario", usuario_id: current_scope.usuario.id]
-
         {:noreply,
          socket
          |> assign(:accion_externa_en_curso, accion_id)
          |> assign(:resultado_accion_externa, nil)
-         |> start_async(:accion_externa, fn -> {accion.nombre, Integraciones.ejecutar_accion(accion, registro, opts_log)} end)}
+         |> start_async(:accion_externa, fn -> {accion.nombre, Integraciones.ejecutar_accion(accion, registro, current_scope)} end)}
     end
   end
 
@@ -294,7 +292,7 @@ defmodule MetadataAppWeb.FichaLive do
 
   def handle_event("actualizar_ficha", _params, socket) do
     %{schema_mod: schema_mod, registro: registro} = socket.assigns
-    registro_actual = CatalogoGenerico.obtener!(schema_mod, registro.id)
+    registro_actual = CatalogoGenerico.obtener!(schema_mod, socket.assigns[:current_scope], registro.id)
 
     {:noreply,
      socket
@@ -352,6 +350,12 @@ defmodule MetadataAppWeb.FichaLive do
           detalle_modulo.changeset(struct(detalle_modulo), campos)
 
         renglon_id ->
+          # Gap conocido (Fase 5, no corregido acá) -- acotado a
+          # socket.assigns.registro.id (el maestro, ya scope-checked al
+          # montar la ficha), sin chequeo propio del catálogo DETALLE si
+          # activara su propio alcance_habilitado. Mismo límite ya
+          # documentado en MetaStateEngine.buscar_renglones/5.
+          # credo:disable-for-next-line MetadataApp.CredoChecks.RepoDirectoConVariable
           case Repo.get_by(detalle_modulo, encabezado_id: socket.assigns.registro.id, renglon_id: renglon_id) do
             nil -> detalle_modulo.changeset(struct(detalle_modulo), campos)
             renglon -> detalle_modulo.changeset(renglon, campos)
@@ -576,7 +580,7 @@ defmodule MetadataAppWeb.FichaLive do
   # Resultado del Task disparado por "ejecutar_accion_externa" (start_async/3,
   # ver ahí el motivo). {:exit, _} es un crash genuino dentro del Task —
   # sin esta cláusula el botón quedaría "en curso" para siempre si algo
-  # revienta fuera del try/rescue que ya tiene Integraciones.ejecutar_accion/3.
+  # revienta fuera del try/rescue que ya tiene Integraciones.ejecutar_accion/4.
   def handle_async(:accion_externa, {:ok, {nombre, {:ok, %{status: status, body: body}}}}, socket) do
     {:noreply,
      socket
@@ -681,12 +685,12 @@ defmodule MetadataAppWeb.FichaLive do
         {:noreply,
          assign(socket, :error_guardado, "No tienes permiso para guardar cambios en este catálogo.")}
 
-      registro_cambio_de_estado?(schema_mod, registro) ->
+      registro_cambio_de_estado?(schema_mod, socket.assigns.current_scope, registro) ->
         {:noreply,
          assign(socket, :error_guardado, "El estado del registro cambió mientras estabas editando.")}
 
       true ->
-        registro_actual = CatalogoGenerico.obtener!(schema_mod, registro.id)
+        registro_actual = CatalogoGenerico.obtener!(schema_mod, socket.assigns.current_scope, registro.id)
 
         guardar_cambios(
           socket,
@@ -718,7 +722,7 @@ defmodule MetadataAppWeb.FichaLive do
     # defensiva del lado servidor, antes de mandarlo al motor.
     renglones = Map.new(renglones_tabla, fn {catalogo, filas} -> {catalogo, limpiar_renglones_vacios(filas)} end)
 
-    case CatalogoGenerico.crear(schema_mod, attrs, renglones: renglones, contexto: socket.assigns.contexto_auditoria) do
+    case CatalogoGenerico.crear(schema_mod, socket.assigns.current_scope, attrs, renglones: renglones, contexto: socket.assigns.contexto_auditoria) do
       {:ok, _nuevo} ->
         {:noreply,
          socket
@@ -764,7 +768,7 @@ defmodule MetadataAppWeb.FichaLive do
       Repo.transaction(fn ->
         with {:ok, actualizado} <-
                aplicar_encabezado(registro_actual, attrs, renglones_editados, transicion_edicion, contexto_auditoria, current_scope),
-             {:ok, _creados} <- crear_renglones_nuevos(registro_actual.id, renglones_nuevos, contexto_auditoria),
+             {:ok, _creados} <- crear_renglones_nuevos(registro_actual.id, current_scope, renglones_nuevos, contexto_auditoria),
              {:ok, _eliminados} <- Renglones.eliminar_todos(catalogo_maestro, registro_actual.id, renglones_eliminados) do
           actualizado
         else
@@ -801,9 +805,9 @@ defmodule MetadataAppWeb.FichaLive do
   # Con renglones editados: tiene que pasar por la transición "guardar"
   # (R4) sí o sí, aunque @form_values venga vacío — es la única forma que
   # el motor conoce de tocar un campo de un renglón ya persistido.
-  defp aplicar_encabezado(registro, attrs, renglones_editados, _transicion, contexto_auditoria, _current_scope)
+  defp aplicar_encabezado(registro, attrs, renglones_editados, _transicion, contexto_auditoria, current_scope)
        when map_size(renglones_editados) == 0 do
-    actualizar_si_hay_cambios(registro, attrs, contexto_auditoria)
+    actualizar_si_hay_cambios(registro, current_scope, attrs, contexto_auditoria)
   end
 
   defp aplicar_encabezado(registro, attrs, renglones_editados, transicion, _contexto_auditoria, current_scope) do
@@ -811,12 +815,12 @@ defmodule MetadataAppWeb.FichaLive do
     MetaStateEngine.ejecutar_transicion(registro, transicion.accion, contexto, renglones: renglones_editados)
   end
 
-  defp actualizar_si_hay_cambios(registro, attrs, _contexto_auditoria) when map_size(attrs) == 0, do: {:ok, registro}
+  defp actualizar_si_hay_cambios(registro, _scope, attrs, _contexto_auditoria) when map_size(attrs) == 0, do: {:ok, registro}
 
-  defp actualizar_si_hay_cambios(registro, attrs, contexto_auditoria),
-    do: CatalogoGenerico.actualizar(registro, attrs, contexto_auditoria)
+  defp actualizar_si_hay_cambios(registro, scope, attrs, contexto_auditoria),
+    do: CatalogoGenerico.actualizar(registro, scope, attrs, contexto_auditoria)
 
-  defp crear_renglones_nuevos(encabezado_id, renglones, contexto_auditoria) do
+  defp crear_renglones_nuevos(encabezado_id, scope, renglones, contexto_auditoria) do
     Enum.reduce_while(renglones, {:ok, []}, fn {catalogo, items}, {:ok, acc} ->
       case items do
         [] ->
@@ -826,7 +830,7 @@ defmodule MetadataAppWeb.FichaLive do
           detalle_modulo = MetaSchemaContext.modulo_por_nombre(catalogo)
           attrs_items = Enum.map(items, &Map.put(&1, "encabezado_id", encabezado_id))
 
-          case CatalogoGenerico.crear_muchos(detalle_modulo, attrs_items, contexto_auditoria) do
+          case CatalogoGenerico.crear_muchos(detalle_modulo, scope, attrs_items, contexto_auditoria) do
             {:ok, creados} -> {:cont, {:ok, acc ++ creados}}
             {:error, _motivo} = error -> {:halt, error}
           end
@@ -850,9 +854,12 @@ defmodule MetadataAppWeb.FichaLive do
            true <- Enum.any?(columnas, &(get_in(&1.schema_context_properties, ["tipo"]) in ["integer", "decimal"])) do
         detalle_modulo = MetaSchemaContext.modulo_por_nombre(nombre)
 
+        # :sistema -- best-effort de LOGGING interno (ver el comentario de
+        # arriba: "no afecta la respuesta al usuario"), no una lista que se
+        # le muestra a nadie.
         renglones =
           detalle_modulo
-          |> CatalogoGenerico.listar(%{"encabezado_id" => registro_id})
+          |> CatalogoGenerico.listar(:sistema, %{"encabezado_id" => registro_id})
           |> Enum.map(&struct_a_mapa_resumen(&1, columnas))
 
         resumen = MetadataApp.ResumenRenglones.calcular(renglones, columnas)
@@ -895,8 +902,8 @@ defmodule MetadataAppWeb.FichaLive do
   # el que tenía el registro cuando se cargó la ficha cubre el caso real más
   # común (otro usuario/regla movió el estado mientras este usuario editaba)
   # sin inventar una garantía transaccional que el esquema no tiene todavía.
-  defp registro_cambio_de_estado?(schema_mod, registro_cargado) do
-    actual = CatalogoGenerico.obtener!(schema_mod, registro_cargado.id)
+  defp registro_cambio_de_estado?(schema_mod, scope, registro_cargado) do
+    actual = CatalogoGenerico.obtener!(schema_mod, scope, registro_cargado.id)
     actual.estado_id != registro_cargado.estado_id
   end
 
@@ -1030,7 +1037,7 @@ defmodule MetadataAppWeb.FichaLive do
         |> Enum.reject(&(&1.accion == "guardar"))
       end
 
-    relaciones = cargar_relaciones(tabla, registro.id)
+    relaciones = cargar_relaciones(socket.assigns[:current_scope], tabla, registro.id)
 
     # Catálogo Maestro-Detalle: mismo criterio que ya usa CatalogoLive
     # (catalogos_detalle + detalle_renglones) — antes solo se podía
@@ -1038,7 +1045,7 @@ defmodule MetadataAppWeb.FichaLive do
     # acá la Ficha 360° ya tiene el id real del maestro, así que se
     # resuelve en el lugar, sin ese viaje de ida y vuelta.
     catalogos_detalle = cargar_catalogos_detalle(header.id)
-    detalle_renglones = cargar_detalle_renglones(catalogos_detalle, registro.id, estados_por_id)
+    detalle_renglones = cargar_detalle_renglones(socket.assigns[:current_scope], catalogos_detalle, registro.id, estados_por_id)
 
     socket
     |> assign(:registro, registro)
@@ -1097,13 +1104,13 @@ defmodule MetadataAppWeb.FichaLive do
     end)
   end
 
-  defp cargar_detalle_renglones(catalogos_detalle, encabezado_id, estados_por_id) do
+  defp cargar_detalle_renglones(scope, catalogos_detalle, encabezado_id, estados_por_id) do
     Map.new(catalogos_detalle, fn %{nombre: nombre} ->
       detalle_modulo = MetaSchemaContext.modulo_por_nombre(nombre)
 
       filas =
         detalle_modulo
-        |> CatalogoGenerico.listar(%{"encabezado_id" => encabezado_id})
+        |> CatalogoGenerico.listar(scope, %{"encabezado_id" => encabezado_id})
         |> Enum.map(&CatalogoGenerico.serializar(&1, estados_por_id))
 
       {nombre, filas}
@@ -1116,14 +1123,14 @@ defmodule MetadataAppWeb.FichaLive do
   # par de catálogos tiene a lo sumo un campo de referencia entre sí (el
   # mensaje de validate en meta_schema/detail.ex ya lo asume) — si hubiera
   # más de uno, se usa el primero encontrado.
-  defp cargar_relaciones(tabla, id) do
+  defp cargar_relaciones(scope, tabla, id) do
     tabla
     |> MetaSchemaContext.listar_dependientes()
-    |> Enum.map(&relacion_de(&1, tabla, id))
+    |> Enum.map(&relacion_de(scope, &1, tabla, id))
     |> Enum.reject(&is_nil/1)
   end
 
-  defp relacion_de(dep_nombre, tabla, id) do
+  defp relacion_de(scope, dep_nombre, tabla, id) do
     campo_fk =
       dep_nombre
       |> MetaSchemaContext.listar_detalles()
@@ -1148,8 +1155,8 @@ defmodule MetadataAppWeb.FichaLive do
       %{
         catalogo: dep_nombre,
         etiqueta: dep_header.schema_context_label,
-        total: CatalogoGenerico.contar(dep_mod, filtro),
-        filas: CatalogoGenerico.listar(dep_mod, filtro, limit: 8),
+        total: CatalogoGenerico.contar(dep_mod, scope, filtro),
+        filas: CatalogoGenerico.listar(dep_mod, scope, filtro, limit: 8),
         campo_descriptivo: campo_descriptivo(dep_nombre),
         columnas: columnas_tabla_relacion(dep_nombre, campos_elegidos)
       }
@@ -1308,6 +1315,22 @@ defmodule MetadataAppWeb.FichaLive do
 
   defp formatear_error(%Ecto.Changeset{} = changeset), do: MetadataApp.MetaErrores.resumen(changeset)
   defp formatear_error({:postcondicion_fallida, _}), do: "Error interno, no se aplicó el cambio."
+
+  # Jerarquía operativa activa (Fase 5, 2026-08-11) -- CatalogoGenerico
+  # devuelve esto cuando el catálogo exige branch/sales_unit/inventory
+  # location y el usuario no tiene ninguno activo elegido (ver
+  # CatalogoGenerico.validar_campo_requerido_en_attrs/4). Mensaje
+  # accionable: le dice exactamente qué hacer (ir a la banda de pie), no
+  # solo que algo falló.
+  defp formatear_error({:alcance_requerido, "branch_id"}),
+    do: "No tienes una Sucursal activa — elegí una desde la banda de pie para poder crear este registro."
+
+  defp formatear_error({:alcance_requerido, "sales_unit_id"}),
+    do: "No tienes una Unidad de Venta activa — elegí una desde la banda de pie para poder crear este registro."
+
+  defp formatear_error({:alcance_requerido, "inventory_id"}),
+    do: "No tienes un Almacén activo — elegí uno desde la banda de pie para poder crear este registro."
+
   defp formatear_error(_otro), do: "No se pudo completar la operación."
 
   # El botón de guardar lleva la etiqueta real de la transición "guardar"
@@ -2146,7 +2169,13 @@ defmodule MetadataAppWeb.FichaLive do
     with {id, ""} <- Integer.parse(to_string(id_texto || "")),
          modulo when not is_nil(modulo) <- MetaSchemaContext.modulo_por_nombre(catalogo) do
       try do
-        registro = CatalogoGenerico.obtener!(modulo, id)
+        # :sistema (Fase 4a) -- nodo de plantilla ("autocompletar"), es un
+        # componente de función (nodo_plantilla_render/1) sin acceso directo
+        # al Scope del socket; mismo criterio que Formula (helper de
+        # preview/cálculo, no el listado principal de la ficha). Pendiente
+        # marcado si en el futuro se justifica threadear el Scope por todo
+        # el árbol de render de plantilla.
+        registro = CatalogoGenerico.obtener!(modulo, :sistema, id)
         etiquetas = etiquetas_de_campos(catalogo, campos_destino)
 
         filas =
