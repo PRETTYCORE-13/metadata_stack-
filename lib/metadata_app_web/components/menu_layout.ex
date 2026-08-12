@@ -265,26 +265,26 @@ defmodule MetadataAppWeb.MenuLayout do
                 <.link :if={@bpb_habilitado} navigate="/sysadmin/tepache" class="pc-user-menu-item pc-user-menu-subitem">
                   Tepache Exp/Imp
                 </.link>
+                <.link navigate="/sysadmin/roles" class="pc-user-menu-item pc-user-menu-subitem">
+                  Roles Admin
+                </.link>
                 <.link navigate="/sysadmin/empresas" class="pc-user-menu-item pc-user-menu-subitem">
                   Empresas
                 </.link>
                 <.link navigate="/sysadmin/usuarios" class="pc-user-menu-item pc-user-menu-subitem">
-                  Usuarios de la empresa
-                </.link>
-                <.link navigate="/sysadmin/roles" class="pc-user-menu-item pc-user-menu-subitem">
-                  Roles y Usuarios
+                  RBAC Usuarios
                 </.link>
                 <.link navigate="/sysadmin/catalogos/permisos" class="pc-user-menu-item pc-user-menu-subitem">
-                  Permission Sets
+                  RBAC Bisness Context
+                </.link>
+                 <.link navigate="/sysadmin/jerarquia" class="pc-user-menu-item pc-user-menu-subitem">
+                  Jerarquía organizacional
                 </.link>
                 <.link navigate="/sysadmin/credenciales" class="pc-user-menu-item pc-user-menu-subitem">
                   Credenciales
                 </.link>
                 <.link navigate="/sysadmin/acciones-externas" class="pc-user-menu-item pc-user-menu-subitem">
                   Acciones externas
-                </.link>
-                <.link navigate="/sysadmin/jerarquia" class="pc-user-menu-item pc-user-menu-subitem">
-                  Jerarquía organizacional
                 </.link>
               </details>
               <button
@@ -350,7 +350,7 @@ defmodule MetadataAppWeb.MenuLayout do
              resueltas -- ver opciones_jerarquia_activa/1. -->
         <div :if={@jerarquia_opciones.empresas != []} class="pc-footer-jerarquia">
           <div class="pc-footer-jerarquia-item">
-            <span class="pc-footer-jerarquia-label">Empresa</span>
+            <span class="pc-footer-jerarquia-label">Emp</span>
             <form method="post" action="/meta_schema_usuario/empresa/activar">
               <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
               <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">
@@ -366,7 +366,7 @@ defmodule MetadataAppWeb.MenuLayout do
           </div>
 
           <div :if={@jerarquia_opciones.branches != []} class="pc-footer-jerarquia-item">
-            <span class="pc-footer-jerarquia-label">Sucursal</span>
+            <span class="pc-footer-jerarquia-label">Suc</span>
             <form method="post" action="/meta_schema_usuario/branch/activar">
               <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
               <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">
@@ -383,7 +383,7 @@ defmodule MetadataAppWeb.MenuLayout do
           </div>
 
           <div :if={@jerarquia_opciones.inventory_locations != []} class="pc-footer-jerarquia-item">
-            <span class="pc-footer-jerarquia-label">Almacén</span>
+            <span class="pc-footer-jerarquia-label">Alm</span>
             <form method="post" action="/meta_schema_usuario/inventory-location/activar">
               <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
               <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">
@@ -400,7 +400,7 @@ defmodule MetadataAppWeb.MenuLayout do
           </div>
 
           <div :if={@jerarquia_opciones.sales_units != []} class="pc-footer-jerarquia-item">
-            <span class="pc-footer-jerarquia-label">Unidad de venta</span>
+            <span class="pc-footer-jerarquia-label">U.Vta</span>
             <form method="post" action="/meta_schema_usuario/sales-unit/activar">
               <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
               <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">

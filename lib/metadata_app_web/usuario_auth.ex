@@ -58,23 +58,37 @@ defmodule MetadataAppWeb.UsuarioAuth do
       # recién al intentar CREAR algo en un catálogo que de verdad exige
       # esa dimensión (Fase 5), no acá.
       [%Autenticacion.Empresa{id: empresa_id}] ->
-        {conn, _listo_o_pendiente} =
-          conn
-          |> put_session(:empresa_activa_id, empresa_id)
-          |> activar_jerarquia_operativa(usuario.id, empresa_id)
+        activar_empresa_y_continuar(conn, usuario, empresa_id, usuario_return_to)
 
-        conn
-        |> delete_session(:usuario_return_to)
-        |> redirect(to: usuario_return_to || signed_in_path(conn))
+      # Más de una -- si un admin marcó una como default (2026-08-12, ver
+      # UsuariosEmpresaLive, sección "Empresa"), se activa sola, mismo
+      # criterio que "una sola empresa" de arriba. Sin default (o el que
+      # había dejó de ser válido -- empresa_default_de_usuario/1 revalida
+      # la membresía viva), al selector; el return_to se resuelve recién
+      # ahí (se re-escribe a propósito, no se borra, porque todavía hace
+      # falta un hop más).
+      varias when varias != [] ->
+        case Autenticacion.empresa_default_de_usuario(usuario.id) do
+          %Autenticacion.Empresa{id: empresa_id} ->
+            activar_empresa_y_continuar(conn, usuario, empresa_id, usuario_return_to)
 
-      # Más de una: al selector. Se resuelve el return_to recién ahí (se
-      # re-escribe a propósito, no se borra, porque todavía hace falta un
-      # hop más).
-      _varias ->
-        conn
-        |> put_session(:usuario_return_to, usuario_return_to)
-        |> redirect(to: ~p"/meta_schema_usuario/seleccionar-empresa")
+          nil ->
+            conn
+            |> put_session(:usuario_return_to, usuario_return_to)
+            |> redirect(to: ~p"/meta_schema_usuario/seleccionar-empresa")
+        end
     end
+  end
+
+  defp activar_empresa_y_continuar(conn, usuario, empresa_id, usuario_return_to) do
+    {conn, _listo_o_pendiente} =
+      conn
+      |> put_session(:empresa_activa_id, empresa_id)
+      |> activar_jerarquia_operativa(usuario.id, empresa_id)
+
+    conn
+    |> delete_session(:usuario_return_to)
+    |> redirect(to: usuario_return_to || signed_in_path(conn))
   end
 
   @doc """

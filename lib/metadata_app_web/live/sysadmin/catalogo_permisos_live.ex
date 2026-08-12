@@ -22,6 +22,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   on_mount {MetadataAppWeb.Hooks.Autorizacion, {"rbac_admin", "leer"}}
 
   alias MetadataApp.Permissions
+  alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataAppWeb.AdminNav
 
   @acciones_crud ~w(leer crear editar eliminar)
@@ -130,6 +131,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     |> assign(:estado, %{})
     |> assign(:alcance_por_rol, %{})
     |> assign(:tipos_alcance, @tipos_alcance)
+    |> assign(:alcance_error, nil)
   end
 
   defp montar_catalogo(socket, recurso) do
@@ -241,6 +243,40 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
 
   def handle_event("cambiar_alcance_tipo", _params, socket), do: {:noreply, socket}
 
+  # Relocado acá desde BcMotorLive/Get View (2026-08-12, ajuste UI:
+  # "revuelve mucho" tener el on/off en una pestaña y la config por rol en
+  # otra — ahora activar/desactivar y `panel_alcance_de_rol` viven juntos).
+  # Apagar solo pisa el flag (nunca borra columnas físicas ni filas de
+  # `meta_schema_rol_alcance` — reversible sin pérdida, mismo criterio que
+  # ya tenía el toggle original). Prender usa `provisionar_alcance/1`, NO
+  # `activar_alcance_con_default_sucursal/1` (esa es solo para cuando un
+  # BC nace, ver MetaSchemaContext) -- togglear acá nunca pisa el
+  # alcance_tipo que un admin ya haya configurado por rol.
+  def handle_event("toggle_alcance_habilitado", _params, socket) do
+    catalogo = socket.assigns.catalogo
+    header = MetaSchemaContext.obtener_header_por_nombre(catalogo.recurso)
+    valor = !catalogo.alcance_habilitado
+
+    resultado =
+      if valor do
+        MetaSchemaContext.provisionar_alcance(header)
+      else
+        MetaSchemaContext.actualizar_header(header, %{"alcance_habilitado" => false})
+      end
+
+    case resultado do
+      {:ok, _header_actualizado} ->
+        {:noreply,
+         socket
+         |> assign(:alcance_error, nil)
+         |> assign(:catalogo, Permissions.obtener_catalogo(catalogo.recurso))
+         |> cargar_matriz()}
+
+      {:error, _motivo} ->
+        {:noreply, assign(socket, :alcance_error, "No se pudo actualizar \"Alcance de datos\".")}
+    end
+  end
+
   defp todas_las_acciones(socket), do: socket.assigns.acciones_crud ++ Enum.map(socket.assigns.transiciones, & &1.accion)
 
   defp cargar_matriz(socket) do
@@ -293,7 +329,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
             class="w-7 h-7 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors shrink-0">
             <span class="material-symbols-outlined" style="font-size: 18px">arrow_back</span>
           </.link>
-          <h1 class="text-2xl font-bold">Permission Sets</h1>
+          <h1 class="text-2xl font-bold">Bisness Context</h1>
         </div>
         <span :if={@catalogo} class="text-sm text-gray-500">
           <span class="font-semibold text-gray-700">BC:</span> {@catalogo.label}
@@ -455,6 +491,31 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
         </div>
       </div>
 
+      <div :if={@catalogo} class="mt-6 rounded-xl border border-gray-200 p-4">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h2 class="text-xs font-bold text-gray-700 uppercase tracking-wide">Alcance de datos</h2>
+            <p class="text-[11px] text-gray-500 mt-0.5 max-w-2xl">
+              Restringe QUÉ FILAS de este catálogo puede ver/operar cada usuario (propio/sucursal/unidad de ventas/ubicación de inventario/empresa/todas) — independiente de qué ACCIONES puede hacer (eso lo resuelve la tabla de arriba). Sin esto activado, el catálogo se comporta como siempre, sin ningún filtro nuevo.
+            </p>
+          </div>
+          <button
+            type="button"
+            phx-click="toggle_alcance_habilitado"
+            class={[
+              "px-3 py-1.5 rounded-lg text-xs font-semibold border shrink-0",
+              if(@catalogo.alcance_habilitado,
+                do: "bg-purple-50 text-purple-700 border-purple-200",
+                else: "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+              )
+            ]}
+          >
+            {if @catalogo.alcance_habilitado, do: "✓ Alcance de datos — Quitar", else: "+ Alcance de datos"}
+          </button>
+        </div>
+        <p :if={@alcance_error} class="text-[11px] text-red-600 mt-2">{@alcance_error}</p>
+      </div>
+
       <.panel_alcance_de_rol :if={@catalogo && @catalogo.alcance_habilitado}
         roles={@roles} alcance_por_rol={@alcance_por_rol} tipos_alcance={@tipos_alcance} />
     </div>
@@ -463,9 +524,9 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
 
   # Fase 6 del modelo de Alcance de Datos (2026-08-11) — sección aparte,
   # NO otra columna de la matriz de arriba, a propósito: es un concepto
-  # distinto (QUÉ FILAS, no QUÉ ACCIONES) y solo aparece si el catálogo
-  # activó alcance_habilitado (BcMotorLive → Get View), la mayoría de los
-  # catálogos hoy no lo tiene prendido.
+  # distinto (QUÉ FILAS, no QUÉ ACCIONES). Solo aparece si el catálogo ya
+  # activó alcance_habilitado (toggle arriba, relocado 2026-08-12 desde
+  # BcMotorLive/Get View), la mayoría de los catálogos hoy no lo tiene prendido.
   attr :roles, :list, required: true
   attr :alcance_por_rol, :map, required: true
   attr :tipos_alcance, :list, required: true

@@ -53,6 +53,42 @@ defmodule MetadataApp.Autenticacion do
   end
 
   @doc """
+  Empresa "default" del usuario (2026-08-12) -- la que
+  `UsuarioAuth.log_in_usuario/2` auto-activa al login SIN mandarlo a
+  `/seleccionar-empresa`, aunque pertenezca a 2+. Revalida contra la
+  membresía VIVA en cada lectura (mismo criterio que
+  `obtener_branch_de_usuario/4` etc.): si le quitaron acceso a esa
+  empresa después de marcarla default, esto devuelve `nil` en vez de
+  arrastrar una referencia a algo que ya no puede usar.
+  """
+  def empresa_default_de_usuario(usuario_id) do
+    case Repo.get(Usuario, usuario_id) |> Repo.preload(:empresa_default) do
+      %{empresa_default: nil} -> nil
+      %{empresa_default: empresa} -> obtener_empresa_de_usuario(usuario_id, empresa.id)
+    end
+  end
+
+  @doc "Fija (o limpia, con `nil`) la empresa default -- nunca confía en el id sin revalidar que el usuario de verdad pertenece a esa empresa."
+  def definir_empresa_default(usuario_id, nil) do
+    atualizar_empresa_default(usuario_id, %{"empresa_default_id" => nil})
+  end
+
+  def definir_empresa_default(usuario_id, empresa_id) do
+    if obtener_empresa_de_usuario(usuario_id, empresa_id) do
+      atualizar_empresa_default(usuario_id, %{"empresa_default_id" => empresa_id})
+    else
+      {:error, :fuera_de_alcance}
+    end
+  end
+
+  defp atualizar_empresa_default(usuario_id, attrs) do
+    case Repo.get(Usuario, usuario_id) do
+      nil -> {:error, :no_encontrado}
+      usuario -> usuario |> Usuario.changeset_empresa_default(attrs) |> Repo.update()
+    end
+  end
+
+  @doc """
   Crea una empresa nueva y deja al usuario creador como miembro +
   `administrador` ahí, todo en la misma transacción — si no, quedaría un
   tenant al que nadie podría entrar después (mismo motivo por el que
@@ -374,12 +410,32 @@ defmodule MetadataApp.Autenticacion do
   branch/inventory, porque las listas asignadas volvían vacías.
   """
   def resolver_jerarquia_operativa(usuario_id, empresa_id, es_administrador? \\ false) do
+    defaults = defaults_de_usuario(usuario_id, empresa_id)
+
     %{
-      branch: seleccion_automatica_o_pendiente(branches_operables(usuario_id, empresa_id, es_administrador?)),
-      inventory_location: seleccion_automatica_o_pendiente(inventory_locations_operables(usuario_id, empresa_id, es_administrador?)),
-      sales_unit: seleccion_automatica_o_pendiente(sales_units_operables(usuario_id, empresa_id, es_administrador?))
+      branch: seleccion_con_default(branches_operables(usuario_id, empresa_id, es_administrador?), defaults.branch),
+      inventory_location:
+        seleccion_con_default(inventory_locations_operables(usuario_id, empresa_id, es_administrador?), defaults.inventory_location),
+      sales_unit: seleccion_con_default(sales_units_operables(usuario_id, empresa_id, es_administrador?), defaults.sales_unit)
     }
   end
+
+  # Un default configurado (2026-08-12, ver defaults_de_usuario/2) gana
+  # sobre el criterio de "auto-activa solo si hay exactamente 1" -- pero
+  # se revalida que siga entre lo operable ANTES de confiar en él (mismo
+  # criterio de "revalidar en cada hidratación" que ya usa
+  # hidratar_empresa_activa/2): si le revocaron el acceso a esa branch
+  # después de marcarla default, cae al criterio de siempre en vez de
+  # arrastrar una referencia que ya no debería poder operar.
+  defp seleccion_con_default(operables, %{id: default_id} = default) do
+    if Enum.any?(operables, &(&1.id == default_id)) do
+      {:automatico, default}
+    else
+      seleccion_automatica_o_pendiente(operables)
+    end
+  end
+
+  defp seleccion_con_default(operables, nil), do: seleccion_automatica_o_pendiente(operables)
 
   defp seleccion_automatica_o_pendiente([]), do: {:vacio}
   defp seleccion_automatica_o_pendiente([unica]), do: {:automatico, unica}
@@ -405,6 +461,70 @@ defmodule MetadataApp.Autenticacion do
   @doc "Igual que obtener_branch_de_usuario/4, para Inventory Location."
   def obtener_inventory_location_de_usuario(usuario_id, empresa_id, inventory_id, es_administrador? \\ false),
     do: Enum.find(inventory_locations_operables(usuario_id, empresa_id, es_administrador?), &(&1.id == inventory_id))
+
+  @doc """
+  Branch/Sales Unit/Inventory Location "default" del usuario en esa
+  empresa (2026-08-12) -- lo que un admin pre-configuró para que el
+  login lo auto-active, distinto de "permitido" (branches_de_usuario/2
+  etc, el universo asignado) y de "activo" (Scope, de la sesión). `nil`
+  en cualquiera de los 3 = sin default configurado para esa dimensión
+  (el login cae al criterio de siempre: auto-activa si hay exactamente 1
+  permitida). Ver UsuariosEmpresaLive, pestaña Alcance, botón "Default".
+  """
+  def defaults_de_usuario(usuario_id, empresa_id) do
+    case Repo.get_by(UsuarioEmpresa, usuario_id: usuario_id, empresa_id: empresa_id) do
+      nil ->
+        %{branch: nil, sales_unit: nil, inventory_location: nil}
+
+      usuario_empresa ->
+        usuario_empresa = Repo.preload(usuario_empresa, [:branch_default, :sales_unit_default, :inventory_default])
+        %{branch: usuario_empresa.branch_default, sales_unit: usuario_empresa.sales_unit_default, inventory_location: usuario_empresa.inventory_default}
+    end
+  end
+
+  @doc """
+  Fija (o limpia, con `nil`) el branch default de un usuario en una
+  empresa -- nunca confía en el id sin revalidar que sigue entre las
+  branches PERMITIDAS del usuario (no tiene sentido un default fuera de
+  lo que puede operar); `{:error, :fuera_de_alcance}` si no lo está.
+  """
+  def definir_branch_default(usuario_id, empresa_id, branch_id, es_administrador? \\ false) do
+    definir_default(usuario_id, empresa_id, :branch_default_id, branch_id, fn u, e, id ->
+      obtener_branch_de_usuario(u, e, id, es_administrador?)
+    end)
+  end
+
+  @doc "Igual que definir_branch_default/3, para Sales Unit."
+  def definir_sales_unit_default(usuario_id, empresa_id, sales_unit_id, es_administrador? \\ false) do
+    definir_default(usuario_id, empresa_id, :sales_unit_default_id, sales_unit_id, fn u, e, id ->
+      obtener_sales_unit_de_usuario(u, e, id, es_administrador?)
+    end)
+  end
+
+  @doc "Igual que definir_branch_default/3, para Inventory Location."
+  def definir_inventory_location_default(usuario_id, empresa_id, inventory_id, es_administrador? \\ false) do
+    definir_default(usuario_id, empresa_id, :inventory_default_id, inventory_id, fn u, e, id ->
+      obtener_inventory_location_de_usuario(u, e, id, es_administrador?)
+    end)
+  end
+
+  defp definir_default(usuario_id, empresa_id, campo, nil, _validador) do
+    atualizar_usuario_empresa(usuario_id, empresa_id, %{Atom.to_string(campo) => nil})
+  end
+
+  defp definir_default(usuario_id, empresa_id, campo, id, validador) do
+    case validador.(usuario_id, empresa_id, id) do
+      nil -> {:error, :fuera_de_alcance}
+      _valido -> atualizar_usuario_empresa(usuario_id, empresa_id, %{Atom.to_string(campo) => id})
+    end
+  end
+
+  defp atualizar_usuario_empresa(usuario_id, empresa_id, attrs) do
+    case Repo.get_by(UsuarioEmpresa, usuario_id: usuario_id, empresa_id: empresa_id) do
+      nil -> {:error, :no_encontrado}
+      usuario_empresa -> usuario_empresa |> UsuarioEmpresa.changeset_default(attrs) |> Repo.update()
+    end
+  end
 
   @doc """
   Usuarios ya registrados (por magic-link/self-service) que todavía no

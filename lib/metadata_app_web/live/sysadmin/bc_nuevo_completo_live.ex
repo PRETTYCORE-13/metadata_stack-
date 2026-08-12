@@ -18,7 +18,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
   on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "crear"}}
 
-  alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador}
+  alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.BorradoresMotor
   alias MetadataAppWeb.AdminNav
@@ -539,7 +539,12 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
 
         case MetaEstadosAdmin.crear_proceso_completo(attrs) do
           {:ok, %{header: header}} ->
-            CatalogoGenerador.generar(header.schema_context_name)
+            # Bug operacional (2026-08-12): un BC nacía sin Alcance de Datos,
+            # cada rol caía en :propio hasta que un admin lo prendía a mano
+            # -- ahora nace acotado a Sucursal por default (ver
+            # MetaSchemaContext.activar_alcance_con_default_sucursal/1, que
+            # ya incluye el CatalogoGenerador.generar/1 que antes iba acá suelto).
+            MetaSchemaContext.activar_alcance_con_default_sucursal(header)
             Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:bc_creado, header})
             eliminar_borrador_si_existe(socket.assigns.borrador_id)
 

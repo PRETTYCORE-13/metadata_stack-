@@ -328,7 +328,7 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
       <p class="font-bold">Listo — <span class="font-mono">{Enum.join(@catalogos, ", ")}</span> ya está en tu Postgres local.</p>
       <p :for={m <- @mensajes} class="text-xs text-green-700">{m}</p>
       <p class="text-xs text-green-700">
-        Para probarlo con un rol puntual, concedeselo desde Permission Sets.
+        Para probarlo con un rol puntual, concedeselo desde Bisness Context.
       </p>
     </div>
     """

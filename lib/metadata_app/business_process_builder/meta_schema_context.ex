@@ -3,6 +3,10 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Detail
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.CarpetaOrden
+  alias MetadataApp.BusinessProcessBuilder.CatalogoGenerador
+  alias MetadataApp.BusinessProcessBuilder.AlcanceBackfill
+  alias MetadataApp.Autenticacion.Rol
+  alias MetadataApp.Permissions
   import Ecto.Query
 
   # order_by explícito a propósito: sin esto Postgres no garantiza el orden
@@ -1337,6 +1341,63 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     |> Header.changeset(attrs)
     |> Ecto.Changeset.change(%{update_guid: generar_guid()})
     |> Repo.update()
+  end
+
+  @doc """
+  Activa Alcance de Datos para un header con el default operacional
+  (2026-08-12, bug operacional: un BC nacía sin alcance y cada rol caía
+  en `:propio` -- ver `Permissions.alcance_tipo_efectivo/2` -- por el
+  deny-by-default de ausencia de fila, demasiado restrictivo para ser un
+  punto de partida razonable). CADA rol del sistema (incluido
+  "administrador", aunque su bypass a `:global` lo vuelve un no-op)
+  arranca en `alcance_tipo: "branch"` (Sucursal). El admin lo afloja o
+  cambia a mano después desde CatalogoPermisosLive -- esto solo fija el
+  punto de partida, nunca lo vuelve a tocar.
+
+  DEBE llamarse DESPUÉS de que el header (y sus detalles) ya están
+  confirmados en la base -- `CatalogoGenerador.generar/1` corre DDL fuera
+  de cualquier transacción Ecto (conexión propia, autocommit), no se
+  puede envolver junto con el insert del header en un Multi/transaction
+  (mismo criterio que ya usaba `BcMotorLive.provisionar_alcance_y_avisar/2`,
+  del que esta función es la versión reutilizable sin socket).
+  """
+  def activar_alcance_con_default_sucursal(%Header{} = header) do
+    with {:ok, header} <- provisionar_alcance(header) do
+      asignar_branch_a_todos_los_roles(header)
+      {:ok, header}
+    end
+  end
+
+  @doc """
+  Activa Alcance de Datos para un header YA existente, SIN tocar el
+  `alcance_tipo` de ningún rol -- a diferencia de
+  `activar_alcance_con_default_sucursal/1` (que además fuerza "branch" en
+  todos los roles, pensado solo para cuando un BC NACE). Esta es la
+  versión que usa el toggle manual de CatalogoPermisosLive: un admin que
+  prende Alcance de Datos en un catálogo que ya tenía configuración de
+  rol previa (la había apagado y la vuelve a prender, por ejemplo) no
+  debería ver su `alcance_tipo` por rol pisado sin aviso.
+  """
+  def provisionar_alcance(%Header{} = header) do
+    with {:ok, header} <- actualizar_header(header, %{"alcance_habilitado" => true}),
+         {:ok, _resultado} <- CatalogoGenerador.generar(header.schema_context_name) do
+      backfillear_creado_por_best_effort(header)
+      {:ok, header}
+    end
+  end
+
+  defp backfillear_creado_por_best_effort(header) do
+    case modulo_por_nombre(header.schema_context_name) do
+      nil -> :ok
+      modulo -> AlcanceBackfill.backfillear_creado_por(modulo)
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp asignar_branch_a_todos_los_roles(header) do
+    Repo.all(from(r in Rol, where: is_nil(r.delete_guid)))
+    |> Enum.each(&Permissions.definir_alcance_de_rol(&1.id, header.id, "branch"))
   end
 
   @doc """

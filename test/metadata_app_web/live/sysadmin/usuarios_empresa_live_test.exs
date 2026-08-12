@@ -1,10 +1,12 @@
 defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLiveTest do
   @moduledoc """
-  Fase 7 del modelo de Alcance de Datos (2026-08-11) — pestaña "Alcance"
-  de UsuariosEmpresaLive: asignar/revocar branches, sales units e
-  inventory locations a un usuario, vía clicks reales, y confirmar que
-  queda reflejado en Autenticacion.alcance_de_usuario/2 (la fuente que
-  UsuarioAuth.hidratar_alcance/2 usa para armar el Scope real).
+  Pestaña "Alcance" de UsuariosEmpresaLive (Fase 7 del modelo de Alcance
+  de Datos, 2026-08-11; rediseñada 2026-08-12 a pedido explícito -- 4
+  secciones verticales en orden fijo, Empresa/Sucursales/Almacén/Unidades
+  de venta, cada una "lista de lo asignado + Quitar" seguida de
+  "<select> de lo disponible + Agregar" -- ver .seccion_alcance/1. La
+  pestaña "Empresas" separada de antes desapareció, ese contenido ahora
+  vive como la primera sección de acá.
   """
   use MetadataAppWeb.ConnCase, async: true
 
@@ -45,21 +47,28 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLiveTest do
     }
   end
 
-  test "asigna y revoca una sucursal en la pestaña Alcance", %{conn: conn, empresa: empresa, objetivo: objetivo, branch: branch} do
+  defp seleccionar(view, usuario) do
+    view |> element("button[phx-click=seleccionar_usuario][phx-value-id=\"#{usuario.id}\"]") |> render_click()
+  end
+
+  test "agrega y quita una sucursal en la sección Sucursales", %{conn: conn, empresa: empresa, objetivo: objetivo, branch: branch} do
     {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+    seleccionar(view, objetivo)
 
-    view |> element("button[phx-click=seleccionar_usuario][phx-value-id=\"#{objetivo.id}\"]") |> render_click()
+    html =
+      view
+      |> form("form[phx-submit=agregar_branch_a_usuario]", %{"id" => to_string(branch.id)})
+      |> render_submit()
 
-    html = view |> element("button[phx-click=toggle_branch_alcance]") |> render_click()
-    assert html =~ "✓ Asignado"
+    assert html =~ branch.branch_name
     assert Autenticacion.alcance_de_usuario(objetivo.id, empresa.id).branches_permitidos == [branch.id]
 
-    html = view |> element("button[phx-click=toggle_branch_alcance]") |> render_click()
-    assert html =~ "+ Asignar"
+    html = view |> element("button[phx-click=quitar_branch_de_usuario]") |> render_click()
+    refute html =~ "phx-click=\"quitar_branch_de_usuario\""
     assert Autenticacion.alcance_de_usuario(objetivo.id, empresa.id).branches_permitidos == []
   end
 
-  test "asigna una sales unit y una inventory location de forma independiente de la sucursal", %{
+  test "agrega una sales unit y una inventory location de forma independiente de la sucursal", %{
     conn: conn,
     empresa: empresa,
     objetivo: objetivo,
@@ -67,16 +76,46 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLiveTest do
     inventory_location: inventory_location
   } do
     {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+    seleccionar(view, objetivo)
 
-    view |> element("button[phx-click=seleccionar_usuario][phx-value-id=\"#{objetivo.id}\"]") |> render_click()
+    view |> form("form[phx-submit=agregar_sales_unit_a_usuario]", %{"id" => to_string(sales_unit.id)}) |> render_submit()
 
-    view |> element("button[phx-click=toggle_sales_unit_alcance]") |> render_click()
-    view |> element("button[phx-click=toggle_inventory_location_alcance]") |> render_click()
+    view
+    |> form("form[phx-submit=agregar_inventory_location_a_usuario]", %{"id" => to_string(inventory_location.id)})
+    |> render_submit()
 
     alcance = Autenticacion.alcance_de_usuario(objetivo.id, empresa.id)
     assert alcance.sales_units_permitidas == [sales_unit.id]
     assert alcance.inventory_locations_permitidas == [inventory_location.id]
     # La sucursal en sí no se tocó -- son 3 asignaciones independientes.
     assert alcance.branches_permitidos == []
+  end
+
+  test "marca y desmarca una sucursal asignada como default", %{conn: conn, empresa: empresa, objetivo: objetivo, branch: branch} do
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+    seleccionar(view, objetivo)
+    view |> form("form[phx-submit=agregar_branch_a_usuario]", %{"id" => to_string(branch.id)}) |> render_submit()
+
+    html = view |> element("button[phx-click=toggle_branch_default]") |> render_click()
+    assert html =~ "★ Default"
+    assert Autenticacion.defaults_de_usuario(objetivo.id, empresa.id).branch.id == branch.id
+
+    html = view |> element("button[phx-click=toggle_branch_default]") |> render_click()
+    assert html =~ "☆ Default"
+    assert Autenticacion.defaults_de_usuario(objetivo.id, empresa.id).branch == nil
+  end
+
+  test "el botón Default no aparece para una sucursal todavía sin asignar", %{conn: conn, objetivo: objetivo} do
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+    html = seleccionar(view, objetivo)
+    refute html =~ "phx-click=\"toggle_branch_default\""
+  end
+
+  test "la pestaña Empresas por separado ya no existe -- Empresa vive dentro de Alcance", %{conn: conn, objetivo: objetivo} do
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+    html = seleccionar(view, objetivo)
+    refute html =~ "usuario-detalle-panel-empresas"
+    assert html =~ "usuario-detalle-panel-alcance"
+    assert html =~ "Empresa</h3>"
   end
 end

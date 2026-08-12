@@ -261,7 +261,7 @@ defmodule MetadataAppWeb.Sysadmin.JerarquiaOrganizacionalLive do
           <p :if={!@branch_seleccionada} class="text-sm text-gray-400">Elegí una sucursal para ver sus unidades de venta y ubicaciones de inventario.</p>
 
           <div :if={@branch_seleccionada} class="grid grid-cols-2 gap-4">
-            <div>
+            <div class="border border-gray-200 rounded-lg p-3">
               <div class="flex items-center justify-between mb-2">
                 <h2 class="text-sm font-bold text-gray-900">Unidades de venta</h2>
                 <button type="button" phx-click="nueva_sales_unit" class="text-purple-600 text-xs font-semibold hover:underline">+ Nueva</button>
@@ -294,7 +294,7 @@ defmodule MetadataAppWeb.Sysadmin.JerarquiaOrganizacionalLive do
               <p :if={@sales_units == []} class="text-xs text-gray-400">Sin unidades de venta todavía.</p>
             </div>
 
-            <div>
+            <div class="border border-gray-200 rounded-lg p-3">
               <div class="flex items-center justify-between mb-2">
                 <h2 class="text-sm font-bold text-gray-900">Ubicaciones de inventario</h2>
                 <button type="button" phx-click="nueva_inventory_location" class="text-purple-600 text-xs font-semibold hover:underline">+ Nueva</button>
