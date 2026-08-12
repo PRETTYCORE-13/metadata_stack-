@@ -26,7 +26,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenericoTest do
     test "trae TODO sin límite cuando no se pasan opciones" do
       clientes = fixture_clientes(30)
 
-      resultado = CatalogoGenerico.listar(MetaFixtureCliente, %{})
+      resultado = CatalogoGenerico.listar(MetaFixtureCliente, :sistema, %{})
 
       assert Enum.map(resultado, & &1.id) |> Enum.sort() == Enum.map(clientes, & &1.id) |> Enum.sort()
     end
@@ -36,15 +36,15 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenericoTest do
     test "limit corta la cantidad de filas" do
       fixture_clientes(30)
 
-      assert length(CatalogoGenerico.listar(MetaFixtureCliente, %{}, limit: 25)) == 25
+      assert length(CatalogoGenerico.listar(MetaFixtureCliente, :sistema, %{}, limit: 25)) == 25
     end
 
     test "offset + limit da páginas sin solapar ni saltear filas (orden estable)" do
       clientes = fixture_clientes(30)
       ids_insertados = Enum.map(clientes, & &1.id) |> Enum.sort()
 
-      pagina1 = CatalogoGenerico.listar(MetaFixtureCliente, %{}, limit: 25, offset: 0) |> Enum.map(& &1.id)
-      pagina2 = CatalogoGenerico.listar(MetaFixtureCliente, %{}, limit: 25, offset: 25) |> Enum.map(& &1.id)
+      pagina1 = CatalogoGenerico.listar(MetaFixtureCliente, :sistema, %{}, limit: 25, offset: 0) |> Enum.map(& &1.id)
+      pagina2 = CatalogoGenerico.listar(MetaFixtureCliente, :sistema, %{}, limit: 25, offset: 25) |> Enum.map(& &1.id)
 
       assert length(pagina1) == 25
       assert length(pagina2) == 5
@@ -61,8 +61,8 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenericoTest do
     test "cuenta sin verse afectado por limit/offset de otras llamadas" do
       fixture_clientes(30)
 
-      total = CatalogoGenerico.contar(MetaFixtureCliente)
-      pagina = CatalogoGenerico.listar(MetaFixtureCliente, %{}, limit: 25)
+      total = CatalogoGenerico.contar(MetaFixtureCliente, :sistema)
+      pagina = CatalogoGenerico.listar(MetaFixtureCliente, :sistema, %{}, limit: 25)
 
       assert total >= 30
       assert length(pagina) == 25

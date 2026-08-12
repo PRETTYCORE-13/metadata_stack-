@@ -29,7 +29,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     %{tipo: :pagina, id: "tepache", label: "Tepache Exp/Imp", nav: "/sysadmin/tepache"},
     %{tipo: :pagina, id: "roles", label: "Roles y Usuarios", nav: "/sysadmin/roles"},
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
-    %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"}
+    %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"},
+    %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
+    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
+    %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
   ]
 
 
@@ -882,6 +885,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # ya se ocultaban solos cuando el catálogo no calificaba (sin motor de
   # estados / no transaccional, ver CatalogoLive.mount/3); esto agrega el
   # apagador de admin ENCIMA de esa condición, no en vez de ella.
+  # Alcance de Datos (Fase 6, 2026-08-11; toggle relocado 2026-08-12 a
+  # CatalogoPermisosLive/pestaña Permisos, ver ese módulo — "revuelve
+  # mucho" tenerlo separado de la config por rol en otra pestaña).
+
   def handle_event("toggle_mostrar_id_en_tabla", _params, socket),
     do: toggle_columna_estructural(socket, :mostrar_id_en_tabla, "\"Mostrar ID\"")
 
@@ -1531,7 +1538,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         nil
 
       modulo ->
-        case CatalogoGenerico.listar(modulo, %{}, limit: 1) do
+        # :sistema (Fase 4a) -- registro de muestra para el Constructor,
+        # no un listado real para un usuario final.
+        case CatalogoGenerico.listar(modulo, :sistema, %{}, limit: 1) do
           [registro] -> registro
           [] -> nil
         end

@@ -11,7 +11,7 @@ defmodule MetadataApp.Permissions do
   import Ecto.Query
 
   alias MetadataApp.Repo
-  alias MetadataApp.Autenticacion.{Scope, Rol, RolPermiso, Permiso, UsuarioRol, Usuario, UsuarioEmpresa}
+  alias MetadataApp.Autenticacion.{Scope, Rol, RolPermiso, Permiso, UsuarioRol, Usuario, UsuarioEmpresa, RolAlcance}
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
   alias MetadataApp.Permissions.Cache
 
@@ -79,7 +79,8 @@ defmodule MetadataApp.Permissions do
     end
   end
 
-  defp administrador?(usuario_id, empresa_id) do
+  @doc "Si usuario_id tiene el rol de sistema \"administrador\" en empresa_id -- comodín que bypasea RBAC (cargar_permisos_de_db/2) Y Alcance de Datos (alcance_tipo_efectivo/2). Pública desde 2026-08-11 para que MenuLayout la reuse en el selector de jerarquía operativa de la banda de pie (un administrador ve TODAS las branches/inventory locations de la empresa ahí, no solo las que tiene asignadas -- no tiene sentido restringirle el selector cuando ya ve todo el dato)."
+  def administrador?(usuario_id, empresa_id) do
     Repo.exists?(
       from ur in UsuarioRol,
         join: r in Rol,
@@ -90,10 +91,80 @@ defmodule MetadataApp.Permissions do
     )
   end
 
-  @doc "Borra la entrada de cache de un usuario/empresa — se recalcula sola en el próximo can?/3."
+  @doc "Borra la entrada de cache (permisos Y alcance) de un usuario/empresa — se recalcula sola en el próximo can?/3 o alcance_tipo_efectivo/2."
   def invalidar_cache(usuario_id, empresa_id) do
     :ets.delete(Cache.tabla(), {usuario_id, empresa_id})
+    :ets.delete(Cache.tabla(), {:alcance, usuario_id, empresa_id})
     :ok
+  end
+
+  ## Alcance de datos (Fase 3, 2026-08-11) -- QUÉ FILAS puede ver/operar un
+  ## usuario en un catálogo puntual, ortogonal a can?/3 (QUÉ ACCIONES puede
+  ## hacer). Ver el moduledoc de MetadataApp.Autenticacion.Scope: es por
+  ## (rol, catálogo), nunca un valor único de sesión.
+
+  @rango %{propio: 1, sales_unit: 2, inventory_location: 2, branch: 3, empresa: 4, global: 5}
+
+  @doc """
+  Alcance efectivo de un usuario en UN catálogo (`header_id`) — `:propio`
+  por default (el más restrictivo, deny-by-default) si el usuario no tiene
+  ningún rol con alcance concedido ahí. "administrador" es comodín total
+  (`:global`, sin necesitar fila en meta_schema_rol_alcance), mismo
+  criterio que ya usa can?/3 para permisos. Con varios roles que concedan
+  alcances distintos en el MISMO catálogo, gana el más amplio (unión,
+  mismo espíritu que can?/3: cualquier rol que lo conceda alcanza).
+  """
+  def alcance_tipo_efectivo(%Scope{usuario: nil}, _header_id), do: :propio
+  def alcance_tipo_efectivo(%Scope{empresa_activa: nil}, _header_id), do: :propio
+
+  def alcance_tipo_efectivo(%Scope{usuario: usuario, empresa_activa: empresa}, header_id) do
+    if administrador?(usuario.id, empresa.id) do
+      :global
+    else
+      usuario.id
+      |> alcance_por_catalogo_de_usuario(empresa.id)
+      |> Map.get(header_id, :propio)
+    end
+  end
+
+  # Mismo mecanismo de caché que permisos_de_usuario/2 (ETS, mismo TTL),
+  # llave distinta para no pisar la de permisos en la misma tabla.
+  defp alcance_por_catalogo_de_usuario(usuario_id, empresa_id) do
+    chave = {:alcance, usuario_id, empresa_id}
+    agora = System.monotonic_time(:millisecond)
+
+    case :ets.lookup(Cache.tabla(), chave) do
+      [{^chave, mapa, expira_en}] when expira_en > agora -> mapa
+      _ -> cargar_y_cachear_alcance(chave, usuario_id, empresa_id)
+    end
+  end
+
+  defp cargar_y_cachear_alcance(chave, usuario_id, empresa_id) do
+    mapa = cargar_alcance_de_db(usuario_id, empresa_id)
+    expira_en = System.monotonic_time(:millisecond) + @ttl_ms
+    :ets.insert(Cache.tabla(), {chave, mapa, expira_en})
+    mapa
+  end
+
+  defp cargar_alcance_de_db(usuario_id, empresa_id) do
+    from(ra in RolAlcance,
+      join: r in Rol, on: r.id == ra.rol_id and is_nil(r.delete_guid),
+      join: ur in UsuarioRol,
+      on:
+        ur.rol_id == r.id and is_nil(ur.delete_guid) and
+          (r.empresa_id == ^empresa_id or is_nil(r.empresa_id)),
+      where: ur.usuario_id == ^usuario_id and ur.empresa_id == ^empresa_id and is_nil(ra.delete_guid),
+      select: {ra.meta_schema_header_id, ra.alcance_tipo}
+    )
+    |> Repo.all()
+    |> Enum.reduce(%{}, fn {header_id, tipo_string}, acc ->
+      tipo = String.to_existing_atom(tipo_string)
+      Map.update(acc, header_id, tipo, &tipo_mas_amplio(&1, tipo))
+    end)
+  end
+
+  defp tipo_mas_amplio(a, b) do
+    if Map.get(@rango, a, 0) >= Map.get(@rango, b, 0), do: a, else: b
   end
 
   ## Administración de roles y permisos
@@ -141,6 +212,74 @@ defmodule MetadataApp.Permissions do
     |> RolPermiso.changeset(%{rol_id: rol_id, permiso_id: permiso_id})
     |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
     |> Repo.insert()
+  end
+
+  @doc "Alcance configurado de un rol, todos los catálogos donde tiene concesión -- para la UI de administración (Fase 6)."
+  def alcance_de_rol(rol_id) do
+    from(ra in RolAlcance, where: ra.rol_id == ^rol_id and is_nil(ra.delete_guid), preload: [:header])
+    |> Repo.all()
+  end
+
+  @doc """
+  Inverso de alcance_de_rol/1 — UN catálogo, el alcance_tipo (átomo) de
+  CADA rol que tenga alguno concedido ahí, como mapa `%{rol_id => tipo}`.
+  Usado por CatalogoPermisosLive (Fase 6) para la sección "Alcance de
+  datos" -- sin entrada en el mapa = ese rol sigue en `:propio` (el
+  default más restrictivo, ver alcance_tipo_efectivo/2).
+  """
+  def alcance_de_catalogo(header_id) do
+    from(ra in RolAlcance,
+      where: ra.meta_schema_header_id == ^header_id and is_nil(ra.delete_guid),
+      select: {ra.rol_id, ra.alcance_tipo}
+    )
+    |> Repo.all()
+    |> Map.new(fn {rol_id, tipo} -> {rol_id, String.to_existing_atom(tipo)} end)
+  end
+
+  @doc "Crea O actualiza (upsert por (rol, catálogo)) el alcance_tipo de un rol en un catálogo (atom o string, ej. :branch o \"branch\") -- invalida la caché de TODOS los usuarios con ese rol, no solo el que dispara el cambio."
+  def definir_alcance_de_rol(rol_id, header_id, tipo) do
+    tipo = to_string(tipo)
+
+    resultado =
+      case obtener_rol_alcance(rol_id, header_id) do
+        nil ->
+          %RolAlcance{}
+          |> RolAlcance.changeset(%{rol_id: rol_id, meta_schema_header_id: header_id, alcance_tipo: tipo})
+          |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+          |> Repo.insert()
+
+        existente ->
+          existente
+          |> RolAlcance.changeset(%{alcance_tipo: tipo})
+          |> Ecto.Changeset.change(%{update_guid: generar_guid()})
+          |> Repo.update()
+      end
+
+    case resultado do
+      {:ok, _} -> invalidar_cache_de_rol(rol_id)
+      _error -> :ok
+    end
+
+    resultado
+  end
+
+  def revocar_alcance_de_rol(rol_id, header_id) do
+    case obtener_rol_alcance(rol_id, header_id) do
+      nil ->
+        {:error, :no_encontrado}
+
+      existente ->
+        resultado = existente |> Ecto.Changeset.change(%{delete_guid: generar_guid()}) |> Repo.update()
+        invalidar_cache_de_rol(rol_id)
+        resultado
+    end
+  end
+
+  defp obtener_rol_alcance(rol_id, header_id) do
+    Repo.one(
+      from ra in RolAlcance,
+        where: ra.rol_id == ^rol_id and ra.meta_schema_header_id == ^header_id and is_nil(ra.delete_guid)
+    )
   end
 
   @doc """
@@ -576,10 +715,15 @@ defmodule MetadataApp.Permissions do
       from h in Header,
         where: h.schema_context_name == ^recurso and is_nil(h.delete_guid),
         select: %{
+          id: h.id,
           recurso: h.schema_context_name,
           label: h.schema_context_label,
           es_consulta: h.schema_context_type == 3,
-          es_detalle: not is_nil(h.schema_encabezado_id)
+          es_detalle: not is_nil(h.schema_encabezado_id),
+          # Fase 6 del modelo de Alcance de Datos (2026-08-11) -- para que
+          # CatalogoPermisosLive sepa si ofrecer la sección de alcance por
+          # rol para este catálogo.
+          alcance_habilitado: h.alcance_habilitado
         }
     )
   end

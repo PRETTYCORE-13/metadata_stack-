@@ -158,7 +158,12 @@ defmodule MetadataApp.Renglones do
     Enum.reduce_while(items, {:ok, []}, fn item_attrs, {:ok, acc} ->
       attrs = Map.put(item_attrs, "encabezado_id", registro_id)
 
-      case MetadataApp.BusinessProcessBuilder.CatalogoGenerico.crear(modulo, attrs) do
+      # :sistema (Fase 4b del modelo de Alcance de Datos) -- creación de
+      # renglones dentro del alta atómica del maestro (crear_todos/3, sin
+      # scope threadeado hasta acá). Si el catálogo detalle activa alcance
+      # propio algún día, esto queda como gap conocido, mismo criterio que
+      # MetaBcApi -- pendiente real, no silencioso.
+      case MetadataApp.BusinessProcessBuilder.CatalogoGenerico.crear(modulo, :sistema, attrs) do
         {:ok, renglon} -> {:cont, {:ok, [renglon | acc]}}
         {:error, _motivo} = error -> {:halt, error}
       end
@@ -219,6 +224,11 @@ defmodule MetadataApp.Renglones do
 
   defp eliminar_cada_renglon(modulo, header_detalle, encabezado_id, renglon_ids) do
     Enum.reduce_while(renglon_ids, {:ok, []}, fn renglon_id, {:ok, acc} ->
+      # Gap conocido (Fase 5, no corregido acá) -- mismo límite que
+      # MetaStateEngine.buscar_renglones/5: acotado a encabezado_id (ya
+      # scope-checked vía el maestro), sin chequeo propio si el catálogo
+      # detalle activara alcance_habilitado.
+      # credo:disable-for-next-line MetadataApp.CredoChecks.RepoDirectoConVariable
       case Repo.get_by(modulo, encabezado_id: encabezado_id, renglon_id: renglon_id) do
         nil ->
           {:halt,

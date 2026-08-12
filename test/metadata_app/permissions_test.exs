@@ -74,6 +74,124 @@ defmodule MetadataApp.PermissionsTest do
     end
   end
 
+  # Fase 3 del modelo de Alcance de Datos (2026-08-11) — QUÉ FILAS puede
+  # ver/operar un usuario en UN catálogo, ortogonal a can?/3 (QUÉ ACCIONES).
+  describe "alcance_tipo_efectivo/2" do
+    defp header_fixture(attrs \\ %{}) do
+      {:ok, header} =
+        %MetadataApp.BusinessProcessBuilder.MetaSchema.Header{}
+        |> MetadataApp.BusinessProcessBuilder.MetaSchema.Header.changeset(
+          Enum.into(attrs, %{
+            schema_context_name: "pty_alcance_test_#{System.unique_integer([:positive])}",
+            schema_context_label: "Alcance test",
+            schema_context_type: 1,
+            schema_context_nav: "/catalogos/alcance-test-#{System.unique_integer([:positive])}",
+            schema_visible: true
+          })
+        )
+        |> Ecto.Changeset.put_change(:insert_guid, Ecto.UUID.generate() |> String.replace("-", ""))
+        |> Repo.insert()
+
+      header
+    end
+
+    test ":propio por default -- sin ningún rol_alcance concedido en ese catálogo" do
+      usuario = usuario_fixture()
+      empresa = empresa_fixture()
+      header = header_fixture()
+
+      scope = %Scope{usuario: usuario, empresa_activa: empresa}
+      assert Permissions.alcance_tipo_efectivo(scope, header.id) == :propio
+    end
+
+    test ":propio sin usuario o sin empresa activa (mismo criterio deny-by-default que can?/3)" do
+      header = header_fixture()
+      assert Permissions.alcance_tipo_efectivo(%Scope{usuario: nil, empresa_activa: nil}, header.id) == :propio
+      assert Permissions.alcance_tipo_efectivo(%Scope{usuario: usuario_fixture(), empresa_activa: nil}, header.id) == :propio
+    end
+
+    test "el tipo concedido al rol del usuario en ESE catálogo" do
+      usuario = usuario_fixture()
+      empresa = empresa_fixture()
+      header = header_fixture()
+      rol = rol_fixture(empresa.id)
+
+      {:ok, _} = Permissions.definir_alcance_de_rol(rol.id, header.id, :branch)
+      {:ok, _} = Permissions.asignar_rol(usuario.id, rol.id, empresa.id)
+
+      scope = %Scope{usuario: usuario, empresa_activa: empresa}
+      assert Permissions.alcance_tipo_efectivo(scope, header.id) == :branch
+    end
+
+    test "no se filtra por otro catálogo -- el alcance es por (rol, catálogo), no global del rol" do
+      usuario = usuario_fixture()
+      empresa = empresa_fixture()
+      header_a = header_fixture()
+      header_b = header_fixture()
+      rol = rol_fixture(empresa.id)
+
+      {:ok, _} = Permissions.definir_alcance_de_rol(rol.id, header_a.id, :empresa)
+      {:ok, _} = Permissions.asignar_rol(usuario.id, rol.id, empresa.id)
+
+      scope = %Scope{usuario: usuario, empresa_activa: empresa}
+      assert Permissions.alcance_tipo_efectivo(scope, header_a.id) == :empresa
+      assert Permissions.alcance_tipo_efectivo(scope, header_b.id) == :propio
+    end
+
+    test "con varios roles concediendo alcances distintos en el MISMO catálogo, gana el más amplio" do
+      usuario = usuario_fixture()
+      empresa = empresa_fixture()
+      header = header_fixture()
+
+      rol_estrecho = rol_fixture(empresa.id)
+      rol_amplio = rol_fixture(empresa.id)
+      {:ok, _} = Permissions.definir_alcance_de_rol(rol_estrecho.id, header.id, :propio)
+      {:ok, _} = Permissions.definir_alcance_de_rol(rol_amplio.id, header.id, :empresa)
+      {:ok, _} = Permissions.asignar_rol(usuario.id, rol_estrecho.id, empresa.id)
+      {:ok, _} = Permissions.asignar_rol(usuario.id, rol_amplio.id, empresa.id)
+
+      scope = %Scope{usuario: usuario, empresa_activa: empresa}
+      assert Permissions.alcance_tipo_efectivo(scope, header.id) == :empresa
+    end
+
+    test "administrador es comodín total (:global) sin fila en meta_schema_rol_alcance" do
+      usuario = usuario_fixture()
+      empresa = empresa_fixture()
+      header = header_fixture()
+      rol_admin = Repo.get_by!(Rol, nombre: "administrador")
+      {:ok, _} = Permissions.asignar_rol(usuario.id, rol_admin.id, empresa.id)
+
+      scope = %Scope{usuario: usuario, empresa_activa: empresa}
+      assert Permissions.alcance_tipo_efectivo(scope, header.id) == :global
+    end
+
+    test "definir_alcance_de_rol/3 es upsert -- una segunda llamada actualiza en vez de duplicar" do
+      empresa = empresa_fixture()
+      header = header_fixture()
+      rol = rol_fixture(empresa.id)
+
+      {:ok, _} = Permissions.definir_alcance_de_rol(rol.id, header.id, :propio)
+      {:ok, _} = Permissions.definir_alcance_de_rol(rol.id, header.id, :sales_unit)
+
+      assert [%{alcance_tipo: "sales_unit"}] = Permissions.alcance_de_rol(rol.id)
+    end
+
+    test "revocar_alcance_de_rol/2 vuelve al default :propio" do
+      usuario = usuario_fixture()
+      empresa = empresa_fixture()
+      header = header_fixture()
+      rol = rol_fixture(empresa.id)
+
+      {:ok, _} = Permissions.definir_alcance_de_rol(rol.id, header.id, :global)
+      {:ok, _} = Permissions.asignar_rol(usuario.id, rol.id, empresa.id)
+      scope = %Scope{usuario: usuario, empresa_activa: empresa}
+      assert Permissions.alcance_tipo_efectivo(scope, header.id) == :global
+
+      {:ok, _} = Permissions.revocar_alcance_de_rol(rol.id, header.id)
+      assert Permissions.alcance_tipo_efectivo(scope, header.id) == :propio
+    end
+  end
+
   describe "roles de sistema son inmutables" do
     test "actualizar_rol/2 rechaza un rol de sistema" do
       rol_admin = Repo.get_by!(Rol, nombre: "administrador")

@@ -136,7 +136,7 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       desactivar_motor(header)
 
       {:ok, equipo} =
-        CatalogoGenerico.crear(MetaFixtureEquipo, %{
+        CatalogoGenerico.crear(MetaFixtureEquipo, :sistema, %{
           "meta_fixture_equipo_nombre_equipo" => "equipo #{unique()}"
         })
 
@@ -148,7 +148,7 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       inicial = fixture_estado(header, %{nombre: "crear_inicial_#{unique()}", es_inicial: true})
 
       {:ok, cliente} =
-        CatalogoGenerico.crear(MetaFixtureCliente, %{
+        CatalogoGenerico.crear(MetaFixtureCliente, :sistema, %{
           "meta_fixture_cliente_nombre" => "cliente #{unique()}",
           "meta_fixture_cliente_edad" => 25,
           "meta_fixture_cliente_venta" => "10.00"
@@ -174,7 +174,7 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       cliente = fixture_cliente(estado.id)
 
       assert {:ok, actualizado} =
-               CatalogoGenerico.actualizar(cliente, %{"meta_fixture_cliente_nombre" => "nombre nuevo"})
+               CatalogoGenerico.actualizar(cliente, :sistema, %{"meta_fixture_cliente_nombre" => "nombre nuevo"})
 
       assert actualizado.meta_fixture_cliente_nombre == "nombre nuevo"
     end
@@ -195,7 +195,7 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       cliente = fixture_cliente(estado.id)
 
       assert {:error, changeset} =
-               CatalogoGenerico.actualizar(cliente, %{"meta_fixture_cliente_edad" => 99})
+               CatalogoGenerico.actualizar(cliente, :sistema, %{"meta_fixture_cliente_edad" => 99})
 
       assert "no editable en el estado actual" in errors_on(changeset).meta_fixture_cliente_edad
       assert Repo.get!(MetaFixtureCliente, cliente.id).meta_fixture_cliente_edad == 30
@@ -217,7 +217,7 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       cliente = fixture_cliente(estado.id)
 
       assert {:error, changeset} =
-               CatalogoGenerico.actualizar(cliente, %{
+               CatalogoGenerico.actualizar(cliente, :sistema, %{
                  "meta_fixture_cliente_nombre" => "cambio válido",
                  "estado_id" => otro.id
                })
@@ -231,12 +231,12 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       desactivar_motor(header)
 
       {:ok, equipo} =
-        CatalogoGenerico.crear(MetaFixtureEquipo, %{
+        CatalogoGenerico.crear(MetaFixtureEquipo, :sistema, %{
           "meta_fixture_equipo_nombre_equipo" => "equipo #{unique()}"
         })
 
       assert {:ok, actualizado} =
-               CatalogoGenerico.actualizar(equipo, %{
+               CatalogoGenerico.actualizar(equipo, :sistema, %{
                  "meta_fixture_equipo_nombre_equipo" => "otro nombre"
                })
 

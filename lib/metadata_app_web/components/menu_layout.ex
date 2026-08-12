@@ -35,6 +35,7 @@ defmodule MetadataAppWeb.MenuLayout do
       assigns
       |> assign(:nodo_actual, buscar_nodo_actual(assigns.menu_items, assigns.current_page))
       |> assign(:nombre_empresa, nombre_empresa_activa(assigns[:current_scope]))
+      |> assign(:jerarquia_opciones, opciones_jerarquia_activa(assigns[:current_scope]))
       |> assign(:anio_actual, Date.utc_today().year)
       |> assign(:bpb_habilitado, Application.get_env(:metadata_app, :bpb_habilitado, false))
       |> asignar_datos_usuario()
@@ -264,17 +265,26 @@ defmodule MetadataAppWeb.MenuLayout do
                 <.link :if={@bpb_habilitado} navigate="/sysadmin/tepache" class="pc-user-menu-item pc-user-menu-subitem">
                   Tepache Exp/Imp
                 </.link>
+                <.link navigate="/sysadmin/roles" class="pc-user-menu-item pc-user-menu-subitem">
+                  Roles Admin
+                </.link>
                 <.link navigate="/sysadmin/empresas" class="pc-user-menu-item pc-user-menu-subitem">
                   Empresas
                 </.link>
                 <.link navigate="/sysadmin/usuarios" class="pc-user-menu-item pc-user-menu-subitem">
-                  Usuarios de la empresa
-                </.link>
-                <.link navigate="/sysadmin/roles" class="pc-user-menu-item pc-user-menu-subitem">
-                  Roles y Usuarios
+                  RBAC Usuarios
                 </.link>
                 <.link navigate="/sysadmin/catalogos/permisos" class="pc-user-menu-item pc-user-menu-subitem">
-                  Permission Sets
+                  RBAC Bisness Context
+                </.link>
+                 <.link navigate="/sysadmin/jerarquia" class="pc-user-menu-item pc-user-menu-subitem">
+                  Jerarquía organizacional
+                </.link>
+                <.link navigate="/sysadmin/credenciales" class="pc-user-menu-item pc-user-menu-subitem">
+                  Credenciales
+                </.link>
+                <.link navigate="/sysadmin/acciones-externas" class="pc-user-menu-item pc-user-menu-subitem">
+                  Acciones externas
                 </.link>
               </details>
               <button
@@ -330,6 +340,83 @@ defmodule MetadataAppWeb.MenuLayout do
            banda: dejar la topbar solo con branding/acciones. -->
       <div class="pc-footer">
         <span class="pc-footer-copyright">Prettycore {@anio_actual}</span>
+
+        <!-- Jerarquía operativa activa (Fase 4, 2026-08-11) — 4 selectores
+             independientes, cada uno un form POST plano (id va en el
+             body, no en la URL) que se auto-envía al cambiar el <select>
+             (onchange="this.form.requestSubmit()"), sin fetch/JS hook:
+             mismo criterio "funciona igual desde cualquier pantalla" que
+             el buscador TRN de más abajo. Solo aparece con sesión+empresa
+             resueltas -- ver opciones_jerarquia_activa/1. -->
+        <div :if={@jerarquia_opciones.empresas != []} class="pc-footer-jerarquia">
+          <div class="pc-footer-jerarquia-item">
+            <span class="pc-footer-jerarquia-label">Emp</span>
+            <form method="post" action="/meta_schema_usuario/empresa/activar">
+              <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
+              <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">
+                <option
+                  :for={empresa <- @jerarquia_opciones.empresas}
+                  value={empresa.id}
+                  selected={@current_scope.empresa_activa && @current_scope.empresa_activa.id == empresa.id}
+                >
+                  {empresa.nombre}
+                </option>
+              </select>
+            </form>
+          </div>
+
+          <div :if={@jerarquia_opciones.branches != []} class="pc-footer-jerarquia-item">
+            <span class="pc-footer-jerarquia-label">Suc</span>
+            <form method="post" action="/meta_schema_usuario/branch/activar">
+              <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
+              <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">
+                <option value="" disabled selected={is_nil(@current_scope.branch_activo)}>Elegir...</option>
+                <option
+                  :for={branch <- @jerarquia_opciones.branches}
+                  value={branch.id}
+                  selected={@current_scope.branch_activo && @current_scope.branch_activo.id == branch.id}
+                >
+                  {branch.branch_name}
+                </option>
+              </select>
+            </form>
+          </div>
+
+          <div :if={@jerarquia_opciones.inventory_locations != []} class="pc-footer-jerarquia-item">
+            <span class="pc-footer-jerarquia-label">Alm</span>
+            <form method="post" action="/meta_schema_usuario/inventory-location/activar">
+              <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
+              <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">
+                <option value="" disabled selected={is_nil(@current_scope.inventory_location_activo)}>Elegir...</option>
+                <option
+                  :for={inventory_location <- @jerarquia_opciones.inventory_locations}
+                  value={inventory_location.id}
+                  selected={@current_scope.inventory_location_activo && @current_scope.inventory_location_activo.id == inventory_location.id}
+                >
+                  {inventory_location.inventory_name}
+                </option>
+              </select>
+            </form>
+          </div>
+
+          <div :if={@jerarquia_opciones.sales_units != []} class="pc-footer-jerarquia-item">
+            <span class="pc-footer-jerarquia-label">U.Vta</span>
+            <form method="post" action="/meta_schema_usuario/sales-unit/activar">
+              <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
+              <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">
+                <option value="ninguna" selected={is_nil(@current_scope.sales_unit_activo)}>Ninguna</option>
+                <option
+                  :for={sales_unit <- @jerarquia_opciones.sales_units}
+                  value={sales_unit.id}
+                  selected={@current_scope.sales_unit_activo && @current_scope.sales_unit_activo.id == sales_unit.id}
+                >
+                  {sales_unit.sales_unit_name}
+                </option>
+              </select>
+            </form>
+          </div>
+        </div>
+
         <%= if @nodo_actual do %>
           <button
             type="button"
@@ -564,6 +651,43 @@ defmodule MetadataAppWeb.MenuLayout do
   # por las dudas).
   defp nombre_empresa_activa(%MetadataApp.Autenticacion.Scope{empresa_activa: %{nombre: nombre}}), do: nombre
   defp nombre_empresa_activa(_), do: Application.get_env(:metadata_app, :nombre_empresa, "Prettycore")
+
+  # Opciones del selector de jerarquía operativa de la banda de pie (Fase
+  # 4, 2026-08-11) — un query directo por render (mismo criterio que
+  # nombre_empresa_activa/1 arriba, esto es un layout compartido por
+  # TODAS las pantallas, no una carga que valga la pena cachear acá).
+  # Sin usuario/empresa activa todavía (login, register) no hay contra
+  # qué resolver nada -- listas vacías, el selector simplemente no
+  # aparece (ver :if={@jerarquia_opciones.empresas != []} en el render).
+  # Un "administrador" bypasea alcance_tipo_efectivo/2 por completo (ve
+  # TODO sin importar la asignación) -- restringirle el selector de la
+  # banda de pie a solo lo que tiene explícitamente asignado en
+  # usuario_branch/usuario_inventory_location/usuario_sales_unit no tiene
+  # sentido (probablemente ni tenga nada asignado, es sysadmin) y lo
+  # dejaba SIN selector (encontrado en vivo: "Empresa" aparecía, branch/
+  # inventory no, porque las listas volvían vacías). Ve TODAS las
+  # opciones de la empresa activa en cambio -- mismo criterio que ya usa
+  # alcance_tipo_efectivo/2 para el filtrado de datos.
+  defp opciones_jerarquia_activa(%MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa})
+       when not is_nil(usuario) and not is_nil(empresa) do
+    if MetadataApp.Permissions.administrador?(usuario.id, empresa.id) do
+      %{
+        empresas: MetadataApp.Autenticacion.empresas_de_usuario(usuario.id),
+        branches: MetadataApp.Autenticacion.listar_branches(empresa.id),
+        inventory_locations: MetadataApp.Autenticacion.listar_inventory_locations_de_empresa(empresa.id),
+        sales_units: MetadataApp.Autenticacion.listar_sales_units_de_empresa(empresa.id)
+      }
+    else
+      %{
+        empresas: MetadataApp.Autenticacion.empresas_de_usuario(usuario.id),
+        branches: MetadataApp.Autenticacion.branches_de_usuario(usuario.id, empresa.id),
+        inventory_locations: MetadataApp.Autenticacion.inventory_locations_de_usuario(usuario.id, empresa.id),
+        sales_units: MetadataApp.Autenticacion.sales_units_de_usuario(usuario.id, empresa.id)
+      }
+    end
+  end
+
+  defp opciones_jerarquia_activa(_scope), do: %{empresas: [], branches: [], inventory_locations: [], sales_units: []}
 
   defp asignar_datos_usuario(assigns) do
     case assigns[:current_scope] do

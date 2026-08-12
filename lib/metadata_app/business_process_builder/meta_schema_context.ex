@@ -3,6 +3,10 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Detail
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.CarpetaOrden
+  alias MetadataApp.BusinessProcessBuilder.CatalogoGenerador
+  alias MetadataApp.BusinessProcessBuilder.AlcanceBackfill
+  alias MetadataApp.Autenticacion.Rol
+  alias MetadataApp.Permissions
   import Ecto.Query
 
   # order_by explícito a propósito: sin esto Postgres no garantiza el orden
@@ -512,19 +516,44 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     |> Enum.group_by(fn {nombre, _detalle} -> nombre end, fn {_nombre, detalle} -> detalle end)
   end
 
-  # schema_context_name de todo catálogo que tenga un detalle tipo
-  # "referencia" apuntando a schema_context_name — bloquean su borrado total.
+  # schema_context_name de todo catálogo que bloquea el borrado total de
+  # schema_context_name -- dos motivos distintos, unificados en una sola
+  # lista porque ambos usan el mismo mensaje/UX ("catálogo(s)
+  # dependientes, borralos primero"):
+  #
+  #   1) tiene un detalle tipo "referencia" apuntando acá (de siempre).
+  #   2) es un catálogo DETALLE de este maestro (schema_encabezado_id
+  #      apunta acá) -- encontrado en vivo (2026-08-11): meta_schema_header.
+  #      schema_encabezado_id SÍ tiene FK real (RESTRICT, sin ON DELETE)
+  #      contra meta_schema_header(id), pero nada acá lo chequeaba antes
+  #      de intentar el DELETE -- el borrado de un maestro con detalle
+  #      vivo llegaba hasta el DROP TABLE/DELETE real y explotaba con un
+  #      error crudo de Postgres en vez de bloquearse limpio como
+  #      cualquier otro dependiente.
   def listar_dependientes(schema_context_name) do
-    from(d in Detail,
-      join: h in assoc(d, :header),
-      where: is_nil(d.delete_guid),
-      where: is_nil(h.delete_guid),
-      where: fragment("?->>'tipo'", d.schema_context_properties) == "referencia",
-      where: fragment("?->>'catalogo'", d.schema_context_properties) == ^schema_context_name,
-      distinct: true,
-      select: h.schema_context_name
-    )
-    |> Repo.all()
+    referencias =
+      from(d in Detail,
+        join: h in assoc(d, :header),
+        where: is_nil(d.delete_guid),
+        where: is_nil(h.delete_guid),
+        where: fragment("?->>'tipo'", d.schema_context_properties) == "referencia",
+        where: fragment("?->>'catalogo'", d.schema_context_properties) == ^schema_context_name,
+        distinct: true,
+        select: h.schema_context_name
+      )
+      |> Repo.all()
+
+    detalles =
+      from(h in Header,
+        join: maestro in Header,
+        on: maestro.id == h.schema_encabezado_id,
+        where: is_nil(h.delete_guid) and is_nil(maestro.delete_guid),
+        where: maestro.schema_context_name == ^schema_context_name,
+        select: h.schema_context_name
+      )
+      |> Repo.all()
+
+    Enum.uniq(referencias ++ detalles)
   end
 
   # --- Referencias dependientes ("combos en cascada") ------------------------
@@ -769,8 +798,13 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   defp es_texto_no_vacio?(valor), do: is_binary(valor) and valor != ""
 
   defp resolver_valor_remoto(catalogo_destino, valor_hijo, campo_remoto) do
+    # Gap conocido (Fase 5, no corregido acá) -- helper de DISPLAY (resuelve
+    # el valor legible de un campo "referencia"), mismo criterio ya
+    # aceptado para Formula/opciones_referencia en la Fase 4a: no
+    # threadea Scope, marcado como mejora pendiente real.
     with modulo when not is_nil(modulo) <- modulo_por_nombre(catalogo_destino),
          id_hijo when not is_nil(id_hijo) <- a_entero_seguro(valor_hijo),
+         # credo:disable-for-next-line MetadataApp.CredoChecks.RepoDirectoConVariable
          registro_destino when not is_nil(registro_destino) <- Repo.get(modulo, id_hijo),
          remoto_atom <- String.to_existing_atom(campo_remoto) do
       {:ok, Map.get(registro_destino, remoto_atom)}
@@ -1376,6 +1410,63 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     |> Header.changeset(attrs)
     |> Ecto.Changeset.change(%{update_guid: generar_guid()})
     |> Repo.update()
+  end
+
+  @doc """
+  Activa Alcance de Datos para un header con el default operacional
+  (2026-08-12, bug operacional: un BC nacía sin alcance y cada rol caía
+  en `:propio` -- ver `Permissions.alcance_tipo_efectivo/2` -- por el
+  deny-by-default de ausencia de fila, demasiado restrictivo para ser un
+  punto de partida razonable). CADA rol del sistema (incluido
+  "administrador", aunque su bypass a `:global` lo vuelve un no-op)
+  arranca en `alcance_tipo: "branch"` (Sucursal). El admin lo afloja o
+  cambia a mano después desde CatalogoPermisosLive -- esto solo fija el
+  punto de partida, nunca lo vuelve a tocar.
+
+  DEBE llamarse DESPUÉS de que el header (y sus detalles) ya están
+  confirmados en la base -- `CatalogoGenerador.generar/1` corre DDL fuera
+  de cualquier transacción Ecto (conexión propia, autocommit), no se
+  puede envolver junto con el insert del header en un Multi/transaction
+  (mismo criterio que ya usaba `BcMotorLive.provisionar_alcance_y_avisar/2`,
+  del que esta función es la versión reutilizable sin socket).
+  """
+  def activar_alcance_con_default_sucursal(%Header{} = header) do
+    with {:ok, header} <- provisionar_alcance(header) do
+      asignar_branch_a_todos_los_roles(header)
+      {:ok, header}
+    end
+  end
+
+  @doc """
+  Activa Alcance de Datos para un header YA existente, SIN tocar el
+  `alcance_tipo` de ningún rol -- a diferencia de
+  `activar_alcance_con_default_sucursal/1` (que además fuerza "branch" en
+  todos los roles, pensado solo para cuando un BC NACE). Esta es la
+  versión que usa el toggle manual de CatalogoPermisosLive: un admin que
+  prende Alcance de Datos en un catálogo que ya tenía configuración de
+  rol previa (la había apagado y la vuelve a prender, por ejemplo) no
+  debería ver su `alcance_tipo` por rol pisado sin aviso.
+  """
+  def provisionar_alcance(%Header{} = header) do
+    with {:ok, header} <- actualizar_header(header, %{"alcance_habilitado" => true}),
+         {:ok, _resultado} <- CatalogoGenerador.generar(header.schema_context_name) do
+      backfillear_creado_por_best_effort(header)
+      {:ok, header}
+    end
+  end
+
+  defp backfillear_creado_por_best_effort(header) do
+    case modulo_por_nombre(header.schema_context_name) do
+      nil -> :ok
+      modulo -> AlcanceBackfill.backfillear_creado_por(modulo)
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp asignar_branch_a_todos_los_roles(header) do
+    Repo.all(from(r in Rol, where: is_nil(r.delete_guid)))
+    |> Enum.each(&Permissions.definir_alcance_de_rol(&1.id, header.id, "branch"))
   end
 
   @doc """

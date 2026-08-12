@@ -96,6 +96,16 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# Cloak.Ecto (ver MetadataApp.Vault/MetadataApp.Encriptado) — clave FIJA acá
+# solo para dev/test, para no depender de que cada quien tenga CLOAK_KEY en
+# su entorno local. Producción SIEMPRE usa la real desde el entorno (ver
+# config/runtime.exs) — esta clave de acá nunca protege datos reales.
+config :metadata_app, MetadataApp.Vault,
+  json_library: Jason,
+  ciphers: [
+    default: {Cloak.Ciphers.AES.GCM, tag: "AES.GCM.V1", key: Base.decode64!("HpRls7DRqcdWp9bdZQCPBOyhCZdHBpglRLmQVIAluEE="), iv_length: 12}
+  ]
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

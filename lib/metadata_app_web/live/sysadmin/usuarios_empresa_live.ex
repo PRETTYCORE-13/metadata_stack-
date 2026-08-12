@@ -2,14 +2,10 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
   @moduledoc """
   Administrador de usuarios: maestro-detalle (rediseño 2026-08-02, a pedido
   explícito con mockup) — lista buscable de usuarios de la empresa activa a
-  la izquierda, y a la derecha 4 pestañas para el usuario seleccionado:
+  la izquierda, y a la derecha 3 pestañas para el usuario seleccionado:
 
     * Generales — alias/email (por ahora solo lectura; "Desactivar cuenta"
       queda para una entrega aparte, ver memoria del proyecto).
-    * Empresas — TODAS las que pertenece (no solo la activa) + agregar a
-      CUALQUIER empresa del sistema (decisión explícita: no se restringe a
-      "solo las empresas donde yo también soy admin" — no hay todavía un
-      concepto de "super admin" dueño de esa regla).
     * Roles — eje invertido de RolDetalleLive/CatalogoPermisosLive (ahí se
       fija un rol/catálogo y se listan usuarios; acá se fija un usuario y
       se listan sus roles). Alcance: solo los roles de la empresa ACTIVA
@@ -22,6 +18,24 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     * BC — de solo lectura: catálogos que el usuario puede "leer" por
       herencia de sus roles en la empresa activa (mismo permiso que ya
       poda el menú, ver MenuLayout.podar_menu_por_permisos/1).
+    * Alcance — Fase 7 del modelo de Alcance de Datos (2026-08-11),
+      rediseñada 2026-08-12 a pedido explícito ("estaba desordenado"): 4
+      secciones verticales, mismo orden siempre -- Empresa, Sucursales,
+      Almacén, Unidades de venta. La pestaña "Empresas" separada de antes
+      se plegó acá adentro (era el mismo concepto -- a QUÉ pertenece este
+      usuario -- repartido en dos lugares sin necesidad). Cada sección
+      tiene el mismo patrón: lista de lo YA asignado (con botón "Quitar" y,
+      para las 3 de jerarquía, "☆/★ Default" -- ver Autenticacion.
+      resolver_jerarquia_operativa/3, el default hace que el login elija
+      esa opción sola aunque haya varias permitidas) + un <select> con lo
+      DISPONIBLE (nunca lo ya asignado) y un botón "Agregar". QUÉ
+      branches/sales_units/inventory_locations puede VER/OPERAR es la
+      asignación N:N de Autenticacion.asignar_branch/2 etc., la que
+      hidrata Scope.branches_permitidos/sales_units_permitidas/
+      inventory_locations_permitidas -- distinto del "alcance_tipo" por
+      rol (eso se configura en CatalogoPermisosLive, es "QUÉ TIPO de
+      filtro aplica", no "cuáles ids concretos", ver moduledoc de
+      MetadataApp.Autenticacion.Scope).
   """
 
   use MetadataAppWeb, :live_view_admin
@@ -41,8 +55,28 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     %{tipo: :pagina, id: "tepache", label: "Tepache Exp/Imp", nav: "/sysadmin/tepache"},
     %{tipo: :pagina, id: "roles", label: "Roles y Usuarios", nav: "/sysadmin/roles"},
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
-    %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"}
+    %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"},
+    %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
+    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
+    %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
   ]
+
+  # Forma "vacía" de la pestaña Alcance -- reusada en mount/3 y en cada
+  # reset (cambiar de empresa gestionada, cerrar detalle, quitar la
+  # empresa en foco al propio usuario), mismo criterio que ya usaban
+  # jerarquia_alcance: [] / empresas_estado: [] antes del rediseño 2026-08-12.
+  @alcance_vacio %{
+    branches_asignadas: [],
+    branches_disponibles: [],
+    sales_units_asignadas: [],
+    sales_units_disponibles: [],
+    inventory_locations_asignadas: [],
+    inventory_locations_disponibles: [],
+    nombres_branch: %{},
+    branch_default_id: nil,
+    sales_unit_default_id: nil,
+    inventory_default_id: nil
+  }
 
   def mount(_params, _session, socket) do
     usuario = socket.assigns.current_scope.usuario
@@ -61,8 +95,9 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
      |> assign(:busqueda_rol, "")
      |> assign(:roles_busqueda_resultado, [])
      |> assign(:empresas_estado, [])
-     |> assign(:empresa_para_agregar, nil)
+     |> assign(:empresa_default_id, nil)
      |> assign(:bcs_lectura, [])
+     |> assign(:alcance, @alcance_vacio)
      |> assign(:alias_form, nil)
      |> assign(:crear_usuario_error, nil)
      # empresa_en_foco: cuál empresa está gestionando esta pantalla (usuarios/
@@ -94,7 +129,9 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
          busqueda_rol: "",
          roles_busqueda_resultado: [],
          empresas_estado: [],
-         bcs_lectura: []
+         empresa_default_id: nil,
+         bcs_lectura: [],
+         alcance: @alcance_vacio
        )
        |> cargar_usuarios()}
     else
@@ -213,7 +250,9 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
        busqueda_rol: "",
        roles_busqueda_resultado: [],
        empresas_estado: [],
-       bcs_lectura: []
+       empresa_default_id: nil,
+       bcs_lectura: [],
+       alcance: @alcance_vacio
      )}
   end
 
@@ -255,32 +294,24 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     {:noreply, socket |> assign(busqueda_rol: "", roles_busqueda_resultado: []) |> cargar_detalle_usuario()}
   end
 
-  def handle_event("elegir_empresa_para_agregar", %{"empresa_id" => empresa_id}, socket) do
-    {:noreply, assign(socket, :empresa_para_agregar, empresa_id)}
+  # Simplificado 2026-08-12 (era un ida y vuelta de 2 eventos --
+  # phx-change para "recordar" lo elegido + phx-submit leyendo eso de
+  # socket.assigns -- innecesario, phx-submit ya manda el valor del
+  # <select> en params). Mismo guard "vacío no hace nada" que el resto de
+  # los agregar_*_a_usuario/2 nuevos.
+  def handle_event("agregar_empresa_a_usuario", %{"id" => id}, socket) when id not in [nil, ""] do
+    Autenticacion.agregar_usuario_a_empresa(socket.assigns.usuario_seleccionado.email, String.to_integer(id))
+    {:noreply, socket |> cargar_usuarios() |> cargar_detalle_usuario()}
   end
 
-  def handle_event("agregar_empresa_a_usuario", _params, socket) do
-    %{usuario_seleccionado: usuario, empresa_para_agregar: empresa_id} = socket.assigns
-
-    socket =
-      case empresa_id do
-        vazio when vazio in [nil, ""] ->
-          socket
-
-        empresa_id ->
-          Autenticacion.agregar_usuario_a_empresa(usuario.email, String.to_integer(empresa_id))
-          socket |> assign(:empresa_para_agregar, nil) |> cargar_usuarios() |> cargar_detalle_usuario()
-      end
-
-    {:noreply, socket}
-  end
+  def handle_event("agregar_empresa_a_usuario", _params, socket), do: {:noreply, socket}
 
   # Quitar la empresa EN FOCO (la misma que arma la lista de la izquierda)
   # deja al usuario seleccionado fuera de esa lista — a diferencia de
-  # cualquier otra empresa (donde solo se refresca su pestaña Empresas).
-  def handle_event("quitar_empresa_de_usuario", %{"empresa_id" => empresa_id}, socket) do
+  # cualquier otra empresa (donde solo se refresca la pestaña Alcance).
+  def handle_event("quitar_empresa_de_usuario", %{"id" => id}, socket) do
     %{usuario_seleccionado: usuario, empresa_en_foco: empresa_en_foco} = socket.assigns
-    empresa_id = String.to_integer(empresa_id)
+    empresa_id = String.to_integer(id)
 
     Autenticacion.remover_usuario_de_empresa(usuario.id, empresa_id)
     socket = assign(socket, :usuarios_sin_empresa, Autenticacion.listar_usuarios_sin_empresa())
@@ -294,12 +325,109 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
          busqueda_rol: "",
          roles_busqueda_resultado: [],
          empresas_estado: [],
-         bcs_lectura: []
+         empresa_default_id: nil,
+         bcs_lectura: [],
+         alcance: @alcance_vacio
        )
        |> cargar_usuarios()}
     else
       {:noreply, cargar_detalle_usuario(socket)}
     end
+  end
+
+  # Fase 7 del modelo de Alcance de Datos, rediseñada 2026-08-12 -- 3
+  # pares gemelos agregar/quitar, uno por dimensión de la jerarquía
+  # (reemplazan los toggle_*_alcance de antes: la UI nueva es lista +
+  # <select> de lo disponible, no un botón por cada fila posible). Los 4
+  # pares de esta pantalla (empresa incluida) comparten el mismo param
+  # "id" -- HEEx no permite nombres de atributo dinámicos
+  # (`phx-value-{@campo}` no es válido), así que .seccion_alcance/1
+  # emite siempre `phx-value-id`/`name="id"`; el nombre del EVENTO ya
+  # dice de qué dimensión se trata, no hace falta un param distinto por
+  # cada una. El guard `when id not in [nil, ""]` en agregar_*/2 es la
+  # misma defensa que ya usaba agregar_empresa_a_usuario/2 -- el
+  # `<select>` tiene `required`, pero eso es solo del lado del cliente.
+  def handle_event("agregar_branch_a_usuario", %{"id" => id}, socket) when id not in [nil, ""] do
+    Autenticacion.asignar_branch(socket.assigns.usuario_seleccionado.id, String.to_integer(id))
+    {:noreply, cargar_detalle_usuario(socket)}
+  end
+
+  def handle_event("agregar_branch_a_usuario", _params, socket), do: {:noreply, socket}
+
+  def handle_event("quitar_branch_de_usuario", %{"id" => id}, socket) do
+    Autenticacion.revocar_branch(socket.assigns.usuario_seleccionado.id, String.to_integer(id))
+    {:noreply, cargar_detalle_usuario(socket)}
+  end
+
+  def handle_event("agregar_sales_unit_a_usuario", %{"id" => id}, socket) when id not in [nil, ""] do
+    Autenticacion.asignar_sales_unit(socket.assigns.usuario_seleccionado.id, String.to_integer(id))
+    {:noreply, cargar_detalle_usuario(socket)}
+  end
+
+  def handle_event("agregar_sales_unit_a_usuario", _params, socket), do: {:noreply, socket}
+
+  def handle_event("quitar_sales_unit_de_usuario", %{"id" => id}, socket) do
+    Autenticacion.revocar_sales_unit(socket.assigns.usuario_seleccionado.id, String.to_integer(id))
+    {:noreply, cargar_detalle_usuario(socket)}
+  end
+
+  def handle_event("agregar_inventory_location_a_usuario", %{"id" => id}, socket) when id not in [nil, ""] do
+    Autenticacion.asignar_inventory_location(socket.assigns.usuario_seleccionado.id, String.to_integer(id))
+    {:noreply, cargar_detalle_usuario(socket)}
+  end
+
+  def handle_event("agregar_inventory_location_a_usuario", _params, socket), do: {:noreply, socket}
+
+  def handle_event("quitar_inventory_location_de_usuario", %{"id" => id}, socket) do
+    Autenticacion.revocar_inventory_location(socket.assigns.usuario_seleccionado.id, String.to_integer(id))
+    {:noreply, cargar_detalle_usuario(socket)}
+  end
+
+  # Default (2026-08-12) -- 3 handlers gemelos, mismo criterio de
+  # "toggle" que los de arriba: si YA es el default, el click lo limpia
+  # (nil); si no, lo fija (reemplaza cualquier default previo de esa
+  # misma dimensión sin acción aparte, el campo es un id único, no una
+  # lista). Solo tiene sentido sobre un renglón ya asignado -- el botón
+  # de "Default" ni se muestra en el render si no lo está (ver
+  # .seccion_alcance/1, `:if={@evento_default}` sobre `asignados`).
+  def handle_event("toggle_branch_default", %{"id" => id, "default" => default}, socket) do
+    %{usuario_seleccionado: usuario, empresa_en_foco: empresa} = socket.assigns
+    es_administrador? = Permissions.administrador?(usuario.id, empresa.id)
+    nuevo_id = if default == "true", do: nil, else: String.to_integer(id)
+
+    Autenticacion.definir_branch_default(usuario.id, empresa.id, nuevo_id, es_administrador?)
+    {:noreply, cargar_detalle_usuario(socket)}
+  end
+
+  def handle_event("toggle_sales_unit_default", %{"id" => id, "default" => default}, socket) do
+    %{usuario_seleccionado: usuario, empresa_en_foco: empresa} = socket.assigns
+    es_administrador? = Permissions.administrador?(usuario.id, empresa.id)
+    nuevo_id = if default == "true", do: nil, else: String.to_integer(id)
+
+    Autenticacion.definir_sales_unit_default(usuario.id, empresa.id, nuevo_id, es_administrador?)
+    {:noreply, cargar_detalle_usuario(socket)}
+  end
+
+  def handle_event("toggle_inventory_location_default", %{"id" => id, "default" => default}, socket) do
+    %{usuario_seleccionado: usuario, empresa_en_foco: empresa} = socket.assigns
+    es_administrador? = Permissions.administrador?(usuario.id, empresa.id)
+    nuevo_id = if default == "true", do: nil, else: String.to_integer(id)
+
+    Autenticacion.definir_inventory_location_default(usuario.id, empresa.id, nuevo_id, es_administrador?)
+    {:noreply, cargar_detalle_usuario(socket)}
+  end
+
+  # Empresa default (2026-08-12) -- mismo criterio de "toggle" que los 3 de
+  # arriba, pero vive en Usuario (cross-empresa) en vez de UsuarioEmpresa,
+  # por eso llama a Autenticacion.definir_empresa_default/2 (sin
+  # es_administrador?, no aplica: no hay bypass de "todas las empresas",
+  # solo puede marcar default una a la que ya pertenece).
+  def handle_event("toggle_empresa_default", %{"id" => id, "default" => default}, socket) do
+    usuario = socket.assigns.usuario_seleccionado
+    nuevo_id = if default == "true", do: nil, else: String.to_integer(id)
+
+    Autenticacion.definir_empresa_default(usuario.id, nuevo_id)
+    {:noreply, cargar_detalle_usuario(socket)}
   end
 
   defp cargar_usuarios(socket) do
@@ -325,14 +453,67 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
       |> MetaSchemaContext.obtener_headers_por_nombres()
       |> Enum.sort_by(& &1.schema_context_label)
 
+    empresa_default = Autenticacion.empresa_default_de_usuario(usuario.id)
+
     socket
     |> assign(:roles_concedidos, roles_concedidos)
     |> assign(:busqueda_rol, "")
     |> assign(:roles_busqueda_resultado, [])
     |> assign(:empresas_estado, empresas_del_usuario)
     |> assign(:empresas_disponibles, empresas_disponibles)
+    |> assign(:empresa_default_id, empresa_default && empresa_default.id)
     |> assign(:bcs_lectura, bcs_lectura)
+    |> assign(:alcance, cargar_alcance(usuario, empresa))
     |> assign(:alias_form, to_form(Autenticacion.change_usuario_alias(usuario)))
+  end
+
+  # Listas PLANAS (asignada/disponible) de las 3 dimensiones de la
+  # jerarquía en la empresa en foco -- reemplaza el árbol Branch ->
+  # {SalesUnit, InventoryLocation} de antes (rediseño 2026-08-12, a
+  # pedido explícito: "estaba desordenado", 4 secciones verticales en vez
+  # de un árbol anidado). Sales units/inventory locations llevan su
+  # branch_id tal cual (structs reales, no un mapa envolvente) -- el
+  # nombre de sucursal para mostrar junto a cada una sale de
+  # nombres_branch, resuelto una sola vez acá. Se arma desde 0 en cada
+  # carga -- son listas chicas (decenas, no miles, por empresa) y así se
+  # evita cualquier desincronización con lo que Autenticacion.
+  # alcance_de_usuario/2 y defaults_de_usuario/2 ya reportan como fuente
+  # de verdad.
+  defp cargar_alcance(usuario, empresa) do
+    %{
+      branches_permitidos: branch_ids,
+      sales_units_permitidas: sales_unit_ids,
+      inventory_locations_permitidas: inventory_ids
+    } = Autenticacion.alcance_de_usuario(usuario.id, empresa.id)
+
+    defaults = Autenticacion.defaults_de_usuario(usuario.id, empresa.id)
+
+    branch_ids = MapSet.new(branch_ids)
+    sales_unit_ids = MapSet.new(sales_unit_ids)
+    inventory_ids = MapSet.new(inventory_ids)
+
+    todas_branches = Autenticacion.listar_branches(empresa.id)
+    todas_sales_units = Autenticacion.listar_sales_units_de_empresa(empresa.id)
+    todas_inventory_locations = Autenticacion.listar_inventory_locations_de_empresa(empresa.id)
+
+    {branches_asignadas, branches_disponibles} = Enum.split_with(todas_branches, &MapSet.member?(branch_ids, &1.id))
+    {sales_units_asignadas, sales_units_disponibles} = Enum.split_with(todas_sales_units, &MapSet.member?(sales_unit_ids, &1.id))
+
+    {inventory_locations_asignadas, inventory_locations_disponibles} =
+      Enum.split_with(todas_inventory_locations, &MapSet.member?(inventory_ids, &1.id))
+
+    %{
+      branches_asignadas: branches_asignadas,
+      branches_disponibles: branches_disponibles,
+      sales_units_asignadas: sales_units_asignadas,
+      sales_units_disponibles: sales_units_disponibles,
+      inventory_locations_asignadas: inventory_locations_asignadas,
+      inventory_locations_disponibles: inventory_locations_disponibles,
+      nombres_branch: Map.new(todas_branches, &{&1.id, &1.branch_name}),
+      branch_default_id: defaults.branch && defaults.branch.id,
+      sales_unit_default_id: defaults.sales_unit && defaults.sales_unit.id,
+      inventory_default_id: defaults.inventory_location && defaults.inventory_location.id
+    }
   end
 
   defp usuarios_filtrados(usuarios, ""), do: usuarios
@@ -341,6 +522,93 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     texto = String.downcase(busqueda)
     Enum.filter(usuarios, &String.contains?(String.downcase(&1.email), texto))
   end
+
+  # Pestaña Alcance, rediseñada 2026-08-12 a pedido explícito ("estaba
+  # desordenado") -- las 4 secciones (Empresa/Sucursales/Almacén/Unidades
+  # de venta) comparten EXACTAMENTE el mismo patrón visual (lista de lo
+  # asignado + Quitar, <select> de lo disponible + Agregar), así que es
+  # una sola función de componente en vez de repetir el HEEx 4 veces.
+  # `nombre_id`/`campo_id_quitar`/`campo_id_default` NO existen como attrs
+  # -- HEEx no permite nombres de atributo dinámicos
+  # (`phx-value-{@campo}=...` es inválido), así que este componente
+  # siempre emite `phx-value-id`/`name="id"`; el nombre del EVENTO
+  # (`evento_agregar`/`evento_quitar`/`evento_default`, esos SÍ son
+  # dinámicos porque son VALORES de atributo, no nombres) ya dice de qué
+  # dimensión se trata.
+  attr :titulo, :string, required: true
+  attr :asignados, :list, required: true
+  attr :disponibles, :list, required: true
+  attr :nombre_campo, :atom, required: true, doc: "campo del struct a mostrar como nombre -- :nombre, :branch_name, :inventory_name, :sales_unit_name"
+  attr :evento_agregar, :string, required: true
+  attr :evento_quitar, :string, required: true
+  attr :placeholder_select, :string, required: true
+  attr :placeholder_vacio, :string, required: true
+  attr :confirmar_quitar, :any, default: nil, doc: "fn(item) -> string | nil -- data-confirm del botón Quitar"
+  attr :etiqueta_extra, :any, default: nil, doc: "fn(item) -> string | nil -- ej. \"(activa)\" en Empresa"
+  attr :evento_default, :string, default: nil, doc: "nil = esta dimensión no tiene Default (Empresa)"
+  attr :default_id, :any, default: nil
+  attr :nombres_branch, :map, default: %{}, doc: "id de branch => nombre, para mostrar entre paréntesis en Almacén/Unidades de venta"
+
+  defp seccion_alcance(assigns) do
+    ~H"""
+    <div>
+      <h3 class="text-xs font-bold text-gray-700 uppercase tracking-wide mb-2">{@titulo}</h3>
+      <ul class="divide-y divide-gray-100 border border-gray-100 rounded-lg mb-2">
+        <li :for={item <- @asignados} class="flex items-center justify-between px-3 py-2 text-sm gap-2">
+          <span class="text-gray-800 truncate">
+            {Map.fetch!(item, @nombre_campo)}
+            <span :if={nombre_sucursal(item, @nombres_branch)} class="text-[10px] text-gray-400 ml-1">({nombre_sucursal(item, @nombres_branch)})</span>
+            <span :if={@etiqueta_extra && @etiqueta_extra.(item)} class="text-[10px] text-purple-600 font-semibold ml-1">{@etiqueta_extra.(item)}</span>
+          </span>
+          <div class="flex items-center gap-2 shrink-0">
+            <button
+              :if={@evento_default}
+              type="button"
+              phx-click={@evento_default}
+              phx-value-id={item.id}
+              phx-value-default={to_string(item.id == @default_id)}
+              title={if item.id == @default_id, do: "Default -- el login la elige sola", else: "Marcar como default para el login"}
+              class={[
+                "text-xs font-semibold rounded-lg px-2 py-1 transition-colors whitespace-nowrap",
+                item.id == @default_id && "bg-amber-500 text-white",
+                item.id != @default_id && "bg-amber-50 text-amber-700 hover:bg-amber-100"
+              ]}
+            >
+              {if item.id == @default_id, do: "★ Default", else: "☆ Default"}
+            </button>
+            <button
+              type="button"
+              phx-click={@evento_quitar}
+              phx-value-id={item.id}
+              data-confirm={@confirmar_quitar && @confirmar_quitar.(item)}
+              class="text-xs text-red-600 hover:underline whitespace-nowrap"
+            >
+              Quitar
+            </button>
+          </div>
+        </li>
+        <li :if={@asignados == []} class="px-3 py-4 text-center text-xs text-gray-400">{@placeholder_vacio}</li>
+      </ul>
+
+      <form phx-submit={@evento_agregar} class="flex gap-2">
+        <select name="id" required class="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-gray-900">
+          <option value="">{@placeholder_select}</option>
+          <option :for={item <- @disponibles} value={item.id}>
+            {Map.fetch!(item, @nombre_campo)}{if nombre_sucursal(item, @nombres_branch), do: " (#{nombre_sucursal(item, @nombres_branch)})"}
+          </option>
+        </select>
+        <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 whitespace-nowrap">
+          Agregar
+        </button>
+      </form>
+    </div>
+    """
+  end
+
+  defp nombre_sucursal(%{branch_id: branch_id}, nombres_branch) when is_map_key(nombres_branch, branch_id),
+    do: Map.fetch!(nombres_branch, branch_id)
+
+  defp nombre_sucursal(_item, _nombres_branch), do: nil
 
   def render(assigns) do
     assigns = assign(assigns, :usuarios_visibles, usuarios_filtrados(assigns.usuarios, assigns.busqueda))
@@ -462,9 +730,9 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
 
             <.tabs_motor id="usuario-detalle" tabs={[
               %{key: "generales", label: "Generales"},
-              %{key: "empresas", label: "Empresas"},
               %{key: "roles", label: "Roles"},
-              %{key: "bc", label: "BC"}
+              %{key: "bc", label: "BC"},
+              %{key: "alcance", label: "Alcance"}
             ]} />
 
             <div id="usuario-detalle-panel-generales">
@@ -515,33 +783,6 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
               <p class="text-xs text-gray-400 mt-4">Desactivar/bloquear cuenta: próximamente.</p>
             </div>
 
-            <div id="usuario-detalle-panel-empresas" class="hidden">
-              <ul class="divide-y divide-gray-100 border border-gray-100 rounded-lg mb-3">
-                <li :for={empresa <- @empresas_estado} class="flex items-center justify-between px-3 py-2 text-sm">
-                  <span class="text-gray-800">
-                    {empresa.nombre}
-                    <span :if={empresa.id == @current_scope.empresa_activa.id} class="text-[10px] text-purple-600 font-semibold ml-1">(activa)</span>
-                  </span>
-                  <button type="button" phx-click="quitar_empresa_de_usuario" phx-value-empresa_id={empresa.id}
-                    data-confirm={"¿Quitar a #{@usuario_seleccionado.email} de #{empresa.nombre}? Pierde cualquier rol que tenga ahí."}
-                    class="text-xs text-red-600 hover:underline">
-                    Quitar
-                  </button>
-                </li>
-                <li :if={@empresas_estado == []} class="px-3 py-4 text-center text-xs text-gray-400">Sin empresas.</li>
-              </ul>
-
-              <form phx-submit="agregar_empresa_a_usuario" phx-change="elegir_empresa_para_agregar" class="flex gap-2">
-                <select name="empresa_id" class="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
-                  <option value="">— Elegir empresa —</option>
-                  <option :for={empresa <- @empresas_disponibles} value={empresa.id}>{empresa.nombre}</option>
-                </select>
-                <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">
-                  Agregar
-                </button>
-              </form>
-            </div>
-
             <div id="usuario-detalle-panel-roles" class="hidden">
               <p class="text-xs text-gray-400 mb-2">Roles en {@empresa_en_foco.nombre}.</p>
 
@@ -589,6 +830,68 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
                 </li>
                 <li :if={@bcs_lectura == []} class="px-3 py-4 text-center text-xs text-gray-400">Sin catálogos.</li>
               </ul>
+            </div>
+
+            <div id="usuario-detalle-panel-alcance" class="hidden space-y-5">
+              <p class="text-xs text-gray-400">
+                Qué puede ver/operar {@usuario_seleccionado.email} — el ★ marca cuál elige el login solo cuando hay varias asignadas (ver banda de pie).
+              </p>
+
+              <.seccion_alcance
+                titulo="Empresa"
+                asignados={@empresas_estado}
+                disponibles={@empresas_disponibles}
+                nombre_campo={:nombre}
+                evento_agregar="agregar_empresa_a_usuario"
+                evento_quitar="quitar_empresa_de_usuario"
+                placeholder_select="— Elegir empresa —"
+                placeholder_vacio="Sin empresas."
+                confirmar_quitar={fn empresa -> "¿Quitar a #{@usuario_seleccionado.email} de #{empresa.nombre}? Pierde cualquier rol que tenga ahí." end}
+                etiqueta_extra={fn empresa -> if empresa.id == @current_scope.empresa_activa.id, do: "(activa)" end}
+                default_id={@empresa_default_id}
+                evento_default="toggle_empresa_default"
+              />
+
+              <.seccion_alcance
+                titulo="Sucursales"
+                asignados={@alcance.branches_asignadas}
+                disponibles={@alcance.branches_disponibles}
+                nombre_campo={:branch_name}
+                evento_agregar="agregar_branch_a_usuario"
+                evento_quitar="quitar_branch_de_usuario"
+                placeholder_select="— Elegir sucursal —"
+                placeholder_vacio="Sin sucursales asignadas."
+                default_id={@alcance.branch_default_id}
+                evento_default="toggle_branch_default"
+              />
+
+              <.seccion_alcance
+                titulo="Almacén"
+                asignados={@alcance.inventory_locations_asignadas}
+                disponibles={@alcance.inventory_locations_disponibles}
+                nombre_campo={:inventory_name}
+                evento_agregar="agregar_inventory_location_a_usuario"
+                evento_quitar="quitar_inventory_location_de_usuario"
+                placeholder_select="— Elegir almacén —"
+                placeholder_vacio="Sin almacenes asignados."
+                default_id={@alcance.inventory_default_id}
+                evento_default="toggle_inventory_location_default"
+                nombres_branch={@alcance.nombres_branch}
+              />
+
+              <.seccion_alcance
+                titulo="Unidades de venta"
+                asignados={@alcance.sales_units_asignadas}
+                disponibles={@alcance.sales_units_disponibles}
+                nombre_campo={:sales_unit_name}
+                evento_agregar="agregar_sales_unit_a_usuario"
+                evento_quitar="quitar_sales_unit_de_usuario"
+                placeholder_select="— Elegir unidad de venta —"
+                placeholder_vacio="Sin unidades de venta asignadas."
+                default_id={@alcance.sales_unit_default_id}
+                evento_default="toggle_sales_unit_default"
+                nombres_branch={@alcance.nombres_branch}
+              />
             </div>
           <% else %>
             <p class="text-center text-sm text-gray-400 py-24">Elegí un usuario de la izquierda.</p>

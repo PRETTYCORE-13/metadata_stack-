@@ -139,6 +139,51 @@ defmodule MetadataAppWeb.UsuarioAuthTest do
       assert new_token = get_session(conn, :usuario_token)
       assert new_token != token
     end
+
+    # Fase 2 del modelo de Alcance de Datos (2026-08-11) -- confirma que
+    # hidratar_alcance/1 corre de verdad en el mismo pipeline que
+    # empresa_activa, no solo que Autenticacion.alcance_de_usuario/2 (la
+    # función de contexto) funcione aislada.
+    test "hidrata branches/sales_units/inventory_locations permitidos del usuario en la empresa activa", %{
+      conn: conn,
+      usuario: usuario
+    } do
+      {:ok, empresa} = Autenticacion.crear_empresa_para_usuario("Empresa scope test #{System.unique_integer()}", usuario.id)
+      {:ok, branch} = Autenticacion.crear_branch(%{empresa_id: empresa.id, branch_name: "Toluca"})
+
+      {:ok, sales_unit} =
+        Autenticacion.crear_sales_unit(%{empresa_id: empresa.id, branch_id: branch.id, sales_unit_name: "Preventa 1"})
+
+      {:ok, inventory_location} =
+        Autenticacion.crear_inventory_location(%{empresa_id: empresa.id, branch_id: branch.id, inventory_name: "Producto terminado"})
+
+      {:ok, _} = Autenticacion.asignar_branch(usuario.id, branch.id)
+      {:ok, _} = Autenticacion.asignar_sales_unit(usuario.id, sales_unit.id)
+      {:ok, _} = Autenticacion.asignar_inventory_location(usuario.id, inventory_location.id)
+
+      usuario_token = Autenticacion.generate_usuario_session_token(usuario)
+
+      conn =
+        conn
+        |> put_session(:usuario_token, usuario_token)
+        |> put_session(:empresa_activa_id, empresa.id)
+        |> UsuarioAuth.fetch_current_scope_for_usuario([])
+
+      scope = conn.assigns.current_scope
+      assert scope.empresa_activa.id == empresa.id
+      assert scope.branches_permitidos == [branch.id]
+      assert scope.sales_units_permitidas == [sales_unit.id]
+      assert scope.inventory_locations_permitidas == [inventory_location.id]
+    end
+
+    test "sin empresa activa, el alcance queda vacío (nada contra qué acotar la jerarquía)", %{conn: conn, usuario: usuario} do
+      usuario_token = Autenticacion.generate_usuario_session_token(usuario)
+      conn = conn |> put_session(:usuario_token, usuario_token) |> UsuarioAuth.fetch_current_scope_for_usuario([])
+
+      scope = conn.assigns.current_scope
+      refute scope.empresa_activa
+      assert scope.branches_permitidos == []
+    end
   end
 
   describe "on_mount :mount_current_scope" do

@@ -10,6 +10,7 @@ defmodule MetadataApp.Application do
     children = [
       MetadataAppWeb.Telemetry,
       MetadataApp.Repo,
+      MetadataApp.Vault,
       {DNSCluster, query: Application.get_env(:metadata_app, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: MetadataApp.PubSub},
       # Efectos de cortesía (Paso 5b) del Motor de Estados: notificaciones y

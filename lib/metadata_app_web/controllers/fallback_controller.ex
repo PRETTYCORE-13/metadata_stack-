@@ -76,4 +76,21 @@ defmodule MetadataAppWeb.FallbackController do
     |> json(%{errors: %{detail: mensaje}})
   end
 
+  # Jerarquía operativa activa (Fase 5, 2026-08-11) -- CatalogoGenerico
+  # devuelve esto cuando el catálogo exige branch/sales_unit/inventory
+  # location y quien hace el POST no tiene ninguno activo elegido (ver
+  # CatalogoGenerico.validar_campo_requerido_en_attrs/4). Mismos mensajes
+  # que FichaLive.formatear_error/1 para el mismo caso.
+  def call(conn, {:error, {:alcance_requerido, campo}}) do
+    detalle =
+      case campo do
+        "branch_id" -> "No hay una Sucursal activa — elegí una desde la banda de pie antes de crear este registro."
+        "sales_unit_id" -> "No hay una Unidad de Venta activa — elegí una desde la banda de pie antes de crear este registro."
+        "inventory_id" -> "No hay un Almacén activo — elegí uno desde la banda de pie antes de crear este registro."
+      end
+
+    conn
+    |> put_status(:unprocessable_entity)
+    |> json(%{errors: %{detail: detalle}})
+  end
 end
