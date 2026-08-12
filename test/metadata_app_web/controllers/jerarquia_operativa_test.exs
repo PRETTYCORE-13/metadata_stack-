@@ -159,9 +159,14 @@ defmodule MetadataAppWeb.JerarquiaOperativaTest do
 
     conn = set_password_e_iniciar(conn, usuario)
     refute get_session(conn, :branch_activo_id)
-    # inventory sí se auto-activó (1 sola opción) -- el form todavía
-    # tiene que mandarlo (como hidden input) junto con el branch elegido.
-    assert get_session(conn, :inventory_location_activo_id) == inventory.id
+    # Arquitectura ERP (2026-08-13, Empresa -> N Branch -> N Inventory):
+    # antes esto esperaba que inventory se auto-activara solo con la
+    # branch todavía pendiente (1 sola opción en TODA la empresa) -- ya
+    # no tiene sentido: un almacén pertenece a una sucursal puntual, y
+    # sin saber CUÁL sucursal eligió el usuario no hay contra qué
+    # resolverlo. Se resuelve recién al elegir la sucursal (en vivo, con
+    # phx-change, ver UsuarioLive.SeleccionarJerarquia).
+    refute get_session(conn, :inventory_location_activo_id)
 
     conn = get(conn, ~p"/meta_schema_usuario/seleccionar-jerarquia")
     html = html_response(conn, 200)

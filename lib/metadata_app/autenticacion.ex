@@ -389,44 +389,64 @@ defmodule MetadataApp.Autenticacion do
   end
 
   @doc """
-  Resuelve, para las 3 dimensiones de la jerarquía operativa (branch/
-  inventory_location/sales_unit), si hay que auto-activar una (el usuario
-  solo tiene una permitida en esa empresa — mismo criterio que ya usa
-  `UsuarioAuth.log_in_usuario/2` con `empresa_activa_id`), si hace falta
-  pedirle que elija (2+ permitidas) o si no tiene ninguna asignada
-  todavía. `branch`/`inventory_location` son obligatorios de operar;
-  `sales_unit` es el único opcional de los tres -- un `{:vacio}` ahí no
-  bloquea nada, los otros dos sí (ver UsuarioAuth/SeleccionarJerarquiaLive,
-  que consumen esto para decidir si redirigir a elegir o dejar pasar).
+  Resuelve la jerarquía operativa completa para el login/cambio de
+  empresa (2026-08-13, arquitectura ERP: Empresa -> N Branch -> N
+  Inventory -> N Sales Unit, Sales Unit opcional). A diferencia de la
+  versión anterior (las 3 dimensiones resueltas de forma independiente),
+  ahora es en CADENA: branch se resuelve primero (default de
+  `UsuarioEmpresa`); SOLO si branch quedó resuelto (`:automatico`) tiene
+  sentido resolver inventory_location/sales_unit, y se hace contra el
+  default de ESA branch puntual (`UsuarioBranch.inventory_default_id`/
+  `sales_unit_default_id`) -- un almacén pertenece a una sola sucursal,
+  no hay "el almacén default de la empresa" en abstracto. Sin branch
+  resuelto (pendiente o vacío), inventory/sales_unit quedan en `{:vacio}`
+  directo -- no hay contra qué acotarlos todavía (mismo criterio de
+  contención que ya usa `UsuarioAuth.hidratar_inventory_location_activo/5`).
 
   `es_administrador?` (default `false`, el caller lo resuelve con
   `MetadataApp.Permissions.administrador?/2` -- este módulo no depende de
   Permissions, es una capa "arriba") -- un administrador bypasea
   alcance_tipo_efectivo/2 por completo, así que acá también ve TODAS las
-  branches/inventory_locations/sales_units de la empresa, no solo las
-  explícitamente asignadas en usuario_branch/etc (que probablemente ni
-  tenga, es sysadmin) -- encontrado en vivo: sin esto, el selector de la
-  banda de pie (MenuLayout) le mostraba "Empresa" pero nada de
-  branch/inventory, porque las listas asignadas volvían vacías.
+  branches/inventory_locations/sales_units, no solo las explícitamente
+  asignadas (que probablemente ni tenga, es sysadmin).
   """
   def resolver_jerarquia_operativa(usuario_id, empresa_id, es_administrador? \\ false) do
-    defaults = defaults_de_usuario(usuario_id, empresa_id)
+    branch_default = branch_default_de_usuario(usuario_id, empresa_id)
+    branch_resultado = seleccion_con_default(branches_operables(usuario_id, empresa_id, es_administrador?), branch_default)
+
+    case branch_resultado do
+      {:automatico, branch} ->
+        resolver_inventario_de_branch(usuario_id, empresa_id, branch.id, es_administrador?)
+        |> Map.put(:branch, branch_resultado)
+
+      sin_branch_resuelto ->
+        %{branch: sin_branch_resuelto, inventory_location: {:vacio}, sales_unit: {:vacio}}
+    end
+  end
+
+  @doc """
+  Resuelve inventory_location/sales_unit para una sucursal YA CONOCIDA
+  (branch_id concreto) -- separado de resolver_jerarquia_operativa/3 para
+  poder reusarlo cuando el usuario elige la sucursal A MANO (2+
+  permitidas, sin default, ver UsuarioLive.SeleccionarJerarquia) y recién
+  ahí hay contra qué resolver almacén/unidad de venta.
+  """
+  def resolver_inventario_de_branch(usuario_id, empresa_id, branch_id, es_administrador? \\ false) do
+    defaults = defaults_de_branch(usuario_id, branch_id)
 
     %{
-      branch: seleccion_con_default(branches_operables(usuario_id, empresa_id, es_administrador?), defaults.branch),
       inventory_location:
-        seleccion_con_default(inventory_locations_operables(usuario_id, empresa_id, es_administrador?), defaults.inventory_location),
-      sales_unit: seleccion_con_default(sales_units_operables(usuario_id, empresa_id, es_administrador?), defaults.sales_unit)
+        seleccion_con_default(inventory_locations_operables(usuario_id, empresa_id, branch_id, es_administrador?), defaults.inventory_location),
+      sales_unit: seleccion_con_default(sales_units_operables(usuario_id, empresa_id, branch_id, es_administrador?), defaults.sales_unit)
     }
   end
 
-  # Un default configurado (2026-08-12, ver defaults_de_usuario/2) gana
-  # sobre el criterio de "auto-activa solo si hay exactamente 1" -- pero
-  # se revalida que siga entre lo operable ANTES de confiar en él (mismo
-  # criterio de "revalidar en cada hidratación" que ya usa
-  # hidratar_empresa_activa/2): si le revocaron el acceso a esa branch
-  # después de marcarla default, cae al criterio de siempre en vez de
-  # arrastrar una referencia que ya no debería poder operar.
+  # Un default configurado gana sobre el criterio de "auto-activa solo si
+  # hay exactamente 1" -- pero se revalida que siga entre lo operable
+  # ANTES de confiar en él (mismo criterio de "revalidar en cada
+  # hidratación" que ya usa hidratar_empresa_activa/2): si le revocaron
+  # el acceso después de marcarlo default, cae al criterio de siempre en
+  # vez de arrastrar una referencia que ya no debería poder operar.
   defp seleccion_con_default(operables, %{id: default_id} = default) do
     if Enum.any?(operables, &(&1.id == default_id)) do
       {:automatico, default}
@@ -444,41 +464,55 @@ defmodule MetadataApp.Autenticacion do
   defp branches_operables(_usuario_id, empresa_id, true), do: listar_branches(empresa_id)
   defp branches_operables(usuario_id, empresa_id, false), do: branches_de_usuario(usuario_id, empresa_id)
 
-  defp inventory_locations_operables(_usuario_id, empresa_id, true), do: listar_inventory_locations_de_empresa(empresa_id)
-  defp inventory_locations_operables(usuario_id, empresa_id, false), do: inventory_locations_de_usuario(usuario_id, empresa_id)
+  # Acotados a UNA sucursal puntual (2026-08-13) -- ya no "todo lo de la
+  # empresa", mismo criterio que MenuLayout.opciones_de_la_sucursal_activa/4
+  # en la banda de pie (este helper es el que ese código debería terminar
+  # reusando, quedó duplicado a propósito para no acoplar el layout web a
+  # este contexto en esta pasada).
+  defp inventory_locations_operables(_usuario_id, _empresa_id, branch_id, true), do: listar_inventory_locations(branch_id)
 
-  defp sales_units_operables(_usuario_id, empresa_id, true), do: listar_sales_units_de_empresa(empresa_id)
-  defp sales_units_operables(usuario_id, empresa_id, false), do: sales_units_de_usuario(usuario_id, empresa_id)
+  defp inventory_locations_operables(usuario_id, empresa_id, branch_id, false),
+    do: inventory_locations_de_usuario(usuario_id, empresa_id) |> Enum.filter(&(&1.branch_id == branch_id))
+
+  defp sales_units_operables(_usuario_id, _empresa_id, branch_id, true), do: listar_sales_units(branch_id)
+
+  defp sales_units_operables(usuario_id, empresa_id, branch_id, false),
+    do: sales_units_de_usuario(usuario_id, empresa_id) |> Enum.filter(&(&1.branch_id == branch_id))
 
   @doc "El branch operable por el usuario en esa empresa cuyo id coincide, o nil -- nunca confiar en un id que llega de sesión/form sin revalidar (mismo criterio que obtener_empresa_de_usuario/2). `es_administrador?` amplía el universo a TODAS las branches de la empresa, ver resolver_jerarquia_operativa/3."
   def obtener_branch_de_usuario(usuario_id, empresa_id, branch_id, es_administrador? \\ false),
     do: Enum.find(branches_operables(usuario_id, empresa_id, es_administrador?), &(&1.id == branch_id))
 
-  @doc "Igual que obtener_branch_de_usuario/4, para Sales Unit."
-  def obtener_sales_unit_de_usuario(usuario_id, empresa_id, sales_unit_id, es_administrador? \\ false),
-    do: Enum.find(sales_units_operables(usuario_id, empresa_id, es_administrador?), &(&1.id == sales_unit_id))
+  @doc "Igual que obtener_branch_de_usuario/4, para Sales Unit -- acotado a UNA sucursal puntual (ver resolver_jerarquia_operativa/3)."
+  def obtener_sales_unit_de_usuario(usuario_id, empresa_id, branch_id, sales_unit_id, es_administrador? \\ false),
+    do: Enum.find(sales_units_operables(usuario_id, empresa_id, branch_id, es_administrador?), &(&1.id == sales_unit_id))
 
-  @doc "Igual que obtener_branch_de_usuario/4, para Inventory Location."
-  def obtener_inventory_location_de_usuario(usuario_id, empresa_id, inventory_id, es_administrador? \\ false),
-    do: Enum.find(inventory_locations_operables(usuario_id, empresa_id, es_administrador?), &(&1.id == inventory_id))
+  @doc "Igual que obtener_branch_de_usuario/4, para Inventory Location -- acotado a UNA sucursal puntual (ver resolver_jerarquia_operativa/3)."
+  def obtener_inventory_location_de_usuario(usuario_id, empresa_id, branch_id, inventory_id, es_administrador? \\ false),
+    do: Enum.find(inventory_locations_operables(usuario_id, empresa_id, branch_id, es_administrador?), &(&1.id == inventory_id))
+
+  @doc "Branch \"default\" del usuario en esa empresa (2026-08-12) -- lo que un admin pre-configuró para que el login lo auto-active, distinto de \"permitido\" (branches_de_usuario/2, el universo asignado) y de \"activo\" (Scope, de la sesión). `nil` = sin default (el login cae al criterio de siempre: auto-activa si hay exactamente 1 permitida)."
+  def branch_default_de_usuario(usuario_id, empresa_id) do
+    case Repo.get_by(UsuarioEmpresa, usuario_id: usuario_id, empresa_id: empresa_id) do
+      nil -> nil
+      usuario_empresa -> Repo.preload(usuario_empresa, :branch_default).branch_default
+    end
+  end
 
   @doc """
-  Branch/Sales Unit/Inventory Location "default" del usuario en esa
-  empresa (2026-08-12) -- lo que un admin pre-configuró para que el
-  login lo auto-active, distinto de "permitido" (branches_de_usuario/2
-  etc, el universo asignado) y de "activo" (Scope, de la sesión). `nil`
-  en cualquiera de los 3 = sin default configurado para esa dimensión
-  (el login cae al criterio de siempre: auto-activa si hay exactamente 1
-  permitida). Ver UsuariosEmpresaLive, pestaña Alcance, botón "Default".
+  Inventory Location / Sales Unit "default" del usuario para UNA
+  sucursal puntual (2026-08-13, vive en UsuarioBranch -- ver el moduledoc
+  del schema). `nil` en cualquiera de los 2 = sin default configurado
+  para esa dimensión en esa sucursal.
   """
-  def defaults_de_usuario(usuario_id, empresa_id) do
-    case Repo.get_by(UsuarioEmpresa, usuario_id: usuario_id, empresa_id: empresa_id) do
+  def defaults_de_branch(usuario_id, branch_id) do
+    case Repo.get_by(UsuarioBranch, usuario_id: usuario_id, branch_id: branch_id) do
       nil ->
-        %{branch: nil, sales_unit: nil, inventory_location: nil}
+        %{inventory_location: nil, sales_unit: nil}
 
-      usuario_empresa ->
-        usuario_empresa = Repo.preload(usuario_empresa, [:branch_default, :sales_unit_default, :inventory_default])
-        %{branch: usuario_empresa.branch_default, sales_unit: usuario_empresa.sales_unit_default, inventory_location: usuario_empresa.inventory_default}
+      usuario_branch ->
+        usuario_branch = Repo.preload(usuario_branch, [:inventory_default, :sales_unit_default])
+        %{inventory_location: usuario_branch.inventory_default, sales_unit: usuario_branch.sales_unit_default}
     end
   end
 
@@ -488,34 +522,55 @@ defmodule MetadataApp.Autenticacion do
   branches PERMITIDAS del usuario (no tiene sentido un default fuera de
   lo que puede operar); `{:error, :fuera_de_alcance}` si no lo está.
   """
-  def definir_branch_default(usuario_id, empresa_id, branch_id, es_administrador? \\ false) do
-    definir_default(usuario_id, empresa_id, :branch_default_id, branch_id, fn u, e, id ->
-      obtener_branch_de_usuario(u, e, id, es_administrador?)
-    end)
+  def definir_branch_default(usuario_id, empresa_id, branch_id, es_administrador? \\ false)
+
+  def definir_branch_default(usuario_id, empresa_id, nil, _es_administrador?) do
+    atualizar_usuario_empresa(usuario_id, empresa_id, %{"branch_default_id" => nil})
   end
 
-  @doc "Igual que definir_branch_default/3, para Sales Unit."
-  def definir_sales_unit_default(usuario_id, empresa_id, sales_unit_id, es_administrador? \\ false) do
-    definir_default(usuario_id, empresa_id, :sales_unit_default_id, sales_unit_id, fn u, e, id ->
-      obtener_sales_unit_de_usuario(u, e, id, es_administrador?)
-    end)
-  end
-
-  @doc "Igual que definir_branch_default/3, para Inventory Location."
-  def definir_inventory_location_default(usuario_id, empresa_id, inventory_id, es_administrador? \\ false) do
-    definir_default(usuario_id, empresa_id, :inventory_default_id, inventory_id, fn u, e, id ->
-      obtener_inventory_location_de_usuario(u, e, id, es_administrador?)
-    end)
-  end
-
-  defp definir_default(usuario_id, empresa_id, campo, nil, _validador) do
-    atualizar_usuario_empresa(usuario_id, empresa_id, %{Atom.to_string(campo) => nil})
-  end
-
-  defp definir_default(usuario_id, empresa_id, campo, id, validador) do
-    case validador.(usuario_id, empresa_id, id) do
+  def definir_branch_default(usuario_id, empresa_id, branch_id, es_administrador?) do
+    case obtener_branch_de_usuario(usuario_id, empresa_id, branch_id, es_administrador?) do
       nil -> {:error, :fuera_de_alcance}
-      _valido -> atualizar_usuario_empresa(usuario_id, empresa_id, %{Atom.to_string(campo) => id})
+      _branch -> atualizar_usuario_empresa(usuario_id, empresa_id, %{"branch_default_id" => branch_id})
+    end
+  end
+
+  @doc """
+  Fija (o limpia, con `nil`) el default de almacén de un usuario para UNA
+  sucursal puntual -- revalida que el almacén pertenezca a ESA sucursal
+  Y que el usuario tenga acceso (mismo criterio que definir_branch_default/4).
+  Estructuralmente no se puede fijar un almacén de OTRA sucursal como
+  default de esta: obtener_inventory_location_de_usuario/5 ya viene
+  acotado a `branch_id`, así que ni aparece como opción válida.
+  """
+  def definir_inventory_default_de_branch(usuario_id, branch_id, inventory_id, es_administrador? \\ false)
+
+  def definir_inventory_default_de_branch(usuario_id, branch_id, nil, _es_administrador?) do
+    atualizar_usuario_branch(usuario_id, branch_id, %{"inventory_default_id" => nil})
+  end
+
+  def definir_inventory_default_de_branch(usuario_id, branch_id, inventory_id, es_administrador?) do
+    with %Branch{empresa_id: empresa_id} <- Repo.get(Branch, branch_id),
+         %InventoryLocation{} <- obtener_inventory_location_de_usuario(usuario_id, empresa_id, branch_id, inventory_id, es_administrador?) do
+      atualizar_usuario_branch(usuario_id, branch_id, %{"inventory_default_id" => inventory_id})
+    else
+      _ -> {:error, :fuera_de_alcance}
+    end
+  end
+
+  @doc "Igual que definir_inventory_default_de_branch/4, para Sales Unit -- único de los 3 defaults que puede quedar sin fijar (opcional)."
+  def definir_sales_unit_default_de_branch(usuario_id, branch_id, sales_unit_id, es_administrador? \\ false)
+
+  def definir_sales_unit_default_de_branch(usuario_id, branch_id, nil, _es_administrador?) do
+    atualizar_usuario_branch(usuario_id, branch_id, %{"sales_unit_default_id" => nil})
+  end
+
+  def definir_sales_unit_default_de_branch(usuario_id, branch_id, sales_unit_id, es_administrador?) do
+    with %Branch{empresa_id: empresa_id} <- Repo.get(Branch, branch_id),
+         %SalesUnit{} <- obtener_sales_unit_de_usuario(usuario_id, empresa_id, branch_id, sales_unit_id, es_administrador?) do
+      atualizar_usuario_branch(usuario_id, branch_id, %{"sales_unit_default_id" => sales_unit_id})
+    else
+      _ -> {:error, :fuera_de_alcance}
     end
   end
 
@@ -523,6 +578,28 @@ defmodule MetadataApp.Autenticacion do
     case Repo.get_by(UsuarioEmpresa, usuario_id: usuario_id, empresa_id: empresa_id) do
       nil -> {:error, :no_encontrado}
       usuario_empresa -> usuario_empresa |> UsuarioEmpresa.changeset_default(attrs) |> Repo.update()
+    end
+  end
+
+  defp atualizar_usuario_branch(usuario_id, branch_id, attrs) do
+    case Repo.get_by(UsuarioBranch, usuario_id: usuario_id, branch_id: branch_id) do
+      nil -> {:error, :no_encontrado}
+      usuario_branch -> usuario_branch |> MetadataApp.Autenticacion.UsuarioBranch.changeset_default(attrs) |> Repo.update()
+    end
+  end
+
+  @doc """
+  Jerarquía operativa "completa" de un usuario en una empresa (2026-08-13)
+  -- true solo si TIENE branch default Y ese branch tiene inventory
+  default (sales_unit queda afuera, es opcional). Usado para BLOQUEAR
+  operar/crear en catálogos con Alcance de Datos: "ver todo" (admin
+  incluido) no exime de tener una Unidad Operativa configurada, ver
+  CatalogoGenerico.preparar_attrs_alcance/4.
+  """
+  def jerarquia_completa?(usuario_id, empresa_id) do
+    case branch_default_de_usuario(usuario_id, empresa_id) do
+      nil -> false
+      branch -> not is_nil(defaults_de_branch(usuario_id, branch.id).inventory_location)
     end
   end
 
