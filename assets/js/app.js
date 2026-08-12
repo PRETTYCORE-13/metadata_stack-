@@ -30,6 +30,8 @@ import RenglonForm from "./hooks/renglon_form"
 import ReferenciaField from "./hooks/referencia_field"
 import GridConstructor from "./hooks/grid_constructor"
 import RelacionCampos from "./hooks/relacion_campos"
+import FormatoCapturaField from "./hooks/formato_captura_field"
+import FormatoNumericoField from "./hooks/formato_numerico_field"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 
@@ -329,9 +331,25 @@ const AbrirCalendario = {
   mounted() {
     this.el.addEventListener("click", () => this.abrir())
     this.el.addEventListener("focus", () => this.abrir())
+    // Modo "fecha" de "Formato de captura" (campo_input_components.ex):
+    // este <input type="date"> vive oculto (sr-only) al lado de un input
+    // de texto con máscara "99/99/9999" — `data-destino` es el id de ESE
+    // input. Elegir una fecha acá la escribe ya formateada ahí (en vez de
+    // reemplazarlo por un date input real, que perdería la posibilidad de
+    // seguir tipeando el patrón a mano) y dispara "input" para que el
+    // phx-change de siempre la vea.
+    if (this.el.dataset.destino) this.el.addEventListener("change", () => this.sincronizar())
   },
   abrir() {
     if (typeof this.el.showPicker === "function") this.el.showPicker()
+  },
+  sincronizar() {
+    const destino = document.getElementById(this.el.dataset.destino)
+    if (!destino || !this.el.value) return
+    const [anio, mes, dia] = this.el.value.split("-")
+    destino.value = `${dia}/${mes}/${anio}`
+    destino.dispatchEvent(new Event("input", {bubbles: true}))
+    destino.focus()
   },
 }
 
@@ -699,7 +717,7 @@ const AbrirVistaPrevia = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField},
 })
 
 // Show progress bar on live navigation and form submits
