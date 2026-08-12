@@ -11,7 +11,13 @@ defmodule MetadataAppWeb.CatalogoLive do
   alias MetadataApp.FiltrosDefault
   alias MetadataApp.Permissions
   alias MetadataApp.Autenticacion.Scope
+  alias MetadataApp.Autenticacion.Branch
+  alias MetadataApp.Autenticacion.SalesUnit
+  alias MetadataApp.Autenticacion.InventoryLocation
+  alias MetadataApp.Autenticacion.Empresa
+  alias MetadataApp.Repo
   alias MetadataAppWeb.AdminNav
+  import Ecto.Query
 
   @por_pagina 25
 
@@ -93,6 +99,10 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:mostrar_id?, header.mostrar_id_en_tabla)
      |> assign(:mostrar_estado?, estados_por_id != %{} and header.mostrar_estado_en_tabla)
      |> assign(:mostrar_trn?, header.schema_es_transaccional and header.mostrar_trn_en_tabla)
+     |> assign(:mostrar_empresa?, header.alcance_habilitado and header.mostrar_empresa_en_tabla)
+     |> assign(:mostrar_branch?, header.alcance_habilitado and header.mostrar_branch_en_tabla)
+     |> assign(:mostrar_inventory_location?, header.alcance_habilitado and header.mostrar_inventory_location_en_tabla)
+     |> assign(:mostrar_sales_unit?, header.alcance_habilitado and header.mostrar_sales_unit_en_tabla)
      |> assign(:modulo, modulo)
      |> assign(:es_detalle?, es_detalle?)
      |> assign(:campos_alta, campos_alta)
@@ -555,7 +565,10 @@ defmodule MetadataAppWeb.CatalogoLive do
         CatalogoGenerico.listar(modulo, socket.assigns[:current_scope], filtros_ecto, [limit: @por_pagina, offset: offset], busqueda)
       acompanamiento = CatalogoGenerico.mapa_acompanamiento(catalogo, registros)
 
-      filas = Enum.map(registros, &CatalogoGenerico.serializar(&1, estados_por_id, acompanamiento))
+      filas =
+        registros
+        |> Enum.map(&CatalogoGenerico.serializar(&1, estados_por_id, acompanamiento))
+        |> agregar_alcance_a_filas(socket.assigns)
 
       socket
       |> assign(:filas, filas)
@@ -574,6 +587,54 @@ defmodule MetadataAppWeb.CatalogoLive do
       |> assign(:fin, 0)
     end
   end
+
+  # Columnas de Alcance de Datos (2026-08-12) — mismo criterio batch-por-
+  # página que mapa_acompanamiento/2 de CatalogoGenerico (nunca una query
+  # por fila): junta los ids que de verdad aparecen en ESTA página,
+  # resuelve nombre en 3 queries chicas (branch/sales_unit/inventory) más
+  # una cuarta para Empresa (encadenada desde branch_id -> Branch.empresa_id,
+  # no hay columna empresa_id propia en la fila -- ver moduledoc de
+  # CatalogoGenerador.columnas_alcance/1). Si ninguna de las 4 columnas
+  # está habilitada para mostrarse, no pega ninguna query de más.
+  defp agregar_alcance_a_filas(filas, %{mostrar_empresa?: false, mostrar_branch?: false, mostrar_inventory_location?: false, mostrar_sales_unit?: false}),
+    do: filas
+
+  defp agregar_alcance_a_filas(filas, _assigns) do
+    branch_ids = ids_unicos(filas, :branch_id)
+    sales_unit_ids = ids_unicos(filas, :sales_unit_id)
+    inventory_ids = ids_unicos(filas, :inventory_id)
+
+    branches =
+      if branch_ids == [], do: [], else: Repo.all(from(b in Branch, where: b.id in ^branch_ids, select: {b.id, b.branch_name, b.empresa_id}))
+
+    branch_nombre_por_id = Map.new(branches, fn {id, nombre, _empresa_id} -> {id, nombre} end)
+    empresa_id_por_branch = Map.new(branches, fn {id, _nombre, empresa_id} -> {id, empresa_id} end)
+    empresa_ids = empresa_id_por_branch |> Map.values() |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+    empresa_nombre_por_id =
+      if empresa_ids == [], do: %{}, else: Repo.all(from(e in Empresa, where: e.id in ^empresa_ids, select: {e.id, e.nombre})) |> Map.new()
+
+    sales_unit_nombre_por_id =
+      if sales_unit_ids == [], do: %{}, else: Repo.all(from(s in SalesUnit, where: s.id in ^sales_unit_ids, select: {s.id, s.sales_unit_name})) |> Map.new()
+
+    inventory_nombre_por_id =
+      if inventory_ids == [], do: %{}, else: Repo.all(from(i in InventoryLocation, where: i.id in ^inventory_ids, select: {i.id, i.inventory_name})) |> Map.new()
+
+    Enum.map(filas, fn fila ->
+      branch_id = Map.get(fila, :branch_id)
+      empresa_id = branch_id && Map.get(empresa_id_por_branch, branch_id)
+      sales_unit_id = Map.get(fila, :sales_unit_id)
+      inventory_id = Map.get(fila, :inventory_id)
+
+      fila
+      |> Map.put(:branch_nombre, branch_id && Map.get(branch_nombre_por_id, branch_id))
+      |> Map.put(:sales_unit_nombre, sales_unit_id && Map.get(sales_unit_nombre_por_id, sales_unit_id))
+      |> Map.put(:inventory_nombre, inventory_id && Map.get(inventory_nombre_por_id, inventory_id))
+      |> Map.put(:empresa_nombre, empresa_id && Map.get(empresa_nombre_por_id, empresa_id))
+    end)
+  end
+
+  defp ids_unicos(filas, campo), do: filas |> Enum.map(&Map.get(&1, campo)) |> Enum.reject(&is_nil/1) |> Enum.uniq()
 
   # A partir de los valores crudos de la barra de filtros (todo strings,
   # como llega cualquier form) arma el mapa de filtros que entiende
@@ -935,7 +996,7 @@ defmodule MetadataAppWeb.CatalogoLive do
               busqueda_campo_filtro={@busqueda_campo_filtro}
             />
           </div>
-          <.panel_campos campos={campos_selector(@columnas, @mostrar_id?, @mostrar_estado?, @mostrar_trn?)} tabla_id="tabla-catalogo" />
+          <.panel_campos campos={campos_selector(@columnas, @mostrar_id?, @mostrar_estado?, @mostrar_trn?, @mostrar_empresa?, @mostrar_branch?, @mostrar_inventory_location?, @mostrar_sales_unit?)} tabla_id="tabla-catalogo" />
         </div>
 
         <div :if={@filtro_default_fecha_descripcion} class="flex items-center gap-1.5 text-[11px] font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-2.5 py-1.5 mb-4 w-fit">
@@ -971,6 +1032,18 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <%= if @mostrar_trn? do %>
                   <th data-col="trn" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">TRN</th>
                 <% end %>
+                <%= if @mostrar_empresa? do %>
+                  <th data-col="empresa" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Empresa</th>
+                <% end %>
+                <%= if @mostrar_branch? do %>
+                  <th data-col="branch" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Sucursal</th>
+                <% end %>
+                <%= if @mostrar_inventory_location? do %>
+                  <th data-col="inventory_location" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Almacén</th>
+                <% end %>
+                <%= if @mostrar_sales_unit? do %>
+                  <th data-col="sales_unit" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Unidad de venta</th>
+                <% end %>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide"></th>
               </tr>
             </thead>
@@ -999,6 +1072,18 @@ defmodule MetadataAppWeb.CatalogoLive do
                   <%= if @mostrar_trn? do %>
                     <td data-col="trn" class="px-4 py-1.5 text-[10px] text-gray-700 font-mono" title={Map.get(fila, :ulid)}>{Map.get(fila, :trn)}</td>
                   <% end %>
+                  <%= if @mostrar_empresa? do %>
+                    <td data-col="empresa" class="px-4 py-1.5 text-[10px] text-gray-700">{Map.get(fila, :empresa_nombre)}</td>
+                  <% end %>
+                  <%= if @mostrar_branch? do %>
+                    <td data-col="branch" class="px-4 py-1.5 text-[10px] text-gray-700">{Map.get(fila, :branch_nombre)}</td>
+                  <% end %>
+                  <%= if @mostrar_inventory_location? do %>
+                    <td data-col="inventory_location" class="px-4 py-1.5 text-[10px] text-gray-700">{Map.get(fila, :inventory_nombre)}</td>
+                  <% end %>
+                  <%= if @mostrar_sales_unit? do %>
+                    <td data-col="sales_unit" class="px-4 py-1.5 text-[10px] text-gray-700">{Map.get(fila, :sales_unit_nombre)}</td>
+                  <% end %>
                   <td class="px-4 py-1.5 text-xs text-right">
                     <.link navigate={"/registro/#{@current_page}/#{fila.id}"}
                       title="Ver ficha 360°"
@@ -1016,7 +1101,9 @@ defmodule MetadataAppWeb.CatalogoLive do
                     class="px-4 py-10 text-center text-gray-400 text-sm"
                     colspan={
                       1 + (if @mostrar_id?, do: 1, else: 0) + (if @mostrar_trn?, do: 1, else: 0) + length(@columnas) +
-                        if(@mostrar_estado?, do: 1, else: 0)
+                        (if @mostrar_estado?, do: 1, else: 0) + (if @mostrar_empresa?, do: 1, else: 0) +
+                        (if @mostrar_branch?, do: 1, else: 0) + (if @mostrar_inventory_location?, do: 1, else: 0) +
+                        if(@mostrar_sales_unit?, do: 1, else: 0)
                     }
                   >
                     <%= if @sin_filtro? do %>
@@ -1041,6 +1128,10 @@ defmodule MetadataAppWeb.CatalogoLive do
                 />
                 <td :if={@mostrar_estado?}></td>
                 <td :if={@mostrar_trn?}></td>
+                <td :if={@mostrar_empresa?}></td>
+                <td :if={@mostrar_branch?}></td>
+                <td :if={@mostrar_inventory_location?}></td>
+                <td :if={@mostrar_sales_unit?}></td>
                 <td></td>
               </tr>
             </tfoot>
@@ -1087,11 +1178,15 @@ defmodule MetadataAppWeb.CatalogoLive do
     Enum.map(columnas, &%{clave: col_key(&1), etiqueta: &1.schema_context_properties["etiqueta"]})
   end
 
-  defp campos_selector(columnas, mostrar_id?, mostrar_estado?, mostrar_trn?) do
+  defp campos_selector(columnas, mostrar_id?, mostrar_estado?, mostrar_trn?, mostrar_empresa?, mostrar_branch?, mostrar_inventory_location?, mostrar_sales_unit?) do
     (if mostrar_id?, do: [%{clave: "id", etiqueta: "ID"}], else: []) ++
       campos_selector(columnas) ++
       (if mostrar_estado?, do: [%{clave: "estado", etiqueta: "Estado"}], else: []) ++
-      (if mostrar_trn?, do: [%{clave: "trn", etiqueta: "TRN"}], else: [])
+      (if mostrar_trn?, do: [%{clave: "trn", etiqueta: "TRN"}], else: []) ++
+      (if mostrar_empresa?, do: [%{clave: "empresa", etiqueta: "Empresa"}], else: []) ++
+      (if mostrar_branch?, do: [%{clave: "branch", etiqueta: "Sucursal"}], else: []) ++
+      (if mostrar_inventory_location?, do: [%{clave: "inventory_location", etiqueta: "Almacén"}], else: []) ++
+      (if mostrar_sales_unit?, do: [%{clave: "sales_unit", etiqueta: "Unidad de venta"}], else: [])
   end
 
   # "Total 25" (Get View → Filtros → "Total 25", bc_motor_live.ex) — a

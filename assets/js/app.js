@@ -514,6 +514,50 @@ const SelectorCampos = {
   },
 }
 
+// Aviso "cambiaste de Unidad Operativa" (2026-08-13) — detección 100%
+// client-side, sin flash ni sesión de por medio: el server solo expone la
+// firma ACTUAL (Empresa+Branch+Inventory, ver firma_unidad_operativa/1 en
+// menu_layout.ex) en un elemento con phx-update="ignore" (nunca lo toca el
+// diff de LiveView). Al montar, compara esa firma contra la última guardada
+// en localStorage del navegador — si YA había una guardada y es distinta,
+// significa que la Unidad Operativa cambió desde la última vez que este
+// navegador vio una página (footer, cambio de empresa, etc.), y dispara el
+// aviso. Primera visita nunca dispara (no hay firma previa contra qué
+// comparar) — no tendría sentido avisar de un "cambio" que en realidad es
+// solo la primera carga.
+const UnidadOperativaWatcher = {
+  mounted() {
+    const clave = "pc_unidad_operativa_firma"
+    const firma = this.el.dataset.firma
+    const anterior = localStorage.getItem(clave)
+
+    if (firma && anterior !== null && anterior !== firma) {
+      this.avisar()
+    }
+
+    if (firma) localStorage.setItem(clave, firma)
+  },
+
+  avisar() {
+    const modal = document.getElementById("modal-unidad-operativa")
+    const detalle = document.getElementById("modal-unidad-operativa-detalle")
+    if (!modal) return
+
+    if (detalle) {
+      const partes = [this.el.dataset.empresa, this.el.dataset.branch, this.el.dataset.inventory].filter(Boolean)
+      detalle.textContent = partes.join(" · ")
+    }
+
+    modal.classList.remove("hidden")
+    clearTimeout(this.temporizador)
+    this.temporizador = setTimeout(() => modal.classList.add("hidden"), 4500)
+  },
+
+  destroyed() {
+    clearTimeout(this.temporizador)
+  },
+}
+
 // Copia el contenido de un <textarea> al portapapeles — usado en el editor
 // de reglas PRE/POST de BcMotorLive (panel_reglas), para poder trabajar la
 // regla en otro editor y volver a pegarla acá antes de "Compilar". Lee
@@ -717,7 +761,7 @@ const AbrirVistaPrevia = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField, UnidadOperativaWatcher},
 })
 
 // Show progress bar on live navigation and form submits

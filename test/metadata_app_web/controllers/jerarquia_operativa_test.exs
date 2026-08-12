@@ -177,4 +177,108 @@ defmodule MetadataAppWeb.JerarquiaOperativaTest do
     assert get_session(conn, :branch_activo_id) == branch_a.id
     assert get_session(conn, :inventory_location_activo_id) == inventory.id
   end
+
+  # Unidad Operativa (2026-08-13, arquitectura ERP: Empresa -> N Branch ->
+  # N Inventory -> N Sales Unit) -- un almacén de OTRA sucursal no puede
+  # quedar "activo" a la vez que esa otra sucursal está activa. Antes de
+  # esto, cambiar de sucursal desde la banda de pie dejaba el almacén
+  # viejo colgado en sesión, y la hidratación lo revalidaba solo contra
+  # "está permitido en la empresa", nunca contra "pertenece a la
+  # sucursal activa" -- este test cubre ese hueco.
+  test "cambiar de sucursal saca de circulación el almacén de la sucursal anterior", %{conn: conn} do
+    usuario = usuario_fixture()
+    {:ok, empresa} = Autenticacion.crear_empresa_para_usuario("Empresa jerarquia op 8 #{System.unique_integer()}", usuario.id)
+    {:ok, branch_a} = Autenticacion.crear_branch(%{empresa_id: empresa.id, branch_name: "Toluca"})
+    {:ok, branch_b} = Autenticacion.crear_branch(%{empresa_id: empresa.id, branch_name: "Puebla"})
+    {:ok, inventory_a} = Autenticacion.crear_inventory_location(%{empresa_id: empresa.id, branch_id: branch_a.id, inventory_name: "Producto terminado"})
+    {:ok, inventory_b} = Autenticacion.crear_inventory_location(%{empresa_id: empresa.id, branch_id: branch_b.id, inventory_name: "Materia prima"})
+    Autenticacion.asignar_branch(usuario.id, branch_a.id)
+    Autenticacion.asignar_branch(usuario.id, branch_b.id)
+    Autenticacion.asignar_inventory_location(usuario.id, inventory_a.id)
+    Autenticacion.asignar_inventory_location(usuario.id, inventory_b.id)
+
+    # 2 branches permitidas = login deja branch_activo SIN elegir (mismo
+    # criterio que el test de arriba "2+ branches... NO bloquea") -- hay
+    # que elegir a mano, primero Toluca y su almacén.
+    conn = set_password_e_iniciar(conn, usuario)
+    refute get_session(conn, :branch_activo_id)
+
+    conn =
+      conn
+      |> recycle()
+      |> Plug.Conn.put_req_header("referer", "http://localhost/sysadmin/bc-list")
+      |> post(~p"/meta_schema_usuario/branch/activar", %{"id" => to_string(branch_a.id)})
+
+    assert get_session(conn, :branch_activo_id) == branch_a.id
+
+    conn =
+      conn
+      |> recycle()
+      |> Plug.Conn.put_req_header("referer", "http://localhost/sysadmin/bc-list")
+      |> post(~p"/meta_schema_usuario/inventory-location/activar", %{"id" => to_string(inventory_a.id)})
+
+    assert get_session(conn, :inventory_location_activo_id) == inventory_a.id
+
+    conn =
+      conn
+      |> recycle()
+      |> Plug.Conn.put_req_header("referer", "http://localhost/sysadmin/bc-list")
+      |> post(~p"/meta_schema_usuario/branch/activar", %{"id" => to_string(branch_b.id)})
+
+    assert get_session(conn, :branch_activo_id) == branch_b.id
+
+    conn = get(recycle(conn), ~p"/")
+    html = html_response(conn, 200)
+
+    # El de Toluca (sucursal ya no activa) ni aparece como opción --
+    # solo se ofrecen los almacenes de la sucursal ACTIVA (Puebla).
+    refute html =~ inventory_a.inventory_name
+    assert html =~ inventory_b.inventory_name
+  end
+
+  # Regresión (2026-08-13): hidratar_jerarquia_activa/4 no pasaba
+  # es_administrador? -- un administrador que elegía sucursal/almacén
+  # desde la banda de pie (JerarquiaSessionController, que SÍ lo pasa) lo
+  # perdía en la SIGUIENTE carga de página, porque la revalidación caía
+  # de nuevo en "solo lo explícitamente asignado" (vacío para un admin).
+  test "un administrador conserva la sucursal/almacén elegidos en la banda de pie después de navegar", %{conn: conn} do
+    usuario = usuario_fixture()
+    {:ok, empresa} = Autenticacion.crear_empresa_para_usuario("Empresa jerarquia op 9 #{System.unique_integer()}", usuario.id)
+    {:ok, branch} = Autenticacion.crear_branch(%{empresa_id: empresa.id, branch_name: "Toluca"})
+    # Una segunda sucursal a propósito -- con una sola, el admin la vería
+    # auto-activada YA al login (bypass = ve TODAS las de la empresa), y
+    # el test no ejercitaría la re-hidratación que es lo que se corrigió.
+    {:ok, _otra_branch} = Autenticacion.crear_branch(%{empresa_id: empresa.id, branch_name: "Puebla"})
+    {:ok, inventory} = Autenticacion.crear_inventory_location(%{empresa_id: empresa.id, branch_id: branch.id, inventory_name: "Producto terminado"})
+
+    # Ningún asignar_branch/asignar_inventory_location a propósito --
+    # "usuario" acá quedó administrador vía crear_empresa_para_usuario/2,
+    # y un admin normalmente no tiene nada asignado explícito.
+    conn = set_password_e_iniciar(conn, usuario)
+    refute get_session(conn, :branch_activo_id)
+
+    conn =
+      conn
+      |> recycle()
+      |> Plug.Conn.put_req_header("referer", "http://localhost/sysadmin/bc-list")
+      |> post(~p"/meta_schema_usuario/branch/activar", %{"id" => to_string(branch.id)})
+
+    assert get_session(conn, :branch_activo_id) == branch.id
+
+    conn =
+      conn
+      |> recycle()
+      |> Plug.Conn.put_req_header("referer", "http://localhost/sysadmin/bc-list")
+      |> post(~p"/meta_schema_usuario/inventory-location/activar", %{"id" => to_string(inventory.id)})
+
+    assert get_session(conn, :inventory_location_activo_id) == inventory.id
+
+    # Navegar a OTRA página (nueva hidratación) -- antes de la corrección,
+    # branch/inventory activos se perdían acá.
+    conn = get(recycle(conn), ~p"/")
+    html = html_response(conn, 200)
+
+    assert html =~ "Toluca"
+    assert html =~ "Producto terminado"
+  end
 end

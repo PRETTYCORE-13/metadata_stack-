@@ -36,6 +36,7 @@ defmodule MetadataAppWeb.MenuLayout do
       |> assign(:nodo_actual, buscar_nodo_actual(assigns.menu_items, assigns.current_page))
       |> assign(:nombre_empresa, nombre_empresa_activa(assigns[:current_scope]))
       |> assign(:jerarquia_opciones, opciones_jerarquia_activa(assigns[:current_scope]))
+      |> assign(:firma_unidad_operativa, firma_unidad_operativa(assigns[:current_scope]))
       |> assign(:anio_actual, Date.utc_today().year)
       |> assign(:bpb_habilitado, Application.get_env(:metadata_app, :bpb_habilitado, false))
       |> asignar_datos_usuario()
@@ -417,6 +418,36 @@ defmodule MetadataAppWeb.MenuLayout do
           </div>
         </div>
 
+        <!-- Aviso "cambiaste de Unidad Operativa" (2026-08-13) -- elemento
+             invisible con phx-update="ignore" (nunca lo re-renderiza el
+             diff de LiveView, solo lo lee el hook al montar) que carga la
+             firma ACTUAL; el hook compara contra la firma guardada en el
+             navegador y decide si mostrar el aviso. Ver
+             firma_unidad_operativa/1 y UnidadOperativaWatcher en app.js. -->
+        <div
+          id="unidad-operativa-watcher"
+          phx-hook="UnidadOperativaWatcher"
+          phx-update="ignore"
+          data-firma={@firma_unidad_operativa}
+          data-empresa={@current_scope && @current_scope.empresa_activa && @current_scope.empresa_activa.nombre}
+          data-branch={@current_scope && @current_scope.branch_activo && @current_scope.branch_activo.branch_name}
+          data-inventory={@current_scope && @current_scope.inventory_location_activo && @current_scope.inventory_location_activo.inventory_name}
+          class="hidden"
+        >
+        </div>
+
+        <div id="modal-unidad-operativa" class="pc-modal-unidad-operativa hidden">
+          <div class="pc-modal-unidad-operativa-caja">
+            <svg class="pc-modal-unidad-operativa-icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+            </svg>
+            <div>
+              <p class="pc-modal-unidad-operativa-titulo">Cambiaste tu Unidad Operativa</p>
+              <p class="pc-modal-unidad-operativa-detalle" id="modal-unidad-operativa-detalle"></p>
+            </div>
+          </div>
+        </div>
+
         <%= if @nodo_actual do %>
           <button
             type="button"
@@ -666,28 +697,57 @@ defmodule MetadataAppWeb.MenuLayout do
   # sentido (probablemente ni tenga nada asignado, es sysadmin) y lo
   # dejaba SIN selector (encontrado en vivo: "Empresa" aparecía, branch/
   # inventory no, porque las listas volvían vacías). Ve TODAS las
-  # opciones de la empresa activa en cambio -- mismo criterio que ya usa
+  # branches de la empresa activa en cambio -- mismo criterio que ya usa
   # alcance_tipo_efectivo/2 para el filtrado de datos.
-  defp opciones_jerarquia_activa(%MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa})
+  #
+  # Unidad Operativa (2026-08-13, arquitectura ERP: Empresa -> N Branch ->
+  # N Inventory -> N Sales Unit -- Sales Unit opcional): Almacén y Unidad
+  # de venta SIEMPRE se acotan a la Sucursal ACTIVA, nunca "todos los de
+  # la empresa" -- antes de esto, con la sucursal "Toluca" activa, el
+  # selector de Almacén igual ofrecía almacenes de "Metepec". Sin
+  # sucursal activa todavía (recién elegida empresa, nada más), ninguna
+  # de las dos tiene sentido -- listas vacías hasta que se elija sucursal.
+  defp opciones_jerarquia_activa(%MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa} = scope)
        when not is_nil(usuario) and not is_nil(empresa) do
-    if MetadataApp.Permissions.administrador?(usuario.id, empresa.id) do
-      %{
-        empresas: MetadataApp.Autenticacion.empresas_de_usuario(usuario.id),
-        branches: MetadataApp.Autenticacion.listar_branches(empresa.id),
-        inventory_locations: MetadataApp.Autenticacion.listar_inventory_locations_de_empresa(empresa.id),
-        sales_units: MetadataApp.Autenticacion.listar_sales_units_de_empresa(empresa.id)
-      }
-    else
-      %{
-        empresas: MetadataApp.Autenticacion.empresas_de_usuario(usuario.id),
-        branches: MetadataApp.Autenticacion.branches_de_usuario(usuario.id, empresa.id),
-        inventory_locations: MetadataApp.Autenticacion.inventory_locations_de_usuario(usuario.id, empresa.id),
-        sales_units: MetadataApp.Autenticacion.sales_units_de_usuario(usuario.id, empresa.id)
-      }
-    end
+    es_administrador? = MetadataApp.Permissions.administrador?(usuario.id, empresa.id)
+    branch_activo_id = scope.branch_activo && scope.branch_activo.id
+
+    branches =
+      if es_administrador?,
+        do: MetadataApp.Autenticacion.listar_branches(empresa.id),
+        else: MetadataApp.Autenticacion.branches_de_usuario(usuario.id, empresa.id)
+
+    %{
+      empresas: MetadataApp.Autenticacion.empresas_de_usuario(usuario.id),
+      branches: branches,
+      inventory_locations: opciones_de_la_sucursal_activa(branch_activo_id, scope.inventory_locations_permitidas, es_administrador?, &MetadataApp.Autenticacion.listar_inventory_locations/1),
+      sales_units: opciones_de_la_sucursal_activa(branch_activo_id, scope.sales_units_permitidas, es_administrador?, &MetadataApp.Autenticacion.listar_sales_units/1)
+    }
   end
 
   defp opciones_jerarquia_activa(_scope), do: %{empresas: [], branches: [], inventory_locations: [], sales_units: []}
+
+  defp opciones_de_la_sucursal_activa(nil, _permitidos, _es_administrador?, _listar_por_branch), do: []
+  defp opciones_de_la_sucursal_activa(branch_id, _permitidos, true, listar_por_branch), do: listar_por_branch.(branch_id)
+
+  defp opciones_de_la_sucursal_activa(branch_id, permitidos, false, listar_por_branch) do
+    branch_id |> listar_por_branch.() |> Enum.filter(&(&1.id in permitidos))
+  end
+
+  # "Firma" de la Unidad Operativa activa (2026-08-13) -- Empresa + Branch
+  # + Inventory, a propósito SIN Sales Unit (opcional, no forma parte de
+  # la Unidad Operativa según el pedido explícito). Un string comparable,
+  # no un id: el hook UnidadOperativaWatcher (app.js) la guarda en
+  # localStorage del navegador y la compara contra la del render
+  # ANTERIOR -- si cambió, dispara el aviso de "cambiaste de Unidad
+  # Operativa". No hace falta nada server-side (flash/sesión) para esto:
+  # el server siempre expone la firma ACTUAL nada más, la detección de
+  # "cambió" es 100% client-side.
+  defp firma_unidad_operativa(%MetadataApp.Autenticacion.Scope{} = scope) do
+    "#{scope.empresa_activa && scope.empresa_activa.id}|#{scope.branch_activo && scope.branch_activo.id}|#{scope.inventory_location_activo && scope.inventory_location_activo.id}"
+  end
+
+  defp firma_unidad_operativa(_scope), do: ""
 
   defp asignar_datos_usuario(assigns) do
     case assigns[:current_scope] do

@@ -951,6 +951,22 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   def handle_event("toggle_mostrar_trn_en_tabla", _params, socket),
     do: toggle_columna_estructural(socket, :mostrar_trn_en_tabla, "\"Mostrar TRN\"")
 
+  # Columnas de Alcance de Datos (2026-08-12) — mismos 4 botones/criterio
+  # que ID/Estado/TRN de arriba, solo que panel_get_view/1 los oculta del
+  # todo si el catálogo no tiene alcance_habilitado (sin eso, las columnas
+  # ni existen físicamente, ver Header.mostrar_branch_en_tabla etc.).
+  def handle_event("toggle_mostrar_empresa_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_empresa_en_tabla, "\"Mostrar Empresa\"")
+
+  def handle_event("toggle_mostrar_branch_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_branch_en_tabla, "\"Mostrar Sucursal\"")
+
+  def handle_event("toggle_mostrar_inventory_location_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_inventory_location_en_tabla, "\"Mostrar Almacén\"")
+
+  def handle_event("toggle_mostrar_sales_unit_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_sales_unit_en_tabla, "\"Mostrar Unidad de venta\"")
+
   # Sub-filtro de fecha de "Filtros por default" — "primer_dia_anio"/
   # "ultimo_dia_anio"/"actual" (una sola fecha por calendario, precargada
   # con el valor obvio de cada modo — el usuario la puede cambiar
@@ -2426,9 +2442,38 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             ]}>
             {if @header.mostrar_trn_en_tabla, do: "✓ TRN", else: "TRN (oculto)"}
           </button>
+          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_empresa_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_empresa_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_empresa_en_tabla, do: "✓ Empresa", else: "Empresa (oculto)"}
+          </button>
+          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_branch_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_branch_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_branch_en_tabla, do: "✓ Sucursal", else: "Sucursal (oculto)"}
+          </button>
+          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_inventory_location_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_inventory_location_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_inventory_location_en_tabla, do: "✓ Almacén", else: "Almacén (oculto)"}
+          </button>
+          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_sales_unit_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_sales_unit_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_sales_unit_en_tabla, do: "✓ Unidad de venta", else: "Unidad de venta (oculto)"}
+          </button>
         </div>
         <p class="text-gray-400 text-[11px] mb-3">
           Columnas de sistema — Estado/TRN solo aparecen igual si el catálogo tiene motor de estados / es transaccional, esto solo los oculta encima de eso.
+          <span :if={@header.alcance_habilitado}>Empresa/Sucursal/Almacén/Unidad de venta son las de Alcance de Datos — se resuelven a nombre por fila.</span>
         </p>
 
         <%= if @campos == [] do %>

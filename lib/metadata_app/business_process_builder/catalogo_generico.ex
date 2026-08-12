@@ -358,9 +358,44 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
 
     tipo = Permissions.alcance_tipo_efectivo(scope, header.id)
 
-    case validar_tipo_en_attrs(tipo, schema_mod, scope, attrs) do
-      :ok -> {:ok, attrs}
-      {:error, _campo} = error -> error
+    with :ok <- validar_tipo_en_attrs(tipo, schema_mod, scope, attrs),
+         :ok <- validar_jerarquia_requerida_en_attrs(schema_mod, attrs) do
+      {:ok, attrs}
+    end
+  end
+
+  # Bug operacional (2026-08-13): validar_tipo_en_attrs/4 de abajo describe
+  # QUÉ FILAS puede FILTRAR cada alcance_tipo (:global/:propio no exigen
+  # nada ahí, a propósito -- "ve todo"/"solo lo suyo" no necesitan acotar
+  # ningún campo para FILTRAR). Pero eso es una pregunta distinta de "¿el
+  # registro nace CON sucursal/almacén cargados?" -- si el catálogo activó
+  # Alcance de Datos, la respuesta tiene que ser sí SIEMPRE, sin importar
+  # el alcance_tipo de quien lo crea. Un administrador (:global, ve todo)
+  # NO está exento: "ver todo" no es lo mismo que "no quedar registrado
+  # dónde pasó esto". La jerarquía activa ya intentó autocompletar
+  # branch_id/inventory_id (estampar_jerarquia_activa_en_attrs/3, arriba)
+  # -- si acá sigue faltando es porque quien crea (admin incluido) no
+  # tiene sucursal/almacén activa elegida en la banda de pie, y hay que
+  # bloquear con el mismo error claro que ya usa validar_campo_requerido_en_attrs/4,
+  # no dejar pasar el registro con la columna en NULL. sales_unit_id queda
+  # afuera a propósito -- es el único opcional de los tres (ver moduledoc
+  # de MetadataApp.Autenticacion.Scope).
+  defp validar_jerarquia_requerida_en_attrs(schema_mod, attrs) do
+    with :ok <- validar_presencia_en_attrs(schema_mod, attrs, "branch_id") do
+      validar_presencia_en_attrs(schema_mod, attrs, "inventory_id")
+    end
+  end
+
+  defp validar_presencia_en_attrs(schema_mod, attrs, campo) do
+    campo_atom = String.to_existing_atom(campo)
+
+    if campo_atom in schema_mod.__schema__(:fields) do
+      case Map.get(attrs, campo) || Map.get(attrs, campo_atom) do
+        nil -> {:error, {:alcance_requerido, campo}}
+        _valor -> :ok
+      end
+    else
+      :ok
     end
   end
 
