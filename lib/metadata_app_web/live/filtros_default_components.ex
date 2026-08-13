@@ -24,7 +24,7 @@ defmodule MetadataAppWeb.FiltrosDefaultComponents do
     ~H"""
     <div class="border border-gray-200 rounded-lg mt-4">
       <div class="px-1.5 ml-2 -mb-2 relative">
-        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Filtros por default</span>
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-900">Filtros por default</span>
       </div>
       <div class="p-3 pt-4 overflow-x-auto">
         <p class="text-gray-500 mb-3">

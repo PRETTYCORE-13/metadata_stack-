@@ -2413,11 +2413,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     ~H"""
     <div class="border border-gray-200 rounded-lg">
       <div class="px-1.5 ml-2 -mb-2 relative">
-        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Get View</span>
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-900">VISUALIZACIÓN DE CAMPOS</span>
       </div>
       <div class="p-3 pt-4 overflow-x-auto">
         <p class="text-gray-500 mb-2">
-          Qué campos ve el usuario final en la tabla de este catálogo. Desmarcar un campo no lo borra ni afecta la API — solo lo oculta de la vista.
+          Campos de Control
         </p>
 
         <div class="flex flex-wrap gap-2 mb-3">
@@ -2471,15 +2471,13 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             {if @header.mostrar_sales_unit_en_tabla, do: "✓ Unidad de venta", else: "Unidad de venta (oculto)"}
           </button>
         </div>
-        <p class="text-gray-400 text-[11px] mb-3">
-          Columnas de sistema — Estado/TRN solo aparecen igual si el catálogo tiene motor de estados / es transaccional, esto solo los oculta encima de eso.
-          <span :if={@header.alcance_habilitado}>Empresa/Sucursal/Almacén/Unidad de venta son las de Alcance de Datos — se resuelven a nombre por fila.</span>
-        </p>
-
         <%= if @campos == [] do %>
           <p class="text-gray-400">Este catálogo todavía no tiene campos.</p>
         <% else %>
           <form id="get-view-form" phx-submit="guardar_get_view">
+            <p class="text-gray-500 mb-2">
+              Campos de negocio
+            </p>
             <div class="flex items-center justify-between gap-2 mb-2">
               <div class="flex gap-2">
                 <button type="button"
@@ -2561,7 +2559,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     ~H"""
     <div class="border border-gray-200 rounded-lg mt-4">
       <div class="px-1.5 ml-2 -mb-2 relative">
-        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Filtros</span>
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-900">Filtros</span>
       </div>
       <div class="p-3 pt-4 overflow-x-auto">
         <p class="text-gray-500 mb-2">
@@ -2763,7 +2761,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     ~H"""
     <div class="border border-gray-200 rounded-lg mt-4">
       <div class="px-1.5 ml-2 -mb-2 relative">
-        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Campos por default</span>
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-900">Campos por default</span>
       </div>
       <div class="p-3 pt-4 overflow-x-auto">
         <p class="text-gray-500 mb-3">
