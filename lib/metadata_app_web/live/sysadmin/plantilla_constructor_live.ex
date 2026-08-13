@@ -1919,7 +1919,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       <div class="overflow-auto">
         <div id="gc-grid" phx-hook="GridConstructor"
           class="inline-grid gc-editor"
-          style={"grid-template-columns: 32px repeat(#{@columnas}, minmax(90px,1fr)); grid-template-rows: 24px repeat(#{@filas}, minmax(48px,auto));"}>
+          style={"grid-template-columns: 32px repeat(#{@columnas}, minmax(90px,1fr)); grid-template-rows: 24px repeat(#{@filas}, minmax(32px,auto));"}>
           <div class="gc-header" style="grid-column:1;grid-row:1"></div>
 
           <button :for={c <- 0..(@columnas - 1)} type="button" phx-click="seleccionar_celda" phx-value-fila="0" phx-value-columna={c}
