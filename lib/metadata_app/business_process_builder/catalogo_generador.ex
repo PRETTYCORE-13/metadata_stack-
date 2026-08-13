@@ -130,6 +130,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
       archivo_eliminado? = borrar_schema_file(schema_context_name)
       reglas_eliminadas? = borrar_reglas_dir(schema_context_name)
+      borrar_export_meta(schema_context_name)
 
       MetaAuditoriaDefinicion.registrar(
         schema_context_name,
@@ -598,6 +599,18 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
       {:ok, _borrados} -> true
       {:error, _motivo, _ruta} -> false
     end
+  end
+
+  # Bug real (encontrado en vivo, roadmap #13): eliminar/4 borraba el .ex
+  # y las reglas, pero nunca estos dos -- quedaban huérfanos en disco.
+  # `MetaPublicador.armar_bundle/1` los sigue encontrando (File.exists?)
+  # aunque el catálogo ya no exista, y el bundle resultante hace que
+  # `/app/bin/import_meta` RECREE el catálogo en producción al desplegarlo
+  # -- justo lo contrario de lo que pide un borrado.
+  defp borrar_export_meta(schema_context_name) do
+    File.rm("priv/repo/catalogos/#{schema_context_name}.meta.json")
+    File.rm("priv/repo/catalogos/#{schema_context_name}.motor.json")
+    :ok
   end
 
   defp migrar do
