@@ -783,8 +783,8 @@ defmodule MetadataAppWeb.CatalogoLive do
           </span>
         </div>
 
-        <div class="flex items-center gap-2 flex-wrap mb-4">
-          <div class="relative flex-1">
+        <div class="flex flex-col gap-2 mb-4 sm:flex-row sm:items-center">
+          <div class="relative sm:flex-1">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
               <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
@@ -797,39 +797,41 @@ defmodule MetadataAppWeb.CatalogoLive do
               class="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500"
             />
           </div>
-          <div class="relative">
-            <button
-              type="button"
-              phx-click="abrir_filtros"
-              class={[
-                "flex items-center gap-1.5 border rounded-lg px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors",
-                if(contar_filtros_activos(@filtros) > 0,
-                  do: "border-purple-600 bg-purple-50 text-purple-700",
-                  else: "border-gray-300 text-gray-600 hover:bg-gray-50"
-                )
-              ]}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-              </svg>
-              Filtros
-              <%= if contar_filtros_activos(@filtros) > 0 do %>
-                <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-600 text-white text-[10px] font-bold">
-                  {contar_filtros_activos(@filtros)}
-                </span>
-              <% end %>
-            </button>
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1 sm:flex-none">
+              <button
+                type="button"
+                phx-click="abrir_filtros"
+                class={[
+                  "flex items-center justify-center gap-1.5 border rounded-lg px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors w-full sm:w-auto",
+                  if(contar_filtros_activos(@filtros) > 0,
+                    do: "border-purple-600 bg-purple-50 text-purple-700",
+                    else: "border-gray-300 text-gray-600 hover:bg-gray-50"
+                  )
+                ]}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                </svg>
+                Filtros
+                <%= if contar_filtros_activos(@filtros) > 0 do %>
+                  <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-600 text-white text-[10px] font-bold">
+                    {contar_filtros_activos(@filtros)}
+                  </span>
+                <% end %>
+              </button>
 
-            <.panel_filtros
-              mostrar={@mostrar_filtros}
-              columnas={@columnas}
-              filtros={@filtros}
-              filtros_activos={@filtros_activos}
-              selector_campo_abierto={@selector_campo_abierto}
-              busqueda_campo_filtro={@busqueda_campo_filtro}
-            />
+              <.panel_filtros
+                mostrar={@mostrar_filtros}
+                columnas={@columnas}
+                filtros={@filtros}
+                filtros_activos={@filtros_activos}
+                selector_campo_abierto={@selector_campo_abierto}
+                busqueda_campo_filtro={@busqueda_campo_filtro}
+              />
+            </div>
+            <.panel_campos campos={campos_selector(@columnas)} tabla_id="tabla-catalogo" />
           </div>
-          <.panel_campos campos={campos_selector(@columnas)} tabla_id="tabla-catalogo" />
         </div>
 
         <div class="overflow-x-auto rounded-xl border border-gray-200">
@@ -840,7 +842,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                   <th
                     data-col={col_key(columna)}
                     title={if @consulta.joins != [], do: "De: #{columna.catalogo}"}
-                    class={["px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide", alineacion_columna(columna)]}
+                    class={["px-2 py-3 sm:px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap", alineacion_columna(columna)]}
                   >
                     {columna.schema_context_properties["etiqueta"]}
                   </th>
@@ -853,7 +855,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                   <%= for columna <- @columnas do %>
                     <% valor = Map.get(fila, columna.clave) %>
                     <td data-col={col_key(columna)} class={[
-                      "px-4 py-1.5 text-[10px] text-gray-700",
+                      "px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700",
                       alineacion_columna(columna)
                     ]}>
                       {formatear_celda(valor, columna.schema_context_properties)}
@@ -950,8 +952,8 @@ defmodule MetadataAppWeb.CatalogoLive do
           </div>
         </div>
 
-        <div class="flex items-center gap-2 flex-wrap mb-4">
-          <div class="relative flex-1">
+        <div class="flex flex-col gap-2 mb-4 sm:flex-row sm:items-center">
+          <div class="relative sm:flex-1">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
               <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
@@ -964,39 +966,41 @@ defmodule MetadataAppWeb.CatalogoLive do
               class="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500"
             />
           </div>
-          <div class="relative">
-            <button
-              type="button"
-              phx-click="abrir_filtros"
-              class={[
-                "flex items-center gap-1.5 border rounded-lg px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors",
-                if(contar_filtros_activos(@filtros) > 0,
-                  do: "border-purple-600 bg-purple-50 text-purple-700",
-                  else: "border-gray-300 text-gray-600 hover:bg-gray-50"
-                )
-              ]}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-              </svg>
-              Filtros
-              <%= if contar_filtros_activos(@filtros) > 0 do %>
-                <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-600 text-white text-[10px] font-bold">
-                  {contar_filtros_activos(@filtros)}
-                </span>
-              <% end %>
-            </button>
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1 sm:flex-none">
+              <button
+                type="button"
+                phx-click="abrir_filtros"
+                class={[
+                  "flex items-center justify-center gap-1.5 border rounded-lg px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors w-full sm:w-auto",
+                  if(contar_filtros_activos(@filtros) > 0,
+                    do: "border-purple-600 bg-purple-50 text-purple-700",
+                    else: "border-gray-300 text-gray-600 hover:bg-gray-50"
+                  )
+                ]}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                </svg>
+                Filtros
+                <%= if contar_filtros_activos(@filtros) > 0 do %>
+                  <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-600 text-white text-[10px] font-bold">
+                    {contar_filtros_activos(@filtros)}
+                  </span>
+                <% end %>
+              </button>
 
-            <.panel_filtros
-              mostrar={@mostrar_filtros}
-              columnas={@columnas}
-              filtros={@filtros}
-              filtros_activos={@filtros_activos}
-              selector_campo_abierto={@selector_campo_abierto}
-              busqueda_campo_filtro={@busqueda_campo_filtro}
-            />
+              <.panel_filtros
+                mostrar={@mostrar_filtros}
+                columnas={@columnas}
+                filtros={@filtros}
+                filtros_activos={@filtros_activos}
+                selector_campo_abierto={@selector_campo_abierto}
+                busqueda_campo_filtro={@busqueda_campo_filtro}
+              />
+            </div>
+            <.panel_campos campos={campos_selector(@columnas, @mostrar_id?, @mostrar_estado?, @mostrar_trn?, @mostrar_empresa?, @mostrar_branch?, @mostrar_inventory_location?, @mostrar_sales_unit?)} tabla_id="tabla-catalogo" />
           </div>
-          <.panel_campos campos={campos_selector(@columnas, @mostrar_id?, @mostrar_estado?, @mostrar_trn?, @mostrar_empresa?, @mostrar_branch?, @mostrar_inventory_location?, @mostrar_sales_unit?)} tabla_id="tabla-catalogo" />
         </div>
 
         <div :if={@filtro_default_fecha_descripcion} class="flex items-center gap-1.5 text-[11px] font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-2.5 py-1.5 mb-4 w-fit">
@@ -1011,7 +1015,7 @@ defmodule MetadataAppWeb.CatalogoLive do
             <thead class="bg-gray-50">
               <tr>
                 <%= if @mostrar_id? do %>
-                  <th data-col="id" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">ID</th>
+                  <th data-col="id" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">ID</th>
                 <% end %>
                 <%= for columna <- @columnas do %>
                   <th data-col={col_key(columna)} class={[
@@ -1027,24 +1031,24 @@ defmodule MetadataAppWeb.CatalogoLive do
                   </th>
                 <% end %>
                 <%= if @mostrar_estado? do %>
-                  <th data-col="estado" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Estado</th>
+                  <th data-col="estado" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Estado</th>
                 <% end %>
                 <%= if @mostrar_trn? do %>
-                  <th data-col="trn" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">TRN</th>
+                  <th data-col="trn" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">TRN</th>
                 <% end %>
                 <%= if @mostrar_empresa? do %>
-                  <th data-col="empresa" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Empresa</th>
+                  <th data-col="empresa" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Empresa</th>
                 <% end %>
                 <%= if @mostrar_branch? do %>
-                  <th data-col="branch" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Sucursal</th>
+                  <th data-col="branch" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Sucursal</th>
                 <% end %>
                 <%= if @mostrar_inventory_location? do %>
-                  <th data-col="inventory_location" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Almacén</th>
+                  <th data-col="inventory_location" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Almacén</th>
                 <% end %>
                 <%= if @mostrar_sales_unit? do %>
-                  <th data-col="sales_unit" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Unidad de venta</th>
+                  <th data-col="sales_unit" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Unidad de venta</th>
                 <% end %>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide"></th>
+                <th class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"></th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
@@ -1052,14 +1056,14 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <tr class="hover:bg-purple-50/60 transition-colors cursor-pointer"
                   ondblclick={"window.location='/registro/#{@current_page}/#{fila.id}'"}>
                   <%= if @mostrar_id? do %>
-                    <td data-col="id" class="px-4 py-1.5 text-[10px] text-gray-700">
+                    <td data-col="id" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">
                       {fila.id}
                     </td>
                   <% end %>
                   <%= for columna <- @columnas do %>
                     <% valor = Map.get(fila, String.to_existing_atom(columna.schema_context_field)) %>
                     <td data-col={col_key(columna)} class={[
-                      "px-4 py-1.5 text-[10px]",
+                      "px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px]",
                       alineacion_columna(columna),
                       if(is_map(valor) and not is_struct(valor), do: "text-blue-700 font-medium", else: "text-gray-700")
                     ]}>
@@ -1067,22 +1071,22 @@ defmodule MetadataAppWeb.CatalogoLive do
                     </td>
                   <% end %>
                   <%= if @mostrar_estado? do %>
-                    <td data-col="estado" class="px-4 py-1.5 text-[10px] text-gray-700">{Map.get(fila, :estado_nombre)}</td>
+                    <td data-col="estado" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(fila, :estado_nombre)}</td>
                   <% end %>
                   <%= if @mostrar_trn? do %>
-                    <td data-col="trn" class="px-4 py-1.5 text-[10px] text-gray-700 font-mono" title={Map.get(fila, :ulid)}>{Map.get(fila, :trn)}</td>
+                    <td data-col="trn" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700 font-mono" title={Map.get(fila, :ulid)}>{Map.get(fila, :trn)}</td>
                   <% end %>
                   <%= if @mostrar_empresa? do %>
-                    <td data-col="empresa" class="px-4 py-1.5 text-[10px] text-gray-700">{Map.get(fila, :empresa_nombre)}</td>
+                    <td data-col="empresa" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(fila, :empresa_nombre)}</td>
                   <% end %>
                   <%= if @mostrar_branch? do %>
-                    <td data-col="branch" class="px-4 py-1.5 text-[10px] text-gray-700">{Map.get(fila, :branch_nombre)}</td>
+                    <td data-col="branch" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(fila, :branch_nombre)}</td>
                   <% end %>
                   <%= if @mostrar_inventory_location? do %>
-                    <td data-col="inventory_location" class="px-4 py-1.5 text-[10px] text-gray-700">{Map.get(fila, :inventory_nombre)}</td>
+                    <td data-col="inventory_location" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(fila, :inventory_nombre)}</td>
                   <% end %>
                   <%= if @mostrar_sales_unit? do %>
-                    <td data-col="sales_unit" class="px-4 py-1.5 text-[10px] text-gray-700">{Map.get(fila, :sales_unit_nombre)}</td>
+                    <td data-col="sales_unit" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(fila, :sales_unit_nombre)}</td>
                   <% end %>
                   <td class="px-4 py-1.5 text-xs text-right">
                     <.link navigate={"/registro/#{@current_page}/#{fila.id}"}
