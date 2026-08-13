@@ -17,6 +17,10 @@ defmodule MetadataApp.MetaFixtureAlcance do
     # CatalogoGenerico.actualizar/4 lee esto incondicionalmente (todo
     # catálogo real lo tiene) -- nil = sin motor de estados adoptado.
     field :estado_id, :id
+    # CatalogoGenerico.crear/2 (crear_simple/3 y el camino de Motor de
+    # Estados) estampa esto incondicionalmente en todo catálogo, igual
+    # que insert_guid -- ver estado_id arriba.
+    field :fecha_registro, :utc_datetime
 
     field :insert_guid, :string
     field :update_guid, :string
