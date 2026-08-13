@@ -26,7 +26,10 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
     %{tipo: :pagina, id: "buscar_trn", label: "Buscar TRN", nav: "/sysadmin/buscar-trn"},
     %{tipo: :pagina, id: "tepache", label: "Tepache Exp/Imp", nav: "/sysadmin/tepache"},
     %{tipo: :pagina, id: "roles", label: "Roles y Usuarios", nav: "/sysadmin/roles"},
-    %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"}
+    %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
+    %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
+    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
+    %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
   ]
 
   def mount(_params, _session, socket) do
@@ -325,7 +328,7 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
       <p class="font-bold">Listo — <span class="font-mono">{Enum.join(@catalogos, ", ")}</span> ya está en tu Postgres local.</p>
       <p :for={m <- @mensajes} class="text-xs text-green-700">{m}</p>
       <p class="text-xs text-green-700">
-        Para probarlo con un rol puntual, concedeselo desde Permission Sets.
+        Para probarlo con un rol puntual, concedeselo desde Bisness Context.
       </p>
     </div>
     """

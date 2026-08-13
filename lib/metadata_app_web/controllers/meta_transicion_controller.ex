@@ -22,7 +22,7 @@ defmodule MetadataAppWeb.MetaTransicionController do
 
   def index(conn, %{"tabla" => tabla, "id" => id} = params) do
     with {:ok, schema_mod} <- resolver(tabla) do
-      registro = CatalogoGenerico.obtener!(schema_mod, id)
+      registro = CatalogoGenerico.obtener!(schema_mod, conn.assigns[:current_scope], id)
 
       contexto =
         params
@@ -40,7 +40,7 @@ defmodule MetadataAppWeb.MetaTransicionController do
 
   def ejecutar(conn, %{"tabla" => tabla, "id" => id, "accion" => accion} = params) do
     with {:ok, schema_mod} <- resolver(tabla) do
-      registro = CatalogoGenerico.obtener!(schema_mod, id)
+      registro = CatalogoGenerico.obtener!(schema_mod, conn.assigns[:current_scope], id)
       renglones = Map.get(params, "renglones", %{})
 
       contexto =

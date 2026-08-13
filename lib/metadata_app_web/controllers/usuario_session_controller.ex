@@ -13,14 +13,14 @@ defmodule MetadataAppWeb.UsuarioSessionController do
   end
 
   # magic link login
-  defp create(conn, %{"usuario" => %{"token" => token} = usuario_params}, info) do
+  defp create(conn, %{"usuario" => %{"token" => token}}, info) do
     case Autenticacion.login_usuario_by_magic_link(token) do
       {:ok, {usuario, tokens_to_disconnect}} ->
         UsuarioAuth.disconnect_sessions(tokens_to_disconnect)
 
         conn
         |> put_flash(:info, info)
-        |> UsuarioAuth.log_in_usuario(usuario, usuario_params)
+        |> UsuarioAuth.log_in_usuario(usuario)
 
       _ ->
         conn
@@ -30,13 +30,12 @@ defmodule MetadataAppWeb.UsuarioSessionController do
   end
 
   # email + password login
-  defp create(conn, %{"usuario" => usuario_params}, info) do
-    %{"email" => email, "password" => password} = usuario_params
+  defp create(conn, %{"usuario" => %{"email" => email, "password" => password}}, info) do
 
     if usuario = Autenticacion.get_usuario_by_email_and_password(email, password) do
       conn
       |> put_flash(:info, info)
-      |> UsuarioAuth.log_in_usuario(usuario, usuario_params)
+      |> UsuarioAuth.log_in_usuario(usuario)
     else
       # In order to prevent user enumeration attacks, don't disclose whether the email is registered.
       conn

@@ -148,10 +148,20 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
     do: "Carpeta '#{header.schema_context_label}' guardada."
 
   defp guardar_texto_resultado(false, header) do
-    case CatalogoGenerador.generar(header.schema_context_name) do
-      {:ok, %{ya_existia: true}} -> "Contexto '#{header.schema_context_label}' guardado (el catálogo ya existía)."
-      {:ok, _} -> "Contexto '#{header.schema_context_label}' guardado y catálogo generado."
-      {:error, motivo} -> "Contexto guardado, pero no se pudo generar el catálogo: #{motivo}"
+    texto_generado =
+      case CatalogoGenerador.generar(header.schema_context_name) do
+        {:ok, %{ya_existia: true}} -> "Contexto '#{header.schema_context_label}' guardado (el catálogo ya existía)."
+        {:ok, _} -> "Contexto '#{header.schema_context_label}' guardado y catálogo generado."
+        {:error, motivo} -> "Contexto guardado, pero no se pudo generar el catálogo: #{motivo}"
+      end
+
+    # Bug operacional (2026-08-12): un BC nacía sin Alcance de Datos, cada
+    # rol caía en :propio (deny-by-default) hasta que un admin lo prendía
+    # a mano -- ahora nace siempre acotado a Sucursal, el admin lo afloja
+    # después si hace falta (ver MetaSchemaContext.activar_alcance_con_default_sucursal/1).
+    case MetaSchemaContext.activar_alcance_con_default_sucursal(header) do
+      {:ok, _} -> texto_generado <> " Alcance de datos activado (Sucursal por default)."
+      {:error, _} -> texto_generado <> " No se pudo activar Alcance de datos por default, revisalo manualmente."
     end
   end
 

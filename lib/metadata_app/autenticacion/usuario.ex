@@ -2,6 +2,16 @@ defmodule MetadataApp.Autenticacion.Usuario do
   use Ecto.Schema
   import Ecto.Changeset
 
+  @type t :: %__MODULE__{
+          id: integer() | nil,
+          email: String.t() | nil,
+          alias: String.t() | nil,
+          avatar_seed: String.t() | nil,
+          hashed_password: String.t() | nil,
+          confirmed_at: DateTime.t() | nil,
+          super_admin: boolean()
+        }
+
   schema "meta_schema_usuario" do
     field :email, :string
     field :alias, :string
@@ -18,6 +28,15 @@ defmodule MetadataApp.Autenticacion.Usuario do
     # deliberadamente independiente de cualquier empresa.
     field :super_admin, :boolean, default: false
 
+    # Jerarquía operativa activa -- "default" de Empresa (2026-08-12):
+    # cuál de las N empresas a las que pertenece este usuario el login
+    # elige sola, sin mandarlo a /seleccionar-empresa (ver
+    # UsuarioAuth.log_in_usuario/2). Mismo concepto que branch_default_id
+    # etc. en UsuarioEmpresa, pero acá porque este default es CROSS-
+    # empresa (dice cuál FILA de membresía es la default entre varias),
+    # no un dato de adentro de una sola empresa.
+    belongs_to :empresa_default, MetadataApp.Autenticacion.Empresa
+
     timestamps(type: :utc_datetime)
   end
 
@@ -26,6 +45,11 @@ defmodule MetadataApp.Autenticacion.Usuario do
     usuario
     |> cast(attrs, [:alias])
     |> validate_length(:alias, max: 40)
+  end
+
+  @doc "Cambia SOLO el default de empresa -- separado de alias_changeset/2, mismo criterio que UsuarioEmpresa.changeset_default/2."
+  def changeset_empresa_default(usuario, attrs) do
+    cast(usuario, attrs, [:empresa_default_id])
   end
 
   @doc """

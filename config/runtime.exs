@@ -53,6 +53,23 @@ if config_env() == :prod do
       You can generate one by calling: mix phx.gen.secret
       """
 
+  # Cifra en reposo las credenciales de Integraciones (ver MetadataApp.Vault)
+  # -- perder esta clave es IRRECUPERABLE, las credenciales cifradas con
+  # ella quedan ilegibles para siempre. Guardarla en un gestor de secretos
+  # real, con el mismo cuidado que secret_key_base de arriba.
+  cloak_key =
+    System.get_env("CLOAK_KEY") ||
+      raise """
+      environment variable CLOAK_KEY is missing.
+      You can generate one with: :crypto.strong_rand_bytes(32) |> Base.encode64()
+      """
+
+  config :metadata_app, MetadataApp.Vault,
+    json_library: Jason,
+    ciphers: [
+      default: {Cloak.Ciphers.AES.GCM, tag: "AES.GCM.V1", key: Base.decode64!(cloak_key), iv_length: 12}
+    ]
+
   host = System.get_env("PHX_HOST") || "example.com"
   port = String.to_integer(System.get_env("PORT") || "4000")
 

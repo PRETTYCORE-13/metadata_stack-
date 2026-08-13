@@ -94,10 +94,22 @@ defmodule MetadataAppWeb.Router do
       live "/meta_schema_usuario/settings", UsuarioLive.Settings, :edit
       live "/meta_schema_usuario/settings/confirm-email/:token", UsuarioLive.Settings, :confirm_email
       live "/meta_schema_usuario/seleccionar-empresa", UsuarioLive.SeleccionarEmpresa, :new
+      live "/meta_schema_usuario/seleccionar-jerarquia", UsuarioLive.SeleccionarJerarquia, :new
     end
 
     post "/meta_schema_usuario/update-password", UsuarioSessionController, :update_password
+    # Empresa tiene 2 rutas a la MISMA acción: con :id en el path (los
+    # links de UsuarioLive.SeleccionarEmpresa, un link por empresa) y sin
+    # -- el selector de la banda de pie (Fase 4) manda "id" en el body de
+    # un <select> auto-enviado, más simple que reescribir la URL por JS.
+    # Phoenix mezcla path_params y body_params en `params` por igual, así
+    # que EmpresaSessionController.activar/2 no necesita saber cuál se usó.
     post "/meta_schema_usuario/empresa/:id/activar", EmpresaSessionController, :activar
+    post "/meta_schema_usuario/empresa/activar", EmpresaSessionController, :activar
+    post "/meta_schema_usuario/jerarquia/activar", JerarquiaSessionController, :activar
+    post "/meta_schema_usuario/branch/activar", JerarquiaSessionController, :activar_branch
+    post "/meta_schema_usuario/inventory-location/activar", JerarquiaSessionController, :activar_inventory_location
+    post "/meta_schema_usuario/sales-unit/activar", JerarquiaSessionController, :activar_sales_unit
   end
 
   scope "/", MetadataAppWeb do
@@ -120,10 +132,14 @@ defmodule MetadataAppWeb.Router do
     # exige sesión — decisión explícita 2026-07-31, revierte la apertura
     # interina de Fase 1 (2026-07-25, ver docs/roadmap RBAC) ahora que Fase 2
     # RBAC ya está completa. Sin sesión, redirect directo a
-    # /meta_schema_usuario/log-in (UsuarioAuth.on_mount/4 :require_authenticated)
-    # — nunca se llega a ver "Bienvenido" ni ninguna otra página de negocio.
+    # /meta_schema_usuario/log-in. Además exige empresa_activa resuelta
+    # (2026-08-06) -- sin eso el sidebar se mostraba SIN podar por
+    # permisos (menu_layout.ex cae a "sin scope, mostrar completo") pero
+    # cualquier catálogo bloqueaba igual (Permissions.can?/3 con
+    # empresa_activa: nil siempre da false) -- ver
+    # UsuarioAuth.on_mount/4 :require_authenticated_con_empresa.
     live_session :app_autenticada,
-      on_mount: [{MetadataAppWeb.UsuarioAuth, :require_authenticated}] do
+      on_mount: [{MetadataAppWeb.UsuarioAuth, :require_authenticated_con_empresa}] do
       live "/", InicioLive
 
       # Ni existen en producción — ni la ruta ni el link del Frame (ver
@@ -153,6 +169,9 @@ defmodule MetadataAppWeb.Router do
       live "/sysadmin/roles/:id", Sysadmin.RolesLive
       live "/sysadmin/usuarios", Sysadmin.UsuariosEmpresaLive
       live "/sysadmin/empresas", Sysadmin.EmpresasLive
+      live "/sysadmin/credenciales", Sysadmin.CredencialesLive
+      live "/sysadmin/acciones-externas", Sysadmin.AccionesExternasLive
+      live "/sysadmin/jerarquia", Sysadmin.JerarquiaOrganizacionalLive
       live "/sysadmin/catalogos/permisos", Sysadmin.CatalogoPermisosLive
       live "/sysadmin/catalogos/:recurso/permisos", Sysadmin.CatalogoPermisosLive
 

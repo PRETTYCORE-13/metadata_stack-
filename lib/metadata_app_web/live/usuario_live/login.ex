@@ -84,15 +84,8 @@ defmodule MetadataAppWeb.UsuarioLive.Login do
             spellcheck="false"
             class="w-full input bg-black border-white/25 text-white placeholder:text-white/40 focus:border-white focus:outline-none"
           />
-          <.button
-            class="btn w-full bg-white text-black border-0 hover:bg-white/90"
-            name={@form[:remember_me].name}
-            value="true"
-          >
-            Log in and stay logged in <span aria-hidden="true">→</span>
-          </.button>
-          <.button class="btn w-full mt-2 bg-transparent text-white border border-white/30 hover:bg-white/10">
-            Log in only this time
+          <.button class="btn w-full bg-white text-black border-0 hover:bg-white/90">
+            Log in <span aria-hidden="true">→</span>
           </.button>
         </.form>
       </div>

@@ -28,6 +28,9 @@ defmodule MetadataAppWeb.CampoInputComponents do
   attr :opciones, :list, default: []
   attr :id, :string, default: nil
   attr :disabled, :boolean, default: false
+  attr :mensaje_dependencia, :string, default: nil
+
+  @modos_posicionales ~w(telefono cp rfc fecha personalizada)
 
   def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
     assigns = assign_name(assigns)
@@ -56,6 +59,52 @@ defmodule MetadataAppWeb.CampoInputComponents do
     """
   end
 
+  # "Formato de captura" numérico/moneda (opcional, ver
+  # MetaSchemaContext.validar_formato_captura/2): el input real SIGUE
+  # siendo un <input type="number"> nativo (el navegador ya bloquea
+  # letras solo) — nunca se reformatea en caliente con comas/símbolo,
+  # porque insertar separadores mientras el cursor está a mitad de tipeo
+  # lo hace saltar de lugar. En cambio, un <span> hermano de solo lectura
+  # (hook FormatoNumericoField) muestra "$1,234.00" en vivo al lado, sin
+  # tocar el valor que en definitiva viaja en el submit.
+  def campo_input(
+        %{
+          columna: %{
+            schema_context_properties: %{
+              "tipo" => tipo,
+              "formato_captura" => %{"habilitada" => true, "modo" => modo} = formato
+            }
+          }
+        } = assigns
+      )
+      when tipo in ["integer", "decimal"] and modo in ["numero", "moneda"] do
+    assigns = assign_name(assigns)
+
+    assigns =
+      assigns
+      |> assign(:step, paso_numerico(formato))
+      |> assign(:formato, formato)
+      |> assign(:dom_id, assigns.id || "campo-#{String.replace(assigns.name, ~r/[\[\]]/, "-")}")
+
+    ~H"""
+    <div>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <div class="flex items-center gap-1.5">
+        <input type="number" step={@step} min={if @formato["permitir_negativos"] != true, do: "0"}
+          name={@name} value={@valor} required={@required} disabled={@disabled}
+          id={@dom_id} phx-hook="FormatoNumericoField"
+          data-decimales={@formato["decimales"] || 0}
+          data-separador-miles={to_string(@formato["separador_miles"] == true)}
+          data-simbolo={@formato["modo"] == "moneda" && @formato["simbolo"]}
+          data-simbolo-posicion={@formato["simbolo_posicion"] || "prefijo"}
+          data-preview-de={"#{@dom_id}-preview"}
+          class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+        <span id={"#{@dom_id}-preview"} class="text-gray-400 text-[11px] whitespace-nowrap"></span>
+      </div>
+    </div>
+    """
+  end
+
   def campo_input(%{columna: %{schema_context_properties: %{"tipo" => tipo}}} = assigns)
       when tipo in ["integer", "decimal"] do
     assigns = assigns |> assign_name() |> assign(:step, if(tipo == "decimal", do: "any"))
@@ -69,13 +118,24 @@ defmodule MetadataAppWeb.CampoInputComponents do
     """
   end
 
+  # phx-hook="AbrirCalendario" (2026-08-13, a pedido explícito) -- mismo
+  # hook que ya usa "Fecha libre" (formato_captura modo "fecha", más
+  # abajo), acá reusado directo sobre el <input type="date"> nativo en
+  # vez de uno oculto sincronizado a otro campo (no hace falta: este SÍ
+  # es el campo real). Sin esto, algunos navegadores/temas no dibujan el
+  # ícono del selector nativo de forma visible -- el hook fuerza
+  # showPicker() con un click O foco en cualquier parte del input, así
+  # no depende de acertarle al ícono.
   def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "date"}}} = assigns) do
-    assigns = assign_name(assigns)
+    assigns =
+      assigns
+      |> assign_name()
+      |> then(&assign(&1, :dom_id, &1.id || "campo-#{String.replace(&1.name, ~r/[\[\]]/, "-")}"))
 
     ~H"""
     <div>
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
-      <input type="date" name={@name} value={@valor} required={@required} disabled={@disabled}
+      <input type="date" id={@dom_id} name={@name} value={@valor} required={@required} disabled={@disabled} phx-hook="AbrirCalendario"
         class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
     </div>
     """
@@ -99,17 +159,116 @@ defmodule MetadataAppWeb.CampoInputComponents do
       |> assign(:dom_id, assigns.id || "campo-#{String.replace(assigns.name, ~r/[\[\]]/, "-")}")
       |> assign(:opciones_json, Jason.encode!(Enum.map(assigns.opciones, fn {id, etiqueta} -> %{id: to_string(id), etiqueta: etiqueta} end)))
       |> assign(:etiqueta_actual, etiqueta_para_valor(assigns.opciones, assigns.valor))
+      |> assign(:placeholder, (assigns.disabled && assigns.mensaje_dependencia) || "Escribí o F2 para buscar…")
 
     ~H"""
     <div>
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
-      <div id={@dom_id} phx-hook="ReferenciaField" data-opciones={@opciones_json} class="relative">
+      <div id={@dom_id} phx-hook="ReferenciaField" data-opciones={@opciones_json}
+        data-disabled={to_string(@disabled)} data-mensaje={@mensaje_dependencia} class="relative">
         <input type="hidden" name={@name} value={@valor} disabled={@disabled} data-campo-hidden />
         <input type="text" autocomplete="off" value={@etiqueta_actual} required={@required} disabled={@disabled} data-campo-texto
-          placeholder="Escribí o F2 para buscar…"
+          placeholder={@placeholder}
           class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
         <ul data-campo-lista role="listbox"
           class="hidden absolute left-0 right-0 z-20 mt-0.5 max-h-40 overflow-auto rounded border border-gray-200 bg-white shadow-lg"></ul>
+      </div>
+    </div>
+    """
+  end
+
+  # "Formato de captura" posicional (Teléfono/CP/RFC/Fecha libre/
+  # Personalizada, ver MetaSchemaContext.validar_formato_captura/2): el
+  # hook FormatoCapturaField reformatea `el.value` en cada tecla cuando
+  # `estricto` está activo (inserta los literales del patrón, descarta
+  # caracteres que no calzan con la clase A/9/*) — el `<input>` sigue
+  # siendo el mismo que se somete, sin par hidden/visible como
+  # ReferenciaField (acá no hay id vs. etiqueta, el valor tipeado ES el
+  # valor real). Modo "fecha" suma un selector de calendario nativo al
+  # lado (mismo hook AbrirCalendario que ya usa "Filtros por default" en
+  # BcMotorLive) — oculto por accesibilidad (sr-only) detrás de su
+  # <label>, elegir una fecha ahí escribe el valor YA formateado en el
+  # input de texto en vez de reemplazarlo por un input de fecha nativo
+  # (que perdería la posibilidad de seguir tipeando el patrón a mano).
+  def campo_input(
+        %{
+          columna: %{
+            schema_context_properties: %{
+              "tipo" => "string",
+              "formato_captura" => %{"habilitada" => true, "modo" => modo} = formato
+            }
+          }
+        } = assigns
+      )
+      when modo in @modos_posicionales do
+    assigns = assign_name(assigns)
+
+    assigns =
+      assigns
+      |> assign(:formato, formato)
+      |> assign(:dom_id, assigns.id || "campo-#{String.replace(assigns.name, ~r/[\[\]]/, "-")}")
+
+    ~H"""
+    <div>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <div class="flex items-center gap-1">
+        <input type="text" name={@name} value={@valor} required={@required} disabled={@disabled}
+          maxlength={@columna.schema_context_properties["longitud"]}
+          id={@dom_id} phx-hook="FormatoCapturaField"
+          data-patron={@formato["patron"]}
+          data-guardar-formato={to_string(@formato["guardar_formato"] != false)}
+          data-estricto={to_string(@formato["estricto"] != false)}
+          class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+        <div :if={@formato["modo"] == "fecha" and !@disabled} class="relative flex-none">
+          <label for={"#{@dom_id}-calendario"} class="material-symbols-outlined text-gray-400 hover:text-purple-600 cursor-pointer" style="font-size:18px">calendar_month</label>
+          <input type="date" id={"#{@dom_id}-calendario"} phx-hook="AbrirCalendario" data-destino={@dom_id} tabindex="-1" class="sr-only" />
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  # "Formato de captura" numérico/moneda en un campo tipo "string" (a
+  # diferencia de la cláusula "integer"/"decimal" de arriba, acá la
+  # columna es texto de verdad — no hay un <input type="number"> nativo
+  # que lo proteja solo, así que FormatoNumericoField también filtra los
+  # caracteres inválidos al tipear). `guardar_formato` decide si, al
+  # perder foco, el valor tipeado se reemplaza por su versión formateada
+  # ("$1,234.50") o se deja como dígitos crudos — igual que en el modo
+  # posicional de arriba.
+  def campo_input(
+        %{
+          columna: %{
+            schema_context_properties: %{
+              "tipo" => "string",
+              "formato_captura" => %{"habilitada" => true, "modo" => modo} = formato
+            }
+          }
+        } = assigns
+      )
+      when modo in ["numero", "moneda"] do
+    assigns = assign_name(assigns)
+
+    assigns =
+      assigns
+      |> assign(:formato, formato)
+      |> assign(:dom_id, assigns.id || "campo-#{String.replace(assigns.name, ~r/[\[\]]/, "-")}")
+
+    ~H"""
+    <div>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <div class="flex items-center gap-1.5">
+        <input type="text" inputmode="decimal" name={@name} value={@valor} required={@required} disabled={@disabled}
+          id={@dom_id} phx-hook="FormatoNumericoField"
+          data-decimales={@formato["decimales"] || 0}
+          data-separador-miles={to_string(@formato["separador_miles"] == true)}
+          data-simbolo={@formato["modo"] == "moneda" && @formato["simbolo"]}
+          data-simbolo-posicion={@formato["simbolo_posicion"] || "prefijo"}
+          data-permitir-negativos={to_string(@formato["permitir_negativos"] == true)}
+          data-guardar-formato={to_string(@formato["guardar_formato"] == true)}
+          data-preview-de={"#{@dom_id}-preview"}
+          class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+        <span id={"#{@dom_id}-preview"} class="text-gray-400 text-[11px] whitespace-nowrap"></span>
       </div>
     </div>
     """
@@ -131,6 +290,11 @@ defmodule MetadataAppWeb.CampoInputComponents do
 
   defp assign_name(%{name: nil} = assigns), do: assign(assigns, :name, "campos[#{assigns.columna.schema_context_field}]")
   defp assign_name(assigns), do: assigns
+
+  defp paso_numerico(%{"decimales" => decimales}) when is_integer(decimales) and decimales > 0,
+    do: "0." <> String.duplicate("0", decimales - 1) <> "1"
+
+  defp paso_numerico(_formato), do: "1"
 
   defp etiqueta_para_valor(opciones, valor) do
     case Enum.find(opciones, fn {id, _etiqueta} -> to_string(id) == valor end) do

@@ -25,8 +25,8 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
       offset = (pagina - 1) * por_pagina
       filtros = filtros_desde_params(tabla, params)
 
-      items = CatalogoGenerico.listar(schema_mod, filtros, limit: por_pagina, offset: offset)
-      total_filas = CatalogoGenerico.contar(schema_mod, filtros)
+      items = CatalogoGenerico.listar(schema_mod, conn.assigns[:current_scope], filtros, limit: por_pagina, offset: offset)
+      total_filas = CatalogoGenerico.contar(schema_mod, conn.assigns[:current_scope], filtros)
       meta_campos = tabla |> MetaSchemaContext.listar_detalles() |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
       estados_por_id = MetaStateEngine.mapa_nombres_estados(tabla)
       acompanamiento = CatalogoGenerico.mapa_acompanamiento(tabla, items)
@@ -118,7 +118,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
 
   def show(conn, %{"tabla" => tabla, "id" => id}) do
     with {:ok, schema_mod} <- resolver(tabla) do
-      item = CatalogoGenerico.obtener!(schema_mod, id)
+      item = CatalogoGenerico.obtener!(schema_mod, conn.assigns[:current_scope], id)
       meta_campos = tabla |> MetaSchemaContext.listar_detalles() |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
       estados_por_id = MetaStateEngine.mapa_nombres_estados(tabla)
       acompanamiento = CatalogoGenerico.mapa_acompanamiento(tabla, [item])
@@ -165,7 +165,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
       if is_list(attrs_bruto) do
         contexto = MetadataAppWeb.AuditoriaContexto.desde_conn(conn)
 
-        with {:ok, items} <- CatalogoGenerico.crear_muchos(schema_mod, attrs_bruto, contexto) do
+        with {:ok, items} <- CatalogoGenerico.crear_muchos(schema_mod, conn.assigns[:current_scope], attrs_bruto, contexto) do
           acompanamiento = CatalogoGenerico.mapa_acompanamiento(tabla, items)
 
           conn
@@ -176,7 +176,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
         {renglones, attrs} = Map.pop(attrs_bruto, "renglones", %{})
         contexto = MetadataAppWeb.AuditoriaContexto.desde_conn(conn)
 
-        with {:ok, item} <- CatalogoGenerico.crear(schema_mod, attrs, renglones: renglones, contexto: contexto) do
+        with {:ok, item} <- CatalogoGenerico.crear(schema_mod, conn.assigns[:current_scope], attrs, renglones: renglones, contexto: contexto) do
           acompanamiento = CatalogoGenerico.mapa_acompanamiento(tabla, [item])
 
           conn
@@ -190,10 +190,10 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
   def update(conn, %{"tabla" => tabla, "id" => id} = params) do
     with {:ok, schema_mod} <- resolver(tabla) do
       attrs = Map.get(params, tabla, Map.drop(params, ["tabla", "id"]))
-      item = CatalogoGenerico.obtener!(schema_mod, id)
+      item = CatalogoGenerico.obtener!(schema_mod, conn.assigns[:current_scope], id)
       contexto = MetadataAppWeb.AuditoriaContexto.desde_conn(conn)
 
-      with {:ok, item} <- CatalogoGenerico.actualizar(item, attrs, contexto) do
+      with {:ok, item} <- CatalogoGenerico.actualizar(item, conn.assigns[:current_scope], attrs, contexto) do
         estados_por_id = MetaStateEngine.mapa_nombres_estados(tabla)
         acompanamiento = CatalogoGenerico.mapa_acompanamiento(tabla, [item])
         json(conn, %{data: serializar_json(item, estados_por_id, acompanamiento)})
@@ -203,7 +203,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
 
   def delete(conn, %{"tabla" => tabla, "id" => id}) do
     with {:ok, schema_mod} <- resolver(tabla) do
-      item = CatalogoGenerico.obtener!(schema_mod, id)
+      item = CatalogoGenerico.obtener!(schema_mod, conn.assigns[:current_scope], id)
       contexto = MetadataAppWeb.AuditoriaContexto.desde_conn(conn)
 
       with {:ok, _item} <- CatalogoGenerico.eliminar(item, contexto) do

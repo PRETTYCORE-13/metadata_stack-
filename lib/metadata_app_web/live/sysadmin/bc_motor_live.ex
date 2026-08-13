@@ -28,7 +28,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     %{tipo: :pagina, id: "tepache", label: "Tepache Exp/Imp", nav: "/sysadmin/tepache"},
     %{tipo: :pagina, id: "roles", label: "Roles y Usuarios", nav: "/sysadmin/roles"},
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
-    %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"}
+    %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"},
+    %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
+    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
+    %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
   ]
 
 
@@ -58,6 +61,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       |> assign(:campo_form, nil)
       |> assign(:eliminar_campo_form, nil)
       |> assign(:relacion_form, nil)
+      |> assign(:dependencia_form, nil)
+      |> assign(:formato_form, nil)
       |> assign(:estado_form, nil)
       |> assign(:transicion_form, nil)
       |> assign(:header, header)
@@ -536,23 +541,201 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # Categoría de un campo (acordeón donde cae en la Ficha 360° → tab
-  # Detalle) — sin modal, cambio directo apenas se elige la opción, mismo
-  # criterio inmediato que guardar_get_view/2 de abajo.
-  def handle_event("cambiar_categoria", %{"campo" => campo, "categoria" => categoria}, socket) do
+  # --- Dependencias ("combos en cascada") de un campo referencia -------------
+  # Genérico: no hay ningún nombre de campo fijo acá — "campo_padre" tiene
+  # que ser OTRO campo "referencia" de este mismo catálogo, "campo_remoto"
+  # una columna del catálogo DESTINO de `campo` (mismo `campos_destino` que
+  # ya arma abrir_form_relacion/1, no duplicado). Ver
+  # MetaSchemaContext.resolver_filtros/3 (runtime) y validar_sin_ciclo/3
+  # (acá, antes de guardar).
+  def handle_event("abrir_form_dependencia", %{"campo" => campo}, socket) do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
-    props = Map.put(detalle.schema_context_properties, "categoria", categoria)
+    props = detalle.schema_context_properties
+    catalogo = socket.assigns.header.schema_context_name
 
-    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
-      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
-      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la categoría de \"#{campo}\".")}
+    campos_destino =
+      props["catalogo"]
+      |> MetaSchemaContext.listar_detalles()
+      |> Enum.filter(& &1.schema_context_properties["visible"])
+
+    # Un campo que YA depende (directa o transitivamente) de `campo` no
+    # puede ofrecerse como su padre — sería un ciclo inmediato. Filtro acá
+    # para que el <select> ni siquiera lo muestre; validar_sin_ciclo/3
+    # vuelve a chequear al guardar, por las dudas (ej. dos pestañas
+    # abiertas a la vez).
+    descendientes = catalogo |> MetaSchemaContext.descendientes(campo) |> MapSet.new()
+
+    otros_referencia =
+      socket.assigns.campos
+      |> Enum.filter(&(&1.schema_context_properties["tipo"] == "referencia" and &1.schema_context_field != campo))
+      |> Enum.reject(&MapSet.member?(descendientes, &1.schema_context_field))
+
+    {:noreply,
+     assign(socket, :dependencia_form, %{
+       "campo" => campo,
+       "catalogo" => catalogo,
+       "catalogo_destino_label" => MetaSchemaContext.obtener_header_por_nombre(props["catalogo"]).schema_context_label,
+       "campos_destino" => campos_destino,
+       "otros_referencia" => otros_referencia,
+       "dependencias" => props["dependencias"] || [],
+       "descendientes" => MetaSchemaContext.descendientes(catalogo, campo),
+       "error" => nil
+     })}
+  end
+
+  def handle_event("cerrar_form_dependencia", _params, socket) do
+    {:noreply, assign(socket, :dependencia_form, nil)}
+  end
+
+  def handle_event("dependencia_agregar", _params, socket) do
+    nueva = %{"campo_padre" => "", "campo_remoto" => "", "obligatorio" => true}
+    {:noreply, update(socket, :dependencia_form, &Map.update!(&1, "dependencias", fn deps -> deps ++ [nueva] end))}
+  end
+
+  def handle_event("dependencia_quitar", %{"indice" => indice}, socket) do
+    i = String.to_integer(indice)
+    {:noreply, update(socket, :dependencia_form, &Map.update!(&1, "dependencias", fn deps -> List.delete_at(deps, i) end))}
+  end
+
+  # phx-change del form entero — llega con TODAS las filas de una
+  # (`dependencias[0][campo_padre]`, `dependencias[1][campo_padre]`, ...),
+  # Plug ya las decodifica como mapa con llaves "0"/"1"/... (mismo truco
+  # que renglones[IDX][...] en FichaLive) — se reordena acá una sola vez.
+  def handle_event("dependencia_cambiar", %{"dependencias" => deps_params}, socket) do
+    dependencias =
+      deps_params
+      |> Enum.sort_by(fn {indice, _valores} -> String.to_integer(indice) end)
+      |> Enum.map(fn {_indice, valores} ->
+        %{
+          "campo_padre" => valores["campo_padre"],
+          "campo_remoto" => valores["campo_remoto"],
+          "obligatorio" => valores["obligatorio"] == "true"
+        }
+      end)
+
+    {:noreply, update(socket, :dependencia_form, &Map.put(&1, "dependencias", dependencias))}
+  end
+
+  def handle_event("guardar_dependencia", _params, socket) do
+    %{"campo" => campo, "catalogo" => catalogo, "dependencias" => dependencias} = socket.assigns.dependencia_form
+
+    dependencias_validas =
+      Enum.filter(dependencias, &(&1["campo_padre"] not in [nil, ""] and &1["campo_remoto"] not in [nil, ""]))
+
+    case MetaSchemaContext.validar_sin_ciclo(catalogo, campo, dependencias_validas) do
+      :ok ->
+        detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+        props = Map.put(detalle.schema_context_properties, "dependencias", dependencias_validas)
+
+        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+          {:ok, _detalle} ->
+            {:noreply,
+             socket
+             |> assign(:dependencia_form, nil)
+             |> put_flash(:info, "Dependencia de \"#{campo}\" actualizada.")
+             |> cargar_motor()}
+
+          {:error, changeset} ->
+            {:noreply, update(socket, :dependencia_form, &Map.put(&1, "error", resumen_errores(changeset)))}
+        end
+
+      {:error, motivo} ->
+        {:noreply, update(socket, :dependencia_form, &Map.put(&1, "error", motivo))}
+    end
+  end
+
+  # --- Formato de captura (máscaras de texto, número/moneda) -----------------
+  # Config libre en schema_context_properties["formato_captura"], sin
+  # regenerar el schema — mismo criterio que "dependencias" arriba (ver
+  # MetaSchemaContext.validar_formato_captura/2). Un solo panel (no el
+  # wizard de 4 pasos del mockup de referencia) con los campos que aplican
+  # según el `tipo` real del campo: posicional para "string", numérico
+  # para "integer"/"decimal".
+  def handle_event("abrir_form_formato", %{"campo" => campo}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = detalle.schema_context_properties
+    tipo = props["tipo"]
+    actual = props["formato_captura"] || %{}
+    modo = actual["modo"] || modo_por_defecto(tipo)
+
+    {:noreply,
+     assign(socket, :formato_form, %{
+       "campo" => campo,
+       "tipo" => tipo,
+       "habilitada" => actual["habilitada"] == true,
+       "modo" => modo,
+       "patron" => actual["patron"] || patron_por_defecto(modo) || "",
+       "guardar_formato" => actual["guardar_formato"] != false,
+       "decimales" => actual["decimales"] || 2,
+       "separador_miles" => actual["separador_miles"] != false,
+       "simbolo" => actual["simbolo"] || "$",
+       "simbolo_posicion" => actual["simbolo_posicion"] || "prefijo",
+       "permitir_negativos" => actual["permitir_negativos"] == true,
+       "estricto" => actual["estricto"] != false,
+       "permitir_incompleto" => actual["permitir_incompleto"] != false,
+       "mensaje_invalido" => actual["mensaje_invalido"] || "",
+       "error" => nil
+     })}
+  end
+
+  def handle_event("cerrar_form_formato", _params, socket) do
+    {:noreply, assign(socket, :formato_form, nil)}
+  end
+
+  # phx-change del panel entero — a diferencia de "dependencia_cambiar" no
+  # hay filas repetidas que reordenar, así que se puede leer `params`
+  # directo campo por campo.
+  def handle_event("formato_cambiar", params, socket) do
+    {:noreply,
+     update(socket, :formato_form, fn form ->
+       modo = params["modo"] || form["modo"]
+
+       form
+       |> Map.put("habilitada", params["habilitada"] == "true")
+       |> Map.put("modo", modo)
+       |> Map.put("patron", patron_por_defecto(modo) || Map.get(params, "patron", form["patron"]))
+       |> Map.put("guardar_formato", params["guardar_formato"] != "false")
+       |> Map.put("decimales", to_entero_seguro(params["decimales"], form["decimales"]))
+       |> Map.put("separador_miles", params["separador_miles"] == "true")
+       |> Map.put("simbolo", Map.get(params, "simbolo", form["simbolo"]))
+       |> Map.put("simbolo_posicion", params["simbolo_posicion"] || form["simbolo_posicion"])
+       |> Map.put("permitir_negativos", params["permitir_negativos"] == "true")
+       |> Map.put("estricto", params["estricto"] == "true")
+       |> Map.put("permitir_incompleto", params["permitir_incompleto"] == "true")
+       |> Map.put("mensaje_invalido", Map.get(params, "mensaje_invalido", form["mensaje_invalido"]))
+     end)}
+  end
+
+  def handle_event("guardar_formato", _params, socket) do
+    form = socket.assigns.formato_form
+    campo = form["campo"]
+
+    case construir_formato_captura(form) do
+      {:ok, formato} ->
+        detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+        props = Map.put(detalle.schema_context_properties, "formato_captura", formato)
+
+        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+          {:ok, _detalle} ->
+            {:noreply,
+             socket
+             |> assign(:formato_form, nil)
+             |> put_flash(:info, "Formato de captura de \"#{campo}\" actualizado.")
+             |> cargar_motor()}
+
+          {:error, changeset} ->
+            {:noreply, update(socket, :formato_form, &Map.put(&1, "error", resumen_errores(changeset)))}
+        end
+
+      {:error, motivo} ->
+        {:noreply, update(socket, :formato_form, &Map.put(&1, "error", motivo))}
     end
   end
 
   # "En tabla" de un campo — si aparece como columna en la tabla del tab
   # Detalle de la Ficha 360° (catálogos con muchos campos quieren mostrar
   # solo un subconjunto ahí; el formulario de al lado siempre muestra
-  # todos). Mismo criterio inmediato que cambiar_categoria/2 arriba.
+  # todos). Guardado inmediato, sin modal.
   def handle_event("cambiar_mostrar_en_tabla", %{"campo" => campo, "mostrar_en_tabla" => valor}, socket) do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
     props = Map.put(detalle.schema_context_properties, "mostrar_en_tabla", valor == "true")
@@ -564,8 +747,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
   # Etiqueta de un campo ya existente (2026-08-04, a pedido explícito) —
-  # mismo criterio inmediato que cambiar_categoria/cambiar_mostrar_en_tabla
-  # de arriba: sin modal, guarda directo al perder foco (evento "change"
+  # mismo criterio inmediato que cambiar_mostrar_en_tabla de arriba: sin
+  # modal, guarda directo al perder foco (evento "change"
   # nativo de un <input type="text">, no dispara por cada tecla). Antes
   # solo se podía definir al crear el campo — ver
   # MetaImportExport.sincronizar_etiquetas_campos/2 para la otra mitad
@@ -626,6 +809,23 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     actualizar_campo_y_regenerar(socket, detalle, props, "el valor default")
   end
 
+  # Reordenar la tabla de Campos (drag-and-drop, hook ListaOrdenable) —
+  # 2026-08-06, a pedido explícito: antes "orden" solo se fijaba una vez
+  # al crear el campo (length(@campos) + 1), corregirlo después era
+  # borrar y volver a crear. Puramente metadata (MetaSchemaContext.
+  # reordenar_campos/2 no toca la columna física ni corre
+  # CatalogoGenerador.generar/1) — @campos sale ordenado por "orden" ya
+  # en la query de listar_detalles/1, así que cargar_motor/1 alcanza
+  # para reflejar el nuevo orden, no hace falta nada más.
+  def handle_event("mover_a", %{"id" => id, "index" => index}, socket) do
+    orden_actual = Enum.map(socket.assigns.campos, & &1.schema_context_field)
+    nuevo_orden = orden_actual |> List.delete(id) |> List.insert_at(index, id)
+
+    :ok = MetaSchemaContext.reordenar_campos(socket.assigns.header.id, nuevo_orden)
+
+    {:noreply, cargar_motor(socket)}
+  end
+
   # --- Filtros: qué campos calculan un total en la fila de Resumen del -------
   # catálogo — sección aparte de la tabla de campos de arriba, "cantidad"
   # (el campo real, con su Nombre/Etiqueta/Tipo/Visible) no tiene nada que
@@ -633,8 +833,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # cuáles participan del Resumen. Arranca sin "Mín. Máx." (se prende
   # aparte, en la tabla de abajo, y solo para numéricos — no tiene sentido
   # pedirlo acá antes de saber si el campo elegido siquiera calificaría).
-  # Guardado inmediato, mismo criterio que cambiar_categoria/2 y
-  # cambiar_mostrar_en_tabla/2 arriba.
+  # Guardado inmediato, mismo criterio que cambiar_mostrar_en_tabla/2 arriba.
   def handle_event("agregar_filtro_resumen", %{"campo" => campo}, socket) do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
 
@@ -733,6 +932,40 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Todos por default\".")}
     end
   end
+
+  # Get View → columnas estructurales (ID/Estado/TRN) — mismo criterio
+  # inmediato que toggle_cargar_todos_por_default/2 de arriba. Estado/TRN
+  # ya se ocultaban solos cuando el catálogo no calificaba (sin motor de
+  # estados / no transaccional, ver CatalogoLive.mount/3); esto agrega el
+  # apagador de admin ENCIMA de esa condición, no en vez de ella.
+  # Alcance de Datos (Fase 6, 2026-08-11; toggle relocado 2026-08-12 a
+  # CatalogoPermisosLive/pestaña Permisos, ver ese módulo — "revuelve
+  # mucho" tenerlo separado de la config por rol en otra pestaña).
+
+  def handle_event("toggle_mostrar_id_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_id_en_tabla, "\"Mostrar ID\"")
+
+  def handle_event("toggle_mostrar_estado_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_estado_en_tabla, "\"Mostrar Estado\"")
+
+  def handle_event("toggle_mostrar_trn_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_trn_en_tabla, "\"Mostrar TRN\"")
+
+  # Columnas de Alcance de Datos (2026-08-12) — mismos 4 botones/criterio
+  # que ID/Estado/TRN de arriba, solo que panel_get_view/1 los oculta del
+  # todo si el catálogo no tiene alcance_habilitado (sin eso, las columnas
+  # ni existen físicamente, ver Header.mostrar_branch_en_tabla etc.).
+  def handle_event("toggle_mostrar_empresa_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_empresa_en_tabla, "\"Mostrar Empresa\"")
+
+  def handle_event("toggle_mostrar_branch_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_branch_en_tabla, "\"Mostrar Sucursal\"")
+
+  def handle_event("toggle_mostrar_inventory_location_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_inventory_location_en_tabla, "\"Mostrar Almacén\"")
+
+  def handle_event("toggle_mostrar_sales_unit_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_sales_unit_en_tabla, "\"Mostrar Unidad de venta\"")
 
   # Sub-filtro de fecha de "Filtros por default" — "primer_dia_anio"/
   # "ultimo_dia_anio"/"actual" (una sola fecha por calendario, precargada
@@ -1214,6 +1447,102 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     update(socket, :reglas_mensajes, &Map.put(&1, tipo, mensaje))
   end
 
+  defp modo_por_defecto("string"), do: "telefono"
+  defp modo_por_defecto(tipo) when tipo in ["integer", "decimal"], do: "numero"
+  defp modo_por_defecto(_tipo), do: "sin_mascara"
+
+  # Patrón fijo de los presets no editables — "personalizada" es el único
+  # modo donde el patrón sale de lo que tipeó quien configura el campo
+  # (ver formato_cambiar/2 y construir_formato_captura/1 abajo, y
+  # formato_ejemplo/2 que reusa esto mismo para la línea de ejemplo).
+  defp patron_por_defecto("telefono"), do: "(999) 999-9999"
+  defp patron_por_defecto("cp"), do: "99999"
+  defp patron_por_defecto("rfc"), do: "AAAA999999AA9"
+  defp patron_por_defecto("fecha"), do: "99/99/9999"
+  defp patron_por_defecto(_modo), do: nil
+
+  defp to_entero_seguro(valor, default) when is_binary(valor) do
+    case Integer.parse(valor) do
+      {n, ""} -> n
+      _ -> default
+    end
+  end
+
+  defp to_entero_seguro(_valor, default), do: default
+
+  defp construir_formato_captura(%{"habilitada" => false}), do: {:ok, %{"habilitada" => false}}
+
+  # "Número"/"Moneda" en un campo tipo "string" — a diferencia del caso
+  # integer/decimal de abajo, acá SÍ aplica "guardar_formato" (la columna
+  # es texto de verdad, puede persistir "1234.50" o "$1,234.50" tal cual).
+  defp construir_formato_captura(%{"tipo" => "string", "modo" => modo} = form) when modo in ["numero", "moneda"] do
+    {:ok,
+     %{
+       "habilitada" => true,
+       "modo" => modo,
+       "decimales" => form["decimales"],
+       "separador_miles" => form["separador_miles"],
+       "simbolo" => if(modo == "moneda", do: form["simbolo"]),
+       "simbolo_posicion" => form["simbolo_posicion"],
+       "permitir_negativos" => form["permitir_negativos"],
+       "guardar_formato" => form["guardar_formato"],
+       "estricto" => form["estricto"],
+       "permitir_incompleto" => form["permitir_incompleto"],
+       "mensaje_invalido" => form["mensaje_invalido"]
+     }}
+  end
+
+  defp construir_formato_captura(%{"tipo" => "string"} = form) do
+    cond do
+      form["modo"] == "sin_mascara" ->
+        {:ok, %{"habilitada" => false}}
+
+      form["patron"] in [nil, ""] ->
+        {:error, "Definí un patrón para la máscara."}
+
+      true ->
+        {:ok,
+         %{
+           "habilitada" => true,
+           "modo" => form["modo"],
+           "patron" => form["patron"],
+           "guardar_formato" => form["guardar_formato"],
+           "estricto" => form["estricto"],
+           "permitir_incompleto" => form["permitir_incompleto"],
+           "mensaje_invalido" => form["mensaje_invalido"]
+         }}
+    end
+  end
+
+  # integer/decimal: siempre numero/moneda — sin "guardar_formato", la
+  # columna numérica real siempre guarda el número crudo.
+  defp construir_formato_captura(form) do
+    {:ok,
+     %{
+       "habilitada" => true,
+       "modo" => form["modo"],
+       "decimales" => form["decimales"],
+       "separador_miles" => form["separador_miles"],
+       "simbolo" => if(form["modo"] == "moneda", do: form["simbolo"]),
+       "simbolo_posicion" => form["simbolo_posicion"],
+       "permitir_negativos" => form["permitir_negativos"],
+       "estricto" => form["estricto"],
+       "permitir_incompleto" => form["permitir_incompleto"],
+       "mensaje_invalido" => form["mensaje_invalido"]
+     }}
+  end
+
+  # Compartido por los 3 toggle_mostrar_*_en_tabla/3 de arriba.
+  defp toggle_columna_estructural(socket, campo, etiqueta) do
+    header = socket.assigns.header
+    valor = !Map.fetch!(header, campo)
+
+    case MetaSchemaContext.actualizar_header(header, %{Atom.to_string(campo) => valor}) do
+      {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar #{etiqueta}.")}
+    end
+  end
+
   # Compartido por cambiar_obligatorio_campo/2 y cambiar_valor_default_campo/2
   # — ambos necesitan CatalogoGenerador.generar/1 después de guardar
   # (a diferencia de cambiar_etiqueta_campo/2 y similares) porque tocan
@@ -1340,7 +1669,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         nil
 
       modulo ->
-        case CatalogoGenerico.listar(modulo, %{}, limit: 1) do
+        # :sistema (Fase 4a) -- registro de muestra para el Constructor,
+        # no un listado real para un usuario final.
+        case CatalogoGenerico.listar(modulo, :sistema, %{}, limit: 1) do
           [registro] -> registro
           [] -> nil
         end
@@ -1573,7 +1904,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       </div>
 
       <div id="motor-panel-getview" class="hidden">
-        <.panel_get_view campos={@campos} />
+        <.panel_get_view campos={@campos} header={@header} />
         <.panel_filtros_resumen campos={@campos} />
         <.panel_campos_default header={@header} />
         <.panel_filtros_default header={@header} />
@@ -1631,6 +1962,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     <.modal_estado :if={@estado_form} form={@estado_form} />
     <.modal_transicion :if={@transicion_form} form={@transicion_form} estados={@estados} campos={@campos} catalogos_detalle={@catalogos_detalle} />
     <.modal_relacion :if={@relacion_form} form={@relacion_form} local_label={@header.schema_context_label} />
+    <.modal_dependencia :if={@dependencia_form} form={@dependencia_form} />
+    <.modal_formato_captura :if={@formato_form} form={@formato_form} />
     """
   end
 
@@ -1921,20 +2254,24 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           <table class="min-w-full mb-2">
             <thead class="bg-gray-50">
               <tr>
+                <th class="px-1.5 py-1 border-b border-gray-200"></th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Nombre</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Etiqueta</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
                 <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Solo validación de la app (el formulario no deja guardar vacío) — la columna en la base de datos se queda nullable siempre">Obligatorio</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si el campo obligatorio llega vacío, se rellena con este valor en vez de rechazar el guardado">Default</th>
-                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Categoría (Ficha → Detalle)</th>
                 <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si aparece como columna en la tabla del tab Detalle de la Ficha 360° — el formulario de al lado siempre muestra todos los campos, esto es solo la tabla">En tabla</th>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Máscara de texto (teléfono, RFC, personalizada…) o formato numérico/moneda (decimales, separador de miles, negativos)">Formato</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="tabla-campos-ordenable" phx-hook="ListaOrdenable" data-grupo="campos-catalogo">
               <%= for c <- @campos do %>
                 <% props = c.schema_context_properties || %{} %>
-                <tr class="border-b border-gray-100 hover:bg-gray-50">
+                <tr id={"campos-row-#{c.schema_context_field}"} class="border-b border-gray-100 hover:bg-gray-50" data-id={c.schema_context_field}>
+                  <td class="px-1.5 py-1 text-gray-300 jal-manija cursor-grab" title="Arrastrar para reordenar">
+                    <span class="material-symbols-outlined" style="font-size: 16px">drag_indicator</span>
+                  </td>
                   <td class="px-1.5 py-1 text-gray-900 font-mono">{c.schema_context_field}</td>
                   <td class="px-1.5 py-1">
                     <form phx-change="cambiar_etiqueta_campo">
@@ -1972,21 +2309,22 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                       <span class="text-gray-300">—</span>
                     <% end %>
                   </td>
-                  <td class="px-1.5 py-1">
-                    <form phx-change="cambiar_categoria">
-                      <input type="hidden" name="campo" value={c.schema_context_field} />
-                      <select name="categoria" class="border border-gray-300 rounded px-1 py-0.5 text-[11px]">
-                        <option :for={{codigo, etiqueta} <- MetaSchemaContext.categorias_campo()} value={codigo}
-                          selected={MetaSchemaContext.categoria_campo(props) == codigo}>{etiqueta}</option>
-                      </select>
-                    </form>
-                  </td>
                   <td class="px-1.5 py-1 text-center">
                     <form phx-change="cambiar_mostrar_en_tabla">
                       <input type="hidden" name="campo" value={c.schema_context_field} />
                       <input type="hidden" name="mostrar_en_tabla" value="false" />
                       <input type="checkbox" name="mostrar_en_tabla" value="true" checked={MetaSchemaContext.mostrar_en_tabla?(props)} class="accent-purple-600" />
                     </form>
+                  </td>
+                  <td class="px-1.5 py-1">
+                    <%= if Map.get(props, "tipo") in ["string", "integer", "decimal"] do %>
+                      <button type="button" phx-click="abrir_form_formato" phx-value-campo={c.schema_context_field}
+                        class="text-purple-600 hover:text-purple-800 text-[11px] font-semibold">
+                        <%= if get_in(props, ["formato_captura", "habilitada"]) == true, do: "Configurado", else: "Configurar" %>
+                      </button>
+                    <% else %>
+                      <span class="text-gray-300">—</span>
+                    <% end %>
                   </td>
                   <td class="px-1.5 py-1">
                     <button type="button" phx-click="abrir_eliminar_campo" phx-value-campo={c.schema_context_field}
@@ -2035,6 +2373,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Catálogo destino</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campos que trae</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campos que muestra allá</th>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Combo en cascada: qué otro campo referencia de este catálogo tiene que elegirse primero">Depende de</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
             </thead>
@@ -2043,6 +2382,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <% props = c.schema_context_properties %>
                 <% traidos = Map.get(props, "campos_acompanamiento", []) %>
                 <% mostrados = Map.get(props, "campos_relacion", []) %>
+                <% dependencias = Map.get(props, "dependencias", []) %>
                 <tr class="border-b border-gray-100 hover:bg-gray-50">
                   <td class="px-1.5 py-1 text-gray-900 font-mono">{c.schema_context_field}</td>
                   <td class="px-1.5 py-1 text-gray-700 font-mono">{Map.get(props, "catalogo")}</td>
@@ -2060,9 +2400,18 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                       {Enum.join(mostrados, ", ")}
                     <% end %>
                   </td>
-                  <td class="px-1.5 py-1">
+                  <td class="px-1.5 py-1 text-gray-600">
+                    <%= if dependencias == [] do %>
+                      <span class="text-gray-400">—</span>
+                    <% else %>
+                      {dependencias |> Enum.map(& &1["campo_padre"]) |> Enum.join(" + ")}
+                    <% end %>
+                  </td>
+                  <td class="px-1.5 py-1 whitespace-nowrap">
                     <button type="button" phx-click="abrir_form_relacion" phx-value-campo={c.schema_context_field}
-                      class="text-blue-600 hover:text-blue-800 text-[11px] font-semibold">Configurar</button>
+                      class="text-blue-600 hover:text-blue-800 text-[11px] font-semibold mr-2">Configurar</button>
+                    <button type="button" phx-click="abrir_form_dependencia" phx-value-campo={c.schema_context_field}
+                      class="text-purple-600 hover:text-purple-800 text-[11px] font-semibold">Cascada</button>
                   </td>
                 </tr>
               <% end %>
@@ -2075,6 +2424,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
   attr :campos, :list, required: true
+  attr :header, :any, required: true
 
   # "Get View": qué campos ve el usuario final al consultar este catálogo
   # (tabla de CatalogoLive) — expone TODOS los campos reales, marcados
@@ -2084,16 +2434,71 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     ~H"""
     <div class="border border-gray-200 rounded-lg">
       <div class="px-1.5 ml-2 -mb-2 relative">
-        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Get View</span>
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-900">VISUALIZACIÓN DE CAMPOS</span>
       </div>
       <div class="p-3 pt-4 overflow-x-auto">
         <p class="text-gray-500 mb-2">
-          Qué campos ve el usuario final en la tabla de este catálogo. Desmarcar un campo no lo borra ni afecta la API — solo lo oculta de la vista.
+          Campos de Control
         </p>
+
+        <div class="flex flex-wrap gap-2 mb-3">
+          <button type="button" phx-click="toggle_mostrar_id_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_id_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_id_en_tabla, do: "✓ ID", else: "ID (oculto)"}
+          </button>
+          <button type="button" phx-click="toggle_mostrar_estado_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_estado_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_estado_en_tabla, do: "✓ Estado", else: "Estado (oculto)"}
+          </button>
+          <button type="button" phx-click="toggle_mostrar_trn_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_trn_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_trn_en_tabla, do: "✓ TRN", else: "TRN (oculto)"}
+          </button>
+          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_empresa_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_empresa_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_empresa_en_tabla, do: "✓ Empresa", else: "Empresa (oculto)"}
+          </button>
+          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_branch_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_branch_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_branch_en_tabla, do: "✓ Sucursal", else: "Sucursal (oculto)"}
+          </button>
+          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_inventory_location_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_inventory_location_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_inventory_location_en_tabla, do: "✓ Almacén", else: "Almacén (oculto)"}
+          </button>
+          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_sales_unit_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_sales_unit_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_sales_unit_en_tabla, do: "✓ Unidad de venta", else: "Unidad de venta (oculto)"}
+          </button>
+        </div>
         <%= if @campos == [] do %>
           <p class="text-gray-400">Este catálogo todavía no tiene campos.</p>
         <% else %>
           <form id="get-view-form" phx-submit="guardar_get_view">
+            <p class="text-gray-500 mb-2">
+              Campos de negocio
+            </p>
             <div class="flex items-center justify-between gap-2 mb-2">
               <div class="flex gap-2">
                 <button type="button"
@@ -2115,16 +2520,20 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             <table class="min-w-full mb-2">
               <thead class="bg-gray-50">
                 <tr>
+                  <th class="px-1.5 py-1 border-b border-gray-200"></th>
                   <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Nombre</th>
                   <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Etiqueta</th>
                   <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
                   <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Visible al usuario</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody id="tabla-get-view-ordenable" phx-hook="ListaOrdenable" data-grupo="campos-catalogo-getview">
                 <%= for c <- @campos do %>
                   <% props = c.schema_context_properties || %{} %>
-                  <tr class="border-b border-gray-100 hover:bg-gray-50">
+                  <tr id={"getview-row-#{c.schema_context_field}"} class="border-b border-gray-100 hover:bg-gray-50" data-id={c.schema_context_field}>
+                    <td class="px-1.5 py-1 text-gray-300 jal-manija cursor-grab" title="Arrastrar para reordenar">
+                      <span class="material-symbols-outlined" style="font-size: 16px">drag_indicator</span>
+                    </td>
                     <td class="px-1.5 py-1 text-gray-900 font-mono">{c.schema_context_field}</td>
                     <td class="px-1.5 py-1 text-gray-700">{Map.get(props, "etiqueta")}</td>
                     <td class="px-1.5 py-1 text-gray-600">{Map.get(props, "tipo")}</td>
@@ -2171,7 +2580,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     ~H"""
     <div class="border border-gray-200 rounded-lg mt-4">
       <div class="px-1.5 ml-2 -mb-2 relative">
-        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Filtros</span>
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-900">Filtros</span>
       </div>
       <div class="p-3 pt-4 overflow-x-auto">
         <p class="text-gray-500 mb-2">
@@ -2391,7 +2800,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     ~H"""
     <div class="border border-gray-200 rounded-lg mt-4">
       <div class="px-1.5 ml-2 -mb-2 relative">
-        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Campos por default</span>
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-900">Campos por default</span>
       </div>
       <div class="p-3 pt-4 overflow-x-auto">
         <p class="text-gray-500 mb-3">
@@ -3550,6 +3959,343 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
   attr :form, :map, required: true
+
+  # "Dependencia o filtro en cascada" de un campo referencia (combos en
+  # cascada, ver MetaSchemaContext.resolver_filtros/3 y
+  # validar_sin_ciclo/3) — lanzado desde el botón "Cascada" del panel
+  # "Relaciones". Genérico: "campo_padre" siempre es OTRO campo
+  # "referencia" YA CREADO en este mismo catálogo (nunca un nombre fijo
+  # como "estado_id"), "campo_remoto" siempre una columna real del
+  # catálogo DESTINO de `campo` — Estado/Municipio/Localidad es apenas un
+  # caso posible entre muchos (Empresa→Sucursal→Almacén, Marca→Modelo,
+  # etc.), no hay nada acá que lo asuma.
+  defp modal_dependencia(assigns) do
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-lg w-full text-xs max-h-[90vh] overflow-y-auto">
+        <div class="px-4 pt-4 pb-3 border-b border-gray-100 flex items-start justify-between gap-3">
+          <div class="flex items-start gap-2.5">
+            <span class="material-symbols-outlined text-purple-600 mt-0.5" style="font-size:20px">stacked_line_chart</span>
+            <div>
+              <h2 class="text-sm font-bold text-gray-900">Dependencia o filtro en cascada</h2>
+              <p class="text-gray-500 mt-0.5">
+                De qué otro campo depende <strong class="font-mono">{@form["campo"]}</strong> para acotar sus opciones — ej.
+                Municipio solo trae los que pertenecen al Estado ya elegido.
+              </p>
+            </div>
+          </div>
+          <button type="button" phx-click="cerrar_form_dependencia" class="text-gray-400 hover:text-gray-700 flex-shrink-0">
+            <span class="material-symbols-outlined" style="font-size:20px">close</span>
+          </button>
+        </div>
+
+        <div class="p-4">
+          <div :if={@form["error"]} class="bg-red-50 text-red-700 rounded-lg px-2.5 py-1.5 mb-3">{@form["error"]}</div>
+
+          <%= if @form["otros_referencia"] == [] do %>
+            <p class="text-gray-400 mb-3">
+              Este catálogo no tiene otro campo tipo <span class="font-mono">referencia</span> (que no dependa ya de
+              <strong class="font-mono">{@form["campo"]}</strong>) del que pueda depender todavía.
+            </p>
+            <div class="flex justify-end">
+              <button type="button" phx-click="cerrar_form_dependencia" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
+                Cerrar
+              </button>
+            </div>
+          <% else %>
+            <form phx-change="dependencia_cambiar" phx-submit="guardar_dependencia">
+              <%= if @form["dependencias"] == [] do %>
+                <p class="text-gray-400 mb-3">
+                  <strong class="font-mono">{@form["campo"]}</strong> no depende de nada todavía — siempre trae
+                  <strong>{@form["catalogo_destino_label"]}</strong> entero.
+                </p>
+              <% else %>
+                <div class="flex flex-col gap-2 mb-3">
+                  <%= for {dep, i} <- Enum.with_index(@form["dependencias"]) do %>
+                    <div class="border border-gray-200 rounded-lg p-2.5">
+                      <div class="flex items-center justify-between mb-1.5">
+                        <span class="text-gray-500 font-semibold">Depende de</span>
+                        <button type="button" phx-click="dependencia_quitar" phx-value-indice={i} class="text-red-600 hover:text-red-800 font-semibold">
+                          Quitar
+                        </button>
+                      </div>
+                      <div class="grid grid-cols-2 gap-2">
+                        <div>
+                          <label class="block text-gray-500 mb-0.5">Campo padre</label>
+                          <select name={"dependencias[#{i}][campo_padre]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                            <option value="">— Elegir —</option>
+                            <option :for={c <- @form["otros_referencia"]} value={c.schema_context_field} selected={dep["campo_padre"] == c.schema_context_field}>
+                              {c.schema_context_properties["etiqueta"] || c.schema_context_field}
+                            </option>
+                          </select>
+                        </div>
+                        <div>
+                          <label class="block text-gray-500 mb-0.5">Filtrar {@form["catalogo_destino_label"]} por</label>
+                          <select name={"dependencias[#{i}][campo_remoto]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                            <option value="">— Elegir —</option>
+                            <option :for={c <- @form["campos_destino"]} value={c.schema_context_field} selected={dep["campo_remoto"] == c.schema_context_field}>
+                              {c.schema_context_properties["etiqueta"] || c.schema_context_field}
+                            </option>
+                          </select>
+                        </div>
+                      </div>
+                      <label class="flex items-center gap-1.5 mt-1.5">
+                        <input type="hidden" name={"dependencias[#{i}][obligatorio]"} value="false" />
+                        <input type="checkbox" name={"dependencias[#{i}][obligatorio]"} value="true" checked={dep["obligatorio"] != false} class="accent-purple-600" />
+                        <span class="text-gray-600">Obligatorio — deshabilitar {@form["campo"]} hasta elegir esto</span>
+                      </label>
+                    </div>
+                  <% end %>
+                </div>
+              <% end %>
+
+              <button type="button" phx-click="dependencia_agregar" class="text-purple-700 hover:text-purple-900 font-semibold mb-3">
+                + Agregar dependencia
+              </button>
+
+              <div :if={@form["descendientes"] != []} class="bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5 mb-3">
+                <p class="text-gray-500">Campos que ya dependen de <strong class="font-mono">{@form["campo"]}</strong> (se limpian solos si este cambia):</p>
+                <p class="font-semibold text-gray-800">{Enum.join(@form["descendientes"], " → ")}</p>
+              </div>
+
+              <div class="flex justify-end gap-2">
+                <button type="button" phx-click="cerrar_form_dependencia" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
+                  Cancelar
+                </button>
+                <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">
+                  Guardar
+                </button>
+              </div>
+            </form>
+          <% end %>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  @presets_formato_string [
+    {"telefono", "Teléfono"},
+    {"cp", "Código postal"},
+    {"rfc", "RFC"},
+    {"fecha", "Fecha libre"},
+    {"personalizada", "Personalizada"},
+    {"numero", "Número"},
+    {"moneda", "Moneda"}
+  ]
+  @presets_formato_numerico [{"numero", "Número"}, {"moneda", "Moneda"}]
+
+  attr :form, :map, required: true
+
+  # Panel único (no el wizard de 4 pasos del mockup de referencia — ver
+  # modal_dependencia/1 arriba, mismo criterio de "versión condensada para
+  # LiveView server-rendered"): qué se ofrece depende del `tipo` real del
+  # campo, nunca un <select> de "tipo de formato" genérico que mezcle
+  # texto y número.
+  defp modal_formato_captura(assigns) do
+    assigns =
+      assign(assigns, :presets, if(assigns.form["tipo"] == "string", do: @presets_formato_string, else: @presets_formato_numerico))
+
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-md w-full text-xs max-h-[90vh] overflow-y-auto">
+        <div class="px-4 pt-4 pb-3 border-b border-gray-100 flex items-start justify-between gap-3">
+          <div class="flex items-start gap-2.5">
+            <span class="material-symbols-outlined text-purple-600 mt-0.5" style="font-size:20px">dialpad</span>
+            <div>
+              <h2 class="text-sm font-bold text-gray-900">Formato de captura</h2>
+              <p class="text-gray-500 mt-0.5">
+                Cómo se escribe y se guarda <strong class="font-mono">{@form["campo"]}</strong>.
+              </p>
+            </div>
+          </div>
+          <button type="button" phx-click="cerrar_form_formato" class="text-gray-400 hover:text-gray-700 flex-shrink-0">
+            <span class="material-symbols-outlined" style="font-size:20px">close</span>
+          </button>
+        </div>
+
+        <div class="p-4">
+          <div :if={@form["error"]} class="bg-red-50 text-red-700 rounded-lg px-2.5 py-1.5 mb-3">{@form["error"]}</div>
+
+          <form phx-change="formato_cambiar" phx-submit="guardar_formato" class="flex flex-col gap-3">
+            <label class="flex items-center gap-1.5">
+              <input type="hidden" name="habilitada" value="false" />
+              <input type="checkbox" name="habilitada" value="true" checked={@form["habilitada"]} class="accent-purple-600" />
+              <span class="text-gray-700 font-semibold">Habilitar formato de captura</span>
+            </label>
+
+            <%= if @form["habilitada"] do %>
+              <div>
+                <p class="text-gray-500 mb-1 font-semibold">Formato</p>
+                <div class="grid grid-cols-2 gap-1.5">
+                  <label :for={{valor, etiqueta} <- @presets} class={[
+                    "flex items-center gap-1.5 border rounded-lg px-2 py-1.5 cursor-pointer",
+                    @form["modo"] == valor && "border-purple-500 bg-purple-50" || "border-gray-200"
+                  ]}>
+                    <input type="radio" name="modo" value={valor} checked={@form["modo"] == valor} class="accent-purple-600" />
+                    {etiqueta}
+                  </label>
+                </div>
+              </div>
+
+              <%= if @form["modo"] in ["numero", "moneda"] do %>
+                <div class="grid grid-cols-2 gap-2">
+                  <div>
+                    <label class="block text-gray-500 mb-0.5 font-semibold">Decimales</label>
+                    <input type="number" name="decimales" value={@form["decimales"]} min="0" max="6"
+                      class="w-full border border-gray-300 rounded-lg px-2 py-1.5" />
+                  </div>
+                  <div :if={@form["modo"] == "moneda"}>
+                    <label class="block text-gray-500 mb-0.5 font-semibold">Símbolo</label>
+                    <div class="flex gap-1">
+                      <input type="text" name="simbolo" value={@form["simbolo"]} maxlength="4" class="w-14 border border-gray-300 rounded-lg px-2 py-1.5" />
+                      <select name="simbolo_posicion" class="flex-1 border border-gray-300 rounded-lg px-1.5 py-1.5">
+                        <option value="prefijo" selected={@form["simbolo_posicion"] == "prefijo"}>Antes</option>
+                        <option value="sufijo" selected={@form["simbolo_posicion"] == "sufijo"}>Después</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+                <label class="flex items-center gap-1.5">
+                  <input type="hidden" name="separador_miles" value="false" />
+                  <input type="checkbox" name="separador_miles" value="true" checked={@form["separador_miles"]} class="accent-purple-600" />
+                  Separador de miles
+                </label>
+                <label class="flex items-center gap-1.5">
+                  <input type="hidden" name="permitir_negativos" value="false" />
+                  <input type="checkbox" name="permitir_negativos" value="true" checked={@form["permitir_negativos"]} class="accent-purple-600" />
+                  Permitir negativos
+                </label>
+
+                <%= if @form["tipo"] == "string" do %>
+                  <div>
+                    <p class="text-gray-500 mb-1 font-semibold">Guardar valor como</p>
+                    <div class="grid grid-cols-2 gap-1.5">
+                      <label class={["flex flex-col gap-0.5 border rounded-lg px-2 py-1.5 cursor-pointer", @form["guardar_formato"] != true && "border-purple-500 bg-purple-50" || "border-gray-200"]}>
+                        <span class="flex items-center gap-1.5"><input type="radio" name="guardar_formato" value="false" checked={@form["guardar_formato"] != true} class="accent-purple-600" /> Solo datos</span>
+                        <span class="font-mono text-gray-500">{formato_ejemplo(@form, false)}</span>
+                      </label>
+                      <label class={["flex flex-col gap-0.5 border rounded-lg px-2 py-1.5 cursor-pointer", @form["guardar_formato"] == true && "border-purple-500 bg-purple-50" || "border-gray-200"]}>
+                        <span class="flex items-center gap-1.5"><input type="radio" name="guardar_formato" value="true" checked={@form["guardar_formato"] == true} class="accent-purple-600" /> Con formato</span>
+                        <span class="font-mono text-gray-500">{formato_ejemplo(@form, true)}</span>
+                      </label>
+                    </div>
+                  </div>
+                <% else %>
+                  <p class="text-gray-500">Ejemplo: <span class="font-mono text-gray-700">{formato_ejemplo(@form, true)}</span></p>
+                <% end %>
+              <% else %>
+                <div>
+                  <label class="block text-gray-500 mb-0.5 font-semibold">Patrón</label>
+                  <input type="text" name="patron" value={@form["patron"]} readonly={@form["modo"] != "personalizada"}
+                    placeholder="(999) 999-9999" spellcheck="false"
+                    class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono read-only:bg-gray-50 read-only:text-gray-500" />
+                  <p class="mt-0.5 text-gray-500"><b class="font-mono">A</b> letra · <b class="font-mono">9</b> número · <b class="font-mono">*</b> cualquiera — el resto se inserta solo.</p>
+                  <p :if={@form["modo"] == "fecha"} class="mt-0.5 text-gray-500">También suma un ícono de calendario junto al campo para elegir la fecha en vez de tipearla.</p>
+                </div>
+
+                <div>
+                  <p class="text-gray-500 mb-1 font-semibold">Guardar valor como</p>
+                  <div class="grid grid-cols-2 gap-1.5">
+                    <label class={["flex flex-col gap-0.5 border rounded-lg px-2 py-1.5 cursor-pointer", @form["guardar_formato"] != true && "border-purple-500 bg-purple-50" || "border-gray-200"]}>
+                      <span class="flex items-center gap-1.5"><input type="radio" name="guardar_formato" value="false" checked={@form["guardar_formato"] != true} class="accent-purple-600" /> Solo datos</span>
+                      <span class="font-mono text-gray-500">{formato_ejemplo(@form, false)}</span>
+                    </label>
+                    <label class={["flex flex-col gap-0.5 border rounded-lg px-2 py-1.5 cursor-pointer", @form["guardar_formato"] == true && "border-purple-500 bg-purple-50" || "border-gray-200"]}>
+                      <span class="flex items-center gap-1.5"><input type="radio" name="guardar_formato" value="true" checked={@form["guardar_formato"] == true} class="accent-purple-600" /> Con formato</span>
+                      <span class="font-mono text-gray-500">{formato_ejemplo(@form, true)}</span>
+                    </label>
+                  </div>
+                </div>
+              <% end %>
+
+              <div class="border-t border-gray-100 pt-2.5 flex flex-col gap-2">
+                <label class="flex items-center gap-1.5">
+                  <input type="hidden" name="estricto" value="false" />
+                  <input type="checkbox" name="estricto" value="true" checked={@form["estricto"]} class="accent-purple-600" />
+                  <%= if @form["modo"] in ["numero", "moneda"] do %>
+                    No deja tipear letras ni más decimales de los configurados
+                  <% else %>
+                    Máscara estricta — no deja tipear un carácter que no calza
+                  <% end %>
+                </label>
+                <label class="flex items-center gap-1.5">
+                  <input type="hidden" name="permitir_incompleto" value="false" />
+                  <input type="checkbox" name="permitir_incompleto" value="true" checked={@form["permitir_incompleto"]} class="accent-purple-600" />
+                  Permitir guardar un valor incompleto
+                </label>
+                <div :if={!@form["permitir_incompleto"]}>
+                  <label class="block text-gray-500 mb-0.5">Mensaje si el valor no es válido</label>
+                  <input type="text" name="mensaje_invalido" value={@form["mensaje_invalido"]}
+                    class="w-full border border-gray-300 rounded-lg px-2 py-1.5" />
+                </div>
+              </div>
+            <% end %>
+
+            <div class="flex justify-end gap-2 pt-1">
+              <button type="button" phx-click="cerrar_form_formato" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
+                Cancelar
+              </button>
+              <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">
+                Guardar
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  # Línea de ejemplo estática (server-side — LiveView ya re-renderiza en
+  # cada phx-change, no hace falta JS de preview acá como en el mockup de
+  # referencia). `con_formato?` distingue las dos columnas de "Guardar
+  # valor como" — irrelevante para número/moneda en un campo integer/
+  # decimal real (la BD siempre guarda el número crudo, se llama con
+  # `true` ahí para la línea "Ejemplo:"), pero SÍ importa cuando número/
+  # moneda vive en un campo string (separadores/símbolo solo aparecen si
+  # se decide persistir "con formato").
+  defp formato_ejemplo(%{"modo" => modo} = form, con_formato?) when modo in ["numero", "moneda"] do
+    decimales = form["decimales"] || 0
+    entero_agrupado = if con_formato?, do: agrupar_miles("1234567", form["separador_miles"]), else: "1234567"
+    numero = if decimales > 0, do: "#{entero_agrupado}.#{String.duplicate("5", decimales)}", else: entero_agrupado
+
+    if con_formato? and modo == "moneda" and form["simbolo"] not in [nil, ""] do
+      if form["simbolo_posicion"] == "sufijo", do: "#{numero} #{form["simbolo"]}", else: "#{form["simbolo"]}#{numero}"
+    else
+      numero
+    end
+  end
+
+  defp formato_ejemplo(%{"tipo" => "string", "modo" => modo} = form, con_formato?) do
+    patron = patron_por_defecto(modo) || form["patron"] || ""
+
+    cruda =
+      patron
+      |> String.graphemes()
+      |> Enum.with_index()
+      |> Enum.map(fn
+        {"A", i} -> Enum.at(~w(A B C D E F G H J), rem(i, 9))
+        {"9", i} -> Integer.to_string(rem(i, 10))
+        {"*", _i} -> "X"
+        {c, _i} -> c
+      end)
+      |> Enum.join()
+
+    if con_formato?, do: cruda, else: patron |> String.graphemes() |> Enum.zip(String.graphemes(cruda)) |> Enum.filter(fn {p, _c} -> p in ["A", "9", "*"] end) |> Enum.map(&elem(&1, 1)) |> Enum.join()
+  end
+
+  defp agrupar_miles(entero, true) do
+    entero
+    |> String.reverse()
+    |> String.graphemes()
+    |> Enum.chunk_every(3)
+    |> Enum.map(&Enum.join/1)
+    |> Enum.join(",")
+    |> String.reverse()
+  end
+
+  defp agrupar_miles(entero, _separador_miles), do: entero
 
   defp modal_estado(assigns) do
     ~H"""

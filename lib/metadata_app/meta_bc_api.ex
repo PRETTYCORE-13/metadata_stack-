@@ -22,7 +22,11 @@ defmodule MetadataApp.MetaBcApi do
   def obtener(tabla, id) do
     with {:ok, modulo} <- resolver(tabla) do
       try do
-        {:ok, CatalogoGenerico.obtener!(modulo, id)}
+        # :sistema (Fase 4a del modelo de Alcance de Datos) -- código de
+        # negocio interno, sin usuario humano detrás; mismo criterio que
+        # el resto de este módulo (acceso cross-catálogo sin RBAC,
+        # responsabilidad de quien escribe la regla).
+        {:ok, CatalogoGenerico.obtener!(modulo, :sistema, id)}
       rescue
         Ecto.NoResultsError -> {:error, :no_encontrado}
       end
@@ -33,14 +37,15 @@ defmodule MetadataApp.MetaBcApi do
   @spec listar(String.t(), map()) :: {:ok, [struct()]} | {:error, :no_encontrado}
   def listar(tabla, filtros \\ %{}) do
     with {:ok, modulo} <- resolver(tabla) do
-      {:ok, CatalogoGenerico.listar(modulo, filtros)}
+      {:ok, CatalogoGenerico.listar(modulo, :sistema, filtros)}
     end
   end
 
   @doc "Alta en otro catálogo — solo permitido desde reglas POST."
   @spec crear(String.t(), map()) :: {:ok, struct()} | {:error, term()}
   def crear(tabla, attrs) do
-    with {:ok, modulo} <- resolver(tabla), do: CatalogoGenerico.crear(modulo, attrs)
+    # :sistema (Fase 4b) -- mismo criterio que obtener/2 y listar/2 arriba.
+    with {:ok, modulo} <- resolver(tabla), do: CatalogoGenerico.crear(modulo, :sistema, attrs)
   end
 
   @doc "Baja en otro catálogo — solo permitido desde reglas POST."

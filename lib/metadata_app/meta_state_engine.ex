@@ -68,6 +68,12 @@ defmodule MetadataApp.MetaStateEngine do
     modulo = registro.__struct__
     # Paso 1 (parte 1): el estado origen se lee AHORA de la base, nunca del
     # que el caller cree tener — protección contra pantallas desactualizadas.
+    # Seguro sin alcance acá (Fase 5, RepoDirectoConVariable): re-lee el
+    # MISMO id que `registro` ya trae -- el caller solo pudo haber
+    # obtenido ese id pasando por un choke point con alcance ya aplicado
+    # (CatalogoGenerico.obtener!/3 aguas arriba), esto no abre ningún id
+    # nuevo, no filtrado.
+    # credo:disable-for-next-line MetadataApp.CredoChecks.RepoDirectoConVariable
     registro_actual = Repo.get!(modulo, registro.id)
     header = obtener_header!(modulo)
     renglones_spec = Keyword.get(opciones, :renglones, %{})
@@ -213,6 +219,9 @@ defmodule MetadataApp.MetaStateEngine do
   """
   def transiciones_disponibles(registro, contexto \\ %{}) do
     modulo = registro.__struct__
+    # Seguro sin alcance (Fase 5) — mismo motivo que ejecutar_transicion/4
+    # arriba: re-lee el id que `registro` ya trae.
+    # credo:disable-for-next-line MetadataApp.CredoChecks.RepoDirectoConVariable
     registro_actual = Repo.get!(modulo, registro.id)
     header = obtener_header!(modulo)
 
@@ -383,7 +392,13 @@ defmodule MetadataApp.MetaStateEngine do
     Enum.reduce_while(items, {:ok, []}, fn item, {:ok, acc} ->
       {renglon_id, campos_attrs} = normalizar_item_renglon(item)
 
+      # Gap conocido (Fase 5, no corregido acá): el renglón se acota a
+      # `encabezado_id` (ya scope-checked vía el maestro, aguas arriba),
+      # pero NO tiene su propio chequeo de alcance si el catálogo
+      # DETALLE llegara a activar alcance_habilitado propio — mismo
+      # límite ya documentado en Renglones.crear_cada_renglon/eliminar_cada_renglon.
       with registro when not is_nil(registro) <-
+             # credo:disable-for-next-line MetadataApp.CredoChecks.RepoDirectoConVariable
              Repo.get_by(modulo, encabezado_id: encabezado_id, renglon_id: renglon_id),
            :ok <- verificar_permiso_detalle(registro, transicion, header_detalle),
            {:ok, changeset} <- construir_changeset_transicion(registro, transicion, campos_attrs) do
@@ -571,6 +586,9 @@ defmodule MetadataApp.MetaStateEngine do
 
     case Repo.transaction(multi) do
       {:ok, %{registro: registro}} ->
+        # Seguro sin alcance (Fase 5): re-lee el registro que la MISMA
+        # transacción acaba de insertar, no un id externo.
+        # credo:disable-for-next-line MetadataApp.CredoChecks.RepoDirectoConVariable
         {:ok, Repo.get!(schema_mod, registro.id)}
 
       {:error, :registro, changeset, _cambios} ->
@@ -607,6 +625,8 @@ defmodule MetadataApp.MetaStateEngine do
 
     case Repo.transaction(multi) do
       {:ok, %{registro: registro}} ->
+        # Seguro sin alcance (Fase 5) — mismo motivo que ejecutar_nucleo_alta/4 arriba.
+        # credo:disable-for-next-line MetadataApp.CredoChecks.RepoDirectoConVariable
         {:ok, Repo.get!(schema_mod, registro.id)}
 
       {:error, :registro, changeset, _cambios} ->
@@ -650,6 +670,9 @@ defmodule MetadataApp.MetaStateEngine do
 
     case Repo.transaction(multi) do
       {:ok, _cambios} ->
+        # Seguro sin alcance (Fase 5) — mismo motivo que arriba: re-lee el
+        # id de `registro`, que el caller ya tenía antes de entrar acá.
+        # credo:disable-for-next-line MetadataApp.CredoChecks.RepoDirectoConVariable
         {:ok, Repo.get!(modulo, registro.id)}
 
       {:error, :cambio_estado, :conflicto_concurrencia, _cambios} ->

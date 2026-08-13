@@ -30,6 +30,8 @@ import RenglonForm from "./hooks/renglon_form"
 import ReferenciaField from "./hooks/referencia_field"
 import GridConstructor from "./hooks/grid_constructor"
 import RelacionCampos from "./hooks/relacion_campos"
+import FormatoCapturaField from "./hooks/formato_captura_field"
+import FormatoNumericoField from "./hooks/formato_numerico_field"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 
@@ -329,9 +331,25 @@ const AbrirCalendario = {
   mounted() {
     this.el.addEventListener("click", () => this.abrir())
     this.el.addEventListener("focus", () => this.abrir())
+    // Modo "fecha" de "Formato de captura" (campo_input_components.ex):
+    // este <input type="date"> vive oculto (sr-only) al lado de un input
+    // de texto con máscara "99/99/9999" — `data-destino` es el id de ESE
+    // input. Elegir una fecha acá la escribe ya formateada ahí (en vez de
+    // reemplazarlo por un date input real, que perdería la posibilidad de
+    // seguir tipeando el patrón a mano) y dispara "input" para que el
+    // phx-change de siempre la vea.
+    if (this.el.dataset.destino) this.el.addEventListener("change", () => this.sincronizar())
   },
   abrir() {
     if (typeof this.el.showPicker === "function") this.el.showPicker()
+  },
+  sincronizar() {
+    const destino = document.getElementById(this.el.dataset.destino)
+    if (!destino || !this.el.value) return
+    const [anio, mes, dia] = this.el.value.split("-")
+    destino.value = `${dia}/${mes}/${anio}`
+    destino.dispatchEvent(new Event("input", {bubbles: true}))
+    destino.focus()
   },
 }
 
@@ -493,6 +511,60 @@ const SelectorCampos = {
 
     if (esOriginal) delete memoriaOrdenColumnas[this.clave]
     else memoriaOrdenColumnas[this.clave] = actual
+  },
+}
+
+// Aviso "cambiaste de Unidad Operativa" (2026-08-13) — detección 100%
+// client-side, sin flash ni sesión de por medio: el server solo expone la
+// firma ACTUAL (Empresa+Branch+Inventory, ver firma_unidad_operativa/1 en
+// menu_layout.ex) en un elemento con phx-update="ignore" (nunca lo toca el
+// diff de LiveView). Al montar, compara esa firma contra la última guardada
+// en localStorage del navegador — si YA había una guardada y es distinta,
+// significa que la Unidad Operativa cambió desde la última vez que este
+// navegador vio una página (footer, cambio de empresa, etc.), y dispara el
+// aviso. Primera visita nunca dispara (no hay firma previa contra qué
+// comparar) — no tendría sentido avisar de un "cambio" que en realidad es
+// solo la primera carga.
+const UnidadOperativaWatcher = {
+  mounted() {
+    const clave = "pc_unidad_operativa_firma"
+    const firma = this.el.dataset.firma
+    const anterior = localStorage.getItem(clave)
+
+    if (firma && anterior !== null && anterior !== firma) {
+      this.avisar()
+    }
+
+    if (firma) localStorage.setItem(clave, firma)
+  },
+
+  avisar() {
+    const modal = document.getElementById("modal-unidad-operativa")
+    if (!modal) return
+
+    this.setTexto("modal-unidad-operativa-empresa", this.el.dataset.empresa)
+    this.setTexto("modal-unidad-operativa-branch", this.el.dataset.branch)
+    this.setTexto("modal-unidad-operativa-inventory", this.el.dataset.inventory)
+    // Unidad de Venta es opcional -- vacía en vez de omitirse, a
+    // propósito (pedido explícito: "XX o vacía si es el caso").
+    this.setTexto("modal-unidad-operativa-sales-unit", this.el.dataset.salesUnit || "")
+
+    modal.classList.remove("hidden")
+    // 5 segundos bloqueando la pantalla (overlay, no un toast que se
+    // pueda ignorar de reojo) -- fricción deliberada para que el usuario
+    // registre el cambio antes de seguir operando y evitar que arranque
+    // a hacer algo en la Unidad Operativa equivocada por apuro.
+    clearTimeout(this.temporizador)
+    this.temporizador = setTimeout(() => modal.classList.add("hidden"), 5000)
+  },
+
+  setTexto(id, valor) {
+    const el = document.getElementById(id)
+    if (el) el.textContent = valor || ""
+  },
+
+  destroyed() {
+    clearTimeout(this.temporizador)
   },
 }
 
@@ -699,7 +771,7 @@ const AbrirVistaPrevia = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField, UnidadOperativaWatcher},
 })
 
 // Show progress bar on live navigation and form submits

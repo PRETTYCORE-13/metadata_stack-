@@ -37,6 +37,7 @@ defmodule MetadataAppWeb.FichaLive do
   alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaPlantillas.Formula
   alias MetadataApp.MetaSchema.TransicionEvento
+  alias MetadataApp.Integraciones
   alias MetadataAppWeb.AdminNav
   alias MetadataAppWeb.GridEditableComponents
 
@@ -55,7 +56,7 @@ defmodule MetadataAppWeb.FichaLive do
 
       schema_mod ->
         header = MetaSchemaContext.obtener_header_por_nombre(tabla)
-        registro = CatalogoGenerico.obtener!(schema_mod, id)
+        registro = CatalogoGenerico.obtener!(schema_mod, socket.assigns[:current_scope], id)
 
         {:ok,
          socket
@@ -76,6 +77,8 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:form_values, %{})
          |> assign(:errores_campos, %{})
          |> assign(:error_guardado, nil)
+         |> assign(:accion_externa_en_curso, nil)
+         |> assign(:resultado_accion_externa, nil)
          |> cargar_registro(registro)}
     end
   end
@@ -149,6 +152,12 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:form_values, %{})
          |> assign(:errores_campos, %{})
          |> assign(:error_guardado, nil)
+         # Sin registro todavía (modo alta) no hay contra qué resolver
+         # {campo} en una url_template -- los botones de Acciones externas
+         # solo tienen sentido en modo :ver (ver header_acciones_externas/1).
+         |> assign(:acciones_externas, [])
+         |> assign(:accion_externa_en_curso, nil)
+         |> assign(:resultado_accion_externa, nil)
          # Todavía no hay id de encabezado para listar renglones YA
          # persistidos, pero sí se puede dejar capturar renglones "al
          # vuelo" (R6, alta atómica: MetaStateEngine.dar_de_alta/5 acepta
@@ -187,6 +196,16 @@ defmodule MetadataAppWeb.FichaLive do
 
   def handle_event("validar", %{"campos" => campos_params}, socket) do
     cambios = campos_modificados(socket.assigns.registro, campos_params, socket.assigns.campos_editables)
+
+    cambios =
+      limpiar_descendientes_cambiados(
+        socket.assigns.tabla,
+        socket.assigns.columnas,
+        socket.assigns.registro,
+        socket.assigns.form_values,
+        cambios
+      )
+
     {:noreply, assign(socket, :form_values, cambios)}
   end
 
@@ -224,6 +243,47 @@ defmodule MetadataAppWeb.FichaLive do
     end
   end
 
+  # Botón "Acciones externas" (Fase 6 de "Integraciones", 2026-08-07) —
+  # dispara la llamada HTTP configurada vía start_async/3, NUNCA síncrono:
+  # a diferencia de una regla post (dentro de la transacción, con timeout
+  # corto, ver Integraciones.ejecutar/4), esto es un botón que un humano
+  # clickea con el timeout default (15s) — bloquear el proceso de la
+  # LiveView ese tiempo dejaría toda la pantalla congelada. Un solo
+  # @accion_externa_en_curso (no por id): dos acciones a la vez sobre el
+  # mismo registro no tiene un caso de uso real y complica innecesariamente
+  # el manejo de errores parciales.
+  def handle_event("ejecutar_accion_externa", %{"accion_id" => accion_id}, socket) do
+    accion_id = String.to_integer(accion_id)
+    %{registro: registro, header: header, current_scope: current_scope} = socket.assigns
+
+    # Busca contra TODAS las acciones del catálogo (no solo
+    # @acciones_externas, ya filtrada por permiso) para poder distinguir
+    # "no existe" de "no tenés permiso" -- defensa en profundidad contra un
+    # permiso revocado en OTRA pestaña/sesión mientras esta ficha seguía
+    # abierta con la lista vieja en memoria, no el camino normal (el botón
+    # ya no aparece si @acciones_externas no la incluye).
+    accion = header.id |> Integraciones.listar_acciones() |> Enum.find(&(&1.id == accion_id))
+
+    cond do
+      is_nil(accion) ->
+        {:noreply, socket}
+
+      not Permissions.can?(current_scope, "ejecutar_#{accion.nombre}", header.schema_context_name) ->
+        {:noreply, put_flash(socket, :error, "No tienes permiso para ejecutar esta acción.")}
+
+      true ->
+        {:noreply,
+         socket
+         |> assign(:accion_externa_en_curso, accion_id)
+         |> assign(:resultado_accion_externa, nil)
+         |> start_async(:accion_externa, fn -> {accion.nombre, Integraciones.ejecutar_accion(accion, registro, current_scope)} end)}
+    end
+  end
+
+  def handle_event("cerrar_resultado_accion_externa", _params, socket) do
+    {:noreply, assign(socket, :resultado_accion_externa, nil)}
+  end
+
   # En modo alta no hay registro que releer — "Actualizar ficha" acá solo
   # limpia el error para que el usuario reintente el alta.
   def handle_event("actualizar_ficha", _params, %{assigns: %{modo: :alta}} = socket) do
@@ -232,7 +292,7 @@ defmodule MetadataAppWeb.FichaLive do
 
   def handle_event("actualizar_ficha", _params, socket) do
     %{schema_mod: schema_mod, registro: registro} = socket.assigns
-    registro_actual = CatalogoGenerico.obtener!(schema_mod, registro.id)
+    registro_actual = CatalogoGenerico.obtener!(schema_mod, socket.assigns[:current_scope], registro.id)
 
     {:noreply,
      socket
@@ -290,6 +350,12 @@ defmodule MetadataAppWeb.FichaLive do
           detalle_modulo.changeset(struct(detalle_modulo), campos)
 
         renglon_id ->
+          # Gap conocido (Fase 5, no corregido acá) -- acotado a
+          # socket.assigns.registro.id (el maestro, ya scope-checked al
+          # montar la ficha), sin chequeo propio del catálogo DETALLE si
+          # activara su propio alcance_habilitado. Mismo límite ya
+          # documentado en MetaStateEngine.buscar_renglones/5.
+          # credo:disable-for-next-line MetadataApp.CredoChecks.RepoDirectoConVariable
           case Repo.get_by(detalle_modulo, encabezado_id: socket.assigns.registro.id, renglon_id: renglon_id) do
             nil -> detalle_modulo.changeset(struct(detalle_modulo), campos)
             renglon -> detalle_modulo.changeset(renglon, campos)
@@ -376,12 +442,28 @@ defmodule MetadataAppWeb.FichaLive do
         {:noreply, socket}
 
       seleccion ->
-        nueva_seleccion = %{seleccion | valores: Map.merge(seleccion.valores, campos)}
+        valores_previos = seleccion.valores
+        valores_merged = Map.merge(valores_previos, campos)
+        columnas = columnas_de_catalogo(socket.assigns.catalogos_detalle, catalogo)
+
+        # limpiar_descendientes_cambiados/5 espera un "registro" struct de
+        # respaldo para cuando un campo no está en el mapa "antes" — acá
+        # @seleccion.valores YA es el mapa completo del renglón (no
+        # sparse como @form_values del encabezado), así que ese respaldo
+        # nunca se ejercita de verdad; %{} alcanza.
+        valores_finales = limpiar_descendientes_cambiados(catalogo, columnas, %{}, valores_previos, valores_merged)
+        nueva_seleccion = %{seleccion | valores: valores_finales}
+
+        # Refleja en la celda de la grilla (solo lectura) tanto lo que el
+        # usuario tocó a mano como cualquier descendiente que se vació
+        # solo (Municipio/Localidad si cambió Estado) — no solo `campos`.
+        valores_a_reflejar =
+          for {campo, valor} <- valores_finales, Map.get(valores_previos, campo) != valor, into: %{}, do: {campo, valor}
 
         {:noreply,
          socket
          |> assign(:detalle_seleccion, Map.put(socket.assigns.detalle_seleccion, catalogo, nueva_seleccion))
-         |> push_event("grid_actualizar_fila", %{catalogo: catalogo, client_id: seleccion.client_id, valores: campos})}
+         |> push_event("grid_actualizar_fila", %{catalogo: catalogo, client_id: seleccion.client_id, valores: valores_a_reflejar})}
     end
   end
 
@@ -495,6 +577,36 @@ defmodule MetadataAppWeb.FichaLive do
     end
   end
 
+  # Resultado del Task disparado por "ejecutar_accion_externa" (start_async/3,
+  # ver ahí el motivo). {:exit, _} es un crash genuino dentro del Task —
+  # sin esta cláusula el botón quedaría "en curso" para siempre si algo
+  # revienta fuera del try/rescue que ya tiene Integraciones.ejecutar_accion/4.
+  def handle_async(:accion_externa, {:ok, {nombre, {:ok, %{status: status, body: body}}}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:accion_externa_en_curso, nil)
+     |> assign(:resultado_accion_externa, %{nombre: nombre, ok?: status in 200..299, status: status, body: body, error: nil})}
+  end
+
+  def handle_async(:accion_externa, {:ok, {nombre, {:error, motivo}}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:accion_externa_en_curso, nil)
+     |> assign(:resultado_accion_externa, %{nombre: nombre, ok?: false, status: nil, body: nil, error: formatear_error_accion_externa(motivo)})}
+  end
+
+  def handle_async(:accion_externa, {:exit, razon}, socket) do
+    {:noreply,
+     socket
+     |> assign(:accion_externa_en_curso, nil)
+     |> assign(:resultado_accion_externa, %{nombre: nil, ok?: false, status: nil, body: nil, error: "Error inesperado: #{inspect(razon)}"})}
+  end
+
+  defp formatear_error_accion_externa(:timeout), do: "La API externa no respondió a tiempo."
+  defp formatear_error_accion_externa({:conexion, motivo}), do: "No se pudo conectar: #{inspect(motivo)}"
+  defp formatear_error_accion_externa({:excepcion, mensaje}), do: mensaje
+  defp formatear_error_accion_externa(motivo), do: inspect(motivo)
+
   defp columnas_de_catalogo(catalogos_detalle, nombre) do
     catalogos_detalle |> Enum.find(%{columnas: []}, &(&1.nombre == nombre)) |> Map.get(:columnas)
   end
@@ -573,12 +685,12 @@ defmodule MetadataAppWeb.FichaLive do
         {:noreply,
          assign(socket, :error_guardado, "No tienes permiso para guardar cambios en este catálogo.")}
 
-      registro_cambio_de_estado?(schema_mod, registro) ->
+      registro_cambio_de_estado?(schema_mod, socket.assigns.current_scope, registro) ->
         {:noreply,
          assign(socket, :error_guardado, "El estado del registro cambió mientras estabas editando.")}
 
       true ->
-        registro_actual = CatalogoGenerico.obtener!(schema_mod, registro.id)
+        registro_actual = CatalogoGenerico.obtener!(schema_mod, socket.assigns.current_scope, registro.id)
 
         guardar_cambios(
           socket,
@@ -610,7 +722,7 @@ defmodule MetadataAppWeb.FichaLive do
     # defensiva del lado servidor, antes de mandarlo al motor.
     renglones = Map.new(renglones_tabla, fn {catalogo, filas} -> {catalogo, limpiar_renglones_vacios(filas)} end)
 
-    case CatalogoGenerico.crear(schema_mod, attrs, renglones: renglones, contexto: socket.assigns.contexto_auditoria) do
+    case CatalogoGenerico.crear(schema_mod, socket.assigns.current_scope, attrs, renglones: renglones, contexto: socket.assigns.contexto_auditoria) do
       {:ok, _nuevo} ->
         {:noreply,
          socket
@@ -656,7 +768,7 @@ defmodule MetadataAppWeb.FichaLive do
       Repo.transaction(fn ->
         with {:ok, actualizado} <-
                aplicar_encabezado(registro_actual, attrs, renglones_editados, transicion_edicion, contexto_auditoria, current_scope),
-             {:ok, _creados} <- crear_renglones_nuevos(registro_actual.id, renglones_nuevos, contexto_auditoria),
+             {:ok, _creados} <- crear_renglones_nuevos(registro_actual.id, current_scope, renglones_nuevos, contexto_auditoria),
              {:ok, _eliminados} <- Renglones.eliminar_todos(catalogo_maestro, registro_actual.id, renglones_eliminados) do
           actualizado
         else
@@ -693,9 +805,9 @@ defmodule MetadataAppWeb.FichaLive do
   # Con renglones editados: tiene que pasar por la transición "guardar"
   # (R4) sí o sí, aunque @form_values venga vacío — es la única forma que
   # el motor conoce de tocar un campo de un renglón ya persistido.
-  defp aplicar_encabezado(registro, attrs, renglones_editados, _transicion, contexto_auditoria, _current_scope)
+  defp aplicar_encabezado(registro, attrs, renglones_editados, _transicion, contexto_auditoria, current_scope)
        when map_size(renglones_editados) == 0 do
-    actualizar_si_hay_cambios(registro, attrs, contexto_auditoria)
+    actualizar_si_hay_cambios(registro, current_scope, attrs, contexto_auditoria)
   end
 
   defp aplicar_encabezado(registro, attrs, renglones_editados, transicion, _contexto_auditoria, current_scope) do
@@ -703,12 +815,12 @@ defmodule MetadataAppWeb.FichaLive do
     MetaStateEngine.ejecutar_transicion(registro, transicion.accion, contexto, renglones: renglones_editados)
   end
 
-  defp actualizar_si_hay_cambios(registro, attrs, _contexto_auditoria) when map_size(attrs) == 0, do: {:ok, registro}
+  defp actualizar_si_hay_cambios(registro, _scope, attrs, _contexto_auditoria) when map_size(attrs) == 0, do: {:ok, registro}
 
-  defp actualizar_si_hay_cambios(registro, attrs, contexto_auditoria),
-    do: CatalogoGenerico.actualizar(registro, attrs, contexto_auditoria)
+  defp actualizar_si_hay_cambios(registro, scope, attrs, contexto_auditoria),
+    do: CatalogoGenerico.actualizar(registro, scope, attrs, contexto_auditoria)
 
-  defp crear_renglones_nuevos(encabezado_id, renglones, contexto_auditoria) do
+  defp crear_renglones_nuevos(encabezado_id, scope, renglones, contexto_auditoria) do
     Enum.reduce_while(renglones, {:ok, []}, fn {catalogo, items}, {:ok, acc} ->
       case items do
         [] ->
@@ -718,7 +830,7 @@ defmodule MetadataAppWeb.FichaLive do
           detalle_modulo = MetaSchemaContext.modulo_por_nombre(catalogo)
           attrs_items = Enum.map(items, &Map.put(&1, "encabezado_id", encabezado_id))
 
-          case CatalogoGenerico.crear_muchos(detalle_modulo, attrs_items, contexto_auditoria) do
+          case CatalogoGenerico.crear_muchos(detalle_modulo, scope, attrs_items, contexto_auditoria) do
             {:ok, creados} -> {:cont, {:ok, acc ++ creados}}
             {:error, _motivo} = error -> {:halt, error}
           end
@@ -742,9 +854,12 @@ defmodule MetadataAppWeb.FichaLive do
            true <- Enum.any?(columnas, &(get_in(&1.schema_context_properties, ["tipo"]) in ["integer", "decimal"])) do
         detalle_modulo = MetaSchemaContext.modulo_por_nombre(nombre)
 
+        # :sistema -- best-effort de LOGGING interno (ver el comentario de
+        # arriba: "no afecta la respuesta al usuario"), no una lista que se
+        # le muestra a nadie.
         renglones =
           detalle_modulo
-          |> CatalogoGenerico.listar(%{"encabezado_id" => registro_id})
+          |> CatalogoGenerico.listar(:sistema, %{"encabezado_id" => registro_id})
           |> Enum.map(&struct_a_mapa_resumen(&1, columnas))
 
         resumen = MetadataApp.ResumenRenglones.calcular(renglones, columnas)
@@ -787,8 +902,8 @@ defmodule MetadataAppWeb.FichaLive do
   # el que tenía el registro cuando se cargó la ficha cubre el caso real más
   # común (otro usuario/regla movió el estado mientras este usuario editaba)
   # sin inventar una garantía transaccional que el esquema no tiene todavía.
-  defp registro_cambio_de_estado?(schema_mod, registro_cargado) do
-    actual = CatalogoGenerico.obtener!(schema_mod, registro_cargado.id)
+  defp registro_cambio_de_estado?(schema_mod, scope, registro_cargado) do
+    actual = CatalogoGenerico.obtener!(schema_mod, scope, registro_cargado.id)
     actual.estado_id != registro_cargado.estado_id
   end
 
@@ -832,6 +947,35 @@ defmodule MetadataAppWeb.FichaLive do
         acc
       end
     end)
+  end
+
+  # Combos en cascada: si alguno de los campos referencia con
+  # descendientes (Estado, Municipio...) cambió de valor efectivo entre
+  # `valores_antes` y `valores_despues`, vacía en `valores_despues` a
+  # TODOS sus descendientes (directos e indirectos —
+  # MetaSchemaContext.descendientes/2 ya resuelve la cadena completa) —
+  # así Municipio/Localidad no quedan con un valor que dejó de ser válido
+  # para el nuevo padre. Acotado a campos tipo "referencia" de `columnas`
+  # (ya en memoria, sin query) para no pagar un `listar_detalles/1` por
+  # CADA campo tocado en cada evento, solo por los que de verdad podrían
+  # tener hijos.
+  defp limpiar_descendientes_cambiados(catalogo, columnas, registro, valores_antes, valores_despues) do
+    campos_referencia =
+      columnas
+      |> Enum.filter(&(&1.schema_context_properties["tipo"] == "referencia"))
+      |> Enum.map(& &1.schema_context_field)
+      |> MapSet.new()
+
+    padres_cambiados =
+      valores_despues
+      |> Map.keys()
+      |> Enum.filter(&MapSet.member?(campos_referencia, &1))
+      |> Enum.filter(fn campo ->
+        antes = Map.get(valores_antes, campo) || valor_registro_seguro(registro, campo)
+        Map.get(valores_despues, campo) != antes
+      end)
+
+    Enum.reduce(padres_cambiados, valores_despues, &MetaSchemaContext.limpiar_descendientes(catalogo, &1, &2))
   end
 
   # Sin ?plantilla_id= (el caso normal): la publicada de siempre. Con el
@@ -893,7 +1037,7 @@ defmodule MetadataAppWeb.FichaLive do
         |> Enum.reject(&(&1.accion == "guardar"))
       end
 
-    relaciones = cargar_relaciones(tabla, registro.id)
+    relaciones = cargar_relaciones(socket.assigns[:current_scope], tabla, registro.id)
 
     # Catálogo Maestro-Detalle: mismo criterio que ya usa CatalogoLive
     # (catalogos_detalle + detalle_renglones) — antes solo se podía
@@ -901,7 +1045,7 @@ defmodule MetadataAppWeb.FichaLive do
     # acá la Ficha 360° ya tiene el id real del maestro, así que se
     # resuelve en el lugar, sin ese viaje de ida y vuelta.
     catalogos_detalle = cargar_catalogos_detalle(header.id)
-    detalle_renglones = cargar_detalle_renglones(catalogos_detalle, registro.id, estados_por_id)
+    detalle_renglones = cargar_detalle_renglones(socket.assigns[:current_scope], catalogos_detalle, registro.id, estados_por_id)
 
     socket
     |> assign(:registro, registro)
@@ -923,6 +1067,18 @@ defmodule MetadataAppWeb.FichaLive do
     |> assign(:detalle_renglones_eliminados, %{})
     |> assign(:detalle_seleccion, %{})
     |> assign(:detalle_form_error, nil)
+    |> assign(:acciones_externas, acciones_externas_permitidas(socket, header))
+  end
+
+  # RBAC (Fase 7 de "Integraciones") — mismo criterio que
+  # verificar_permiso_transicion/3 del motor de estados: deny-by-default,
+  # el botón directamente no aparece si falta {recurso: catálogo, accion:
+  # "ejecutar_<nombre>"} (ver Integraciones.registrar_permiso_ejecucion/1,
+  # que la registra sola al crear/editar la acción).
+  defp acciones_externas_permitidas(socket, header) do
+    header.id
+    |> Integraciones.listar_acciones()
+    |> Enum.filter(&Permissions.can?(socket.assigns.current_scope, "ejecutar_#{&1.nombre}", header.schema_context_name))
   end
 
   defp cargar_catalogos_detalle(header_id) do
@@ -948,13 +1104,13 @@ defmodule MetadataAppWeb.FichaLive do
     end)
   end
 
-  defp cargar_detalle_renglones(catalogos_detalle, encabezado_id, estados_por_id) do
+  defp cargar_detalle_renglones(scope, catalogos_detalle, encabezado_id, estados_por_id) do
     Map.new(catalogos_detalle, fn %{nombre: nombre} ->
       detalle_modulo = MetaSchemaContext.modulo_por_nombre(nombre)
 
       filas =
         detalle_modulo
-        |> CatalogoGenerico.listar(%{"encabezado_id" => encabezado_id})
+        |> CatalogoGenerico.listar(scope, %{"encabezado_id" => encabezado_id})
         |> Enum.map(&CatalogoGenerico.serializar(&1, estados_por_id))
 
       {nombre, filas}
@@ -967,14 +1123,14 @@ defmodule MetadataAppWeb.FichaLive do
   # par de catálogos tiene a lo sumo un campo de referencia entre sí (el
   # mensaje de validate en meta_schema/detail.ex ya lo asume) — si hubiera
   # más de uno, se usa el primero encontrado.
-  defp cargar_relaciones(tabla, id) do
+  defp cargar_relaciones(scope, tabla, id) do
     tabla
     |> MetaSchemaContext.listar_dependientes()
-    |> Enum.map(&relacion_de(&1, tabla, id))
+    |> Enum.map(&relacion_de(scope, &1, tabla, id))
     |> Enum.reject(&is_nil/1)
   end
 
-  defp relacion_de(dep_nombre, tabla, id) do
+  defp relacion_de(scope, dep_nombre, tabla, id) do
     campo_fk =
       dep_nombre
       |> MetaSchemaContext.listar_detalles()
@@ -999,8 +1155,8 @@ defmodule MetadataAppWeb.FichaLive do
       %{
         catalogo: dep_nombre,
         etiqueta: dep_header.schema_context_label,
-        total: CatalogoGenerico.contar(dep_mod, filtro),
-        filas: CatalogoGenerico.listar(dep_mod, filtro, limit: 8),
+        total: CatalogoGenerico.contar(dep_mod, scope, filtro),
+        filas: CatalogoGenerico.listar(dep_mod, scope, filtro, limit: 8),
         campo_descriptivo: campo_descriptivo(dep_nombre),
         columnas: columnas_tabla_relacion(dep_nombre, campos_elegidos)
       }
@@ -1068,19 +1224,29 @@ defmodule MetadataAppWeb.FichaLive do
   #   (bc == tabla) a propósito: esa ya la cubre TransicionEvento cuando el
   #   catálogo adoptó el motor, sumar las dos duplicaría cada edición.
   defp cargar_historial(header_id, registro_id, catalogos_detalle, detalle_renglones) do
-    transiciones =
+    eventos =
       from(e in TransicionEvento,
         where: e.meta_schema_header_id == ^header_id and e.registro_id == ^registro_id
       )
       |> Repo.all()
-      |> Enum.map(fn e ->
+
+    usuarios_por_id = usuarios_por_id(Enum.map(eventos, & &1.usuario_id))
+
+    transiciones =
+      Enum.map(eventos, fn e ->
         %{
           origen: :transicion,
           inserted_at: e.inserted_at,
           accion: e.accion,
           estado_origen_id: e.estado_origen_id,
           estado_destino_id: e.estado_destino_id,
-          contexto: e.contexto
+          # "usuario_id"/"empresa_id" viajan mezclados en el mismo mapa que
+          # los campos REALES del formulario (ver Permissions.contexto_confiable/1
+          # + evento_changeset/5 en MetaStateEngine, que los mergea antes de
+          # persistir) — sin este Map.drop, "Modificó: ..." los listaba como
+          # si fueran campos de negocio tocados por el usuario.
+          contexto: Map.drop(e.contexto || %{}, ["usuario_id", "empresa_id"]),
+          usuario: Map.get(usuarios_por_id, e.usuario_id)
         }
       end)
 
@@ -1114,6 +1280,27 @@ defmodule MetadataAppWeb.FichaLive do
     |> Repo.all()
   end
 
+  # Nombre legible (alias, o el usuario de antes de la @ del email —
+  # Usuario.nombre_mostrar/1) para cada usuario_id de TransicionEvento —
+  # a diferencia de meta_schema_auditoria (que ya guarda usuario_email en
+  # texto plano), TransicionEvento solo persiste el id, así que hace
+  # falta este lookup. Un solo Repo.all para TODO el historial (no uno
+  # por fila) — usuario_id puede ser nil (contexto sin sesión resuelta,
+  # ej. un seed/import), se descarta antes de la query en vez de fallar.
+  defp usuarios_por_id([]), do: %{}
+
+  defp usuarios_por_id(ids) do
+    case Enum.reject(ids, &is_nil/1) |> Enum.uniq() do
+      [] ->
+        %{}
+
+      ids ->
+        from(u in MetadataApp.Autenticacion.Usuario, where: u.id in ^ids)
+        |> Repo.all()
+        |> Map.new(&{&1.id, MetadataApp.Autenticacion.Usuario.nombre_mostrar(&1)})
+    end
+  end
+
   # Mismos desenlaces que ya traduce CatalogoLive.formatear_error_transicion/1
   # para el modal de renglones — acá cubre además la ejecución de
   # transiciones de estado desde la Ficha 360°.
@@ -1128,6 +1315,22 @@ defmodule MetadataAppWeb.FichaLive do
 
   defp formatear_error(%Ecto.Changeset{} = changeset), do: MetadataApp.MetaErrores.resumen(changeset)
   defp formatear_error({:postcondicion_fallida, _}), do: "Error interno, no se aplicó el cambio."
+
+  # Jerarquía operativa activa (Fase 5, 2026-08-11) -- CatalogoGenerico
+  # devuelve esto cuando el catálogo exige branch/sales_unit/inventory
+  # location y el usuario no tiene ninguno activo elegido (ver
+  # CatalogoGenerico.validar_campo_requerido_en_attrs/4). Mensaje
+  # accionable: le dice exactamente qué hacer (ir a la banda de pie), no
+  # solo que algo falló.
+  defp formatear_error({:alcance_requerido, "branch_id"}),
+    do: "No tienes una Sucursal activa — elegí una desde la banda de pie para poder crear este registro."
+
+  defp formatear_error({:alcance_requerido, "sales_unit_id"}),
+    do: "No tienes una Unidad de Venta activa — elegí una desde la banda de pie para poder crear este registro."
+
+  defp formatear_error({:alcance_requerido, "inventory_id"}),
+    do: "No tienes un Almacén activo — elegí uno desde la banda de pie para poder crear este registro."
+
   defp formatear_error(_otro), do: "No se pudo completar la operación."
 
   # El botón de guardar lleva la etiqueta real de la transición "guardar"
@@ -1213,6 +1416,17 @@ defmodule MetadataAppWeb.FichaLive do
           </div>
 
           <div class="flex items-center gap-2 flex-wrap">
+            <button :for={accion <- @acciones_externas} type="button"
+              phx-click="ejecutar_accion_externa" phx-value-accion_id={accion.id}
+              disabled={!is_nil(@accion_externa_en_curso)}
+              data-confirm={if accion.confirmar_antes, do: "¿Ejecutar \"#{accion.etiqueta || accion.nombre}\"? Esto llama a #{accion.credencial.sistema_externo || accion.credencial.nombre} y puede modificar datos ahí."}
+              class={[
+                "px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors border border-purple-200 text-purple-700 hover:bg-purple-50",
+                !is_nil(@accion_externa_en_curso) && "opacity-50 cursor-not-allowed"
+              ]}>
+              {if @accion_externa_en_curso == accion.id, do: "Ejecutando…", else: accion.etiqueta || accion.nombre}
+            </button>
+
             <button :for={t <- @otras_transiciones} type="button"
               phx-click="ejecutar_transicion" phx-value-accion={t.accion} disabled={!t.disponible}
               title={if !t.disponible, do: Enum.map_join(t.razones, "; ", & &1.mensaje)}
@@ -1259,6 +1473,8 @@ defmodule MetadataAppWeb.FichaLive do
         </div>
       </div>
 
+      <.modal_resultado_accion_externa :if={@resultado_accion_externa} resultado={@resultado_accion_externa} />
+
       <div class="flex gap-5 border-b border-gray-200 mb-4 text-sm">
         <button type="button" phx-click="cambiar_tab" phx-value-tab="datos"
           class={["pb-2 -mb-px font-semibold", @tab == "datos" && "text-purple-700 border-b-2 border-purple-600", @tab != "datos" && "text-gray-400"]}>
@@ -1289,6 +1505,44 @@ defmodule MetadataAppWeb.FichaLive do
     </div>
     """
   end
+
+  # Respuesta CRUDA de la API externa (Fase 6, "Integraciones") — a
+  # propósito sin interpretar/traducir el body: quien pone el botón (el
+  # constructor del catálogo, vía AccionesExternasLive) es responsable de
+  # que la URL/método tengan sentido; este modal solo demuestra que el
+  # viaje de ida y vuelta ocurrió, para debug o confirmación visual.
+  attr :resultado, :map, required: true
+
+  defp modal_resultado_accion_externa(assigns) do
+    ~H"""
+    <div class="fixed inset-0 bg-black/30 flex items-center justify-center z-50" phx-click="cerrar_resultado_accion_externa">
+      <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full mx-4 p-4" onclick="event.stopPropagation()">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-bold text-gray-900 flex items-center gap-2">
+            <span class={["w-2 h-2 rounded-full", @resultado.ok? && "bg-green-500", !@resultado.ok? && "bg-red-500"]}></span>
+            {@resultado.nombre || "Acción externa"}
+          </h3>
+          <button type="button" phx-click="cerrar_resultado_accion_externa" class="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+        </div>
+
+        <p :if={@resultado.status} class="text-xs text-gray-500 mb-2">HTTP {@resultado.status}</p>
+        <p :if={@resultado.error} class="text-xs text-red-600 mb-2">{@resultado.error}</p>
+
+        <pre :if={@resultado.body} class="bg-gray-50 border border-gray-200 rounded-lg p-2 text-[11px] font-mono overflow-auto max-h-64 whitespace-pre-wrap">{formatear_body_accion_externa(@resultado.body)}</pre>
+
+        <div class="flex justify-end mt-3">
+          <button type="button" phx-click="cerrar_resultado_accion_externa"
+            class="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700 text-xs font-semibold hover:bg-gray-200">
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp formatear_body_accion_externa(body) when is_map(body) or is_list(body), do: Jason.encode!(body, pretty: true)
+  defp formatear_body_accion_externa(body), do: to_string(body)
 
   attr :columnas, :list, required: true
   attr :registro, :map, required: true
@@ -1915,7 +2169,13 @@ defmodule MetadataAppWeb.FichaLive do
     with {id, ""} <- Integer.parse(to_string(id_texto || "")),
          modulo when not is_nil(modulo) <- MetaSchemaContext.modulo_por_nombre(catalogo) do
       try do
-        registro = CatalogoGenerico.obtener!(modulo, id)
+        # :sistema (Fase 4a) -- nodo de plantilla ("autocompletar"), es un
+        # componente de función (nodo_plantilla_render/1) sin acceso directo
+        # al Scope del socket; mismo criterio que Formula (helper de
+        # preview/cálculo, no el listado principal de la ficha). Pendiente
+        # marcado si en el futuro se justifica threadear el Scope por todo
+        # el árbol de render de plantilla.
+        registro = CatalogoGenerico.obtener!(modulo, :sistema, id)
         etiquetas = etiquetas_de_campos(catalogo, campos_destino)
 
         filas =
@@ -1972,7 +2232,11 @@ defmodule MetadataAppWeb.FichaLive do
     # de texto libre; solo lectura, el número pelado), sin ninguna pista de
     # a qué apunta. Precalculado en cargar_catalogos_detalle/1 (col.opciones)
     # — nunca se vuelve a consultar acá, esto corre en cada render.
-    opciones_referencia = Map.get(assigns.col, :opciones, [])
+    {opciones_referencia, deshabilitado_dependencia, mensaje_dependencia} =
+      resolver_info_dependencia(props, Map.get(assigns.col, :opciones, []), fn campo ->
+        Map.get(assigns.edicion.valores, campo) || valor_registro_seguro(assigns.registro, campo)
+      end)
+
     valor_legible = if props["tipo"] == "referencia", do: etiqueta_opcion(opciones_referencia, valor_actual), else: valor_actual
 
     assigns =
@@ -1982,6 +2246,8 @@ defmodule MetadataAppWeb.FichaLive do
       |> assign(:valor_mostrado, valor_mostrado)
       |> assign(:errores_campo, errores_campo)
       |> assign(:opciones_referencia, opciones_referencia)
+      |> assign(:deshabilitado_dependencia, deshabilitado_dependencia)
+      |> assign(:mensaje_dependencia, mensaje_dependencia)
       |> assign(:valor_legible, valor_legible)
 
     ~H"""
@@ -2006,7 +2272,8 @@ defmodule MetadataAppWeb.FichaLive do
       </div>
 
       <div :if={@editable?} class="flex-1 min-w-0">
-        <.campo_input columna={@col} valor={@valor_mostrado} mostrar_etiqueta={false} opciones={@opciones_referencia} />
+        <.campo_input columna={@col} valor={@valor_mostrado} mostrar_etiqueta={false} opciones={@opciones_referencia}
+          disabled={@deshabilitado_dependencia} mensaje_dependencia={@mensaje_dependencia} />
         <p :if={@errores_campo} class="text-red-600 text-xs mt-1">{Enum.join(@errores_campo, "; ")}</p>
       </div>
       <span :if={!@editable?} class="text-gray-900 font-medium truncate">
@@ -2106,6 +2373,7 @@ defmodule MetadataAppWeb.FichaLive do
           <span class="text-gray-400 text-[11px]">
             {Map.get(@estados_por_id, e.estado_origen_id) || "—"} → {Map.get(@estados_por_id, e.estado_destino_id) || "—"}
           </span>
+          <span :if={e.usuario} class="text-gray-400 text-[11px]">· {e.usuario}</span>
         </div>
         <div :if={e.origen == :transicion and map_size(e.contexto) > 0} class="text-xs text-gray-500 mt-1">
           Modificó: {Enum.join(Map.keys(e.contexto), ", ")}
@@ -2184,9 +2452,6 @@ defmodule MetadataAppWeb.FichaLive do
   attr :campos_editables, :list, default: []
 
   defp formulario_renglon(assigns) do
-    grupos = if assigns.seleccion, do: agrupar_por_categoria(assigns.cat.columnas), else: []
-    {primer_grupo, resto_grupos} = separar_primer_grupo(grupos)
-
     # Un renglón YA PERSISTIDO solo se puede tocar si al menos uno de sus
     # campos está en la whitelist campos_editables de la transición
     # "guardar" resuelta (ver campo_detalle_editable?/3 más abajo, que
@@ -2197,7 +2462,7 @@ defmodule MetadataAppWeb.FichaLive do
       assigns.seleccion && assigns.seleccion.renglon_id &&
         not Enum.any?(assigns.cat.columnas, &(&1.schema_context_field in assigns.campos_editables))
 
-    assigns = assigns |> assign(:primer_grupo, primer_grupo) |> assign(:resto_grupos, resto_grupos) |> assign(:bloqueado?, bloqueado?)
+    assigns = assign(assigns, :bloqueado?, bloqueado?)
 
     ~H"""
     <div class="flex flex-col">
@@ -2228,41 +2493,26 @@ defmodule MetadataAppWeb.FichaLive do
         <form id={"renglon-form-#{@cat.nombre}"} phx-hook="RenglonForm" data-catalogo={@cat.nombre} phx-change="detalle_form_cambiar">
           <input type="hidden" name="catalogo" value={@cat.nombre} />
 
-          <div :if={@primer_grupo} class="border-b border-gray-100">
-            <div class="px-3 py-1.5 text-[11px] font-semibold text-gray-600">{@primer_grupo.etiqueta}</div>
-            <div class="px-3 pb-2 flex flex-wrap items-end gap-2">
-              <div :for={campo <- @primer_grupo.campos} class="flex-1 min-w-[120px]">
-                <.campo_input columna={campo} mostrar_etiqueta={true}
-                  valor={Map.get(@seleccion.valores, campo.schema_context_field, "")}
-                  name={"renglon[#{campo.schema_context_field}]"} opciones={opciones_para_campo(campo)}
-                  id={"campo-#{@cat.nombre}-#{campo.schema_context_field}"}
-                  disabled={!campo_detalle_editable?(campo, @seleccion, @campos_editables)} />
-              </div>
-              <div class="flex items-center gap-1.5 flex-none pb-0.5">
-                <button type="button" phx-click="detalle_eliminar_linea" phx-value-catalogo={@cat.nombre}
-                  title={
-                    if @seleccion.renglon_id,
-                      do: "Eliminar renglón (se aplica recién al Guardar)",
-                      else: "Eliminar línea"
-                  }
-                  class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 font-bold hover:bg-gray-50">×</button>
-              </div>
+          <div class="px-3 py-2 flex flex-wrap items-end gap-2">
+            <div :for={campo <- @cat.columnas} class="flex-1 min-w-[120px]">
+              <% {opciones_campo, deshabilitado_dep?, mensaje_dep} = resolver_info_dependencia(campo.schema_context_properties, opciones_para_campo(campo), &Map.get(@seleccion.valores, &1)) %>
+              <.campo_input columna={campo} mostrar_etiqueta={true}
+                valor={Map.get(@seleccion.valores, campo.schema_context_field, "")}
+                name={"renglon[#{campo.schema_context_field}]"} opciones={opciones_campo}
+                id={"campo-#{@cat.nombre}-#{campo.schema_context_field}"}
+                disabled={!campo_detalle_editable?(campo, @seleccion, @campos_editables) or deshabilitado_dep?}
+                mensaje_dependencia={mensaje_dep} />
+            </div>
+            <div class="flex items-center gap-1.5 flex-none pb-0.5">
+              <button type="button" phx-click="detalle_eliminar_linea" phx-value-catalogo={@cat.nombre}
+                title={
+                  if @seleccion.renglon_id,
+                    do: "Eliminar renglón (se aplica recién al Guardar)",
+                    else: "Eliminar línea"
+                }
+                class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 font-bold hover:bg-gray-50">×</button>
             </div>
           </div>
-
-          <details :for={grupo <- @resto_grupos} class="group border-b border-gray-100 last:border-b-0">
-            <summary class="cursor-pointer select-none px-3 py-1.5 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 flex items-center justify-between">
-              {grupo.etiqueta}
-              <span class="text-gray-300 transition-transform group-open:rotate-180">⌄</span>
-            </summary>
-            <div class="px-3 pb-2 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-x-2 gap-y-1.5">
-              <.campo_input :for={campo <- grupo.campos} columna={campo} mostrar_etiqueta={true}
-                valor={Map.get(@seleccion.valores, campo.schema_context_field, "")}
-                name={"renglon[#{campo.schema_context_field}]"} opciones={opciones_para_campo(campo)}
-                id={"campo-#{@cat.nombre}-#{campo.schema_context_field}"}
-                disabled={!campo_detalle_editable?(campo, @seleccion, @campos_editables)} />
-            </div>
-          </details>
         </form>
       <% end %>
 
@@ -2276,19 +2526,6 @@ defmodule MetadataAppWeb.FichaLive do
       </div>
     </div>
     """
-  end
-
-  # Agrupa las columnas de un catálogo detalle en el vocabulario cerrado de
-  # MetaSchemaContext.categorias_campo/0 (configurado por campo desde
-  # BcMotorLive → Campos → "Categoría"), en el orden fijo de ese
-  # vocabulario — solo se listan las categorías que de verdad tienen algún
-  # campo, para no mostrar acordeones vacíos.
-  defp agrupar_por_categoria(columnas) do
-    MetaSchemaContext.categorias_campo()
-    |> Enum.map(fn {codigo, etiqueta} ->
-      %{codigo: codigo, etiqueta: etiqueta, campos: Enum.filter(columnas, &(MetaSchemaContext.categoria_campo(&1) == codigo))}
-    end)
-    |> Enum.reject(&(&1.campos == []))
   end
 
   # Consulta en vivo — solo se llama UNA VEZ por columna, al armar
@@ -2305,10 +2542,60 @@ defmodule MetadataAppWeb.FichaLive do
 
   defp opciones_para_campo(campo), do: Map.get(campo, :opciones, [])
 
-  # El primer grupo (normalmente "Información general", el único abierto
-  # por default) se pinta suelto, sin acordeón, con los botones +/× de
-  # nueva línea/eliminar pegados al final de su fila — el resto sigue
-  # colapsable como siempre.
-  defp separar_primer_grupo([primero | resto]), do: {primero, resto}
-  defp separar_primer_grupo([]), do: {nil, []}
+  # Referencias dependientes ("combos en cascada", ver
+  # MetaSchemaContext.resolver_filtros/3) — a diferencia de
+  # opciones_para_columna/1 (arriba), esto SÍ corre en cada render: un
+  # campo con "dependencias" no puede cachear sus opciones una sola vez
+  # al mount, porque cambian con lo que el usuario va tipeando/eligiendo
+  # en sus campos padre. El costo real es chico (la consulta ya viene
+  # acotada por el filtro del padre, no las hasta 500 filas de
+  # opciones_referencia/1 sin filtrar) y solo lo pagan los campos que
+  # tienen "dependencias" configuradas — cualquier otro campo referencia
+  # sigue usando `opciones_cacheadas` tal cual, cero cambio de
+  # comportamiento. `buscar_valor` es un `campo -> valor | nil` que cada
+  # caller arma distinto: campo_row/1 (encabezado) mezcla @edicion.valores
+  # (sin guardar) con el registro persistido; formulario_renglon/1 lee
+  # directo de @seleccion.valores (ya es el mapa completo del renglón).
+  defp resolver_info_dependencia(props, opciones_cacheadas, buscar_valor) do
+    if props["tipo"] == "referencia" and is_list(props["dependencias"]) and props["dependencias"] != [] do
+      hermanos = valores_hermanos(props, buscar_valor)
+
+      case MetaSchemaContext.resolver_filtros(props, hermanos) do
+        {:ok, filtros} -> {CatalogoGenerico.opciones_referencia(props, filtros), false, nil}
+        {:disabled, mensaje} -> {[], true, mensaje}
+      end
+    else
+      {opciones_cacheadas, false, nil}
+    end
+  end
+
+  defp valores_hermanos(props, buscar_valor) do
+    props["dependencias"]
+    |> List.wrap()
+    |> Enum.map(& &1["campo_padre"])
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Map.new(&{&1, buscar_valor.(&1)})
+  end
+
+  # Lee el valor real de un campo hermano del registro PERSISTIDO — a
+  # diferencia del resto de este archivo (que ya conoce sus propios
+  # campos), acá "campo" viene de metadata libre ("campo_padre" de una
+  # dependencia, configurado a mano en el diseñador) — si apunta a un
+  # campo que ya no existe (config vieja, campo borrado), no puede
+  # crashear el render de la Ficha 360° entera por eso.
+  defp valor_registro_seguro(registro, campo) do
+    case campo_a_atom_seguro(campo) do
+      {:ok, atom} -> registro |> Map.get(atom) |> valor_o_nil()
+      :error -> nil
+    end
+  end
+
+  defp campo_a_atom_seguro(campo) do
+    {:ok, String.to_existing_atom(campo)}
+  rescue
+    ArgumentError -> :error
+  end
+
+  defp valor_o_nil(nil), do: nil
+  defp valor_o_nil(valor), do: to_string(valor)
 end

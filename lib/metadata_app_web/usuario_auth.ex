@@ -7,24 +7,20 @@ defmodule MetadataAppWeb.UsuarioAuth do
   alias MetadataApp.Autenticacion
   alias MetadataApp.Autenticacion.Scope
 
-  # Make the remember me cookie valid for 14 days. This should match
-  # the session validity setting in UsuarioToken.
-  @max_cookie_age_in_days 14
-  @remember_me_cookie "_metadata_app_web_usuario_remember_me"
-  @remember_me_options [
-    sign: true,
-    max_age: @max_cookie_age_in_days * 24 * 60 * 60,
-    same_site: "Lax"
-  ]
+  # Sin "recordarme" -- decisión explícita 2026-08-06 (ERP transaccional
+  # con datos sensibles): la cookie de sesión (Plug.Session, sin max_age,
+  # ver endpoint.ex) ya muere sola al cerrar el navegador de verdad; un
+  # cookie persistente aparte solo agrega superficie de riesgo (laptop
+  # robada, empleado despedido) por una comodidad menor. Ver
+  # UsuarioToken.@session_validity_in_hours para el límite real de cuánto
+  # dura un token, independiente de si el navegador "recuerda" la cookie.
 
-  # How old the session token should be before a new one is issued. When a request is made
-  # with a session token older than this value, then a new session token will be created
-  # and the session and remember-me cookies (if set) will be updated with the new token.
-  # Lowering this value will result in more tokens being created by active users. Increasing
-  # it will result in less time before a session token expires for a user to get issued a new
-  # token. This can be set to a value greater than `@max_cookie_age_in_days` to disable
-  # the reissuing of tokens completely.
-  @session_reissue_age_in_days 7
+  # Reissue a mitad de camino de la ventana de validez del token (ver
+  # UsuarioToken.@session_validity_in_hours, 12h): una sesión ACTIVA nunca
+  # llega al corte duro (se renueva antes), mientras que una sesión
+  # abandonada (nadie hace requests, nada la reissuea) sí expira -- esto
+  # funciona como timeout por inactividad sin necesitar tracking aparte.
+  @session_reissue_age_in_hours 6
 
   @doc """
   Logs the usuario in.
@@ -32,9 +28,9 @@ defmodule MetadataAppWeb.UsuarioAuth do
   Redirects to the session's `:usuario_return_to` path
   or falls back to the `signed_in_path/1`.
   """
-  def log_in_usuario(conn, usuario, params \\ %{}) do
+  def log_in_usuario(conn, usuario) do
     usuario_return_to = get_session(conn, :usuario_return_to)
-    conn = create_or_extend_session(conn, usuario, params)
+    conn = create_or_extend_session(conn, usuario)
 
     # usuario_return_to se lee una sola vez y se borra explícito acá — si no,
     # queda pegado para siempre en sesiones donde el usuario que se
@@ -51,21 +47,95 @@ defmodule MetadataAppWeb.UsuarioAuth do
         |> redirect(to: usuario_return_to || signed_in_path(conn))
 
       # Una sola empresa: se activa sola, sin pedirle que elija algo obvio.
+      # activar_jerarquia_operativa/3 auto-activa branch/inventory/sales_unit
+      # si el usuario solo tiene UNA opción permitida en cada uno -- pero,
+      # a diferencia de empresa, NUNCA bloquea el login para ir a elegir
+      # (ni con 0 asignados ni con 2+): un usuario recién migrado, sin
+      # branch/inventory asignado todavía (el caso de HOY, nadie tiene esto
+      # configurado), tiene que poder seguir entrando igual que siempre --
+      # la pantalla de elegir queda disponible desde la banda de pie
+      # (Fase 4) cuando el usuario la necesite, y el bloqueo real pasa
+      # recién al intentar CREAR algo en un catálogo que de verdad exige
+      # esa dimensión (Fase 5), no acá.
       [%Autenticacion.Empresa{id: empresa_id}] ->
-        conn
-        |> put_session(:empresa_activa_id, empresa_id)
-        |> delete_session(:usuario_return_to)
-        |> redirect(to: usuario_return_to || signed_in_path(conn))
+        activar_empresa_y_continuar(conn, usuario, empresa_id, usuario_return_to)
 
-      # Más de una: al selector. Se resuelve el return_to recién ahí (se
-      # re-escribe a propósito, no se borra, porque todavía hace falta un
-      # hop más).
-      _varias ->
-        conn
-        |> put_session(:usuario_return_to, usuario_return_to)
-        |> redirect(to: ~p"/meta_schema_usuario/seleccionar-empresa")
+      # Más de una -- si un admin marcó una como default (2026-08-12, ver
+      # UsuariosEmpresaLive, sección "Empresa"), se activa sola, mismo
+      # criterio que "una sola empresa" de arriba. Sin default (o el que
+      # había dejó de ser válido -- empresa_default_de_usuario/1 revalida
+      # la membresía viva), al selector; el return_to se resuelve recién
+      # ahí (se re-escribe a propósito, no se borra, porque todavía hace
+      # falta un hop más).
+      varias when varias != [] ->
+        case Autenticacion.empresa_default_de_usuario(usuario.id) do
+          %Autenticacion.Empresa{id: empresa_id} ->
+            activar_empresa_y_continuar(conn, usuario, empresa_id, usuario_return_to)
+
+          nil ->
+            conn
+            |> put_session(:usuario_return_to, usuario_return_to)
+            |> redirect(to: ~p"/meta_schema_usuario/seleccionar-empresa")
+        end
     end
   end
+
+  defp activar_empresa_y_continuar(conn, usuario, empresa_id, usuario_return_to) do
+    {conn, _listo_o_pendiente} =
+      conn
+      |> put_session(:empresa_activa_id, empresa_id)
+      |> activar_jerarquia_operativa(usuario.id, empresa_id)
+
+    conn
+    |> delete_session(:usuario_return_to)
+    |> redirect(to: usuario_return_to || signed_in_path(conn))
+  end
+
+  @doc """
+  Resuelve la jerarquía operativa (branch/inventory_location/sales_unit)
+  de `usuario_id` en `empresa_id` y fija en sesión lo que se pueda
+  auto-activar (mismo criterio que empresa_activa: una sola opción
+  permitida se activa sola). Devuelve `{conn, :listo}` si branch E
+  inventory_location quedaron resueltos, o `{conn, :pendiente}` si
+  alguno tiene 2+ opciones o ninguna asignada todavía -- el segundo
+  átomo es solo informativo, NINGÚN caller lo usa para bloquear
+  navegación (a diferencia de empresa_activa): un usuario sin
+  branch/inventory asignado (el caso de HOY, nadie tiene esto
+  configurado todavía) tiene que poder seguir usando la app igual que
+  siempre. `/meta_schema_usuario/seleccionar-jerarquia` es una pantalla
+  que el usuario visita cuando quiere (desde la banda de pie, Fase 4),
+  no un gate de login -- el bloqueo real pasa en Fase 5, al intentar
+  crear un registro en un catálogo que de verdad exige la dimensión que
+  falta.
+
+  Usado tanto al login (una sola empresa, `log_in_usuario/2`) como al
+  cambiar de empresa más tarde (`EmpresaSessionController.activar/2`) --
+  la jerarquía permitida es POR empresa, así que cambiar de empresa
+  siempre tiene que volver a resolver esto.
+  """
+  def activar_jerarquia_operativa(conn, usuario_id, empresa_id) do
+    # Un administrador ve TODAS las branches/inventory/sales_units de la
+    # empresa acá también (no solo lo asignado en usuario_branch/etc) --
+    # mismo motivo que el selector de la banda de pie, ver el moduledoc
+    # de Autenticacion.resolver_jerarquia_operativa/3.
+    es_administrador? = MetadataApp.Permissions.administrador?(usuario_id, empresa_id)
+    jerarquia = Autenticacion.resolver_jerarquia_operativa(usuario_id, empresa_id, es_administrador?)
+
+    conn =
+      conn
+      |> aplicar_seleccion_automatica(:branch_activo_id, jerarquia.branch)
+      |> aplicar_seleccion_automatica(:inventory_location_activo_id, jerarquia.inventory_location)
+      |> aplicar_seleccion_automatica(:sales_unit_activo_id, jerarquia.sales_unit)
+
+    if match?(%{branch: {:automatico, _}, inventory_location: {:automatico, _}}, jerarquia) do
+      {conn, :listo}
+    else
+      {conn, :pendiente}
+    end
+  end
+
+  defp aplicar_seleccion_automatica(conn, session_key, {:automatico, %{id: id}}), do: put_session(conn, session_key, id)
+  defp aplicar_seleccion_automatica(conn, session_key, _otro), do: delete_session(conn, session_key)
 
   @doc """
   Logs the usuario out.
@@ -82,19 +152,26 @@ defmodule MetadataAppWeb.UsuarioAuth do
 
     conn
     |> renew_session(nil)
-    |> delete_resp_cookie(@remember_me_cookie, @remember_me_options)
     |> redirect(to: ~p"/meta_schema_usuario/log-in")
   end
 
   @doc """
-  Authenticates the usuario by looking into the session and remember me token.
+  Authenticates the usuario by looking into the session.
 
   Will reissue the session token if it is older than the configured age.
   """
   def fetch_current_scope_for_usuario(conn, _opts) do
     with {token, conn} <- ensure_usuario_token(conn),
          {usuario, token_inserted_at} <- Autenticacion.get_usuario_by_session_token(token) do
-      scope = hidratar_empresa_activa(Scope.for_usuario(usuario), get_session(conn, :empresa_activa_id))
+      scope =
+        Scope.for_usuario(usuario)
+        |> hidratar_empresa_activa(get_session(conn, :empresa_activa_id))
+        |> hidratar_alcance()
+        |> hidratar_jerarquia_activa(
+          get_session(conn, :branch_activo_id),
+          get_session(conn, :inventory_location_activo_id),
+          get_session(conn, :sales_unit_activo_id)
+        )
 
       conn
       |> assign(:current_scope, scope)
@@ -118,26 +195,108 @@ defmodule MetadataAppWeb.UsuarioAuth do
     end
   end
 
+  # Alcance de Datos (Fase 2, 2026-08-11) -- branches_permitidos/
+  # sales_units_permitidas/inventory_locations_permitidas del Scope, resueltas
+  # una vez por request/mount (mismo momento que empresa_activa). Sin empresa
+  # activa todavía no hay contra qué acotar la jerarquía -- queda vacío hasta
+  # que se elija una, igual que campos_editables/otras_transiciones en
+  # FichaLive esperan un estado_id resuelto antes de tener sentido.
+  defp hidratar_alcance(nil), do: nil
+  defp hidratar_alcance(%Scope{empresa_activa: nil} = scope), do: scope
+
+  defp hidratar_alcance(%Scope{usuario: usuario, empresa_activa: empresa} = scope) do
+    alcance = Autenticacion.alcance_de_usuario(usuario.id, empresa.id)
+
+    %{
+      scope
+      | branches_permitidos: alcance.branches_permitidos,
+        sales_units_permitidas: alcance.sales_units_permitidas,
+        inventory_locations_permitidas: alcance.inventory_locations_permitidas
+    }
+  end
+
+  # Jerarquía operativa activa (branch/inventory_location/sales_unit ya
+  # ELEGIDOS, no solo permitidos -- ver moduledoc de Scope). Mismo
+  # criterio de revalidación que hidratar_empresa_activa/2: el id de
+  # sesión se re-valida contra la asignación real en cada hidratación
+  # (Autenticacion.obtener_*_de_usuario/3, que reutiliza las mismas
+  # listas de branches_de_usuario/2 etc.) -- si le revocaron esa
+  # sucursal/almacén después de elegirla, el scope simplemente queda sin
+  # ese campo activo en vez de arrastrar una referencia inválida.
+  defp hidratar_jerarquia_activa(nil, _branch_id, _inventory_id, _sales_unit_id), do: nil
+  defp hidratar_jerarquia_activa(%Scope{empresa_activa: nil} = scope, _b, _i, _s), do: scope
+
+  defp hidratar_jerarquia_activa(%Scope{usuario: usuario, empresa_activa: empresa} = scope, branch_id, inventory_id, sales_unit_id) do
+    # es_administrador? faltaba acá (bug encontrado 2026-08-13): sin esto,
+    # un administrador que elegía sucursal/almacén desde la banda de pie
+    # (JerarquiaSessionController, que SÍ pasa es_administrador?) la
+    # perdía en la siguiente carga de página -- obtener_branch_de_usuario/3
+    # sin el 4to argumento solo mira lo explícitamente asignado, que un
+    # admin normalmente no tiene.
+    es_administrador? = MetadataApp.Permissions.administrador?(usuario.id, empresa.id)
+
+    scope
+    |> hidratar_branch_activo(usuario, empresa, branch_id, es_administrador?)
+    |> hidratar_inventory_location_activo(usuario, empresa, inventory_id, es_administrador?)
+    |> hidratar_sales_unit_activo(usuario, empresa, sales_unit_id, es_administrador?)
+  end
+
+  defp hidratar_branch_activo(scope, _usuario, _empresa, nil, _es_administrador?), do: scope
+
+  defp hidratar_branch_activo(scope, usuario, empresa, branch_id, es_administrador?) do
+    case Autenticacion.obtener_branch_de_usuario(usuario.id, empresa.id, branch_id, es_administrador?) do
+      nil -> scope
+      branch -> Scope.con_branch_activo(scope, branch)
+    end
+  end
+
+  defp hidratar_inventory_location_activo(scope, _usuario, _empresa, nil, _es_administrador?), do: scope
+
+  # Unidad Operativa (2026-08-13, arquitectura ERP: Empresa -> N Branch ->
+  # N Inventory -> N Sales Unit) -- un almacén SIEMPRE es hijo de una
+  # sucursal, nunca de la empresa a secas. Sin sucursal activa todavía no
+  # hay contra qué contener un almacén (queda vacío, mismo criterio que
+  # hidratar_alcance/1 con empresa_activa: nil). La contención en sí ya
+  # NO se revisa acá con un `when` -- Autenticacion.obtener_inventory_location_de_usuario/5
+  # recibe `branch_activo.id` y acota la lista operable a ESA sucursal
+  # desde el origen, así que un almacén de otra sucursal ni siquiera
+  # aparece como candidato (devuelve nil directo).
+  defp hidratar_inventory_location_activo(%Scope{branch_activo: nil} = scope, _usuario, _empresa, _inventory_id, _es_administrador?),
+    do: scope
+
+  defp hidratar_inventory_location_activo(scope, usuario, empresa, inventory_id, es_administrador?) do
+    case Autenticacion.obtener_inventory_location_de_usuario(usuario.id, empresa.id, scope.branch_activo.id, inventory_id, es_administrador?) do
+      nil -> scope
+      inventory_location -> Scope.con_inventory_location_activo(scope, inventory_location)
+    end
+  end
+
+  defp hidratar_sales_unit_activo(scope, _usuario, _empresa, nil, _es_administrador?), do: scope
+
+  # Mismo criterio que hidratar_inventory_location_activo/5 -- Sales Unit
+  # también es hijo directo de Branch (hermano de Inventory, no anidado
+  # bajo él), así que se acota contra la sucursal activa igual.
+  defp hidratar_sales_unit_activo(%Scope{branch_activo: nil} = scope, _usuario, _empresa, _sales_unit_id, _es_administrador?), do: scope
+
+  defp hidratar_sales_unit_activo(scope, usuario, empresa, sales_unit_id, es_administrador?) do
+    case Autenticacion.obtener_sales_unit_de_usuario(usuario.id, empresa.id, scope.branch_activo.id, sales_unit_id, es_administrador?) do
+      nil -> scope
+      sales_unit -> Scope.con_sales_unit_activo(scope, sales_unit)
+    end
+  end
+
   defp ensure_usuario_token(conn) do
     if token = get_session(conn, :usuario_token) do
       {token, conn}
-    else
-      conn = fetch_cookies(conn, signed: [@remember_me_cookie])
-
-      if token = conn.cookies[@remember_me_cookie] do
-        {token, conn |> put_token_in_session(token) |> put_session(:usuario_remember_me, true)}
-      else
-        nil
-      end
     end
   end
 
   # Reissue the session token if it is older than the configured reissue age.
   defp maybe_reissue_usuario_session_token(conn, usuario, token_inserted_at) do
-    token_age = DateTime.diff(DateTime.utc_now(:second), token_inserted_at, :day)
+    token_age = DateTime.diff(DateTime.utc_now(:second), token_inserted_at, :hour)
 
-    if token_age >= @session_reissue_age_in_days do
-      create_or_extend_session(conn, usuario, %{})
+    if token_age >= @session_reissue_age_in_hours do
+      create_or_extend_session(conn, usuario)
     else
       conn
     end
@@ -151,14 +310,12 @@ defmodule MetadataAppWeb.UsuarioAuth do
   # When the session is created, rather than extended, the renew_session
   # function will clear the session to avoid fixation attacks. See the
   # renew_session function to customize this behaviour.
-  defp create_or_extend_session(conn, usuario, params) do
+  defp create_or_extend_session(conn, usuario) do
     token = Autenticacion.generate_usuario_session_token(usuario)
-    remember_me = get_session(conn, :usuario_remember_me)
 
     conn
     |> renew_session(usuario)
     |> put_token_in_session(token)
-    |> maybe_write_remember_me_cookie(token, params, remember_me)
   end
 
   # Do not renew session if the usuario is already logged in
@@ -189,20 +346,6 @@ defmodule MetadataAppWeb.UsuarioAuth do
     conn
     |> configure_session(renew: true)
     |> clear_session()
-  end
-
-  defp maybe_write_remember_me_cookie(conn, token, %{"remember_me" => "true"}, _),
-    do: write_remember_me_cookie(conn, token)
-
-  defp maybe_write_remember_me_cookie(conn, token, _params, true),
-    do: write_remember_me_cookie(conn, token)
-
-  defp maybe_write_remember_me_cookie(conn, _token, _params, _), do: conn
-
-  defp write_remember_me_cookie(conn, token) do
-    conn
-    |> put_session(:usuario_remember_me, true)
-    |> put_resp_cookie(@remember_me_cookie, token, @remember_me_options)
   end
 
   defp put_token_in_session(conn, token) do
@@ -273,6 +416,34 @@ defmodule MetadataAppWeb.UsuarioAuth do
     end
   end
 
+  # Igual que :require_authenticated, pero ADEMÁS exige empresa_activa
+  # resuelta (2026-08-06, bug real encontrado: una sesión con usuario_token
+  # válido pero SIN empresa_activa_id -- ej. una cookie vieja de antes de
+  # elegir empresa -- pasaba :require_authenticated igual, current_scope
+  # quedaba con empresa_activa: nil, y desde ahí dos cosas se
+  # contradecían en silencio: podar_menu_por_permisos/1 (menu_layout.ex)
+  # cae a "sin scope resuelto, mostrar completo" -- el sidebar se ve
+  # ENTERO sin podar -- mientras que Permissions.can?/3 con
+  # empresa_activa: nil siempre da false -- CUALQUIER catálogo redirige
+  # con "No tienes permiso". El usuario ve todo el menú pero no puede
+  # usar nada. Usado solo por la live_session "real" de la app
+  # (router.ex, :app_autenticada) -- NO por :require_authenticated_usuario
+  # de arriba (settings/seleccionar-empresa), que seguiría en loop
+  # infinito si exigiera empresa activa para poder llegar a elegir una.
+  def on_mount(:require_authenticated_con_empresa, params, session, socket) do
+    case on_mount(:require_authenticated, params, session, socket) do
+      {:cont, socket} ->
+        if socket.assigns.current_scope.empresa_activa do
+          {:cont, socket}
+        else
+          {:halt, Phoenix.LiveView.redirect(socket, to: ~p"/meta_schema_usuario/seleccionar-empresa")}
+        end
+
+      {:halt, _socket} = resultado ->
+        resultado
+    end
+  end
+
   def on_mount(:require_sudo_mode, _params, session, socket) do
     socket = mount_current_scope(socket, session)
 
@@ -296,7 +467,14 @@ defmodule MetadataAppWeb.UsuarioAuth do
             Autenticacion.get_usuario_by_session_token(usuario_token)
           end || {nil, nil}
 
-        hidratar_empresa_activa(Scope.for_usuario(usuario), session["empresa_activa_id"])
+        Scope.for_usuario(usuario)
+        |> hidratar_empresa_activa(session["empresa_activa_id"])
+        |> hidratar_alcance()
+        |> hidratar_jerarquia_activa(
+          session["branch_activo_id"],
+          session["inventory_location_activo_id"],
+          session["sales_unit_activo_id"]
+        )
       end)
 
     suscribir_notificaciones(socket)

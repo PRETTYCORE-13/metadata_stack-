@@ -433,7 +433,13 @@ defmodule MetadataApp.MetaPlantillas.Formula do
   defp resolver_fijo(catalogo, id, campo, caster) do
     with {:ok, modulo} <- resolver_modulo(catalogo) do
       try do
-        registro = CatalogoGenerico.obtener!(modulo, id)
+        # :sistema (Fase 4a del modelo de Alcance de Datos) -- el
+        # evaluador de fórmulas no tiene un usuario detrás en su firma
+        # (evaluar/2 no recibe scope), y sus resultados hoy son
+        # agregados/valores fijos mostrados en cualquier ficha, no un
+        # listado de filas -- filtrar por alcance acá queda fuera de
+        # alcance de esta fase, marcado a propósito.
+        registro = CatalogoGenerico.obtener!(modulo, :sistema, id)
 
         case Map.fetch(registro, String.to_existing_atom(campo)) do
           {:ok, valor} -> caster.(valor)
@@ -467,7 +473,7 @@ defmodule MetadataApp.MetaPlantillas.Formula do
     with {:ok, catalogo} <- parse_solo_catalogo(arg) do
       con_cache({"COUNT", catalogo}, fn ->
         with {:ok, modulo} <- resolver_modulo(catalogo) do
-          {:ok, CatalogoGenerico.contar(modulo) * 1.0}
+          {:ok, CatalogoGenerico.contar(modulo, :sistema) * 1.0}
         end
       end)
     end
@@ -480,7 +486,7 @@ defmodule MetadataApp.MetaPlantillas.Formula do
              {:ok, campo_atom} <- a_atomo_existente(campo, catalogo) do
           numeros =
             modulo
-            |> CatalogoGenerico.listar()
+            |> CatalogoGenerico.listar(:sistema)
             |> Enum.map(&Map.get(&1, campo_atom))
             |> Enum.map(&a_numero/1)
             |> Enum.filter(&match?({:ok, _}, &1))

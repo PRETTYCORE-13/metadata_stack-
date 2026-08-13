@@ -25,7 +25,10 @@ defmodule MetadataAppWeb.Sysadmin.BuscadorTrnLive do
     %{tipo: :pagina, id: "tepache", label: "Tepache Exp/Imp", nav: "/sysadmin/tepache"},
     %{tipo: :pagina, id: "roles", label: "Roles y Usuarios", nav: "/sysadmin/roles"},
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
-    %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"}
+    %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"},
+    %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
+    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
+    %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
   ]
 
   def mount(_params, _session, socket) do
@@ -96,6 +99,13 @@ defmodule MetadataAppWeb.Sysadmin.BuscadorTrnLive do
 
   defp armar_resultado(fila, header) do
     modulo = MetaSchemaContext.modulo_por_nombre(header.schema_context_name)
+    # Intencional, no un gap (Fase 5): esta pantalla ya exige el permiso
+    # sysadmin "sysadmin_bc"/"leer" (ver on_mount arriba) y por diseño
+    # encuentra registros SOFT-DELETED (buscador de auditoría/trazabilidad,
+    # ver moduledoc) -- ambas cosas ya están fuera del contrato normal de
+    # CatalogoGenerico.obtener!/3, es una herramienta de sysadmin, no una
+    # vista de datos de negocio.
+    # credo:disable-for-next-line MetadataApp.CredoChecks.RepoDirectoConVariable
     registro = modulo && Repo.get(modulo, fila.entity_id)
 
     {:ok,

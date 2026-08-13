@@ -10,7 +10,13 @@ defmodule MetadataAppWeb.CatalogoLive do
   alias MetadataApp.FiltrosDefault
   alias MetadataApp.Permissions
   alias MetadataApp.Autenticacion.Scope
+  alias MetadataApp.Autenticacion.Branch
+  alias MetadataApp.Autenticacion.SalesUnit
+  alias MetadataApp.Autenticacion.InventoryLocation
+  alias MetadataApp.Autenticacion.Empresa
+  alias MetadataApp.Repo
   alias MetadataAppWeb.AdminNav
+  import Ecto.Query
 
   @por_pagina 25
 
@@ -89,8 +95,13 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:encontrado?, true)
      |> assign(:label, header.schema_context_label)
      |> assign(:columnas, columnas)
-     |> assign(:mostrar_estado?, estados_por_id != %{})
-     |> assign(:mostrar_trn?, header.schema_es_transaccional)
+     |> assign(:mostrar_id?, header.mostrar_id_en_tabla)
+     |> assign(:mostrar_estado?, estados_por_id != %{} and header.mostrar_estado_en_tabla)
+     |> assign(:mostrar_trn?, header.schema_es_transaccional and header.mostrar_trn_en_tabla)
+     |> assign(:mostrar_empresa?, header.alcance_habilitado and header.mostrar_empresa_en_tabla)
+     |> assign(:mostrar_branch?, header.alcance_habilitado and header.mostrar_branch_en_tabla)
+     |> assign(:mostrar_inventory_location?, header.alcance_habilitado and header.mostrar_inventory_location_en_tabla)
+     |> assign(:mostrar_sales_unit?, header.alcance_habilitado and header.mostrar_sales_unit_en_tabla)
      |> assign(:modulo, modulo)
      |> assign(:es_detalle?, es_detalle?)
      |> assign(:campos_alta, campos_alta)
@@ -470,8 +481,8 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   defp calcular_agregacion(%{assigns: %{modulo: nil}}, _campo, _funcion, _filtros_ecto, _busqueda), do: nil
 
-  defp calcular_agregacion(%{assigns: %{modulo: modulo}}, campo, funcion, filtros_ecto, busqueda) do
-    CatalogoGenerico.agregar(modulo, campo, funcion_agregada(funcion), filtros_ecto, busqueda)
+  defp calcular_agregacion(%{assigns: %{modulo: modulo} = assigns}, campo, funcion, filtros_ecto, busqueda) do
+    CatalogoGenerico.agregar(modulo, assigns[:current_scope], campo, funcion_agregada(funcion), filtros_ecto, busqueda)
   end
 
   defp funcion_agregada("suma"), do: :sum
@@ -526,15 +537,19 @@ defmodule MetadataAppWeb.CatalogoLive do
       campos_busqueda = Enum.map(columnas, & &1.schema_context_field)
       busqueda = {busqueda_general, campos_busqueda}
 
-      total_filas = CatalogoGenerico.contar(modulo, filtros_ecto, busqueda)
+      total_filas = CatalogoGenerico.contar(modulo, socket.assigns[:current_scope], filtros_ecto, busqueda)
       total_paginas = max(ceil(total_filas / @por_pagina), 1)
       pagina = socket.assigns.pagina |> max(1) |> min(total_paginas)
       offset = (pagina - 1) * @por_pagina
 
-      registros = CatalogoGenerico.listar(modulo, filtros_ecto, [limit: @por_pagina, offset: offset], busqueda)
+      registros =
+        CatalogoGenerico.listar(modulo, socket.assigns[:current_scope], filtros_ecto, [limit: @por_pagina, offset: offset], busqueda)
       acompanamiento = CatalogoGenerico.mapa_acompanamiento(catalogo, registros)
 
-      filas = Enum.map(registros, &CatalogoGenerico.serializar(&1, estados_por_id, acompanamiento))
+      filas =
+        registros
+        |> Enum.map(&CatalogoGenerico.serializar(&1, estados_por_id, acompanamiento))
+        |> agregar_alcance_a_filas(socket.assigns)
 
       socket
       |> assign(:filas, filas)
@@ -553,6 +568,54 @@ defmodule MetadataAppWeb.CatalogoLive do
       |> assign(:fin, 0)
     end
   end
+
+  # Columnas de Alcance de Datos (2026-08-12) — mismo criterio batch-por-
+  # página que mapa_acompanamiento/2 de CatalogoGenerico (nunca una query
+  # por fila): junta los ids que de verdad aparecen en ESTA página,
+  # resuelve nombre en 3 queries chicas (branch/sales_unit/inventory) más
+  # una cuarta para Empresa (encadenada desde branch_id -> Branch.empresa_id,
+  # no hay columna empresa_id propia en la fila -- ver moduledoc de
+  # CatalogoGenerador.columnas_alcance/1). Si ninguna de las 4 columnas
+  # está habilitada para mostrarse, no pega ninguna query de más.
+  defp agregar_alcance_a_filas(filas, %{mostrar_empresa?: false, mostrar_branch?: false, mostrar_inventory_location?: false, mostrar_sales_unit?: false}),
+    do: filas
+
+  defp agregar_alcance_a_filas(filas, _assigns) do
+    branch_ids = ids_unicos(filas, :branch_id)
+    sales_unit_ids = ids_unicos(filas, :sales_unit_id)
+    inventory_ids = ids_unicos(filas, :inventory_id)
+
+    branches =
+      if branch_ids == [], do: [], else: Repo.all(from(b in Branch, where: b.id in ^branch_ids, select: {b.id, b.branch_name, b.empresa_id}))
+
+    branch_nombre_por_id = Map.new(branches, fn {id, nombre, _empresa_id} -> {id, nombre} end)
+    empresa_id_por_branch = Map.new(branches, fn {id, _nombre, empresa_id} -> {id, empresa_id} end)
+    empresa_ids = empresa_id_por_branch |> Map.values() |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+    empresa_nombre_por_id =
+      if empresa_ids == [], do: %{}, else: Repo.all(from(e in Empresa, where: e.id in ^empresa_ids, select: {e.id, e.nombre})) |> Map.new()
+
+    sales_unit_nombre_por_id =
+      if sales_unit_ids == [], do: %{}, else: Repo.all(from(s in SalesUnit, where: s.id in ^sales_unit_ids, select: {s.id, s.sales_unit_name})) |> Map.new()
+
+    inventory_nombre_por_id =
+      if inventory_ids == [], do: %{}, else: Repo.all(from(i in InventoryLocation, where: i.id in ^inventory_ids, select: {i.id, i.inventory_name})) |> Map.new()
+
+    Enum.map(filas, fn fila ->
+      branch_id = Map.get(fila, :branch_id)
+      empresa_id = branch_id && Map.get(empresa_id_por_branch, branch_id)
+      sales_unit_id = Map.get(fila, :sales_unit_id)
+      inventory_id = Map.get(fila, :inventory_id)
+
+      fila
+      |> Map.put(:branch_nombre, branch_id && Map.get(branch_nombre_por_id, branch_id))
+      |> Map.put(:sales_unit_nombre, sales_unit_id && Map.get(sales_unit_nombre_por_id, sales_unit_id))
+      |> Map.put(:inventory_nombre, inventory_id && Map.get(inventory_nombre_por_id, inventory_id))
+      |> Map.put(:empresa_nombre, empresa_id && Map.get(empresa_nombre_por_id, empresa_id))
+    end)
+  end
+
+  defp ids_unicos(filas, campo), do: filas |> Enum.map(&Map.get(&1, campo)) |> Enum.reject(&is_nil/1) |> Enum.uniq()
 
   # A partir de los valores crudos de la barra de filtros (todo strings,
   # como llega cualquier form) arma el mapa de filtros que entiende
@@ -705,8 +768,8 @@ defmodule MetadataAppWeb.CatalogoLive do
           </span>
         </div>
 
-        <div class="flex items-center gap-2 flex-wrap mb-4">
-          <div class="relative flex-1">
+        <div class="flex flex-col gap-2 mb-4 sm:flex-row sm:items-center">
+          <div class="relative sm:flex-1">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
               <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
@@ -719,39 +782,41 @@ defmodule MetadataAppWeb.CatalogoLive do
               class="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500"
             />
           </div>
-          <div class="relative">
-            <button
-              type="button"
-              phx-click="abrir_filtros"
-              class={[
-                "flex items-center gap-1.5 border rounded-lg px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors",
-                if(contar_filtros_activos(@filtros) > 0,
-                  do: "border-purple-600 bg-purple-50 text-purple-700",
-                  else: "border-gray-300 text-gray-600 hover:bg-gray-50"
-                )
-              ]}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-              </svg>
-              Filtros
-              <%= if contar_filtros_activos(@filtros) > 0 do %>
-                <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-600 text-white text-[10px] font-bold">
-                  {contar_filtros_activos(@filtros)}
-                </span>
-              <% end %>
-            </button>
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1 sm:flex-none">
+              <button
+                type="button"
+                phx-click="abrir_filtros"
+                class={[
+                  "flex items-center justify-center gap-1.5 border rounded-lg px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors w-full sm:w-auto",
+                  if(contar_filtros_activos(@filtros) > 0,
+                    do: "border-purple-600 bg-purple-50 text-purple-700",
+                    else: "border-gray-300 text-gray-600 hover:bg-gray-50"
+                  )
+                ]}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                </svg>
+                Filtros
+                <%= if contar_filtros_activos(@filtros) > 0 do %>
+                  <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-600 text-white text-[10px] font-bold">
+                    {contar_filtros_activos(@filtros)}
+                  </span>
+                <% end %>
+              </button>
 
-            <.panel_filtros
-              mostrar={@mostrar_filtros}
-              columnas={@columnas}
-              filtros={@filtros}
-              filtros_activos={@filtros_activos}
-              selector_campo_abierto={@selector_campo_abierto}
-              busqueda_campo_filtro={@busqueda_campo_filtro}
-            />
+              <.panel_filtros
+                mostrar={@mostrar_filtros}
+                columnas={@columnas}
+                filtros={@filtros}
+                filtros_activos={@filtros_activos}
+                selector_campo_abierto={@selector_campo_abierto}
+                busqueda_campo_filtro={@busqueda_campo_filtro}
+              />
+            </div>
+            <.panel_campos campos={campos_selector(@columnas)} tabla_id="tabla-catalogo" />
           </div>
-          <.panel_campos campos={campos_selector(@columnas)} tabla_id="tabla-catalogo" />
         </div>
 
         <div class="overflow-x-auto rounded-xl border border-gray-200">
@@ -762,7 +827,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                   <th
                     data-col={col_key(columna)}
                     title={if @consulta.joins != [], do: "De: #{columna.catalogo}"}
-                    class={["px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide", alineacion_columna(columna)]}
+                    class={["px-2 py-3 sm:px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap", alineacion_columna(columna)]}
                   >
                     {columna.schema_context_properties["etiqueta"]}
                   </th>
@@ -775,7 +840,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                   <%= for columna <- @columnas do %>
                     <% valor = Map.get(fila, columna.clave) %>
                     <td data-col={col_key(columna)} class={[
-                      "px-4 py-1.5 text-[10px] text-gray-700",
+                      "px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700",
                       alineacion_columna(columna)
                     ]}>
                       {formatear_celda(valor, columna.schema_context_properties)}
@@ -872,8 +937,8 @@ defmodule MetadataAppWeb.CatalogoLive do
           </div>
         </div>
 
-        <div class="flex items-center gap-2 flex-wrap mb-4">
-          <div class="relative flex-1">
+        <div class="flex flex-col gap-2 mb-4 sm:flex-row sm:items-center">
+          <div class="relative sm:flex-1">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
               <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
@@ -886,39 +951,41 @@ defmodule MetadataAppWeb.CatalogoLive do
               class="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500"
             />
           </div>
-          <div class="relative">
-            <button
-              type="button"
-              phx-click="abrir_filtros"
-              class={[
-                "flex items-center gap-1.5 border rounded-lg px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors",
-                if(contar_filtros_activos(@filtros) > 0,
-                  do: "border-purple-600 bg-purple-50 text-purple-700",
-                  else: "border-gray-300 text-gray-600 hover:bg-gray-50"
-                )
-              ]}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-              </svg>
-              Filtros
-              <%= if contar_filtros_activos(@filtros) > 0 do %>
-                <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-600 text-white text-[10px] font-bold">
-                  {contar_filtros_activos(@filtros)}
-                </span>
-              <% end %>
-            </button>
+          <div class="flex items-center gap-2">
+            <div class="relative flex-1 sm:flex-none">
+              <button
+                type="button"
+                phx-click="abrir_filtros"
+                class={[
+                  "flex items-center justify-center gap-1.5 border rounded-lg px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors w-full sm:w-auto",
+                  if(contar_filtros_activos(@filtros) > 0,
+                    do: "border-purple-600 bg-purple-50 text-purple-700",
+                    else: "border-gray-300 text-gray-600 hover:bg-gray-50"
+                  )
+                ]}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                </svg>
+                Filtros
+                <%= if contar_filtros_activos(@filtros) > 0 do %>
+                  <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-600 text-white text-[10px] font-bold">
+                    {contar_filtros_activos(@filtros)}
+                  </span>
+                <% end %>
+              </button>
 
-            <.panel_filtros
-              mostrar={@mostrar_filtros}
-              columnas={@columnas}
-              filtros={@filtros}
-              filtros_activos={@filtros_activos}
-              selector_campo_abierto={@selector_campo_abierto}
-              busqueda_campo_filtro={@busqueda_campo_filtro}
-            />
+              <.panel_filtros
+                mostrar={@mostrar_filtros}
+                columnas={@columnas}
+                filtros={@filtros}
+                filtros_activos={@filtros_activos}
+                selector_campo_abierto={@selector_campo_abierto}
+                busqueda_campo_filtro={@busqueda_campo_filtro}
+              />
+            </div>
+            <.panel_campos campos={campos_selector(@columnas, @mostrar_id?, @mostrar_estado?, @mostrar_trn?, @mostrar_empresa?, @mostrar_branch?, @mostrar_inventory_location?, @mostrar_sales_unit?)} tabla_id="tabla-catalogo" />
           </div>
-          <.panel_campos campos={campos_selector(@columnas, @mostrar_estado?, @mostrar_trn?)} tabla_id="tabla-catalogo" />
         </div>
 
         <div :if={@filtro_default_fecha_descripcion} class="flex items-center gap-1.5 text-[11px] font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-2.5 py-1.5 mb-4 w-fit">
@@ -932,7 +999,9 @@ defmodule MetadataAppWeb.CatalogoLive do
           <table id="tabla-catalogo" class="min-w-full divide-y divide-gray-200 text-xs">
             <thead class="bg-gray-50">
               <tr>
-                <th data-col="id" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">ID</th>
+                <%= if @mostrar_id? do %>
+                  <th data-col="id" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">ID</th>
+                <% end %>
                 <%= for columna <- @columnas do %>
                   <th data-col={col_key(columna)} class={[
                     "px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide",
@@ -947,25 +1016,39 @@ defmodule MetadataAppWeb.CatalogoLive do
                   </th>
                 <% end %>
                 <%= if @mostrar_estado? do %>
-                  <th data-col="estado" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Estado</th>
+                  <th data-col="estado" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Estado</th>
                 <% end %>
                 <%= if @mostrar_trn? do %>
-                  <th data-col="trn" class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">TRN</th>
+                  <th data-col="trn" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">TRN</th>
                 <% end %>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide"></th>
+                <%= if @mostrar_empresa? do %>
+                  <th data-col="empresa" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Empresa</th>
+                <% end %>
+                <%= if @mostrar_branch? do %>
+                  <th data-col="branch" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Sucursal</th>
+                <% end %>
+                <%= if @mostrar_inventory_location? do %>
+                  <th data-col="inventory_location" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Almacén</th>
+                <% end %>
+                <%= if @mostrar_sales_unit? do %>
+                  <th data-col="sales_unit" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Unidad de venta</th>
+                <% end %>
+                <th class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"></th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
               <%= for fila <- @filas do %>
                 <tr class="hover:bg-purple-50/60 transition-colors cursor-pointer"
                   ondblclick={"window.location='/registro/#{@current_page}/#{fila.id}'"}>
-                  <td data-col="id" class="px-4 py-1.5 text-[10px] text-gray-700">
-                    {fila.id}
-                  </td>
+                  <%= if @mostrar_id? do %>
+                    <td data-col="id" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">
+                      {fila.id}
+                    </td>
+                  <% end %>
                   <%= for columna <- @columnas do %>
                     <% valor = Map.get(fila, String.to_existing_atom(columna.schema_context_field)) %>
                     <td data-col={col_key(columna)} class={[
-                      "px-4 py-1.5 text-[10px]",
+                      "px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px]",
                       alineacion_columna(columna),
                       if(is_map(valor) and not is_struct(valor), do: "text-blue-700 font-medium", else: "text-gray-700")
                     ]}>
@@ -973,10 +1056,22 @@ defmodule MetadataAppWeb.CatalogoLive do
                     </td>
                   <% end %>
                   <%= if @mostrar_estado? do %>
-                    <td data-col="estado" class="px-4 py-1.5 text-[10px] text-gray-700">{Map.get(fila, :estado_nombre)}</td>
+                    <td data-col="estado" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(fila, :estado_nombre)}</td>
                   <% end %>
                   <%= if @mostrar_trn? do %>
-                    <td data-col="trn" class="px-4 py-1.5 text-[10px] text-gray-700 font-mono" title={Map.get(fila, :ulid)}>{Map.get(fila, :trn)}</td>
+                    <td data-col="trn" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700 font-mono" title={Map.get(fila, :ulid)}>{Map.get(fila, :trn)}</td>
+                  <% end %>
+                  <%= if @mostrar_empresa? do %>
+                    <td data-col="empresa" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(fila, :empresa_nombre)}</td>
+                  <% end %>
+                  <%= if @mostrar_branch? do %>
+                    <td data-col="branch" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(fila, :branch_nombre)}</td>
+                  <% end %>
+                  <%= if @mostrar_inventory_location? do %>
+                    <td data-col="inventory_location" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(fila, :inventory_nombre)}</td>
+                  <% end %>
+                  <%= if @mostrar_sales_unit? do %>
+                    <td data-col="sales_unit" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(fila, :sales_unit_nombre)}</td>
                   <% end %>
                   <td class="px-4 py-1.5 text-xs text-right">
                     <.link navigate={"/registro/#{@current_page}/#{fila.id}"}
@@ -993,7 +1088,12 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <tr>
                   <td
                     class="px-4 py-10 text-center text-gray-400 text-sm"
-                    colspan={2 + (if @mostrar_trn?, do: 1, else: 0) + length(@columnas) + if @mostrar_estado?, do: 1, else: 0}
+                    colspan={
+                      1 + (if @mostrar_id?, do: 1, else: 0) + (if @mostrar_trn?, do: 1, else: 0) + length(@columnas) +
+                        (if @mostrar_estado?, do: 1, else: 0) + (if @mostrar_empresa?, do: 1, else: 0) +
+                        (if @mostrar_branch?, do: 1, else: 0) + (if @mostrar_inventory_location?, do: 1, else: 0) +
+                        if(@mostrar_sales_unit?, do: 1, else: 0)
+                    }
                   >
                     <%= if @sin_filtro? do %>
                       Seleccioná un filtro o buscá algo para ver los datos.
@@ -1006,7 +1106,7 @@ defmodule MetadataAppWeb.CatalogoLive do
             </tbody>
             <tfoot class="bg-gray-50 border-t-2 border-gray-300">
               <tr>
-                <td class="px-4 py-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 whitespace-nowrap">Resumen</td>
+                <td :if={@mostrar_id?} class="px-4 py-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 whitespace-nowrap">Resumen</td>
                 <.celdas_resumen
                   columnas={@columnas}
                   agregaciones={@agregaciones}
@@ -1017,6 +1117,10 @@ defmodule MetadataAppWeb.CatalogoLive do
                 />
                 <td :if={@mostrar_estado?}></td>
                 <td :if={@mostrar_trn?}></td>
+                <td :if={@mostrar_empresa?}></td>
+                <td :if={@mostrar_branch?}></td>
+                <td :if={@mostrar_inventory_location?}></td>
+                <td :if={@mostrar_sales_unit?}></td>
                 <td></td>
               </tr>
             </tfoot>
@@ -1063,11 +1167,15 @@ defmodule MetadataAppWeb.CatalogoLive do
     Enum.map(columnas, &%{clave: col_key(&1), etiqueta: &1.schema_context_properties["etiqueta"]})
   end
 
-  defp campos_selector(columnas, mostrar_estado?, mostrar_trn?) do
-    [%{clave: "id", etiqueta: "ID"}] ++
+  defp campos_selector(columnas, mostrar_id?, mostrar_estado?, mostrar_trn?, mostrar_empresa?, mostrar_branch?, mostrar_inventory_location?, mostrar_sales_unit?) do
+    (if mostrar_id?, do: [%{clave: "id", etiqueta: "ID"}], else: []) ++
       campos_selector(columnas) ++
       (if mostrar_estado?, do: [%{clave: "estado", etiqueta: "Estado"}], else: []) ++
-      (if mostrar_trn?, do: [%{clave: "trn", etiqueta: "TRN"}], else: [])
+      (if mostrar_trn?, do: [%{clave: "trn", etiqueta: "TRN"}], else: []) ++
+      (if mostrar_empresa?, do: [%{clave: "empresa", etiqueta: "Empresa"}], else: []) ++
+      (if mostrar_branch?, do: [%{clave: "branch", etiqueta: "Sucursal"}], else: []) ++
+      (if mostrar_inventory_location?, do: [%{clave: "inventory_location", etiqueta: "Almacén"}], else: []) ++
+      (if mostrar_sales_unit?, do: [%{clave: "sales_unit", etiqueta: "Unidad de venta"}], else: [])
   end
 
   # "Total 25" (Get View → Filtros → "Total 25", bc_motor_live.ex) — a

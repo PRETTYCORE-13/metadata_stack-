@@ -31,7 +31,10 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
     %{tipo: :pagina, id: "tepache", label: "Tepache Exp/Imp", nav: "/sysadmin/tepache"},
     %{tipo: :pagina, id: "roles", label: "Roles y Usuarios", nav: "/sysadmin/roles"},
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
-    %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"}
+    %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"},
+    %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
+    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
+    %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
   ]
 
   def mount(_params, _session, socket) do
@@ -69,7 +72,7 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
         socket = socket |> assign(form_nueva_empresa: nil, error_form: nil) |> cargar_empresas()
 
         # `empresa_activa` solo se fija en la sesión al momento de loguearse
-        # (ver UsuarioAuth.log_in_usuario/3) — si el usuario entró sin
+        # (ver UsuarioAuth.log_in_usuario/2) — si el usuario entró sin
         # ninguna empresa todavía (como cualquiera recién registrado, ver
         # el bootstrap de arriba), crearla acá no actualiza esa sesión. Sin
         # este redirect quedaría con acceso a "sus empresas" pero sin poder

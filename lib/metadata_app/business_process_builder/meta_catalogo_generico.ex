@@ -25,6 +25,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
     transaccional? = Keyword.get(opts, :transaccional, false)
     codigo_trn = Keyword.get(opts, :codigo_trn)
     detalle_de = Keyword.get(opts, :detalle_de)
+    alcance? = Keyword.get(opts, :alcance, false)
 
     campo_nombres = Enum.map(campos, &elem(&1, 0))
 
@@ -44,6 +45,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
     trn_field_asts = trn_field_asts(transaccional?)
     trn_behaviour_ast = trn_behaviour_ast(transaccional?, codigo_trn)
     detalle_field_asts = detalle_field_asts(detalle_de)
+    alcance_field_asts = alcance_field_asts(alcance?)
 
     quote do
       use Ecto.Schema
@@ -81,6 +83,19 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
         # CatalogoGenerico.crear/2), nunca un cast directo. Solo existen
         # si `detalle_de` está seteado.
         unquote_splicing(detalle_field_asts)
+
+        # Dimensiones del modelo de Alcance de Datos (Fase 9, 2026-08-11)
+        # — deliberadamente fuera de @campos, mismo criterio que
+        # estado_id/trn/renglones arriba: el único camino para escribirlas
+        # es CatalogoGenerico.preparar_attrs_con_alcance/3 (branch_id/
+        # sales_unit_id/inventory_id, validados contra el scope) y
+        # estampar_creado_por_en_attrs/3 (creado_por_id, siempre
+        # automático), nunca un cast directo del formulario de negocio.
+        # Solo existen si `alcance: true` -- ver
+        # CatalogoGenerador.asegurar_columnas_alcance/1, que agrega las
+        # columnas físicas Y regenera este archivo cuando un catálogo
+        # activa `alcance_habilitado`.
+        unquote_splicing(alcance_field_asts)
       end
 
       unquote(trn_behaviour_ast)
@@ -95,6 +110,8 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
         |> cast(MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.forzar_defaults(attrs, @campos_meta), @campos)
         |> validate_required(@campos_requeridos, message: "no puede quedar vacío")
         |> MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.aplicar_validaciones(@campos_meta)
+        |> MetadataApp.BusinessProcessBuilder.MetaSchemaContext.validar_dependencias_referencia(unquote(tabla))
+        |> MetadataApp.BusinessProcessBuilder.MetaSchemaContext.validar_formato_captura(unquote(tabla))
         |> unique_constraint(@campos, name: @nombre_indice, message: "ya existe un registro con estos valores")
       end
     end
@@ -125,6 +142,17 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
     [
       quote(do: field(:encabezado_id, :id)),
       quote(do: field(:renglon_id, :integer))
+    ]
+  end
+
+  defp alcance_field_asts(false), do: []
+
+  defp alcance_field_asts(true) do
+    [
+      quote(do: field(:branch_id, :integer)),
+      quote(do: field(:sales_unit_id, :integer)),
+      quote(do: field(:inventory_id, :integer)),
+      quote(do: field(:creado_por_id, :integer))
     ]
   end
 
