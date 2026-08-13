@@ -58,3 +58,6 @@ priv/repo/migrations/*demo100_*.exs
 bc-bundle-*.tar.gz
 
 priv/plts/
+
+# Config local de desarrollo (puerto/credenciales de DB varían por máquina).
+config/dev.exs
