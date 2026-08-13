@@ -63,6 +63,10 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:show_prettycore_children, false)
      |> assign(:busqueda, "")
      |> assign(:pagina, 1)
+     # get_connect_info/2 solo existe durante mount/3 -- se calcula UNA vez
+     # acá y se guarda en assigns para que confirmar_eliminar/eliminar_campo
+     # lo reuse (roadmap #13, ver AuditoriaContexto.desde_socket/1).
+     |> assign(:contexto_auditoria, AuditoriaContexto.desde_socket(socket))
      # Set de rutas EXPANDIDAS (opt-in), no colapsadas — así el estado por
      # default (MapSet vacío, sin nada marcado) significa "todo cerrado",
      # tanto al entrar por primera vez como después de reiniciar el
@@ -332,7 +336,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       # alguien podría mandar el evento igual saltándoselo.
       {:noreply, put_flash(socket, :error, "El texto no coincide con el nombre del catálogo.")}
     else
-      case CatalogoGenerador.eliminar(tabla, tabla, filas, AuditoriaContexto.desde_socket(socket)) do
+      case CatalogoGenerador.eliminar(tabla, tabla, filas, socket.assigns.contexto_auditoria) do
         {:ok, _resultado} ->
           {:noreply,
            socket
