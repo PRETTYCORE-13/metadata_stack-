@@ -4,6 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={get_csrf_token()} />
+    <!-- Ícono de la pestaña del navegador -- mismo logo que ya usa el
+         sidebar (pc-sidebar-logo), reusado tal cual para no tener que
+         alojar/mantener un archivo de ícono aparte. -->
+    <link rel="icon" type="image/png" href="https://prettycore.xyz/IMAGENES/Logo%20Prettycore%20(8).png" />
     <.live_title default="Prettycore" suffix=" · BPB v1.0">
       {assigns[:page_title]}
     </.live_title>

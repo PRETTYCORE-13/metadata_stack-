@@ -20,7 +20,7 @@ defmodule MetadataAppWeb.JerarquiaSessionController do
          {:ok, inventory_id} <- parse_id(params["inventory_location_id"]),
          %{} = branch <- Autenticacion.obtener_branch_de_usuario(usuario.id, empresa.id, branch_id, es_administrador?),
          %{} = inventory_location <-
-           Autenticacion.obtener_inventory_location_de_usuario(usuario.id, empresa.id, inventory_id, es_administrador?) do
+           Autenticacion.obtener_inventory_location_de_usuario(usuario.id, empresa.id, branch.id, inventory_id, es_administrador?) do
       conn =
         conn
         |> delete_session(:usuario_return_to)
@@ -32,7 +32,7 @@ defmodule MetadataAppWeb.JerarquiaSessionController do
       conn =
         case parse_id(params["sales_unit_id"]) do
           {:ok, sales_unit_id} ->
-            case Autenticacion.obtener_sales_unit_de_usuario(usuario.id, empresa.id, sales_unit_id, es_administrador?) do
+            case Autenticacion.obtener_sales_unit_de_usuario(usuario.id, empresa.id, branch.id, sales_unit_id, es_administrador?) do
               nil -> delete_session(conn, :sales_unit_activo_id)
               sales_unit -> put_session(conn, :sales_unit_activo_id, sales_unit.id)
             end
@@ -57,6 +57,14 @@ defmodule MetadataAppWeb.JerarquiaSessionController do
   # Vuelve a la página desde donde se mandó el form (Referer), no a "/" --
   # cambiar de sucursal desde el pie de una Ficha 360° tiene que dejarte
   # en esa misma Ficha, no mandarte al inicio.
+  # Cambiar de sucursal (2026-08-13) también aplica el default de
+  # almacén/unidad de venta DE ESA sucursal (Autenticacion.defaults_de_branch/2)
+  # -- ya no queda en blanco hasta que el usuario lo elija a mano de
+  # nuevo cada vez. Si esa sucursal todavía no tiene un default
+  # configurado (admin no la completó todavía), simplemente no se aplica
+  # nada acá -- el bloqueo real de "no puede operar sin Unidad Operativa
+  # completa" vive en CatalogoGenerico.preparar_attrs_alcance/4, no en
+  # este selector.
   def activar_branch(conn, %{"id" => id}) do
     usuario = conn.assigns.current_scope.usuario
     empresa = conn.assigns.current_scope.empresa_activa
@@ -64,7 +72,15 @@ defmodule MetadataAppWeb.JerarquiaSessionController do
 
     with {:ok, id} <- parse_id(id),
          %{} = branch <- Autenticacion.obtener_branch_de_usuario(usuario.id, empresa.id, id, es_administrador?) do
-      conn |> put_session(:branch_activo_id, branch.id) |> redirect(to: pagina_de_origen(conn))
+      defaults = Autenticacion.defaults_de_branch(usuario.id, branch.id)
+
+      conn =
+        conn
+        |> put_session(:branch_activo_id, branch.id)
+        |> aplicar_default_de_sucursal(:inventory_location_activo_id, defaults.inventory_location)
+        |> aplicar_default_de_sucursal(:sales_unit_activo_id, defaults.sales_unit)
+
+      redirect(conn, to: pagina_de_origen(conn))
     else
       _ ->
         conn
@@ -73,14 +89,19 @@ defmodule MetadataAppWeb.JerarquiaSessionController do
     end
   end
 
+  defp aplicar_default_de_sucursal(conn, _clave, nil), do: conn
+  defp aplicar_default_de_sucursal(conn, clave, %{id: id}), do: put_session(conn, clave, id)
+
   def activar_inventory_location(conn, %{"id" => id}) do
     usuario = conn.assigns.current_scope.usuario
     empresa = conn.assigns.current_scope.empresa_activa
+    branch_activo = conn.assigns.current_scope.branch_activo
     es_administrador? = Permissions.administrador?(usuario.id, empresa.id)
 
-    with {:ok, id} <- parse_id(id),
+    with %{} = branch <- branch_activo,
+         {:ok, id} <- parse_id(id),
          %{} = inventory_location <-
-           Autenticacion.obtener_inventory_location_de_usuario(usuario.id, empresa.id, id, es_administrador?) do
+           Autenticacion.obtener_inventory_location_de_usuario(usuario.id, empresa.id, branch.id, id, es_administrador?) do
       conn |> put_session(:inventory_location_activo_id, inventory_location.id) |> redirect(to: pagina_de_origen(conn))
     else
       _ ->
@@ -95,17 +116,18 @@ defmodule MetadataAppWeb.JerarquiaSessionController do
   def activar_sales_unit(conn, %{"id" => id}) do
     usuario = conn.assigns.current_scope.usuario
     empresa = conn.assigns.current_scope.empresa_activa
+    branch_activo = conn.assigns.current_scope.branch_activo
     es_administrador? = Permissions.administrador?(usuario.id, empresa.id)
 
     conn =
-      case parse_id(id) do
-        {:ok, id} ->
-          case Autenticacion.obtener_sales_unit_de_usuario(usuario.id, empresa.id, id, es_administrador?) do
+      case {branch_activo, parse_id(id)} do
+        {%{} = branch, {:ok, id}} ->
+          case Autenticacion.obtener_sales_unit_de_usuario(usuario.id, empresa.id, branch.id, id, es_administrador?) do
             nil -> conn
             sales_unit -> put_session(conn, :sales_unit_activo_id, sales_unit.id)
           end
 
-        :error ->
+        _ ->
           delete_session(conn, :sales_unit_activo_id)
       end
 

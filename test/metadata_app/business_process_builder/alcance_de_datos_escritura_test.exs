@@ -100,6 +100,43 @@ defmodule MetadataApp.BusinessProcessBuilder.AlcanceDeDatosEscrituraTest do
     end
   end
 
+  # Bug operacional (2026-08-13, reportado por el usuario contra un
+  # catálogo real: un administrador creó un registro y quedó sin
+  # sucursal/almacén). validar_tipo_en_attrs(:global, ...) no exige nada
+  # -- a propósito, describe QUÉ FILAS puede FILTRAR ese alcance_tipo
+  # ("ve todo"), no si el registro nace con sucursal/almacén cargados.
+  # validar_jerarquia_requerida_en_attrs/2 es la validación NUEVA e
+  # INDEPENDIENTE de alcance_tipo que cierra ese hueco: si el catálogo
+  # tiene Alcance de Datos, TODO registro nuevo exige sucursal + almacén,
+  # sin importar quién lo crea ni qué alcance_tipo tenga.
+  describe "crear/4 — alcance_tipo :global (administrador)" do
+    test "bloquea igual que cualquier otro tipo si no hay sucursal/almacén activos" do
+      header = header_fixture(true)
+      usuario = usuario_fixture()
+      %{empresa: empresa} = jerarquia()
+      scope = scope_con_alcance(usuario, empresa, header, :global)
+
+      assert {:error, {:alcance_requerido, "branch_id"}} =
+               CatalogoGenerico.crear(MetaFixtureAlcance, scope, %{"nombre" => "admin sin jerarquia"})
+    end
+
+    test "con sucursal/almacén activos en el scope, autocompleta y crea igual" do
+      header = header_fixture(true)
+      usuario = usuario_fixture()
+      %{empresa: empresa, branch: branch, inventory_location: inventory_location} = jerarquia()
+
+      scope =
+        usuario
+        |> scope_con_alcance(empresa, header, :global)
+        |> Map.put(:branch_activo, branch)
+        |> Map.put(:inventory_location_activo, inventory_location)
+
+      assert {:ok, registro} = CatalogoGenerico.crear(MetaFixtureAlcance, scope, %{"nombre" => "admin con jerarquia"})
+      assert registro.branch_id == branch.id
+      assert registro.inventory_id == inventory_location.id
+    end
+  end
+
   describe "crear/4 — nil (sin autenticar) con alcance_habilitado: true" do
     test "se rechaza, nunca llega a la base" do
       header_fixture(true)
@@ -112,8 +149,19 @@ defmodule MetadataApp.BusinessProcessBuilder.AlcanceDeDatosEscrituraTest do
       header = header_fixture(true)
       usuario = usuario_fixture()
       otro = usuario_fixture()
-      %{empresa: empresa} = jerarquia()
-      scope = scope_con_alcance(usuario, empresa, header, :propio)
+      %{empresa: empresa, branch: branch, inventory_location: inventory_location} = jerarquia()
+
+      # Bug operacional (2026-08-13): branch/almacén activos en el scope --
+      # sin importar el alcance_tipo (acá :propio, que no exige nada por sí
+      # solo), validar_jerarquia_requerida_en_attrs/2 igual bloquea si el
+      # registro nacería sin sucursal/almacén. Este test es sobre
+      # creado_por_id, no sobre esa validación, así que le da lo que hace
+      # falta para no chocar con ella.
+      scope =
+        usuario
+        |> scope_con_alcance(empresa, header, :propio)
+        |> Map.put(:branch_activo, branch)
+        |> Map.put(:inventory_location_activo, inventory_location)
 
       assert {:ok, registro} =
                CatalogoGenerico.crear(MetaFixtureAlcance, scope, %{"nombre" => "mio", "creado_por_id" => otro.id})
@@ -142,11 +190,15 @@ defmodule MetadataApp.BusinessProcessBuilder.AlcanceDeDatosEscrituraTest do
     test "permite crear con branch_id dentro de lo permitido" do
       header = header_fixture(true)
       usuario = usuario_fixture()
-      %{empresa: empresa, branch: branch_permitida} = jerarquia()
+      %{empresa: empresa, branch: branch_permitida, inventory_location: inventory_location} = jerarquia()
       scope = scope_con_alcance(usuario, empresa, header, :branch, %{branches_permitidos: [branch_permitida.id]})
 
       assert {:ok, registro} =
-               CatalogoGenerico.crear(MetaFixtureAlcance, scope, %{"nombre" => "adentro", "branch_id" => branch_permitida.id})
+               CatalogoGenerico.crear(MetaFixtureAlcance, scope, %{
+                 "nombre" => "adentro",
+                 "branch_id" => branch_permitida.id,
+                 "inventory_id" => inventory_location.id
+               })
 
       assert registro.branch_id == branch_permitida.id
     end
@@ -175,12 +227,13 @@ defmodule MetadataApp.BusinessProcessBuilder.AlcanceDeDatosEscrituraTest do
     test "autocompleta branch_id con el branch activo del scope si attrs no trae uno explícito" do
       header = header_fixture(true)
       usuario = usuario_fixture()
-      %{empresa: empresa, branch: branch_permitida} = jerarquia()
+      %{empresa: empresa, branch: branch_permitida, inventory_location: inventory_location} = jerarquia()
 
       scope =
         usuario
         |> scope_con_alcance(empresa, header, :branch, %{branches_permitidos: [branch_permitida.id]})
         |> Map.put(:branch_activo, branch_permitida)
+        |> Map.put(:inventory_location_activo, inventory_location)
 
       assert {:ok, registro} = CatalogoGenerico.crear(MetaFixtureAlcance, scope, %{"nombre" => "auto"})
       assert registro.branch_id == branch_permitida.id
@@ -189,7 +242,7 @@ defmodule MetadataApp.BusinessProcessBuilder.AlcanceDeDatosEscrituraTest do
     test "un branch_id explícito en attrs gana sobre el branch activo del scope" do
       header = header_fixture(true)
       usuario = usuario_fixture()
-      %{empresa: empresa, branch: branch_permitida} = jerarquia()
+      %{empresa: empresa, branch: branch_permitida, inventory_location: inventory_location} = jerarquia()
       {:ok, otra_branch_permitida} = Autenticacion.crear_branch(%{empresa_id: empresa.id, branch_name: "Guadalajara"})
       Autenticacion.asignar_branch(usuario.id, otra_branch_permitida.id)
 
@@ -197,6 +250,7 @@ defmodule MetadataApp.BusinessProcessBuilder.AlcanceDeDatosEscrituraTest do
         usuario
         |> scope_con_alcance(empresa, header, :branch, %{branches_permitidos: [branch_permitida.id, otra_branch_permitida.id]})
         |> Map.put(:branch_activo, branch_permitida)
+        |> Map.put(:inventory_location_activo, inventory_location)
 
       assert {:ok, registro} =
                CatalogoGenerico.crear(MetaFixtureAlcance, scope, %{"nombre" => "explicito", "branch_id" => otra_branch_permitida.id})
@@ -342,15 +396,23 @@ defmodule MetadataApp.BusinessProcessBuilder.AlcanceDeDatosEscrituraTest do
       :ok = con_transicion_alta(header)
 
       usuario = usuario_fixture()
-      %{empresa: empresa, branch: branch_permitida} = jerarquia()
+      %{empresa: empresa, branch: branch_permitida, inventory_location: inventory_location} = jerarquia()
       {:ok, branch_no_permitida} = Autenticacion.crear_branch(%{empresa_id: empresa.id, branch_name: "Puebla"})
       scope = scope_con_alcance(usuario, empresa, header, :branch, %{branches_permitidos: [branch_permitida.id]})
 
       assert {:error, "branch_id"} =
-               CatalogoGenerico.crear(MetaFixtureAlcance, scope, %{"nombre" => "fuera", "branch_id" => branch_no_permitida.id})
+               CatalogoGenerico.crear(MetaFixtureAlcance, scope, %{
+                 "nombre" => "fuera",
+                 "branch_id" => branch_no_permitida.id,
+                 "inventory_id" => inventory_location.id
+               })
 
       assert {:ok, registro} =
-               CatalogoGenerico.crear(MetaFixtureAlcance, scope, %{"nombre" => "adentro", "branch_id" => branch_permitida.id})
+               CatalogoGenerico.crear(MetaFixtureAlcance, scope, %{
+                 "nombre" => "adentro",
+                 "branch_id" => branch_permitida.id,
+                 "inventory_id" => inventory_location.id
+               })
 
       assert registro.creado_por_id == usuario.id
       assert registro.branch_id == branch_permitida.id

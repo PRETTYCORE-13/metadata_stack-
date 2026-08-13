@@ -227,34 +227,59 @@ defmodule MetadataAppWeb.UsuarioAuth do
   defp hidratar_jerarquia_activa(%Scope{empresa_activa: nil} = scope, _b, _i, _s), do: scope
 
   defp hidratar_jerarquia_activa(%Scope{usuario: usuario, empresa_activa: empresa} = scope, branch_id, inventory_id, sales_unit_id) do
+    # es_administrador? faltaba acá (bug encontrado 2026-08-13): sin esto,
+    # un administrador que elegía sucursal/almacén desde la banda de pie
+    # (JerarquiaSessionController, que SÍ pasa es_administrador?) la
+    # perdía en la siguiente carga de página -- obtener_branch_de_usuario/3
+    # sin el 4to argumento solo mira lo explícitamente asignado, que un
+    # admin normalmente no tiene.
+    es_administrador? = MetadataApp.Permissions.administrador?(usuario.id, empresa.id)
+
     scope
-    |> hidratar_branch_activo(usuario, empresa, branch_id)
-    |> hidratar_inventory_location_activo(usuario, empresa, inventory_id)
-    |> hidratar_sales_unit_activo(usuario, empresa, sales_unit_id)
+    |> hidratar_branch_activo(usuario, empresa, branch_id, es_administrador?)
+    |> hidratar_inventory_location_activo(usuario, empresa, inventory_id, es_administrador?)
+    |> hidratar_sales_unit_activo(usuario, empresa, sales_unit_id, es_administrador?)
   end
 
-  defp hidratar_branch_activo(scope, _usuario, _empresa, nil), do: scope
+  defp hidratar_branch_activo(scope, _usuario, _empresa, nil, _es_administrador?), do: scope
 
-  defp hidratar_branch_activo(scope, usuario, empresa, branch_id) do
-    case Autenticacion.obtener_branch_de_usuario(usuario.id, empresa.id, branch_id) do
+  defp hidratar_branch_activo(scope, usuario, empresa, branch_id, es_administrador?) do
+    case Autenticacion.obtener_branch_de_usuario(usuario.id, empresa.id, branch_id, es_administrador?) do
       nil -> scope
       branch -> Scope.con_branch_activo(scope, branch)
     end
   end
 
-  defp hidratar_inventory_location_activo(scope, _usuario, _empresa, nil), do: scope
+  defp hidratar_inventory_location_activo(scope, _usuario, _empresa, nil, _es_administrador?), do: scope
 
-  defp hidratar_inventory_location_activo(scope, usuario, empresa, inventory_id) do
-    case Autenticacion.obtener_inventory_location_de_usuario(usuario.id, empresa.id, inventory_id) do
+  # Unidad Operativa (2026-08-13, arquitectura ERP: Empresa -> N Branch ->
+  # N Inventory -> N Sales Unit) -- un almacén SIEMPRE es hijo de una
+  # sucursal, nunca de la empresa a secas. Sin sucursal activa todavía no
+  # hay contra qué contener un almacén (queda vacío, mismo criterio que
+  # hidratar_alcance/1 con empresa_activa: nil). La contención en sí ya
+  # NO se revisa acá con un `when` -- Autenticacion.obtener_inventory_location_de_usuario/5
+  # recibe `branch_activo.id` y acota la lista operable a ESA sucursal
+  # desde el origen, así que un almacén de otra sucursal ni siquiera
+  # aparece como candidato (devuelve nil directo).
+  defp hidratar_inventory_location_activo(%Scope{branch_activo: nil} = scope, _usuario, _empresa, _inventory_id, _es_administrador?),
+    do: scope
+
+  defp hidratar_inventory_location_activo(scope, usuario, empresa, inventory_id, es_administrador?) do
+    case Autenticacion.obtener_inventory_location_de_usuario(usuario.id, empresa.id, scope.branch_activo.id, inventory_id, es_administrador?) do
       nil -> scope
       inventory_location -> Scope.con_inventory_location_activo(scope, inventory_location)
     end
   end
 
-  defp hidratar_sales_unit_activo(scope, _usuario, _empresa, nil), do: scope
+  defp hidratar_sales_unit_activo(scope, _usuario, _empresa, nil, _es_administrador?), do: scope
 
-  defp hidratar_sales_unit_activo(scope, usuario, empresa, sales_unit_id) do
-    case Autenticacion.obtener_sales_unit_de_usuario(usuario.id, empresa.id, sales_unit_id) do
+  # Mismo criterio que hidratar_inventory_location_activo/5 -- Sales Unit
+  # también es hijo directo de Branch (hermano de Inventory, no anidado
+  # bajo él), así que se acota contra la sucursal activa igual.
+  defp hidratar_sales_unit_activo(%Scope{branch_activo: nil} = scope, _usuario, _empresa, _sales_unit_id, _es_administrador?), do: scope
+
+  defp hidratar_sales_unit_activo(scope, usuario, empresa, sales_unit_id, es_administrador?) do
+    case Autenticacion.obtener_sales_unit_de_usuario(usuario.id, empresa.id, scope.branch_activo.id, sales_unit_id, es_administrador?) do
       nil -> scope
       sales_unit -> Scope.con_sales_unit_activo(scope, sales_unit)
     end

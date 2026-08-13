@@ -63,19 +63,20 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
 
   # Forma "vacía" de la pestaña Alcance -- reusada en mount/3 y en cada
   # reset (cambiar de empresa gestionada, cerrar detalle, quitar la
-  # empresa en foco al propio usuario), mismo criterio que ya usaban
-  # jerarquia_alcance: [] / empresas_estado: [] antes del rediseño 2026-08-12.
+  # empresa en foco al propio usuario). Rediseño 2026-08-13 (arquitectura
+  # ERP: Empresa -> N Branch -> N Inventory -> N Sales Unit, Sales Unit
+  # opcional) -- a diferencia de la versión anterior (4 listas planas,
+  # todas mezclando TODAS las empresas del usuario en una sola lista), la
+  # pestaña Alcance ahora es GLOBAL al usuario (no depende de qué empresa
+  # está "en foco" en esta pantalla) y anidada: `por_empresa` es
+  # `%{empresa_id => %{branches_asignadas: [%{branch:, inventories_...,
+  # sales_units_..., inventory_default_id, sales_unit_default_id}, ...],
+  # branches_disponibles:, branch_default_id:}}`.
   @alcance_vacio %{
-    branches_asignadas: [],
-    branches_disponibles: [],
-    sales_units_asignadas: [],
-    sales_units_disponibles: [],
-    inventory_locations_asignadas: [],
-    inventory_locations_disponibles: [],
-    nombres_branch: %{},
-    branch_default_id: nil,
-    sales_unit_default_id: nil,
-    inventory_default_id: nil
+    empresas: [],
+    empresas_disponibles: [],
+    empresa_default_id: nil,
+    por_empresa: %{}
   }
 
   def mount(_params, _session, socket) do
@@ -94,8 +95,6 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
      |> assign(:roles_concedidos, [])
      |> assign(:busqueda_rol, "")
      |> assign(:roles_busqueda_resultado, [])
-     |> assign(:empresas_estado, [])
-     |> assign(:empresa_default_id, nil)
      |> assign(:bcs_lectura, [])
      |> assign(:alcance, @alcance_vacio)
      |> assign(:alias_form, nil)
@@ -128,8 +127,6 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
          roles_concedidos: [],
          busqueda_rol: "",
          roles_busqueda_resultado: [],
-         empresas_estado: [],
-         empresa_default_id: nil,
          bcs_lectura: [],
          alcance: @alcance_vacio
        )
@@ -249,8 +246,6 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
        roles_concedidos: [],
        busqueda_rol: "",
        roles_busqueda_resultado: [],
-       empresas_estado: [],
-       empresa_default_id: nil,
        bcs_lectura: [],
        alcance: @alcance_vacio
      )}
@@ -324,8 +319,6 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
          roles_concedidos: [],
          busqueda_rol: "",
          roles_busqueda_resultado: [],
-         empresas_estado: [],
-         empresa_default_id: nil,
          bcs_lectura: [],
          alcance: @alcance_vacio
        )
@@ -383,37 +376,44 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     {:noreply, cargar_detalle_usuario(socket)}
   end
 
-  # Default (2026-08-12) -- 3 handlers gemelos, mismo criterio de
-  # "toggle" que los de arriba: si YA es el default, el click lo limpia
-  # (nil); si no, lo fija (reemplaza cualquier default previo de esa
-  # misma dimensión sin acción aparte, el campo es un id único, no una
-  # lista). Solo tiene sentido sobre un renglón ya asignado -- el botón
-  # de "Default" ni se muestra en el render si no lo está (ver
-  # .seccion_alcance/1, `:if={@evento_default}` sobre `asignados`).
-  def handle_event("toggle_branch_default", %{"id" => id, "default" => default}, socket) do
-    %{usuario_seleccionado: usuario, empresa_en_foco: empresa} = socket.assigns
-    es_administrador? = Permissions.administrador?(usuario.id, empresa.id)
+  # Default (2026-08-13, rediseño ERP) -- 3 handlers gemelos, mismo
+  # criterio de "toggle" que los de arriba: si YA es el default, el
+  # click lo limpia (nil); si no, lo fija (reemplaza cualquier default
+  # previo de esa misma dimensión sin acción aparte, el campo es un id
+  # único, no una lista). Solo tiene sentido sobre un renglón ya
+  # asignado -- el botón de "Default" ni se muestra en el render si no
+  # lo está (ver .seccion_alcance/1, `:if={@evento_default}` sobre
+  # `asignados`). branch_default es por empresa (empresa_id llega como
+  # phx-value); inventory/sales_unit default son por SUCURSAL puntual
+  # (branch_id Y empresa_id llegan como phx-value -- empresa_id hace
+  # falta para resolver es_administrador?, ver .seccion_alcance/1).
+  def handle_event("toggle_branch_default", %{"id" => id, "empresa_id" => empresa_id, "default" => default}, socket) do
+    usuario = socket.assigns.usuario_seleccionado
+    empresa_id = String.to_integer(empresa_id)
+    es_administrador? = Permissions.administrador?(usuario.id, empresa_id)
     nuevo_id = if default == "true", do: nil, else: String.to_integer(id)
 
-    Autenticacion.definir_branch_default(usuario.id, empresa.id, nuevo_id, es_administrador?)
+    Autenticacion.definir_branch_default(usuario.id, empresa_id, nuevo_id, es_administrador?)
     {:noreply, cargar_detalle_usuario(socket)}
   end
 
-  def handle_event("toggle_sales_unit_default", %{"id" => id, "default" => default}, socket) do
-    %{usuario_seleccionado: usuario, empresa_en_foco: empresa} = socket.assigns
-    es_administrador? = Permissions.administrador?(usuario.id, empresa.id)
+  def handle_event("toggle_inventory_default", %{"id" => id, "branch_id" => branch_id, "empresa_id" => empresa_id, "default" => default}, socket) do
+    usuario = socket.assigns.usuario_seleccionado
+    branch_id = String.to_integer(branch_id)
+    es_administrador? = Permissions.administrador?(usuario.id, String.to_integer(empresa_id))
     nuevo_id = if default == "true", do: nil, else: String.to_integer(id)
 
-    Autenticacion.definir_sales_unit_default(usuario.id, empresa.id, nuevo_id, es_administrador?)
+    Autenticacion.definir_inventory_default_de_branch(usuario.id, branch_id, nuevo_id, es_administrador?)
     {:noreply, cargar_detalle_usuario(socket)}
   end
 
-  def handle_event("toggle_inventory_location_default", %{"id" => id, "default" => default}, socket) do
-    %{usuario_seleccionado: usuario, empresa_en_foco: empresa} = socket.assigns
-    es_administrador? = Permissions.administrador?(usuario.id, empresa.id)
+  def handle_event("toggle_sales_unit_default", %{"id" => id, "branch_id" => branch_id, "empresa_id" => empresa_id, "default" => default}, socket) do
+    usuario = socket.assigns.usuario_seleccionado
+    branch_id = String.to_integer(branch_id)
+    es_administrador? = Permissions.administrador?(usuario.id, String.to_integer(empresa_id))
     nuevo_id = if default == "true", do: nil, else: String.to_integer(id)
 
-    Autenticacion.definir_inventory_location_default(usuario.id, empresa.id, nuevo_id, es_administrador?)
+    Autenticacion.definir_sales_unit_default_de_branch(usuario.id, branch_id, nuevo_id, es_administrador?)
     {:noreply, cargar_detalle_usuario(socket)}
   end
 
@@ -440,10 +440,6 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
 
     roles_concedidos = Permissions.roles_de_usuario(usuario.id, empresa.id)
 
-    empresas_del_usuario = Autenticacion.empresas_de_usuario(usuario.id)
-    empresas_del_usuario_ids = MapSet.new(empresas_del_usuario, & &1.id)
-    empresas_disponibles = Enum.reject(Autenticacion.listar_empresas(), &MapSet.member?(empresas_del_usuario_ids, &1.id))
-
     bcs_lectura =
       usuario.id
       |> Permissions.permisos_de_usuario(empresa.id)
@@ -453,66 +449,76 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
       |> MetaSchemaContext.obtener_headers_por_nombres()
       |> Enum.sort_by(& &1.schema_context_label)
 
-    empresa_default = Autenticacion.empresa_default_de_usuario(usuario.id)
-
     socket
     |> assign(:roles_concedidos, roles_concedidos)
     |> assign(:busqueda_rol, "")
     |> assign(:roles_busqueda_resultado, [])
-    |> assign(:empresas_estado, empresas_del_usuario)
-    |> assign(:empresas_disponibles, empresas_disponibles)
-    |> assign(:empresa_default_id, empresa_default && empresa_default.id)
     |> assign(:bcs_lectura, bcs_lectura)
-    |> assign(:alcance, cargar_alcance(usuario, empresa))
+    |> assign(:alcance, cargar_alcance(usuario))
     |> assign(:alias_form, to_form(Autenticacion.change_usuario_alias(usuario)))
   end
 
-  # Listas PLANAS (asignada/disponible) de las 3 dimensiones de la
-  # jerarquía en la empresa en foco -- reemplaza el árbol Branch ->
-  # {SalesUnit, InventoryLocation} de antes (rediseño 2026-08-12, a
-  # pedido explícito: "estaba desordenado", 4 secciones verticales en vez
-  # de un árbol anidado). Sales units/inventory locations llevan su
-  # branch_id tal cual (structs reales, no un mapa envolvente) -- el
-  # nombre de sucursal para mostrar junto a cada una sale de
-  # nombres_branch, resuelto una sola vez acá. Se arma desde 0 en cada
-  # carga -- son listas chicas (decenas, no miles, por empresa) y así se
-  # evita cualquier desincronización con lo que Autenticacion.
-  # alcance_de_usuario/2 y defaults_de_usuario/2 ya reportan como fuente
-  # de verdad.
-  defp cargar_alcance(usuario, empresa) do
+  # Alcance del usuario, ANIDADO por empresa (rediseño 2026-08-13,
+  # arquitectura ERP: Empresa -> N Branch -> N Inventory -> N Sales Unit,
+  # Sales Unit opcional -- mockup del usuario, confirmado explícito).
+  # Reemplaza las 4 listas planas del rediseño anterior (2026-08-12, que
+  # mezclaban TODAS las empresas del usuario en una sola lista de
+  # sucursales/almacenes) -- ahora es GLOBAL al usuario, no depende de
+  # `empresa_en_foco`: un admin ve/edita la jerarquía completa del
+  # usuario en TODAS sus empresas desde esta misma pestaña, no solo la
+  # que está gestionando en Roles/BC. Se arma desde 0 en cada carga --
+  # son listas chicas (decenas, no miles) y así se evita cualquier
+  # desincronización con lo que Autenticacion ya reporta como fuente de
+  # verdad.
+  defp cargar_alcance(usuario) do
+    empresas_del_usuario = Autenticacion.empresas_de_usuario(usuario.id)
+    empresas_del_usuario_ids = MapSet.new(empresas_del_usuario, & &1.id)
+    empresas_disponibles = Enum.reject(Autenticacion.listar_empresas(), &MapSet.member?(empresas_del_usuario_ids, &1.id))
+    empresa_default = Autenticacion.empresa_default_de_usuario(usuario.id)
+
     %{
-      branches_permitidos: branch_ids,
-      sales_units_permitidas: sales_unit_ids,
-      inventory_locations_permitidas: inventory_ids
-    } = Autenticacion.alcance_de_usuario(usuario.id, empresa.id)
+      empresas: empresas_del_usuario,
+      empresas_disponibles: empresas_disponibles,
+      empresa_default_id: empresa_default && empresa_default.id,
+      por_empresa: Map.new(empresas_del_usuario, &{&1.id, cargar_alcance_de_empresa(usuario, &1)})
+    }
+  end
 
-    defaults = Autenticacion.defaults_de_usuario(usuario.id, empresa.id)
-
-    branch_ids = MapSet.new(branch_ids)
-    sales_unit_ids = MapSet.new(sales_unit_ids)
-    inventory_ids = MapSet.new(inventory_ids)
-
+  defp cargar_alcance_de_empresa(usuario, empresa) do
+    branch_ids_asignados = usuario.id |> Autenticacion.branches_de_usuario(empresa.id) |> Enum.map(& &1.id) |> MapSet.new()
     todas_branches = Autenticacion.listar_branches(empresa.id)
-    todas_sales_units = Autenticacion.listar_sales_units_de_empresa(empresa.id)
-    todas_inventory_locations = Autenticacion.listar_inventory_locations_de_empresa(empresa.id)
-
-    {branches_asignadas, branches_disponibles} = Enum.split_with(todas_branches, &MapSet.member?(branch_ids, &1.id))
-    {sales_units_asignadas, sales_units_disponibles} = Enum.split_with(todas_sales_units, &MapSet.member?(sales_unit_ids, &1.id))
-
-    {inventory_locations_asignadas, inventory_locations_disponibles} =
-      Enum.split_with(todas_inventory_locations, &MapSet.member?(inventory_ids, &1.id))
+    {branches_asignadas, branches_disponibles} = Enum.split_with(todas_branches, &MapSet.member?(branch_ids_asignados, &1.id))
+    branch_default = Autenticacion.branch_default_de_usuario(usuario.id, empresa.id)
 
     %{
-      branches_asignadas: branches_asignadas,
+      branches_asignadas: Enum.map(branches_asignadas, &cargar_alcance_de_branch(usuario, empresa, &1)),
       branches_disponibles: branches_disponibles,
+      branch_default_id: branch_default && branch_default.id
+    }
+  end
+
+  # Almacén/Unidad de venta acotados a ESTA sucursal puntual (un almacén
+  # pertenece a UNA sola branch, nunca se mezclan entre sucursales -- ver
+  # UsuarioBranch, donde ahora vive el default de cada una).
+  defp cargar_alcance_de_branch(usuario, empresa, branch) do
+    inventory_ids_asignados = usuario.id |> Autenticacion.inventory_locations_de_usuario(empresa.id) |> Enum.map(& &1.id) |> MapSet.new()
+    todas_inventories = Autenticacion.listar_inventory_locations(branch.id)
+    {inventories_asignadas, inventories_disponibles} = Enum.split_with(todas_inventories, &MapSet.member?(inventory_ids_asignados, &1.id))
+
+    sales_unit_ids_asignados = usuario.id |> Autenticacion.sales_units_de_usuario(empresa.id) |> Enum.map(& &1.id) |> MapSet.new()
+    todas_sales_units = Autenticacion.listar_sales_units(branch.id)
+    {sales_units_asignadas, sales_units_disponibles} = Enum.split_with(todas_sales_units, &MapSet.member?(sales_unit_ids_asignados, &1.id))
+
+    defaults = Autenticacion.defaults_de_branch(usuario.id, branch.id)
+
+    %{
+      branch: branch,
+      inventories_asignadas: inventories_asignadas,
+      inventories_disponibles: inventories_disponibles,
+      inventory_default_id: defaults.inventory_location && defaults.inventory_location.id,
       sales_units_asignadas: sales_units_asignadas,
       sales_units_disponibles: sales_units_disponibles,
-      inventory_locations_asignadas: inventory_locations_asignadas,
-      inventory_locations_disponibles: inventory_locations_disponibles,
-      nombres_branch: Map.new(todas_branches, &{&1.id, &1.branch_name}),
-      branch_default_id: defaults.branch && defaults.branch.id,
-      sales_unit_default_id: defaults.sales_unit && defaults.sales_unit.id,
-      inventory_default_id: defaults.inventory_location && defaults.inventory_location.id
+      sales_unit_default_id: defaults.sales_unit && defaults.sales_unit.id
     }
   end
 
@@ -523,92 +529,64 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     Enum.filter(usuarios, &String.contains?(String.downcase(&1.email), texto))
   end
 
-  # Pestaña Alcance, rediseñada 2026-08-12 a pedido explícito ("estaba
-  # desordenado") -- las 4 secciones (Empresa/Sucursales/Almacén/Unidades
-  # de venta) comparten EXACTAMENTE el mismo patrón visual (lista de lo
-  # asignado + Quitar, <select> de lo disponible + Agregar), así que es
-  # una sola función de componente en vez de repetir el HEEx 4 veces.
-  # `nombre_id`/`campo_id_quitar`/`campo_id_default` NO existen como attrs
-  # -- HEEx no permite nombres de atributo dinámicos
-  # (`phx-value-{@campo}=...` es inválido), así que este componente
-  # siempre emite `phx-value-id`/`name="id"`; el nombre del EVENTO
-  # (`evento_agregar`/`evento_quitar`/`evento_default`, esos SÍ son
-  # dinámicos porque son VALORES de atributo, no nombres) ya dice de qué
-  # dimensión se trata.
-  attr :titulo, :string, required: true
+  # Celda de tabla para Almacén/Unidad de venta (rediseño 2026-08-13, a
+  # pedido explícito -- "respeta mi bosquejo": tabla Empresa | Sucursal |
+  # Almacén | Unidad de venta, un ● verde marca el default, en vez de las
+  # cards apiladas con "★ Default" de la versión anterior. Lista chica +
+  # form de agregar, todo compacto para caber en una celda.
   attr :asignados, :list, required: true
   attr :disponibles, :list, required: true
-  attr :nombre_campo, :atom, required: true, doc: "campo del struct a mostrar como nombre -- :nombre, :branch_name, :inventory_name, :sales_unit_name"
+  attr :nombre_campo, :atom, required: true, doc: ":inventory_name o :sales_unit_name"
   attr :evento_agregar, :string, required: true
   attr :evento_quitar, :string, required: true
-  attr :placeholder_select, :string, required: true
-  attr :placeholder_vacio, :string, required: true
-  attr :confirmar_quitar, :any, default: nil, doc: "fn(item) -> string | nil -- data-confirm del botón Quitar"
-  attr :etiqueta_extra, :any, default: nil, doc: "fn(item) -> string | nil -- ej. \"(activa)\" en Empresa"
-  attr :evento_default, :string, default: nil, doc: "nil = esta dimensión no tiene Default (Empresa)"
+  attr :evento_default, :string, required: true
   attr :default_id, :any, default: nil
-  attr :nombres_branch, :map, default: %{}, doc: "id de branch => nombre, para mostrar entre paréntesis en Almacén/Unidades de venta"
+  attr :empresa_id, :any, required: true, doc: "phx-value en el botón Default -- resuelve es_administrador?"
+  attr :branch_id, :any, required: true, doc: "phx-value en el botón Default -- definir_*_default_de_branch/4"
 
-  defp seccion_alcance(assigns) do
+  defp celda_lista(assigns) do
     ~H"""
-    <div>
-      <h3 class="text-xs font-bold text-gray-700 uppercase tracking-wide mb-2">{@titulo}</h3>
-      <ul class="divide-y divide-gray-100 border border-gray-100 rounded-lg mb-2">
-        <li :for={item <- @asignados} class="flex items-center justify-between px-3 py-2 text-sm gap-2">
-          <span class="text-gray-800 truncate">
-            {Map.fetch!(item, @nombre_campo)}
-            <span :if={nombre_sucursal(item, @nombres_branch)} class="text-[10px] text-gray-400 ml-1">({nombre_sucursal(item, @nombres_branch)})</span>
-            <span :if={@etiqueta_extra && @etiqueta_extra.(item)} class="text-[10px] text-purple-600 font-semibold ml-1">{@etiqueta_extra.(item)}</span>
-          </span>
-          <div class="flex items-center gap-2 shrink-0">
-            <button
-              :if={@evento_default}
-              type="button"
-              phx-click={@evento_default}
-              phx-value-id={item.id}
-              phx-value-default={to_string(item.id == @default_id)}
-              title={if item.id == @default_id, do: "Default -- el login la elige sola", else: "Marcar como default para el login"}
-              class={[
-                "text-xs font-semibold rounded-lg px-2 py-1 transition-colors whitespace-nowrap",
-                item.id == @default_id && "bg-amber-500 text-white",
-                item.id != @default_id && "bg-amber-50 text-amber-700 hover:bg-amber-100"
-              ]}
-            >
-              {if item.id == @default_id, do: "★ Default", else: "☆ Default"}
-            </button>
-            <button
-              type="button"
-              phx-click={@evento_quitar}
-              phx-value-id={item.id}
-              data-confirm={@confirmar_quitar && @confirmar_quitar.(item)}
-              class="text-xs text-red-600 hover:underline whitespace-nowrap"
-            >
-              Quitar
-            </button>
-          </div>
+    <div class="min-w-[140px]">
+      <ul class="space-y-0.5 mb-1">
+        <li :for={item <- @asignados} class="flex items-center gap-1.5 text-xs">
+          <button
+            type="button"
+            phx-click={@evento_default}
+            phx-value-id={item.id}
+            phx-value-default={to_string(item.id == @default_id)}
+            phx-value-empresa_id={@empresa_id}
+            phx-value-branch_id={@branch_id}
+            title={if item.id == @default_id, do: "Default", else: "Marcar como default"}
+            class={[
+              "w-1.5 h-1.5 rounded-full shrink-0",
+              item.id == @default_id && "bg-green-500",
+              item.id != @default_id && "bg-gray-300 hover:bg-gray-400"
+            ]}
+          >
+          </button>
+          <span class="text-gray-800 truncate">{Map.fetch!(item, @nombre_campo)}</span>
+          <button
+            type="button"
+            phx-click={@evento_quitar}
+            phx-value-id={item.id}
+            class="text-gray-300 hover:text-red-500 ml-auto shrink-0"
+            title="Quitar"
+          >
+            ✕
+          </button>
         </li>
-        <li :if={@asignados == []} class="px-3 py-4 text-center text-xs text-gray-400">{@placeholder_vacio}</li>
+        <li :if={@asignados == []} class="text-xs text-gray-300">—</li>
       </ul>
-
-      <form phx-submit={@evento_agregar} class="flex gap-2">
-        <select name="id" required class="flex-1 border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-gray-900">
-          <option value="">{@placeholder_select}</option>
-          <option :for={item <- @disponibles} value={item.id}>
-            {Map.fetch!(item, @nombre_campo)}{if nombre_sucursal(item, @nombres_branch), do: " (#{nombre_sucursal(item, @nombres_branch)})"}
-          </option>
+      <form phx-submit={@evento_agregar} class="flex gap-1">
+        <select name="id" required class="flex-1 min-w-0 border border-gray-200 rounded px-1 py-0.5 text-[11px] text-gray-700">
+          <option value="">— Agregar —</option>
+          <option :for={item <- @disponibles} value={item.id}>{Map.fetch!(item, @nombre_campo)}</option>
         </select>
-        <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 whitespace-nowrap">
-          Agregar
-        </button>
+        <button type="submit" class="text-[11px] text-purple-700 font-semibold hover:underline shrink-0">+</button>
       </form>
     </div>
     """
   end
-
-  defp nombre_sucursal(%{branch_id: branch_id}, nombres_branch) when is_map_key(nombres_branch, branch_id),
-    do: Map.fetch!(nombres_branch, branch_id)
-
-  defp nombre_sucursal(_item, _nombres_branch), do: nil
 
   def render(assigns) do
     assigns = assign(assigns, :usuarios_visibles, usuarios_filtrados(assigns.usuarios, assigns.busqueda))
@@ -832,66 +810,164 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
               </ul>
             </div>
 
-            <div id="usuario-detalle-panel-alcance" class="hidden space-y-5">
+            <div id="usuario-detalle-panel-alcance" class="hidden space-y-4">
               <p class="text-xs text-gray-400">
-                Qué puede ver/operar {@usuario_seleccionado.email} — el ★ marca cuál elige el login solo cuando hay varias asignadas (ver banda de pie).
+                Unidad Operativa de {@usuario_seleccionado.email} — el ● verde marca el default (lo que el login elige solo). Empresa, Sucursal y Almacén de cada default son OBLIGATORIOS: sin completarlos, no puede crear registros en catálogos con Alcance de Datos.
               </p>
 
-              <.seccion_alcance
-                titulo="Empresa"
-                asignados={@empresas_estado}
-                disponibles={@empresas_disponibles}
-                nombre_campo={:nombre}
-                evento_agregar="agregar_empresa_a_usuario"
-                evento_quitar="quitar_empresa_de_usuario"
-                placeholder_select="— Elegir empresa —"
-                placeholder_vacio="Sin empresas."
-                confirmar_quitar={fn empresa -> "¿Quitar a #{@usuario_seleccionado.email} de #{empresa.nombre}? Pierde cualquier rol que tenga ahí." end}
-                etiqueta_extra={fn empresa -> if empresa.id == @current_scope.empresa_activa.id, do: "(activa)" end}
-                default_id={@empresa_default_id}
-                evento_default="toggle_empresa_default"
-              />
+              <!-- Empresa: raíz del árbol, arriba de la tabla -- las otras 3
+                   columnas dependen de a qué empresa pertenecen (Sucursal
+                   de una empresa, Almacén/Unidad de venta de una sucursal). -->
+              <div class="border border-gray-200 rounded-lg p-3">
+                <h3 class="text-xs font-bold text-gray-700 uppercase tracking-wide mb-2">Empresa</h3>
+                <ul class="space-y-1 mb-2">
+                  <li :for={empresa <- @alcance.empresas} class="flex items-center gap-2 text-sm">
+                    <button
+                      type="button"
+                      phx-click="toggle_empresa_default"
+                      phx-value-id={empresa.id}
+                      phx-value-default={to_string(empresa.id == @alcance.empresa_default_id)}
+                      title={if empresa.id == @alcance.empresa_default_id, do: "Default -- el login la elige sola", else: "Marcar como default"}
+                      class={[
+                        "w-2.5 h-2.5 rounded-full shrink-0",
+                        empresa.id == @alcance.empresa_default_id && "bg-green-500",
+                        empresa.id != @alcance.empresa_default_id && "bg-gray-300 hover:bg-gray-400"
+                      ]}
+                    >
+                    </button>
+                    <span class="text-gray-800">{empresa.nombre}</span>
+                    <span :if={empresa.id == @current_scope.empresa_activa.id} class="text-[10px] text-purple-600 font-semibold">(activa)</span>
+                    <button
+                      type="button"
+                      phx-click="quitar_empresa_de_usuario"
+                      phx-value-id={empresa.id}
+                      data-confirm={"¿Quitar a #{@usuario_seleccionado.email} de #{empresa.nombre}? Pierde cualquier rol que tenga ahí."}
+                      class="text-gray-300 hover:text-red-500 ml-auto text-xs shrink-0"
+                      title="Quitar"
+                    >
+                      ✕
+                    </button>
+                  </li>
+                  <li :if={@alcance.empresas == []} class="text-xs text-gray-400">Sin empresas.</li>
+                </ul>
+                <form phx-submit="agregar_empresa_a_usuario" class="flex gap-2">
+                  <select name="id" required class="flex-1 border border-gray-300 rounded-lg px-2 py-1 text-xs text-gray-900">
+                    <option value="">— Elegir empresa —</option>
+                    <option :for={empresa <- @alcance.empresas_disponibles} value={empresa.id}>{empresa.nombre}</option>
+                  </select>
+                  <button type="submit" class="px-2 py-1 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 whitespace-nowrap">
+                    Agregar
+                  </button>
+                </form>
+              </div>
 
-              <.seccion_alcance
-                titulo="Sucursales"
-                asignados={@alcance.branches_asignadas}
-                disponibles={@alcance.branches_disponibles}
-                nombre_campo={:branch_name}
-                evento_agregar="agregar_branch_a_usuario"
-                evento_quitar="quitar_branch_de_usuario"
-                placeholder_select="— Elegir sucursal —"
-                placeholder_vacio="Sin sucursales asignadas."
-                default_id={@alcance.branch_default_id}
-                evento_default="toggle_branch_default"
-              />
-
-              <.seccion_alcance
-                titulo="Almacén"
-                asignados={@alcance.inventory_locations_asignadas}
-                disponibles={@alcance.inventory_locations_disponibles}
-                nombre_campo={:inventory_name}
-                evento_agregar="agregar_inventory_location_a_usuario"
-                evento_quitar="quitar_inventory_location_de_usuario"
-                placeholder_select="— Elegir almacén —"
-                placeholder_vacio="Sin almacenes asignados."
-                default_id={@alcance.inventory_default_id}
-                evento_default="toggle_inventory_location_default"
-                nombres_branch={@alcance.nombres_branch}
-              />
-
-              <.seccion_alcance
-                titulo="Unidades de venta"
-                asignados={@alcance.sales_units_asignadas}
-                disponibles={@alcance.sales_units_disponibles}
-                nombre_campo={:sales_unit_name}
-                evento_agregar="agregar_sales_unit_a_usuario"
-                evento_quitar="quitar_sales_unit_de_usuario"
-                placeholder_select="— Elegir unidad de venta —"
-                placeholder_vacio="Sin unidades de venta asignadas."
-                default_id={@alcance.sales_unit_default_id}
-                evento_default="toggle_sales_unit_default"
-                nombres_branch={@alcance.nombres_branch}
-              />
+              <!-- Empresa -> Sucursal -> Almacén -> Unidad de venta, en 4
+                   columnas (bosquejo del usuario) -- una fila por
+                   sucursal, Empresa agrupada con rowspan. -->
+              <div class="overflow-x-auto rounded-lg border border-gray-200">
+                <table class="min-w-full divide-y divide-gray-200 text-sm">
+                  <thead class="bg-gray-50">
+                    <tr>
+                      <th class="px-3 py-2 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wide">Empresa</th>
+                      <th class="px-3 py-2 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wide">Sucursal</th>
+                      <th class="px-3 py-2 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wide">Almacén</th>
+                      <th class="px-3 py-2 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wide">Unidad de venta</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-100">
+                    <%= for empresa <- @alcance.empresas do %>
+                      <% info_empresa = @alcance.por_empresa[empresa.id] %>
+                      <% filas = if info_empresa.branches_asignadas == [], do: [nil], else: info_empresa.branches_asignadas %>
+                      <%= for {info_branch, idx} <- Enum.with_index(filas) do %>
+                        <tr class="align-top">
+                          <td :if={idx == 0} rowspan={length(filas) + 1} class="px-3 py-2 border-r border-gray-100 align-top bg-gray-50/50">
+                            <span class="font-semibold text-gray-900">{empresa.nombre}</span>
+                            <span :if={empresa.id == @alcance.empresa_default_id} class="block text-[10px] text-green-600 font-semibold mt-0.5">● default</span>
+                            <span
+                              :if={info_empresa.branches_asignadas != [] and is_nil(info_empresa.branch_default_id)}
+                              class="block text-[10px] text-red-600 font-semibold mt-0.5"
+                            >
+                              ⚠ falta default
+                            </span>
+                          </td>
+                          <%= if info_branch do %>
+                            <td class="px-3 py-2 border-r border-gray-100">
+                              <div class="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  phx-click="toggle_branch_default"
+                                  phx-value-id={info_branch.branch.id}
+                                  phx-value-default={to_string(info_branch.branch.id == info_empresa.branch_default_id)}
+                                  phx-value-empresa_id={empresa.id}
+                                  title={if info_branch.branch.id == info_empresa.branch_default_id, do: "Default", else: "Marcar como default"}
+                                  class={[
+                                    "w-2 h-2 rounded-full shrink-0",
+                                    info_branch.branch.id == info_empresa.branch_default_id && "bg-green-500",
+                                    info_branch.branch.id != info_empresa.branch_default_id && "bg-gray-300 hover:bg-gray-400"
+                                  ]}
+                                >
+                                </button>
+                                <span class="text-gray-800">{info_branch.branch.branch_name}</span>
+                                <button
+                                  type="button"
+                                  phx-click="quitar_branch_de_usuario"
+                                  phx-value-id={info_branch.branch.id}
+                                  class="text-gray-300 hover:text-red-500 ml-auto text-xs shrink-0"
+                                  title="Quitar"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            </td>
+                            <td class="px-3 py-2 border-r border-gray-100">
+                              <.celda_lista
+                                asignados={info_branch.inventories_asignadas}
+                                disponibles={info_branch.inventories_disponibles}
+                                nombre_campo={:inventory_name}
+                                evento_agregar="agregar_inventory_location_a_usuario"
+                                evento_quitar="quitar_inventory_location_de_usuario"
+                                evento_default="toggle_inventory_default"
+                                default_id={info_branch.inventory_default_id}
+                                empresa_id={empresa.id}
+                                branch_id={info_branch.branch.id}
+                              />
+                            </td>
+                            <td class="px-3 py-2">
+                              <.celda_lista
+                                asignados={info_branch.sales_units_asignadas}
+                                disponibles={info_branch.sales_units_disponibles}
+                                nombre_campo={:sales_unit_name}
+                                evento_agregar="agregar_sales_unit_a_usuario"
+                                evento_quitar="quitar_sales_unit_de_usuario"
+                                evento_default="toggle_sales_unit_default"
+                                default_id={info_branch.sales_unit_default_id}
+                                empresa_id={empresa.id}
+                                branch_id={info_branch.branch.id}
+                              />
+                            </td>
+                          <% else %>
+                            <td colspan="3" class="px-3 py-2 text-xs text-gray-300">Sin sucursales todavía.</td>
+                          <% end %>
+                        </tr>
+                      <% end %>
+                      <tr>
+                        <td colspan="3" class="px-3 py-2">
+                          <form phx-submit="agregar_branch_a_usuario" class="flex gap-1.5 max-w-xs">
+                            <select name="id" required class="flex-1 min-w-0 border border-gray-200 rounded px-1.5 py-1 text-[11px] text-gray-700">
+                              <option value="">— Agregar sucursal —</option>
+                              <option :for={branch <- info_empresa.branches_disponibles} value={branch.id}>{branch.branch_name}</option>
+                            </select>
+                            <button type="submit" class="text-[11px] text-purple-700 font-semibold hover:underline shrink-0">+ Agregar</button>
+                          </form>
+                        </td>
+                      </tr>
+                    <% end %>
+                    <tr :if={@alcance.empresas == []}>
+                      <td colspan="4" class="px-3 py-6 text-center text-xs text-gray-400">Asigná una empresa arriba para configurar su jerarquía.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           <% else %>
             <p class="text-center text-sm text-gray-400 py-24">Elegí un usuario de la izquierda.</p>

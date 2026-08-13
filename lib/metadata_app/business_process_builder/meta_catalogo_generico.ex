@@ -62,6 +62,15 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
         # MetadataApp.MetaStateEngine.ejecutar_transicion/3.
         field :estado_id, :integer
 
+        # Fecha de alta (2026-08-06) — deliberadamente fuera de @campos,
+        # mismo criterio que estado_id/TRN: el único camino para
+        # asignarla es CatalogoGenerico.crear/2 (y el equivalente en
+        # MetaStateEngine para catálogos con transición "alta"), nunca un
+        # cast directo — así nadie la pisa por PATCH. Existe en TODA
+        # tabla generada (no depende de ninguna opción del catálogo),
+        # a diferencia de TRN/maestro-detalle de arriba.
+        field :fecha_registro, :utc_datetime
+
         # PrettyCore TRN (Fase 1, 2026-07-21) — deliberadamente fuera de
         # @campos, mismo criterio que estado_id: el único camino para
         # asignarlos es MetadataApp.TRN.asignar_si_transaccional/1, nunca

@@ -19,6 +19,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   alias MetadataApp.Permissions
   alias MetadataAppWeb.AdminNav
   alias MetadataAppWeb.Sysadmin.FieldDesignerComponents
+  alias MetadataAppWeb.AuditoriaContexto
   alias Phoenix.LiveView.JS
 
   import MetadataAppWeb.FiltrosDefaultComponents, only: [panel_filtros_default: 1]
@@ -385,7 +386,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     %{campo: campo, confirmar_texto: confirmar_texto} = socket.assigns.eliminar_campo_form
     catalogo = socket.assigns.header.schema_context_name
 
-    case CatalogoGenerador.eliminar_campo(catalogo, campo, confirmar_texto) do
+    case CatalogoGenerador.eliminar_campo(catalogo, campo, confirmar_texto, AuditoriaContexto.desde_socket(socket)) do
       {:ok, _resultado} ->
         {:noreply,
          socket
@@ -898,6 +899,22 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   def handle_event("toggle_mostrar_trn_en_tabla", _params, socket),
     do: toggle_columna_estructural(socket, :mostrar_trn_en_tabla, "\"Mostrar TRN\"")
 
+  # Columnas de Alcance de Datos (2026-08-12) — mismos 4 botones/criterio
+  # que ID/Estado/TRN de arriba, solo que panel_get_view/1 los oculta del
+  # todo si el catálogo no tiene alcance_habilitado (sin eso, las columnas
+  # ni existen físicamente, ver Header.mostrar_branch_en_tabla etc.).
+  def handle_event("toggle_mostrar_empresa_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_empresa_en_tabla, "\"Mostrar Empresa\"")
+
+  def handle_event("toggle_mostrar_branch_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_branch_en_tabla, "\"Mostrar Sucursal\"")
+
+  def handle_event("toggle_mostrar_inventory_location_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_inventory_location_en_tabla, "\"Mostrar Almacén\"")
+
+  def handle_event("toggle_mostrar_sales_unit_en_tabla", _params, socket),
+    do: toggle_columna_estructural(socket, :mostrar_sales_unit_en_tabla, "\"Mostrar Unidad de venta\"")
+
   # Sub-filtro de fecha de "Filtros por default" — "primer_dia_anio"/
   # "ultimo_dia_anio"/"actual" (una sola fecha por calendario, precargada
   # con el valor obvio de cada modo — el usuario la puede cambiar
@@ -983,6 +1000,27 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
       {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
       {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Totalizado\" de \"#{campo}\".")}
+    end
+  end
+
+  # "Máscara" — separador de miles ("," 1,234.56 / "." 1.234,56) y símbolo
+  # ("$" antepuesto o ninguno) con que CatalogoLive formatea la fila de
+  # Resumen (formatear_agregacion/2 ahí lee estas mismas dos claves).
+  # Antes se elegía inline en esa misma fila (cualquier usuario final la
+  # podía tocar); ahora es un ajuste de admin, igual que Mín. Máx./Total
+  # 25/Totalizado — mismo criterio: formato es una decisión de quien
+  # configura el catálogo, no de quien solo lo mira.
+  def handle_event("cambiar_mascara", %{"campo" => campo, "separador" => separador, "simbolo" => simbolo}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+
+    props =
+      detalle.schema_context_properties
+      |> Map.put("mascara_separador", separador)
+      |> Map.put("mascara_simbolo", simbolo)
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la máscara de \"#{campo}\".")}
     end
   end
 
@@ -2308,11 +2346,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     ~H"""
     <div class="border border-gray-200 rounded-lg">
       <div class="px-1.5 ml-2 -mb-2 relative">
-        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Get View</span>
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-900">VISUALIZACIÓN DE CAMPOS</span>
       </div>
       <div class="p-3 pt-4 overflow-x-auto">
         <p class="text-gray-500 mb-2">
-          Qué campos ve el usuario final en la tabla de este catálogo. Desmarcar un campo no lo borra ni afecta la API — solo lo oculta de la vista.
+          Campos de Control
         </p>
 
         <div class="flex flex-wrap gap-2 mb-3">
@@ -2337,15 +2375,42 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             ]}>
             {if @header.mostrar_trn_en_tabla, do: "✓ TRN", else: "TRN (oculto)"}
           </button>
+          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_empresa_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_empresa_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_empresa_en_tabla, do: "✓ Empresa", else: "Empresa (oculto)"}
+          </button>
+          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_branch_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_branch_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_branch_en_tabla, do: "✓ Sucursal", else: "Sucursal (oculto)"}
+          </button>
+          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_inventory_location_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_inventory_location_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_inventory_location_en_tabla, do: "✓ Almacén", else: "Almacén (oculto)"}
+          </button>
+          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_sales_unit_en_tabla"
+            class={[
+              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
+              if(@header.mostrar_sales_unit_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
+            ]}>
+            {if @header.mostrar_sales_unit_en_tabla, do: "✓ Unidad de venta", else: "Unidad de venta (oculto)"}
+          </button>
         </div>
-        <p class="text-gray-400 text-[11px] mb-3">
-          Columnas de sistema — Estado/TRN solo aparecen igual si el catálogo tiene motor de estados / es transaccional, esto solo los oculta encima de eso.
-        </p>
-
         <%= if @campos == [] do %>
           <p class="text-gray-400">Este catálogo todavía no tiene campos.</p>
         <% else %>
           <form id="get-view-form" phx-submit="guardar_get_view">
+            <p class="text-gray-500 mb-2">
+              Campos de negocio
+            </p>
             <div class="flex items-center justify-between gap-2 mb-2">
               <div class="flex gap-2">
                 <button type="button"
@@ -2427,11 +2492,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     ~H"""
     <div class="border border-gray-200 rounded-lg mt-4">
       <div class="px-1.5 ml-2 -mb-2 relative">
-        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Filtros</span>
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-900">Filtros</span>
       </div>
       <div class="p-3 pt-4 overflow-x-auto">
         <p class="text-gray-500 mb-2">
-          Qué campos calculan un total en la fila de Resumen del catálogo — Suma/Promedio/Conteo si el campo es numérico, Conteo si no. "Mín. Máx.", "Total 25" y "Totalizado" solo aplican a campos numéricos (integer/decimal).
+          Qué campos calculan un total en la fila de Resumen del catálogo — Suma/Promedio/Conteo si el campo es numérico, Conteo si no. "Mín. Máx.", "Total 25", "Totalizado" y "Máscara" solo aplican a campos numéricos (integer/decimal).
         </p>
 
         <%= if @filtros_activos == [] do %>
@@ -2444,6 +2509,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th :if={@hay_numericos?} class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Mín. Máx.</th>
                 <th :if={@hay_numericos?} class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Total 25</th>
                 <th :if={@hay_numericos?} class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Totalizado</th>
+                <th :if={@hay_numericos?} class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Máscara</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Valor por default</th>
                 <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Bloqueado</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
@@ -2510,6 +2576,23 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                       >
                         Totalizado
                       </button>
+                    <% else %>
+                      <span class="text-gray-300 text-[11px]">—</span>
+                    <% end %>
+                  </td>
+                  <td :if={@hay_numericos?} class="px-1.5 py-1 text-center">
+                    <%= if numerico? do %>
+                      <form phx-change="cambiar_mascara" class="flex items-center justify-center gap-0.5">
+                        <input type="hidden" name="campo" value={c.schema_context_field} />
+                        <select name="separador" title="Separador de miles" class="text-[11px] border border-gray-300 rounded px-1 py-0.5">
+                          <option value="," selected={Map.get(props, "mascara_separador", ",") == ","}>1,234.56</option>
+                          <option value="." selected={Map.get(props, "mascara_separador", ",") == "."}>1.234,56</option>
+                        </select>
+                        <select name="simbolo" title="Símbolo" class="text-[11px] border border-gray-300 rounded px-1 py-0.5">
+                          <option value="" selected={Map.get(props, "mascara_simbolo", "") == ""}>Sin $</option>
+                          <option value="$" selected={Map.get(props, "mascara_simbolo", "") == "$"}>$</option>
+                        </select>
+                      </form>
                     <% else %>
                       <span class="text-gray-300 text-[11px]">—</span>
                     <% end %>
@@ -2620,16 +2703,16 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # se puede usar sola o las dos juntas), cada una en su propia caja:
   #   - "Campos por default": trae TODOS los registros y columnas sin
   #     esperar filtro/búsqueda.
-  #   - "Filtros por default": acota por fecha de alta (ver Header y
-  #     MetaAuditoria.ids_creados_en_rango/3 — los catálogos generados no
-  #     tienen columna de timestamp propia, se resuelve vía auditoría).
+  #   - "Filtros por default": acota por fecha de alta, filtrando directo
+  #     sobre la columna real "fecha_registro" (ver Header y
+  #     MetaCatalogoGenerico — en TODA tabla de catálogo).
   attr :header, :any, required: true
 
   defp panel_campos_default(assigns) do
     ~H"""
     <div class="border border-gray-200 rounded-lg mt-4">
       <div class="px-1.5 ml-2 -mb-2 relative">
-        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Campos por default</span>
+        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-900">Campos por default</span>
       </div>
       <div class="p-3 pt-4 overflow-x-auto">
         <p class="text-gray-500 mb-3">

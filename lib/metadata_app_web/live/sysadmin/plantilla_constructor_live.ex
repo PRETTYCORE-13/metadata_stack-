@@ -18,6 +18,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   además marca esta plantilla como la única activa del catálogo.
   """
 
+
   use MetadataAppWeb, :live_view_admin
 
   on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}

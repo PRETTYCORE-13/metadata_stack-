@@ -22,10 +22,9 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
 
     # "Filtros por default" (bc_motor_live.ex, independiente de
     # cargar_todos_por_default) — acota lo que ve el usuario final por
-    # fecha de ALTA (cuándo se creó cada uno, ver
-    # MetaAuditoria.ids_creados_en_rango/3 — los catálogos generados no
-    # tienen columna de timestamp propia, se resuelve vía la tabla de
-    # auditoría). Modos: "primer_dia_anio" (desde el 1/1 del AÑO de
+    # fecha de ALTA, filtrando directo sobre la columna real
+    # "fecha_registro" (ver MetaCatalogoGenerico, en TODA tabla de
+    # catálogo desde 2026-08-06). Modos: "primer_dia_anio" (desde el 1/1 del AÑO de
     # filtro_default_fecha_valor, elegido por calendario), "ultimo_dia_anio"
     # (hasta el 31/12 del año de filtro_default_fecha_valor), "actual" (el
     # día exacto de filtro_default_fecha_valor, elegido por calendario —
@@ -61,6 +60,19 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # vive acá -- es por (rol, catálogo), ver meta_schema_rol_alcance /
     # MetadataApp.Permissions.alcance_tipo_efectivo/2.
     field :alcance_habilitado, :boolean, default: false
+
+    # Get View → columnas de Alcance de Datos (2026-08-12) -- mismo
+    # criterio que mostrar_id_en_tabla/mostrar_estado_en_tabla arriba,
+    # pero estas 4 SOLO tienen sentido (y CatalogoLive las hace AND con
+    # alcance_habilitado antes de mostrarlas) cuando el catálogo activó
+    # Alcance de Datos: sin eso, branch_id/sales_unit_id/inventory_id ni
+    # existen como columna física en la tabla generada. "Empresa" no es
+    # una columna física propia -- se resuelve por fila vía
+    # branch_id → Branch.empresa_id, ver CatalogoLive.mapa_nombres_alcance/2.
+    field :mostrar_empresa_en_tabla, :boolean, default: true
+    field :mostrar_branch_en_tabla, :boolean, default: true
+    field :mostrar_inventory_location_en_tabla, :boolean, default: true
+    field :mostrar_sales_unit_en_tabla, :boolean, default: true
 
     # Catálogo Maestro-Detalle (ver docs/catalogo-maestro-detalle-requerimientos.md,
     # R1/R16) — no nulo implica "este catálogo es detalle de otro". No se
@@ -112,7 +124,11 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
           :mostrar_id_en_tabla,
           :mostrar_estado_en_tabla,
           :mostrar_trn_en_tabla,
-          :alcance_habilitado
+          :alcance_habilitado,
+          :mostrar_empresa_en_tabla,
+          :mostrar_branch_en_tabla,
+          :mostrar_inventory_location_en_tabla,
+          :mostrar_sales_unit_en_tabla
         ]
     )
     |> validate_required(@requeridos)

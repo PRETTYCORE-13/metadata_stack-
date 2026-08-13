@@ -122,14 +122,6 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     from(r in query, where: field(r, ^campo) >= ^desde and field(r, ^campo) <= ^hasta)
   end
 
-  # Pertenencia a una lista — usado por CatalogoLive para el filtro
-  # "por default" de fecha de alta (ver MetaAuditoria.ids_creados_en_rango/3):
-  # como los catálogos generados no tienen columna de timestamp propia, se
-  # resuelve la lista de :id por afuera (vía auditoría) y se filtra acá.
-  defp aplicar_filtro(query, campo, {:en, lista}) do
-    from(r in query, where: field(r, ^campo) in ^lista)
-  end
-
   defp aplicar_filtro(query, campo, valor) do
     from(r in query, where: field(r, ^campo) == ^valor)
   end
@@ -358,9 +350,44 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
 
     tipo = Permissions.alcance_tipo_efectivo(scope, header.id)
 
-    case validar_tipo_en_attrs(tipo, schema_mod, scope, attrs) do
-      :ok -> {:ok, attrs}
-      {:error, _campo} = error -> error
+    with :ok <- validar_tipo_en_attrs(tipo, schema_mod, scope, attrs),
+         :ok <- validar_jerarquia_requerida_en_attrs(schema_mod, attrs) do
+      {:ok, attrs}
+    end
+  end
+
+  # Bug operacional (2026-08-13): validar_tipo_en_attrs/4 de abajo describe
+  # QUÉ FILAS puede FILTRAR cada alcance_tipo (:global/:propio no exigen
+  # nada ahí, a propósito -- "ve todo"/"solo lo suyo" no necesitan acotar
+  # ningún campo para FILTRAR). Pero eso es una pregunta distinta de "¿el
+  # registro nace CON sucursal/almacén cargados?" -- si el catálogo activó
+  # Alcance de Datos, la respuesta tiene que ser sí SIEMPRE, sin importar
+  # el alcance_tipo de quien lo crea. Un administrador (:global, ve todo)
+  # NO está exento: "ver todo" no es lo mismo que "no quedar registrado
+  # dónde pasó esto". La jerarquía activa ya intentó autocompletar
+  # branch_id/inventory_id (estampar_jerarquia_activa_en_attrs/3, arriba)
+  # -- si acá sigue faltando es porque quien crea (admin incluido) no
+  # tiene sucursal/almacén activa elegida en la banda de pie, y hay que
+  # bloquear con el mismo error claro que ya usa validar_campo_requerido_en_attrs/4,
+  # no dejar pasar el registro con la columna en NULL. sales_unit_id queda
+  # afuera a propósito -- es el único opcional de los tres (ver moduledoc
+  # de MetadataApp.Autenticacion.Scope).
+  defp validar_jerarquia_requerida_en_attrs(schema_mod, attrs) do
+    with :ok <- validar_presencia_en_attrs(schema_mod, attrs, "branch_id") do
+      validar_presencia_en_attrs(schema_mod, attrs, "inventory_id")
+    end
+  end
+
+  defp validar_presencia_en_attrs(schema_mod, attrs, campo) do
+    campo_atom = String.to_existing_atom(campo)
+
+    if campo_atom in schema_mod.__schema__(:fields) do
+      case Map.get(attrs, campo) || Map.get(attrs, campo_atom) do
+        nil -> {:error, {:alcance_requerido, campo}}
+        _valor -> :ok
+      end
+    else
+      :ok
     end
   end
 
@@ -575,7 +602,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
         schema_mod
         |> struct()
         |> schema_mod.changeset(attrs)
-        |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+        |> Ecto.Changeset.change(%{insert_guid: generar_guid(), fecha_registro: DateTime.utc_now() |> DateTime.truncate(:second)})
         |> asignar_estado_inicial(estado_inicial)
         |> aplicar_campos_alcance_en_changeset(schema_mod, attrs, [:branch_id, :sales_unit_id, :inventory_id, :creado_por_id])
         |> MetadataApp.Renglones.preparar(catalogo, attrs)
@@ -732,7 +759,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # respectivamente, nunca un PATCH.
   defp rechazar_no_editables(changeset, attrs, todos_los_campos, editables) do
     editables_set = MapSet.new(editables)
-    protegidos = ["estado_id", "trn", "ulid" | todos_los_campos]
+    protegidos = ["estado_id", "trn", "ulid", "fecha_registro" | todos_los_campos]
 
     attrs
     |> Map.keys()

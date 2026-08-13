@@ -130,10 +130,15 @@ defmodule MetadataApp.MetaImportExport do
     end
   end
 
-  # Get View → columnas estructurales (ID/Estado/TRN, 2026-08-06) -- mismo
-  # criterio que sincronizar_cargar_todos_por_default/2: es puro flag de
+  # Get View → columnas estructurales (ID/Estado/TRN, 2026-08-06; Empresa/
+  # Sucursal/Almacén/Unidad de venta sumadas 2026-08-13, bug operacional
+  # encontrado en vivo: se agregaron esas 4 columnas de Alcance de Datos a
+  # Get View pero se olvidó sumarlas acá -- el bundle nunca las llevaba,
+  # así que tras un deploy quedaban en su default `true` (todas visibles)
+  # sin importar lo que el admin hubiera configurado) -- mismo criterio
+  # que sincronizar_cargar_todos_por_default/2: es puro flag de
   # presentación, no toca la columna física ni corre migración, seguro
-  # sobreescribirlo a ciegas. Los 3 juntos en una sola función porque son
+  # sobreescribirlo a ciegas. Todas juntas en una sola función porque son
   # la misma categoría de cambio (nada estructural), a diferencia de
   # separarlos como sincronizar_etiquetas_campos/sincronizar_obligatorio_campos
   # (esos sí son por-campo, con su propia lista de "cuáles cambiaron").
@@ -141,7 +146,11 @@ defmodule MetadataApp.MetaImportExport do
     campos = [
       {:mostrar_id_en_tabla, "mostrar_id_en_tabla", "ID"},
       {:mostrar_estado_en_tabla, "mostrar_estado_en_tabla", "Estado"},
-      {:mostrar_trn_en_tabla, "mostrar_trn_en_tabla", "TRN"}
+      {:mostrar_trn_en_tabla, "mostrar_trn_en_tabla", "TRN"},
+      {:mostrar_empresa_en_tabla, "mostrar_empresa_en_tabla", "Empresa"},
+      {:mostrar_branch_en_tabla, "mostrar_branch_en_tabla", "Sucursal"},
+      {:mostrar_inventory_location_en_tabla, "mostrar_inventory_location_en_tabla", "Almacén"},
+      {:mostrar_sales_unit_en_tabla, "mostrar_sales_unit_en_tabla", "Unidad de venta"}
     ]
 
     # OJO: nunca "valor = Map.get(...)" como cláusula de un for -- Elixir

@@ -36,6 +36,7 @@ defmodule MetadataAppWeb.MenuLayout do
       |> assign(:nodo_actual, buscar_nodo_actual(assigns.menu_items, assigns.current_page))
       |> assign(:nombre_empresa, nombre_empresa_activa(assigns[:current_scope]))
       |> assign(:jerarquia_opciones, opciones_jerarquia_activa(assigns[:current_scope]))
+      |> assign(:firma_unidad_operativa, firma_unidad_operativa(assigns[:current_scope]))
       |> assign(:anio_actual, Date.utc_today().year)
       |> assign(:bpb_habilitado, Application.get_env(:metadata_app, :bpb_habilitado, false))
       |> asignar_datos_usuario()
@@ -338,6 +339,26 @@ defmodule MetadataAppWeb.MenuLayout do
            que ahora sin el texto al lado. El buscador TRN también se movió
            acá (antes en la topbar) — misma razón que el resto de esta
            banda: dejar la topbar solo con branding/acciones. -->
+
+      <!-- Ajuste UI (2026-08-13, a pedido explícito, solo móvil): el
+           footer ocupa demasiado espacio de pantalla siempre visible en
+           celular -- @media (max-width: 768px) en menu.css lo oculta por
+           default y este botón lo revela, 100% client-side (JS.toggle_class,
+           sin evento al servidor). El botón mismo también vive oculto en
+           desktop (mismo CSS), así que no hace falta gatearlo acá con
+           ninguna condición de Elixir. -->
+      <button
+        type="button"
+        class="pc-footer-toggle-btn"
+        phx-click={JS.toggle_class("pc-footer-abierto", to: ".pc-footer")}
+        title="Mostrar/ocultar barra inferior"
+        aria-label="Mostrar/ocultar barra inferior"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="18 15 12 9 6 15" />
+        </svg>
+      </button>
+
       <div class="pc-footer">
         <span class="pc-footer-copyright">Prettycore {@anio_actual}</span>
 
@@ -414,6 +435,62 @@ defmodule MetadataAppWeb.MenuLayout do
                 </option>
               </select>
             </form>
+          </div>
+        </div>
+
+        <!-- Aviso "cambiaste de Unidad Operativa" (2026-08-13) -- elemento
+             invisible con phx-update="ignore" (nunca lo re-renderiza el
+             diff de LiveView, solo lo lee el hook al montar) que carga la
+             firma ACTUAL; el hook compara contra la firma guardada en el
+             navegador y decide si mostrar el aviso. Ver
+             firma_unidad_operativa/1 y UnidadOperativaWatcher en app.js.
+             Sales Unit se muestra igual (no aplica para la FIRMA, sí para
+             el contenido del aviso -- pedido explícito). -->
+        <div
+          id="unidad-operativa-watcher"
+          phx-hook="UnidadOperativaWatcher"
+          phx-update="ignore"
+          data-firma={@firma_unidad_operativa}
+          data-empresa={@current_scope && @current_scope.empresa_activa && @current_scope.empresa_activa.nombre}
+          data-branch={@current_scope && @current_scope.branch_activo && @current_scope.branch_activo.branch_name}
+          data-inventory={@current_scope && @current_scope.inventory_location_activo && @current_scope.inventory_location_activo.inventory_name}
+          data-sales-unit={@current_scope && @current_scope.sales_unit_activo && @current_scope.sales_unit_activo.sales_unit_name}
+          class="hidden"
+        >
+        </div>
+
+        <!-- Mismo lenguaje visual que modal_publicar/1 (BcListLive, wizard
+             de "Publicar paquete") a propósito: overlay que bloquea la
+             pantalla unos segundos con un spinner -- fricción deliberada
+             para que el usuario REGISTRE el cambio antes de seguir
+             operando, no una notificación que se pueda ignorar de reojo. -->
+        <div id="modal-unidad-operativa" class="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999] p-4 hidden">
+          <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+            <div class="flex flex-col items-center text-center gap-3">
+              <svg class="animate-spin h-8 w-8 text-purple-600" viewBox="0 0 24 24" fill="none">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+              <p class="text-sm font-bold text-gray-900">Cambiando a Unidad Operativa</p>
+              <dl class="text-xs text-gray-600 w-full text-left space-y-1 mt-1">
+                <div class="flex justify-between gap-2">
+                  <dt class="font-semibold text-gray-500">Empresa:</dt>
+                  <dd id="modal-unidad-operativa-empresa" class="text-gray-900 font-medium text-right"></dd>
+                </div>
+                <div class="flex justify-between gap-2">
+                  <dt class="font-semibold text-gray-500">Sucursal:</dt>
+                  <dd id="modal-unidad-operativa-branch" class="text-gray-900 font-medium text-right"></dd>
+                </div>
+                <div class="flex justify-between gap-2">
+                  <dt class="font-semibold text-gray-500">Almacén:</dt>
+                  <dd id="modal-unidad-operativa-inventory" class="text-gray-900 font-medium text-right"></dd>
+                </div>
+                <div class="flex justify-between gap-2">
+                  <dt class="font-semibold text-gray-500">Unidad de Venta:</dt>
+                  <dd id="modal-unidad-operativa-sales-unit" class="text-gray-900 font-medium text-right"></dd>
+                </div>
+              </dl>
+            </div>
           </div>
         </div>
 
@@ -666,28 +743,57 @@ defmodule MetadataAppWeb.MenuLayout do
   # sentido (probablemente ni tenga nada asignado, es sysadmin) y lo
   # dejaba SIN selector (encontrado en vivo: "Empresa" aparecía, branch/
   # inventory no, porque las listas volvían vacías). Ve TODAS las
-  # opciones de la empresa activa en cambio -- mismo criterio que ya usa
+  # branches de la empresa activa en cambio -- mismo criterio que ya usa
   # alcance_tipo_efectivo/2 para el filtrado de datos.
-  defp opciones_jerarquia_activa(%MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa})
+  #
+  # Unidad Operativa (2026-08-13, arquitectura ERP: Empresa -> N Branch ->
+  # N Inventory -> N Sales Unit -- Sales Unit opcional): Almacén y Unidad
+  # de venta SIEMPRE se acotan a la Sucursal ACTIVA, nunca "todos los de
+  # la empresa" -- antes de esto, con la sucursal "Toluca" activa, el
+  # selector de Almacén igual ofrecía almacenes de "Metepec". Sin
+  # sucursal activa todavía (recién elegida empresa, nada más), ninguna
+  # de las dos tiene sentido -- listas vacías hasta que se elija sucursal.
+  defp opciones_jerarquia_activa(%MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa} = scope)
        when not is_nil(usuario) and not is_nil(empresa) do
-    if MetadataApp.Permissions.administrador?(usuario.id, empresa.id) do
-      %{
-        empresas: MetadataApp.Autenticacion.empresas_de_usuario(usuario.id),
-        branches: MetadataApp.Autenticacion.listar_branches(empresa.id),
-        inventory_locations: MetadataApp.Autenticacion.listar_inventory_locations_de_empresa(empresa.id),
-        sales_units: MetadataApp.Autenticacion.listar_sales_units_de_empresa(empresa.id)
-      }
-    else
-      %{
-        empresas: MetadataApp.Autenticacion.empresas_de_usuario(usuario.id),
-        branches: MetadataApp.Autenticacion.branches_de_usuario(usuario.id, empresa.id),
-        inventory_locations: MetadataApp.Autenticacion.inventory_locations_de_usuario(usuario.id, empresa.id),
-        sales_units: MetadataApp.Autenticacion.sales_units_de_usuario(usuario.id, empresa.id)
-      }
-    end
+    es_administrador? = MetadataApp.Permissions.administrador?(usuario.id, empresa.id)
+    branch_activo_id = scope.branch_activo && scope.branch_activo.id
+
+    branches =
+      if es_administrador?,
+        do: MetadataApp.Autenticacion.listar_branches(empresa.id),
+        else: MetadataApp.Autenticacion.branches_de_usuario(usuario.id, empresa.id)
+
+    %{
+      empresas: MetadataApp.Autenticacion.empresas_de_usuario(usuario.id),
+      branches: branches,
+      inventory_locations: opciones_de_la_sucursal_activa(branch_activo_id, scope.inventory_locations_permitidas, es_administrador?, &MetadataApp.Autenticacion.listar_inventory_locations/1),
+      sales_units: opciones_de_la_sucursal_activa(branch_activo_id, scope.sales_units_permitidas, es_administrador?, &MetadataApp.Autenticacion.listar_sales_units/1)
+    }
   end
 
   defp opciones_jerarquia_activa(_scope), do: %{empresas: [], branches: [], inventory_locations: [], sales_units: []}
+
+  defp opciones_de_la_sucursal_activa(nil, _permitidos, _es_administrador?, _listar_por_branch), do: []
+  defp opciones_de_la_sucursal_activa(branch_id, _permitidos, true, listar_por_branch), do: listar_por_branch.(branch_id)
+
+  defp opciones_de_la_sucursal_activa(branch_id, permitidos, false, listar_por_branch) do
+    branch_id |> listar_por_branch.() |> Enum.filter(&(&1.id in permitidos))
+  end
+
+  # "Firma" de la Unidad Operativa activa (2026-08-13) -- Empresa + Branch
+  # + Inventory, a propósito SIN Sales Unit (opcional, no forma parte de
+  # la Unidad Operativa según el pedido explícito). Un string comparable,
+  # no un id: el hook UnidadOperativaWatcher (app.js) la guarda en
+  # localStorage del navegador y la compara contra la del render
+  # ANTERIOR -- si cambió, dispara el aviso de "cambiaste de Unidad
+  # Operativa". No hace falta nada server-side (flash/sesión) para esto:
+  # el server siempre expone la firma ACTUAL nada más, la detección de
+  # "cambió" es 100% client-side.
+  defp firma_unidad_operativa(%MetadataApp.Autenticacion.Scope{} = scope) do
+    "#{scope.empresa_activa && scope.empresa_activa.id}|#{scope.branch_activo && scope.branch_activo.id}|#{scope.inventory_location_activo && scope.inventory_location_activo.id}"
+  end
+
+  defp firma_unidad_operativa(_scope), do: ""
 
   defp asignar_datos_usuario(assigns) do
     case assigns[:current_scope] do

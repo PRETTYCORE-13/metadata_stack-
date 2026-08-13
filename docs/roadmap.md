@@ -78,9 +78,13 @@ Poder marcar una transición como **"no mostrar al usuario final"** — sigue si
 
 Sin diseñar todavía: si además de ocultarla del descubrimiento (`GET .../transiciones`) hay que bloquear también el `POST .../transiciones/:accion` directo desde afuera (para que la única forma de dispararla sea vía regla, nunca por un cliente HTTP que se sepa el nombre de la acción) — son dos decisiones distintas (visibilidad vs. quién puede ejecutarla).
 
-## 13 — Log de quién crea/modifica/borra la DEFINICIÓN de cada motor (BC) hecho por ADN
+## 13 — Log de quién crea/modifica/borra la DEFINICIÓN de cada motor (BC) hecho por ADN ⚠️ borrado implementado (2026-08-13), falta crear/actualizar
 
-Distinto del ítem 6 (que es sobre **datos** — quién cambió un registro de negocio): esto es sobre la **definición** del catálogo mismo — campos, estados, transiciones, reglas. Por cada motor que arma ADN con el BPB, un log con: GUID, usuario que lo creó, usuario que lo actualizó (y cuándo), usuario que lo borró (y cuándo), fecha de cada cambio, y qué cambió puntualmente. Depende de [[#3]] — sin login no hay "usuario de ADN" que registrar, mismo motivo que el ítem 6.
+Distinto del ítem 6 (que es sobre **datos** — quién cambió un registro de negocio): esto es sobre la **definición** del catálogo mismo — campos, estados, transiciones, reglas. Por cada motor que arma ADN con el BPB, un log con: GUID, usuario que lo creó, usuario que lo actualizó (y cuándo), usuario que lo borró (y cuándo), fecha de cada cambio, y qué cambió puntualmente. Ya no depende de [[#3]] — el login/RBAC se construyó después de escribir este roadmap y ya está resuelto.
+
+**Implementado (solo borrado)**: `meta_schema_auditoria_definicion` (sin partición, bajo volumen) + `MetadataApp.MetaAuditoriaDefinicion.registrar/4`, mismo patrón que `MetaAuditoria` del ítem 6. Enganchado en `CatalogoGenerador.eliminar/4` (borrado total de catálogo) y `eliminar_campo/4` (borrado de un campo) — ambos reciben ahora un `contexto` opcional (usuario/ip/user-agent, armado con `MetadataAppWeb.AuditoriaContexto.desde_socket/1` o `desde_conn/1`, igual que el ítem 6). Motivado por un incidente real: un catálogo (`pty_gasto_diario`) quedó con `alcance_habilitado` distinto entre dev y producción sin que quedara registro de quién ni cuándo lo tocó.
+
+**Pendiente**: crear/actualizar (agregar/editar campos, cambiar configuración del catálogo) todavía no está enganchado — solo las dos acciones irreversibles (borrar catálogo, borrar campo).
 
 ## 14 — "Tepache": compartir un BC entre desarrolladores sin publicarlo
 

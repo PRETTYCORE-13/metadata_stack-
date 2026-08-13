@@ -1,12 +1,16 @@
 defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLiveTest do
   @moduledoc """
   Pestaña "Alcance" de UsuariosEmpresaLive (Fase 7 del modelo de Alcance
-  de Datos, 2026-08-11; rediseñada 2026-08-12 a pedido explícito -- 4
-  secciones verticales en orden fijo, Empresa/Sucursales/Almacén/Unidades
-  de venta, cada una "lista de lo asignado + Quitar" seguida de
-  "<select> de lo disponible + Agregar" -- ver .seccion_alcance/1. La
-  pestaña "Empresas" separada de antes desapareció, ese contenido ahora
-  vive como la primera sección de acá.
+  de Datos, 2026-08-11; rediseñada 2026-08-13 -- arquitectura ERP,
+  Empresa -> N Branch -> N Inventory -> N Sales Unit, Sales Unit
+  opcional, a pedido explícito con mockup). Ya no son 4 listas planas
+  (rediseño 2026-08-12): la pestaña es GLOBAL al usuario (todas sus
+  empresas, no solo la que está "en foco" en esta pantalla) y anidada --
+  un bloque por empresa, con sus sucursales asignadas adentro, y cada
+  sucursal con SU PROPIO Almacén/Unidad de venta adentro (un almacén
+  pertenece a una sola sucursal). Almacén/Unidad de venta ya no se pueden
+  asignar sin haber asignado la sucursal primero -- el picker ni existe
+  todavía sin eso.
   """
   use MetadataAppWeb.ConnCase, async: true
 
@@ -68,15 +72,24 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLiveTest do
     assert Autenticacion.alcance_de_usuario(objetivo.id, empresa.id).branches_permitidos == []
   end
 
-  test "agrega una sales unit y una inventory location de forma independiente de la sucursal", %{
+  # Arquitectura ERP (2026-08-13): Almacén/Unidad de venta ya NO son
+  # independientes de la sucursal -- el picker de cada uno vive ANIDADO
+  # dentro de la card de la sucursal ya asignada (un almacén pertenece a
+  # una sola branch). Antes de esto se podían asignar sueltos, sin
+  # sucursal -- ya no tiene sentido, así que este test ahora asigna la
+  # sucursal primero.
+  test "agrega una sales unit y una inventory location anidadas a su sucursal", %{
     conn: conn,
     empresa: empresa,
     objetivo: objetivo,
+    branch: branch,
     sales_unit: sales_unit,
     inventory_location: inventory_location
   } do
     {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
     seleccionar(view, objetivo)
+
+    view |> form("form[phx-submit=agregar_branch_a_usuario]", %{"id" => to_string(branch.id)}) |> render_submit()
 
     view |> form("form[phx-submit=agregar_sales_unit_a_usuario]", %{"id" => to_string(sales_unit.id)}) |> render_submit()
 
@@ -85,10 +98,17 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLiveTest do
     |> render_submit()
 
     alcance = Autenticacion.alcance_de_usuario(objetivo.id, empresa.id)
+    assert alcance.branches_permitidos == [branch.id]
     assert alcance.sales_units_permitidas == [sales_unit.id]
     assert alcance.inventory_locations_permitidas == [inventory_location.id]
-    # La sucursal en sí no se tocó -- son 3 asignaciones independientes.
-    assert alcance.branches_permitidos == []
+  end
+
+  test "el picker de Almacén/Unidad de venta no existe todavía sin sucursal asignada", %{conn: conn, objetivo: objetivo} do
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+    html = seleccionar(view, objetivo)
+
+    refute html =~ "phx-submit=\"agregar_sales_unit_a_usuario\""
+    refute html =~ "phx-submit=\"agregar_inventory_location_a_usuario\""
   end
 
   test "marca y desmarca una sucursal asignada como default", %{conn: conn, empresa: empresa, objetivo: objetivo, branch: branch} do
@@ -96,19 +116,65 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLiveTest do
     seleccionar(view, objetivo)
     view |> form("form[phx-submit=agregar_branch_a_usuario]", %{"id" => to_string(branch.id)}) |> render_submit()
 
+    # Rediseño 2026-08-13 ("respeta mi bosquejo"): ya no hay texto
+    # "★/☆ Default", es un punto verde (● bg-green-500) -- la advertencia
+    # "falta default" (siempre visible mientras haya sucursales sin
+    # default) es la señal de texto más estable para el assert.
     html = view |> element("button[phx-click=toggle_branch_default]") |> render_click()
-    assert html =~ "★ Default"
-    assert Autenticacion.defaults_de_usuario(objetivo.id, empresa.id).branch.id == branch.id
+    refute html =~ "falta default"
+    assert Autenticacion.branch_default_de_usuario(objetivo.id, empresa.id).id == branch.id
 
     html = view |> element("button[phx-click=toggle_branch_default]") |> render_click()
-    assert html =~ "☆ Default"
-    assert Autenticacion.defaults_de_usuario(objetivo.id, empresa.id).branch == nil
+    assert html =~ "falta default"
+    assert Autenticacion.branch_default_de_usuario(objetivo.id, empresa.id) == nil
+  end
+
+  # Sucursal es obligatoria (arquitectura ERP, 2026-08-13) -- el botón
+  # Default de Sucursal ahora muestra una advertencia si hay sucursales
+  # asignadas pero ninguna es default, en vez de solo faltar el botón.
+  test "marca y desmarca un almacén asignado (dentro de su sucursal) como default", %{
+    conn: conn,
+    objetivo: objetivo,
+    branch: branch,
+    inventory_location: inventory_location
+  } do
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+    seleccionar(view, objetivo)
+    view |> form("form[phx-submit=agregar_branch_a_usuario]", %{"id" => to_string(branch.id)}) |> render_submit()
+
+    view
+    |> form("form[phx-submit=agregar_inventory_location_a_usuario]", %{"id" => to_string(inventory_location.id)})
+    |> render_submit()
+
+    # Rediseño 2026-08-13 ("respeta mi bosquejo"): el marcador es un
+    # punto verde (bg-green-500), no texto "★/☆ Default" -- nada más en
+    # esta página lo usa todavía en este punto del test (nadie tiene
+    # ningún default fijado), así que sirve como señal directa.
+    html = view |> element("button[phx-click=toggle_inventory_default]") |> render_click()
+    assert html =~ "bg-green-500"
+    assert Autenticacion.defaults_de_branch(objetivo.id, branch.id).inventory_location.id == inventory_location.id
+
+    html = view |> element("button[phx-click=toggle_inventory_default]") |> render_click()
+    refute html =~ "bg-green-500"
+    assert Autenticacion.defaults_de_branch(objetivo.id, branch.id).inventory_location == nil
   end
 
   test "el botón Default no aparece para una sucursal todavía sin asignar", %{conn: conn, objetivo: objetivo} do
     {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
     html = seleccionar(view, objetivo)
     refute html =~ "phx-click=\"toggle_branch_default\""
+  end
+
+  test "advierte cuando hay sucursales asignadas pero ninguna es default", %{conn: conn, objetivo: objetivo, branch: branch} do
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+    seleccionar(view, objetivo)
+
+    html =
+      view
+      |> form("form[phx-submit=agregar_branch_a_usuario]", %{"id" => to_string(branch.id)})
+      |> render_submit()
+
+    assert html =~ "falta default"
   end
 
   test "la pestaña Empresas por separado ya no existe -- Empresa vive dentro de Alcance", %{conn: conn, objetivo: objetivo} do
