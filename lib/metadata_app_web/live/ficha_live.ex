@@ -2084,7 +2084,7 @@ defmodule MetadataAppWeb.FichaLive do
 
   defp estilo_grid_hijos(nodo) do
     n = nodo["propiedades"]["columnas"] || 1
-    gap = %{"compacto" => "8px", "amplio" => "20px"}[nodo["propiedades"]["gap"]] || "12px"
+    gap = %{"compacto" => "8px", "amplio" => "20px"}[nodo["propiedades"]["gap"]] || "8px"
     "--pc-grid-cols: #{n}; --pc-grid-gap: #{gap}"
   end
 
@@ -2184,7 +2184,12 @@ defmodule MetadataAppWeb.FichaLive do
   defp padding_celda_class("ninguno"), do: "p-0"
   defp padding_celda_class("compacto"), do: "p-1.5"
   defp padding_celda_class("amplio"), do: "p-5"
-  defp padding_celda_class(_), do: "p-3"
+  # "Normal" (default de toda celda auto-generada, ver MetaPlantillas.celda_default/0)
+  # baja de p-3 a p-1.5 -- a pedido explícito, más parecido a la densidad
+  # de una tabla de configuración que a una ficha espaciada. Queda igual
+  # que "compacto" a propósito (nunca hizo falta la distinción en la
+  # práctica); "amplio" sigue siendo la única opción realmente más floja.
+  defp padding_celda_class(_), do: "p-1.5"
 
   defp swatch_fondo(nombre) do
     Map.get(
@@ -2415,7 +2420,7 @@ defmodule MetadataAppWeb.FichaLive do
     <div class={[
       "flex flex-col sm:flex-row sm:items-center text-sm",
       @compacto && "gap-2",
-      !@compacto && "gap-1.5 sm:gap-3 px-4 py-2.5 border-b border-gray-100 last:border-b-0"
+      !@compacto && "gap-1.5 sm:gap-3 px-4 py-1 border-b border-gray-100 last:border-b-0"
     ]}>
       <div class={["flex items-center gap-2 sm:contents", !@compacto && "gap-3"]}>
         <span class="w-5 flex-shrink-0 text-gray-400 self-start mt-0.5">
