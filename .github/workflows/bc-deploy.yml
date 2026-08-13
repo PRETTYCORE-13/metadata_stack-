@@ -25,6 +25,12 @@ on:
 env:
   ELIXIR_VERSION: "1.18.4"
   OTP_VERSION: "28.0.4"
+  # Sin esto, cualquier `mix` (incluido `mix local.rebar` de setup-beam)
+  # corre en :dev por defecto -- y config/dev.exs ya no existe en el
+  # checkout de CI (gitignorado, config local por máquina), así que
+  # config/config.exs revienta al intentar importarlo. ci.yml no lo sufre
+  # porque ya fija MIX_ENV: test en su job "validate".
+  MIX_ENV: prod
 
 jobs:
   deploy-bc:

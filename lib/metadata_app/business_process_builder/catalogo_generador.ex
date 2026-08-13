@@ -579,13 +579,27 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     # up/down (no change/0) a propósito: purgar_metadata_por_nombre/1 no es
     # reversible, y esta migración nunca debe "deshacerse" (mismo criterio
     # que el resto del módulo -- nunca se toca la migración de creación).
+    #
+    # Orden real (encontrado en vivo): DROP TABLE primero, purga de
+    # metadata después. Si un catálogo TIENE filas, cada una tiene un
+    # estado_id con FK real a meta_schema_estados -- purgar la metadata
+    # primero borra esos estados (cascada de header) mientras la tabla
+    # todavía existe y los referencia, y Postgres rechaza el DELETE
+    # ("<tabla>_estado_id_fkey"). Dropear la tabla primero elimina esas
+    # filas (y su referencia) antes de tocar los estados.
     contenido = """
     defmodule MetadataApp.Repo.Migrations.#{modulo_migracion} do
       use Ecto.Migration
 
       def up do
-        MetadataApp.BusinessProcessBuilder.CatalogoGenerador.purgar_metadata_por_nombre("#{schema_context_name}")
         drop_if_exists table(:#{schema_context_name})
+        # flush/0 obligatorio acá: drop_if_exists (como create/alter) queda
+        # ENCOLADO por Ecto, no se ejecuta hasta el final de la migración
+        # (o hasta el próximo flush) -- sin esto, purgar_metadata_por_nombre
+        # (llamada Elixir normal, corre en el acto) se ejecuta con la tabla
+        # todavía física, mismo error de FK que si nunca se hubiera reordenado.
+        flush()
+        MetadataApp.BusinessProcessBuilder.CatalogoGenerador.purgar_metadata_por_nombre("#{schema_context_name}")
       end
 
       def down do

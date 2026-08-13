@@ -69,6 +69,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       |> assign(:estado_form, nil)
       |> assign(:transicion_form, nil)
       |> assign(:header, header)
+      # get_connect_info/2 solo existe durante mount/3 -- se calcula UNA vez
+      # acá y se guarda en assigns para que confirmar_eliminar_campo lo
+      # reuse (roadmap #13, ver AuditoriaContexto.desde_socket/1).
+      |> assign(:contexto_auditoria, AuditoriaContexto.desde_socket(socket))
       |> assign(:header_form, header_form_desde(header))
       |> assign(:iconos_sugeridos, @iconos_sugeridos)
       |> assign(:carpetas, MetaSchemaContext.listar_carpetas_existentes())
@@ -397,7 +401,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     %{campo: campo, confirmar_texto: confirmar_texto} = socket.assigns.eliminar_campo_form
     catalogo = socket.assigns.header.schema_context_name
 
-    case CatalogoGenerador.eliminar_campo(catalogo, campo, confirmar_texto, AuditoriaContexto.desde_socket(socket)) do
+    case CatalogoGenerador.eliminar_campo(catalogo, campo, confirmar_texto, socket.assigns.contexto_auditoria) do
       {:ok, _resultado} ->
         {:noreply,
          socket
