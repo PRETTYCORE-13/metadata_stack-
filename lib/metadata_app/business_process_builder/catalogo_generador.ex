@@ -5,6 +5,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.MetaReglasCodigo
   alias MetadataApp.MetaPlantillas
+  alias MetadataApp.MetaAuditoriaDefinicion
 
   # Genera migración y schema para schema_context_name a partir de lo
   # registrado en meta_schema_detail y corre la migración. Si el catálogo ya
@@ -113,21 +114,57 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   # orden de versiones la hace frágil) — en cambio genera una migración
   # nueva hacia adelante que dropea la tabla, igual que cualquier otra
   # migración del historial.
-  def eliminar(schema_context_name, confirmar_tabla, confirmar_filas) do
-    with {:ok, header} <- buscar_header(schema_context_name),
+  def eliminar(schema_context_name, confirmar_tabla, confirmar_filas, contexto \\ %{}) do
+    with {:ok, _header} <- buscar_header(schema_context_name),
          :ok <- validar_confirmacion(schema_context_name, confirmar_tabla),
          :ok <- validar_confirmacion_filas(schema_context_name, confirmar_filas),
          :ok <- validar_sin_dependientes(schema_context_name) do
+      # La migración generada (crear_migracion_drop/1) purga la metadata
+      # (header/detail/historial/TRN) POR NOMBRE antes de dropear la tabla
+      # -- así, cuando esta misma migración corra vía CI/CD contra
+      # producción, el borrado queda completo ahí también, no solo en el
+      # ambiente donde se pidió. No se purga acá aparte para no duplicar
+      # (y porque el header ya no existiría cuando migrar/0 termine).
       crear_migracion_drop(schema_context_name)
       migrar()
-      MetaEstadosAdmin.purgar_historial(header.id)
-      MetadataApp.TRN.purgar_registro_central(header.id)
 
-      with :ok <- MetaSchemaContext.eliminar_header(header) do
-        archivo_eliminado? = borrar_schema_file(schema_context_name)
-        reglas_eliminadas? = borrar_reglas_dir(schema_context_name)
-        {:ok, %{tabla: schema_context_name, archivo_eliminado: archivo_eliminado?, reglas_eliminadas: reglas_eliminadas?}}
-      end
+      archivo_eliminado? = borrar_schema_file(schema_context_name)
+      reglas_eliminadas? = borrar_reglas_dir(schema_context_name)
+
+      MetaAuditoriaDefinicion.registrar(
+        schema_context_name,
+        "eliminar",
+        %{"filas_eliminadas" => confirmar_filas},
+        contexto
+      )
+
+      {:ok, %{tabla: schema_context_name, archivo_eliminado: archivo_eliminado?, reglas_eliminadas: reglas_eliminadas?}}
+    end
+  end
+
+  @doc """
+  Purga TODA la metadata (header, detail en cascada, historial de
+  transiciones, registro TRN central) de un catálogo por NOMBRE -- pensada
+  para correr desde DENTRO de la migración `up/0` que genera
+  `crear_migracion_drop/1`, así el borrado de metadata queda completo en
+  cualquier ambiente donde esa migración corra (dev al generarla,
+  producción al desplegarla vía CI/CD) y no solo en el ambiente donde se
+  pidió el borrado -- `header.id` es un autoincremental distinto por base,
+  no se puede "grabar" un id fijo en la migración.
+
+  No-op si el catálogo no tiene header en ESTE ambiente (ej. nunca se creó
+  en producción) -- mismo criterio defensivo que `contar_filas_si_existe/1`.
+  """
+  def purgar_metadata_por_nombre(schema_context_name) do
+    case MetaSchemaContext.obtener_header_por_nombre(schema_context_name) do
+      nil ->
+        :ok
+
+      header ->
+        MetaEstadosAdmin.purgar_historial(header.id)
+        MetadataApp.TRN.purgar_registro_central(header.id)
+        :ok = MetaSchemaContext.eliminar_header(header)
+        :ok
     end
   end
 
@@ -174,13 +211,16 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   # nombre exacto, no una frase fija) — acá alcanza con el nombre del campo
   # solo (no hace falta confirmar_filas como en el borrado total: esto
   # pierde una columna, no el catálogo entero).
-  def eliminar_campo(schema_context_name, campo, confirmar_campo) do
+  def eliminar_campo(schema_context_name, campo, confirmar_campo, contexto \\ %{}) do
     with {:ok, _header} <- buscar_header(schema_context_name),
          :ok <- validar_confirmacion(campo, confirmar_campo),
          {:ok, detalle} <- buscar_detalle(schema_context_name, campo) do
       MetaSchemaContext.eliminar_detalle(detalle)
       quitar_columna(schema_context_name, campo)
       asegurar_campos_nuevos(schema_context_name)
+
+      MetaAuditoriaDefinicion.registrar(schema_context_name, "eliminar_campo", %{"campo" => campo}, contexto)
+
       {:ok, %{campo: campo}}
     end
   end
@@ -504,12 +544,20 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     modulo_migracion = "Eliminar" <> Macro.camelize(schema_context_name) <> timestamp
     path = "priv/repo/migrations/#{timestamp}_eliminar_#{schema_context_name}_#{timestamp}.exs"
 
+    # up/down (no change/0) a propósito: purgar_metadata_por_nombre/1 no es
+    # reversible, y esta migración nunca debe "deshacerse" (mismo criterio
+    # que el resto del módulo -- nunca se toca la migración de creación).
     contenido = """
     defmodule MetadataApp.Repo.Migrations.#{modulo_migracion} do
       use Ecto.Migration
 
-      def change do
+      def up do
+        MetadataApp.BusinessProcessBuilder.CatalogoGenerador.purgar_metadata_por_nombre("#{schema_context_name}")
         drop_if_exists table(:#{schema_context_name})
+      end
+
+      def down do
+        :ok
       end
     end
     """

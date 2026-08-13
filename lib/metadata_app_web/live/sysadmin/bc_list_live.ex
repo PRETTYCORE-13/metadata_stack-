@@ -11,6 +11,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   alias MetadataApp.MetaPublicador
   alias MetadataApp.BorradoresMotor
   alias MetadataAppWeb.AdminNav
+  alias MetadataAppWeb.AuditoriaContexto
   alias Phoenix.LiveView.JS
 
   @topic "bc_contextos"
@@ -331,7 +332,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       # alguien podría mandar el evento igual saltándoselo.
       {:noreply, put_flash(socket, :error, "El texto no coincide con el nombre del catálogo.")}
     else
-      case CatalogoGenerador.eliminar(tabla, tabla, filas) do
+      case CatalogoGenerador.eliminar(tabla, tabla, filas, AuditoriaContexto.desde_socket(socket)) do
         {:ok, _resultado} ->
           {:noreply,
            socket

@@ -18,6 +18,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   alias MetadataApp.MetaReglasCodigo
   alias MetadataApp.Permissions
   alias MetadataAppWeb.AdminNav
+  alias MetadataAppWeb.AuditoriaContexto
   alias Phoenix.LiveView.JS
 
   import MetadataAppWeb.FiltrosDefaultComponents, only: [panel_filtros_default: 1]
@@ -438,7 +439,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     %{campo: campo, confirmar_texto: confirmar_texto} = socket.assigns.eliminar_campo_form
     catalogo = socket.assigns.header.schema_context_name
 
-    case CatalogoGenerador.eliminar_campo(catalogo, campo, confirmar_texto) do
+    case CatalogoGenerador.eliminar_campo(catalogo, campo, confirmar_texto, AuditoriaContexto.desde_socket(socket)) do
       {:ok, _resultado} ->
         {:noreply,
          socket

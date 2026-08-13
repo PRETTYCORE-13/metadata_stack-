@@ -2,6 +2,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoAdminController do
   use MetadataAppWeb, :controller
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerador
   alias MetadataApp.MetaEstadosAdmin
+  alias MetadataAppWeb.AuditoriaContexto
 
   action_fallback MetadataAppWeb.FallbackController
 
@@ -27,7 +28,8 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoAdminController do
     confirmar_tabla = Map.get(params, "confirmar_tabla")
     confirmar_filas = Map.get(params, "confirmar_filas")
 
-    with {:ok, resultado} <- CatalogoGenerador.eliminar(tabla, confirmar_tabla, confirmar_filas) do
+    with {:ok, resultado} <-
+           CatalogoGenerador.eliminar(tabla, confirmar_tabla, confirmar_filas, AuditoriaContexto.desde_conn(conn)) do
       json(conn, resultado)
     end
   end
