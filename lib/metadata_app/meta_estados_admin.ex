@@ -231,6 +231,13 @@ defmodule MetadataApp.MetaEstadosAdmin do
   # por el motor en tiempo de ejecución (MetadataApp.Renglones.resolver/4
   # para insertar, MetaStateEngine.buscar_renglones/5 para
   # actualizar/borrar).
+  # Repo.get_by/3 con `campo: nil` explota (Ecto prohíbe comparar contra
+  # nil por keyword, pide is_nil/1) — un maestro sin NINGÚN estado
+  # configurado (catálogo que no usa motor de estados) tiene estado_id
+  # nil de verdad, caso real y válido, no un dato corrupto. Cae acá antes
+  # de tocar la base: mismo resultado "deny" de siempre, sin el crash.
+  def permiso_detalle(nil, _header_detalle_id), do: %{permite_insertar: false, permite_actualizar: false, permite_borrar: false}
+
   def permiso_detalle(estado_id, header_detalle_id) do
     case Repo.get_by(EstadoDetallePermiso,
            meta_schema_estado_id: estado_id,

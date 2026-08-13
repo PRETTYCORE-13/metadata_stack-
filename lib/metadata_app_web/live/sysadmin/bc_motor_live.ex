@@ -18,6 +18,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   alias MetadataApp.MetaReglasCodigo
   alias MetadataApp.Permissions
   alias MetadataAppWeb.AdminNav
+  alias MetadataAppWeb.Sysadmin.FieldDesignerComponents
   alias MetadataAppWeb.AuditoriaContexto
   alias Phoenix.LiveView.JS
 
@@ -64,6 +65,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       |> assign(:relacion_form, nil)
       |> assign(:dependencia_form, nil)
       |> assign(:formato_form, nil)
+      |> assign(:formato_fecha_form, nil)
       |> assign(:estado_form, nil)
       |> assign(:transicion_form, nil)
       |> assign(:header, header)
@@ -165,6 +167,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
     socket
     |> assign(:campos, MetaSchemaContext.listar_detalles(header.schema_context_name))
+    |> assign(:longitudes_columnas, CatalogoGenerador.info_longitud_columnas(header.schema_context_name))
     |> assign(:catalogos_detalle, catalogos_detalle)
     |> assign(:es_detalle?, header.schema_encabezado_id != nil)
     |> assign(:maestro, maestro)
@@ -290,130 +293,85 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # --- Campos: agregar -----------------------------------------------------
 
   def handle_event("abrir_form_campo", _params, socket) do
-    {:noreply,
-     assign(socket, :campo_form, %{
-       "nombre" => "",
-       "etiqueta" => "",
-       "tipo" => "string",
-       "longitud" => "",
-       "precision" => "",
-       "escala" => "",
-       "catalogo" => "",
-       "opcional" => true,
-       "valor_default" => "",
-       "error" => nil
-     })}
+    {:noreply, assign(socket, :campo_form, FieldDesignerComponents.estado_inicial())}
   end
 
   def handle_event("cerrar_form_campo", _params, socket) do
     {:noreply, assign(socket, :campo_form, nil)}
   end
 
-  # Solo existe para que el modal reaccione en vivo al elegir "referencia"
-  # en Tipo (mostrar/ocultar el selector de Catálogo destino).
-  def handle_event("validar_campo", params, socket) do
-    campo_form = %{
-      "nombre" => params["nombre"] || "",
-      "etiqueta" => params["etiqueta"] || "",
-      "tipo" => params["tipo"] || "string",
-      "longitud" => params["longitud"] || "",
-      "precision" => params["precision"] || "",
-      "escala" => params["escala"] || "",
-      "catalogo" => params["catalogo"] || "",
-      "opcional" => params["opcional"] == "true",
-      "valor_default" => params["valor_default"] || "",
-      "error" => nil
-    }
+  # --- Asistente de campos (Diseñador Inteligente) ---------------------------
+  # Ver FieldDesignerComponents — el "Paso 3" del mockup de referencia
+  # (configuración de la capacidad activada) se muestra INLINE debajo de
+  # cada checkbox tildado del "Paso 2" (capacidades), no como una pantalla
+  # de navegación aparte — así que acá solo hay dos pasos reales: 1
+  # (tarjetas de tipo) y 2 (nombre/etiqueta + capacidades + su config).
 
-    {:noreply, assign(socket, :campo_form, campo_form)}
+  def handle_event("asistente_elegir_tipo", %{"tipo" => tipo}, socket) do
+    {:noreply, update(socket, :campo_form, &FieldDesignerComponents.elegir_tipo(&1, tipo))}
   end
 
-  # Referencia (correcciones de compliance): nombre/etiqueta/opcional NUNCA
-  # vienen del form — se derivan del catálogo destino, siempre obligatoria.
-  # Cualquier otro tipo sigue el camino de siempre (nombre/etiqueta a mano).
-  def handle_event("guardar_campo", %{"tipo" => "referencia"} = params, socket) do
-    header = socket.assigns.header
-    catalogo = params["catalogo"] || ""
-
-    case catalogo do
-      "" ->
-        {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Elegí a qué catálogo apunta la referencia."))}
-
-      _catalogo ->
-        case MetaSchemaContext.obtener_header_por_nombre(catalogo) do
-          nil ->
-            {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Ese catálogo destino ya no existe."))}
-
-          destino ->
-            nombre = "#{header.schema_context_name}_#{String.replace_prefix(catalogo, "pty_", "")}"
-
-            # El nombre se auto-deriva del catálogo destino — dos referencias
-            # al MISMO catálogo producen el mismo nombre. El índice único de
-            # meta_schema_detail ya lo bloquea de fondo, pero acá se corta
-            # antes, con un mensaje específico (evita el genérico "has
-            # already been taken" del constraint).
-            if Enum.any?(socket.assigns.campos, &(&1.schema_context_field == nombre)) do
-              {:noreply,
-               update(
-                 socket,
-                 :campo_form,
-                 &Map.put(&1, "error", "Ya existe un campo que referencia a #{destino.schema_context_label} en este catálogo.")
-               )}
-            else
-              propiedades = %{
-                "etiqueta" => destino.schema_context_label,
-                "tipo" => "referencia",
-                "orden" => length(socket.assigns.campos) + 1,
-                "visible" => true,
-                "editable" => true,
-                "opcional" => false,
-                "catalogo" => catalogo
-              }
-
-              guardar_campo_y_generar(socket, header, nombre, propiedades)
-            end
-        end
-    end
+  def handle_event("asistente_cambiar_tipo", _params, socket) do
+    {:noreply, update(socket, :campo_form, &Map.merge(&1, %{"paso" => 1, "tipo" => nil}))}
   end
 
-  def handle_event("guardar_campo", params, socket) do
+  def handle_event("asistente_aplicar_sugerencia", %{"capacidades" => capacidades, "config" => config}, socket) do
+    {:noreply, update(socket, :campo_form, &FieldDesignerComponents.aplicar_sugerencia(&1, capacidades, config))}
+  end
+
+  # phx-change del formulario entero del asistente (nombre/etiqueta,
+  # checkboxes de capacidad, y todos los sub-campos de configuración que
+  # aparecen inline) — un solo evento, mismo criterio que
+  # formato_cambiar/2, porque no hay filas repetidas que reordenar acá
+  # (a diferencia de dependencia_cambiar/2).
+  def handle_event("asistente_cambiar", params, socket) do
+    {:noreply,
+     update(socket, :campo_form, fn form ->
+       FieldDesignerComponents.aplicar_cambios(form, params, socket.assigns.campos)
+     end)}
+  end
+
+  def handle_event("asistente_dependencia_agregar", _params, socket) do
+    {:noreply, update(socket, :campo_form, &Map.update!(&1, "dependencias", fn deps -> deps ++ [%{"campo_padre" => "", "campo_remoto" => "", "obligatorio" => true}] end))}
+  end
+
+  def handle_event("asistente_dependencia_quitar", %{"indice" => indice}, socket) do
+    i = String.to_integer(indice)
+    {:noreply, update(socket, :campo_form, &Map.update!(&1, "dependencias", fn deps -> List.delete_at(deps, i) end))}
+  end
+
+  def handle_event("asistente_lista_agregar", _params, socket) do
+    {:noreply, update(socket, :campo_form, &Map.update!(&1, "valores_lista", fn v -> v ++ [""] end))}
+  end
+
+  def handle_event("asistente_lista_quitar", %{"indice" => indice}, socket) do
+    i = String.to_integer(indice)
+    {:noreply, update(socket, :campo_form, &Map.update!(&1, "valores_lista", fn v -> List.delete_at(v, i) end))}
+  end
+
+  def handle_event("asistente_lista_mapeado_agregar", _params, socket) do
+    {:noreply, update(socket, :campo_form, &Map.update!(&1, "valores_mapeado", fn v -> v ++ [%{"valor" => "", "descripcion" => ""}] end))}
+  end
+
+  def handle_event("asistente_lista_mapeado_quitar", %{"indice" => indice}, socket) do
+    i = String.to_integer(indice)
+    {:noreply, update(socket, :campo_form, &Map.update!(&1, "valores_mapeado", fn v -> List.delete_at(v, i) end))}
+  end
+
+  def handle_event("asistente_formula_insertar", %{"campo" => campo}, socket) do
+    {:noreply, update(socket, :campo_form, &Map.update!(&1, "formula", fn f -> (f || "") <> "{#{campo}}" end))}
+  end
+
+  def handle_event("guardar_campo_asistente", _params, socket) do
     header = socket.assigns.header
-    sufijo = String.trim(params["nombre"] || "")
-    etiqueta = String.trim(params["etiqueta"] || "")
-    tipo = params["tipo"] || "string"
-    opcional = params["opcional"] == "true"
-    valor_default = String.trim(params["valor_default"] || "")
-    nombre = "#{header.schema_context_name}_#{sufijo}"
+    form = socket.assigns.campo_form
 
-    cond do
-      not Regex.match?(~r/^[a-z][a-z0-9_]{0,49}$/, sufijo) ->
-        {:noreply,
-         update(
-           socket,
-           :campo_form,
-           &Map.put(&1, "error", "Nombre inválido — minúsculas, sin acentos ni espacios, debe empezar con una letra.")
-         )}
-
-      etiqueta == "" ->
-        {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "La etiqueta no puede quedar vacía."))}
-
-      not opcional and valor_default != "" and not valor_default_valido?(tipo, valor_default) ->
-        {:noreply, update(socket, :campo_form, &Map.put(&1, "error", mensaje_valor_default_invalido(tipo)))}
-
-      true ->
-        propiedades =
-          %{
-            "etiqueta" => etiqueta,
-            "tipo" => tipo,
-            "orden" => length(socket.assigns.campos) + 1,
-            "visible" => true,
-            "editable" => true,
-            "opcional" => opcional
-          }
-          |> agregar_opciones_tipo_campo(tipo, params)
-          |> agregar_valor_default(opcional, valor_default)
-
+    case FieldDesignerComponents.construir_propiedades(form, socket.assigns.campos, header.schema_context_name) do
+      {:ok, nombre, propiedades} ->
         guardar_campo_y_generar(socket, header, nombre, propiedades)
+
+      {:error, motivo} ->
+        {:noreply, update(socket, :campo_form, &Map.put(&1, "error", motivo))}
     end
   end
 
@@ -609,6 +567,13 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   def handle_event("dependencia_cambiar", %{"dependencias" => deps_params}, socket) do
     dependencias =
       deps_params
+      # Agregar/quitar una fila del medio de un :for sin key estable hace
+      # que el cliente de LiveView mande ADEMÁS una clave sombra
+      # "dependencias[_unused_N]" (recycling de nodos DOM) — no es un
+      # índice real, String.to_integer/1 sobre eso tira ArgumentError y
+      # tumba el LiveView (bug real, reproducido en vivo en el asistente
+      # de campos — ver field_designer_components.ex).
+      |> Enum.filter(fn {indice, _valores} -> match?({_n, ""}, Integer.parse(indice)) end)
       |> Enum.sort_by(fn {indice, _valores} -> String.to_integer(indice) end)
       |> Enum.map(fn {_indice, valores} ->
         %{
@@ -737,6 +702,51 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
+  # --- "Formato de visualización" (campos date/hora) --------------------------
+  # A diferencia de "Formato de captura" (arriba), esto NUNCA valida ni
+  # transforma lo que se guarda — es puramente cómo se MUESTRA el valor ya
+  # persistido en la Ficha 360° de solo lectura (ver
+  # FichaLive.formatear_fecha/2). Config libre en
+  # schema_context_properties["formato_fecha"], sin regenerar el schema —
+  # mismo criterio que "formato_captura"/"dependencias".
+  def handle_event("abrir_form_formato_fecha", %{"campo" => campo}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = detalle.schema_context_properties
+
+    {:noreply,
+     assign(socket, :formato_fecha_form, %{
+       "campo" => campo,
+       "tipo" => props["tipo"],
+       "formato_fecha" => props["formato_fecha"] || ""
+     })}
+  end
+
+  def handle_event("cerrar_form_formato_fecha", _params, socket) do
+    {:noreply, assign(socket, :formato_fecha_form, nil)}
+  end
+
+  def handle_event("formato_fecha_cambiar", %{"formato_fecha" => formato_fecha}, socket) do
+    {:noreply, update(socket, :formato_fecha_form, &Map.put(&1, "formato_fecha", formato_fecha))}
+  end
+
+  def handle_event("guardar_formato_fecha", _params, socket) do
+    %{"campo" => campo, "formato_fecha" => formato_fecha} = socket.assigns.formato_fecha_form
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "formato_fecha", formato_fecha)
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} ->
+        {:noreply,
+         socket
+         |> assign(:formato_fecha_form, nil)
+         |> put_flash(:info, "Formato de visualización de \"#{campo}\" actualizado.")
+         |> cargar_motor()}
+
+      {:error, changeset} ->
+        {:noreply, put_flash(socket, :error, resumen_errores(changeset))}
+    end
+  end
+
   # "En tabla" de un campo — si aparece como columna en la tabla del tab
   # Detalle de la Ficha 360° (catálogos con muchos campos quieren mostrar
   # solo un subconjunto ahí; el formulario de al lado siempre muestra
@@ -810,6 +820,19 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       else
         Map.put(detalle.schema_context_properties, "valor_default", valor)
       end
+
+    actualizar_campo_y_regenerar(socket, detalle, props, "el valor default")
+  end
+
+  # Botón "Hoy"/"Ahora" junto al input de arriba, solo para date/hora — un
+  # click fija el sentinel que MetaCatalogoGenerico.resolver_valor_default/2
+  # resuelve a la fecha/hora real EN CADA alta (nunca la de hoy mismo,
+  # queda congelada). Mismo camino de guardado que cambiar_valor_default_campo,
+  # sin código nuevo de persistencia.
+  def handle_event("usar_valor_default_hoy", %{"campo" => campo}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    sentinel = if Map.get(detalle.schema_context_properties, "tipo") == "date", do: "hoy", else: "ahora"
+    props = Map.put(detalle.schema_context_properties, "valor_default", sentinel)
 
     actualizar_campo_y_regenerar(socket, detalle, props, "el valor default")
   end
@@ -1463,6 +1486,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   defp patron_por_defecto("telefono"), do: "(999) 999-9999"
   defp patron_por_defecto("cp"), do: "99999"
   defp patron_por_defecto("rfc"), do: "AAAA999999AA9"
+  defp patron_por_defecto("curp"), do: "AAAA999999AAAAAA*9"
   defp patron_por_defecto("fecha"), do: "99/99/9999"
   defp patron_por_defecto(_modo), do: nil
 
@@ -1591,48 +1615,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  defp agregar_opciones_tipo_campo(propiedades, "string", params), do: maybe_put_int(propiedades, "longitud", params["longitud"])
-
-  defp agregar_opciones_tipo_campo(propiedades, "decimal", params),
-    do: propiedades |> maybe_put_int("precision", params["precision"]) |> maybe_put_int("escala", params["escala"])
-
-  defp agregar_opciones_tipo_campo(propiedades, "referencia", params), do: Map.put(propiedades, "catalogo", params["catalogo"])
-
-  defp agregar_opciones_tipo_campo(propiedades, _tipo, _params), do: propiedades
-
-  # El campo "Valor por default" solo tiene sentido para un campo
-  # OBLIGATORIO agregado a un catálogo que ya existe (ver
-  # CatalogoGenerador.columna_migracion_agregar/3 y
-  # docs/catalogo-maestro-detalle-requerimientos.md §R13) — si es
-  # opcional o no se completó, no se manda la propiedad.
-  defp agregar_valor_default(propiedades, true, _valor), do: propiedades
-  defp agregar_valor_default(propiedades, false, ""), do: propiedades
-  defp agregar_valor_default(propiedades, false, valor), do: Map.put(propiedades, "valor_default", valor)
-
-  defp valor_default_valido?("integer", valor), do: Regex.match?(~r/^-?\d+$/, valor)
-  defp valor_default_valido?("decimal", valor), do: Regex.match?(~r/^-?\d+(\.\d+)?$/, valor)
-  defp valor_default_valido?("boolean", valor), do: valor in ["true", "false"]
-  defp valor_default_valido?("date", valor), do: match?({:ok, _}, Date.from_iso8601(valor))
-  defp valor_default_valido?(_tipo, _valor), do: true
-
-  defp mensaje_valor_default_invalido("integer"), do: "El valor por default tiene que ser un número entero."
-  defp mensaje_valor_default_invalido("decimal"), do: "El valor por default tiene que ser un número (con decimales si hace falta)."
-  defp mensaje_valor_default_invalido("boolean"), do: "El valor por default tiene que ser Verdadero o Falso."
-  defp mensaje_valor_default_invalido("date"), do: "El valor por default tiene que ser una fecha válida."
-  defp mensaje_valor_default_invalido(_tipo), do: "Valor por default inválido."
-
-  defp placeholder_valor_default("integer"), do: "0"
-  defp placeholder_valor_default("decimal"), do: "0.00"
-  defp placeholder_valor_default(_tipo), do: "texto"
-
-  defp maybe_put_int(map, _key, val) when val in ["", nil], do: map
-
-  defp maybe_put_int(map, key, val) do
-    case Integer.parse(val) do
-      {n, _} -> Map.put(map, key, n)
-      :error -> map
-    end
-  end
 
   defp normalizar_icono(valor) do
     (valor || "")
@@ -1712,7 +1694,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       tipo == "referencia" -> "link"
       tipo in ["integer", "decimal"] -> "tag"
       tipo == "date" -> "calendar_month"
+      tipo == "hora" -> "schedule"
       tipo == "boolean" -> "toggle_on"
+      tipo == "texto_largo" -> "notes"
+      tipo == "enum" -> "list"
       true -> "text_fields"
     end
   end
@@ -1751,6 +1736,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       "decimal" -> 10.5
       "boolean" -> true
       "date" -> "2026-01-15"
+      "hora" -> "14:30"
+      "texto_largo" -> "texto largo…"
       "enum" -> (propiedades |> Map.get("valores", ["valor_a"]) |> List.first()) || "valor_a"
       "referencia" -> 1
       _ -> "texto"
@@ -1891,7 +1878,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       <div id="motor-panel-config" class="space-y-4">
         <.panel_encabezado header_form={@header_form} iconos_sugeridos={@iconos_sugeridos} carpetas={@carpetas} />
-        <.panel_campos campos={@campos} />
+        <.panel_campos campos={@campos} longitudes_columnas={@longitudes_columnas} />
         <%= if @es_detalle? do %>
           <div class="border border-gray-200 rounded-lg p-3 text-gray-500">
             Sin estados/transiciones propias — este catálogo se mueve junto con <strong>{@maestro.schema_context_label}</strong>.
@@ -1962,13 +1949,14 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       </div>
     </div>
 
-    <.modal_campo :if={@campo_form} form={@campo_form} catalogos={@catalogos_referenciables} nombre_base={@header.schema_context_name} />
+    <FieldDesignerComponents.asistente :if={@campo_form} form={@campo_form} catalogos={@catalogos_referenciables} nombre_base={@header.schema_context_name} campos={@campos} />
     <.modal_eliminar_campo :if={@eliminar_campo_form} form={@eliminar_campo_form} />
     <.modal_estado :if={@estado_form} form={@estado_form} />
     <.modal_transicion :if={@transicion_form} form={@transicion_form} estados={@estados} campos={@campos} catalogos_detalle={@catalogos_detalle} />
     <.modal_relacion :if={@relacion_form} form={@relacion_form} local_label={@header.schema_context_label} />
     <.modal_dependencia :if={@dependencia_form} form={@dependencia_form} />
     <.modal_formato_captura :if={@formato_form} form={@formato_form} />
+    <.modal_formato_fecha :if={@formato_fecha_form} form={@formato_fecha_form} />
     """
   end
 
@@ -2245,6 +2233,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
   attr :campos, :list, required: true
+  attr :longitudes_columnas, :map, default: %{}
 
   defp panel_campos(assigns) do
     ~H"""
@@ -2263,6 +2252,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Nombre</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Etiqueta</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Tamaño real de la columna en la base de datos (information_schema, no la metadata) — varchar(N), precisión/escala del decimal, o 'sin límite'">Longitud</th>
                 <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Solo validación de la app (el formulario no deja guardar vacío) — la columna en la base de datos se queda nullable siempre">Obligatorio</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si el campo obligatorio llega vacío, se rellena con este valor en vez de rechazar el guardado">Default</th>
                 <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si aparece como columna en la tabla del tab Detalle de la Ficha 360° — el formulario de al lado siempre muestra todos los campos, esto es solo la tabla">En tabla</th>
@@ -2295,6 +2285,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                       {Map.get(props, "tipo")}
                     <% end %>
                   </td>
+                  <td class="px-1.5 py-1 text-gray-500 font-mono">
+                    {Map.get(@longitudes_columnas, c.schema_context_field) || "—"}
+                  </td>
                   <td class="px-1.5 py-1 text-center">
                     <form phx-change="cambiar_obligatorio_campo">
                       <input type="hidden" name="campo" value={c.schema_context_field} />
@@ -2304,12 +2297,20 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                   </td>
                   <td class="px-1.5 py-1">
                     <%= if Map.get(props, "opcional") != true and Map.get(props, "tipo") != "referencia" do %>
-                      <form phx-change="cambiar_valor_default_campo">
-                        <input type="hidden" name="campo" value={c.schema_context_field} />
-                        <input type="text" name="valor_default" value={Map.get(props, "valor_default")}
-                          title="Valor si es nulo"
-                          class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] text-gray-700 w-11" />
-                      </form>
+                      <div class="flex items-center gap-1">
+                        <form phx-change="cambiar_valor_default_campo">
+                          <input type="hidden" name="campo" value={c.schema_context_field} />
+                          <input type="text" name="valor_default" value={Map.get(props, "valor_default")}
+                            title="Valor si es nulo"
+                            class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] text-gray-700 w-11" />
+                        </form>
+                        <button :if={Map.get(props, "tipo") in ["date", "hora"]} type="button"
+                          phx-click="usar_valor_default_hoy" phx-value-campo={c.schema_context_field}
+                          title="Siempre la fecha/hora del momento del alta, no una fecha fija"
+                          class="text-[10px] text-purple-600 hover:text-purple-800 font-semibold whitespace-nowrap">
+                          <%= if Map.get(props, "tipo") == "date", do: "Hoy", else: "Ahora" %>
+                        </button>
+                      </div>
                     <% else %>
                       <span class="text-gray-300">—</span>
                     <% end %>
@@ -2322,13 +2323,19 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                     </form>
                   </td>
                   <td class="px-1.5 py-1">
-                    <%= if Map.get(props, "tipo") in ["string", "integer", "decimal"] do %>
-                      <button type="button" phx-click="abrir_form_formato" phx-value-campo={c.schema_context_field}
-                        class="text-purple-600 hover:text-purple-800 text-[11px] font-semibold">
-                        <%= if get_in(props, ["formato_captura", "habilitada"]) == true, do: "Configurado", else: "Configurar" %>
-                      </button>
-                    <% else %>
-                      <span class="text-gray-300">—</span>
+                    <%= cond do %>
+                      <% Map.get(props, "tipo") in ["string", "integer", "decimal"] -> %>
+                        <button type="button" phx-click="abrir_form_formato" phx-value-campo={c.schema_context_field}
+                          class="text-purple-600 hover:text-purple-800 text-[11px] font-semibold">
+                          <%= if get_in(props, ["formato_captura", "habilitada"]) == true, do: "Configurado", else: "Configurar" %>
+                        </button>
+                      <% Map.get(props, "tipo") in ["date", "hora"] -> %>
+                        <button type="button" phx-click="abrir_form_formato_fecha" phx-value-campo={c.schema_context_field}
+                          class="text-purple-600 hover:text-purple-800 text-[11px] font-semibold">
+                          <%= if Map.get(props, "formato_fecha") not in [nil, ""], do: "Configurado", else: "Configurar" %>
+                        </button>
+                      <% true -> %>
+                        <span class="text-gray-300">—</span>
                     <% end %>
                   </td>
                   <td class="px-1.5 py-1">
@@ -3480,133 +3487,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     """
   end
 
-  @tipos_campo ~w(string integer decimal boolean date enum referencia)
-
-  attr :form, :map, required: true
-  attr :catalogos, :list, required: true
-  attr :nombre_base, :string, required: true
-
-  defp modal_campo(assigns) do
-    assigns = assign(assigns, :tipos, @tipos_campo)
-
-    ~H"""
-    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-      <div class="bg-white rounded-xl shadow-lg max-w-sm w-full p-4 text-xs">
-        <h2 class="text-sm font-bold text-gray-900 mb-3">Agregar campo</h2>
-
-        <%= if @form["error"] do %>
-          <div class="bg-red-50 text-red-700 rounded-lg px-2 py-1.5 mb-2">{@form["error"]}</div>
-        <% end %>
-
-        <form phx-submit="guardar_campo" phx-change="validar_campo" class="space-y-2">
-          <div>
-            <label class="block text-gray-700 mb-0.5">Tipo</label>
-            <select name="tipo" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
-              <%= for tipo <- @tipos do %>
-                <option value={tipo} selected={@form["tipo"] == tipo}>{tipo}</option>
-              <% end %>
-            </select>
-          </div>
-
-          <%!-- Referencia: nombre/etiqueta/longitud/precisión/escala/opcional
-               NO se capturan — se derivan del catálogo destino (nombre y
-               etiqueta) o no aplican (una referencia es un entero, no tiene
-               longitud). Siempre obligatoria, sin excepción — nunca se
-               ofrece "Opcional" para este tipo. --%>
-          <%= if @form["tipo"] == "referencia" do %>
-            <div>
-              <label class="block text-gray-700 mb-0.5">Catálogo destino</label>
-              <select name="catalogo" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
-                <option value="">— Elegir —</option>
-                <%= for c <- @catalogos do %>
-                  <option value={c.nombre} selected={@form["catalogo"] == c.nombre}>{c.etiqueta}</option>
-                <% end %>
-              </select>
-              <p class="mt-0.5 text-gray-500">
-                El nombre, la etiqueta y el resto de las propiedades del campo se toman del catálogo elegido — siempre obligatorio.
-              </p>
-            </div>
-          <% else %>
-            <div>
-              <label class="block text-gray-700 mb-0.5">Nombre</label>
-              <input type="text" name="nombre" value={@form["nombre"]} placeholder="color" required
-                pattern="[a-z][a-z0-9_]*" maxlength="50"
-                class="w-full border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
-              <p class="mt-0.5 text-gray-500">
-                Se va a crear como <strong class="font-mono">{@nombre_base}_{if @form["nombre"] in [nil, ""], do: "…", else: @form["nombre"]}</strong>
-              </p>
-            </div>
-            <div>
-              <label class="block text-gray-700 mb-0.5">Etiqueta</label>
-              <input type="text" name="etiqueta" value={@form["etiqueta"]} required maxlength="100"
-                class="w-full border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
-            </div>
-            <div class="grid grid-cols-3 gap-2">
-              <div>
-                <label class="block text-gray-700 mb-0.5">longitud</label>
-                <input type="number" name="longitud" value={@form["longitud"]} class="w-full border border-gray-300 rounded-lg px-2 py-1" />
-              </div>
-              <div>
-                <label class="block text-gray-700 mb-0.5">precisión</label>
-                <input type="number" name="precision" value={@form["precision"]} class="w-full border border-gray-300 rounded-lg px-2 py-1" />
-              </div>
-              <div>
-                <label class="block text-gray-700 mb-0.5">escala</label>
-                <input type="number" name="escala" value={@form["escala"]} class="w-full border border-gray-300 rounded-lg px-2 py-1" />
-              </div>
-            </div>
-            <label class="flex items-center gap-1.5">
-              <input type="hidden" name="opcional" value="false" />
-              <input type="checkbox" name="opcional" value="true" checked={@form["opcional"] == true} class="accent-purple-600" />
-              Opcional (recomendado — el catálogo ya puede tener filas sin este campo)
-            </label>
-
-            <%!-- Solo tiene sentido para un campo OBLIGATORIO en un catálogo que
-                 YA existe (BcMotorLive siempre opera sobre uno ya generado —
-                 ver CatalogoGenerador.columna_migracion_agregar/3): sin esto,
-                 agregar un campo obligatorio a una tabla con millones de filas
-                 queda "obligatorio de palabra" (nullable en Postgres, exigido
-                 solo desde la app en adelante). Con un valor acá, Postgres 11+
-                 lo aplica de una como NOT NULL real, sin reescribir la tabla. --%>
-            <div :if={@form["opcional"] != true}>
-              <label class="block text-gray-700 mb-0.5">Valor por default (opcional)</label>
-              <%= if @form["tipo"] == "boolean" do %>
-                <select name="valor_default" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
-                  <option value="" selected={@form["valor_default"] in [nil, ""]}>— Sin default (nullable en filas viejas) —</option>
-                  <option value="true" selected={@form["valor_default"] == "true"}>Verdadero</option>
-                  <option value="false" selected={@form["valor_default"] == "false"}>Falso</option>
-                </select>
-              <% else %>
-                <input
-                  type={if @form["tipo"] == "date", do: "date", else: "text"}
-                  name="valor_default"
-                  value={@form["valor_default"]}
-                  placeholder={placeholder_valor_default(@form["tipo"])}
-                  class="w-full border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500"
-                />
-              <% end %>
-              <p class="mt-0.5 text-gray-500">
-                Sin default, el campo queda obligatorio solo desde ahora (filas viejas se quedan sin valor). Con un
-                default, las filas viejas también lo reciben y el campo queda realmente NOT NULL — instantáneo aunque
-                el catálogo tenga millones de filas.
-              </p>
-            </div>
-          <% end %>
-
-          <div class="flex justify-end gap-2 pt-2">
-            <button type="button" phx-click="cerrar_form_campo" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
-              Cancelar
-            </button>
-            <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">
-              Guardar
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-    """
-  end
-
   attr :form, :map, required: true
 
   defp modal_eliminar_campo(assigns) do
@@ -4083,6 +3963,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     {"telefono", "Teléfono"},
     {"cp", "Código postal"},
     {"rfc", "RFC"},
+    {"curp", "CURP"},
     {"fecha", "Fecha libre"},
     {"personalizada", "Personalizada"},
     {"numero", "Número"},
@@ -4239,6 +4120,74 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
             <div class="flex justify-end gap-2 pt-1">
               <button type="button" phx-click="cerrar_form_formato" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
+                Cancelar
+              </button>
+              <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">
+                Guardar
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  @presets_formato_fecha_date [
+    {"corta", "Fecha corta", "15/08/2026"},
+    {"larga", "Fecha larga", "15 de agosto de 2026"},
+    {"mes_dia", "Mes y día", "15 de agosto"},
+    {"anio_mes", "Año y mes", "Agosto 2026"}
+  ]
+  @presets_formato_fecha_hora [{"hora_corta", "Hora corta", "14:30"}]
+
+  attr :form, :map, required: true
+
+  # Panel único, mucho más chico que "Formato de captura" (arriba): acá no
+  # hay nada que VALIDAR ni transformar al guardar, solo cómo se ve el
+  # valor ya guardado en modo solo lectura (ver FichaLive.formatear_fecha/2)
+  # — el selector nativo para editar sigue igual siempre.
+  defp modal_formato_fecha(assigns) do
+    assigns = assign(assigns, :presets, if(assigns.form["tipo"] == "date", do: @presets_formato_fecha_date, else: @presets_formato_fecha_hora))
+
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-sm w-full text-xs max-h-[90vh] overflow-y-auto">
+        <div class="px-4 pt-4 pb-3 border-b border-gray-100 flex items-start justify-between gap-3">
+          <div class="flex items-start gap-2.5">
+            <span class="material-symbols-outlined text-purple-600 mt-0.5" style="font-size:20px">calendar_month</span>
+            <div>
+              <h2 class="text-sm font-bold text-gray-900">Formato de visualización</h2>
+              <p class="text-gray-500 mt-0.5">
+                Cómo se muestra <strong class="font-mono">{@form["campo"]}</strong> ya guardado — al editar sigue usando el calendario de siempre.
+              </p>
+            </div>
+          </div>
+          <button type="button" phx-click="cerrar_form_formato_fecha" class="text-gray-400 hover:text-gray-700 flex-shrink-0">
+            <span class="material-symbols-outlined" style="font-size:20px">close</span>
+          </button>
+        </div>
+
+        <div class="p-4">
+          <form phx-change="formato_fecha_cambiar" phx-submit="guardar_formato_fecha" class="flex flex-col gap-2">
+            <label class={["flex items-center justify-between gap-2 border rounded-lg px-2.5 py-1.5 cursor-pointer", @form["formato_fecha"] == "" && "border-purple-500 bg-purple-50" || "border-gray-200"]}>
+              <span class="flex items-center gap-1.5">
+                <input type="radio" name="formato_fecha" value="" checked={@form["formato_fecha"] == ""} class="accent-purple-600" />
+                Sin formato especial
+              </span>
+              <span class="font-mono text-gray-400">como hoy</span>
+            </label>
+            <label :for={{valor, etiqueta, ejemplo} <- @presets}
+              class={["flex items-center justify-between gap-2 border rounded-lg px-2.5 py-1.5 cursor-pointer", @form["formato_fecha"] == valor && "border-purple-500 bg-purple-50" || "border-gray-200"]}>
+              <span class="flex items-center gap-1.5">
+                <input type="radio" name="formato_fecha" value={valor} checked={@form["formato_fecha"] == valor} class="accent-purple-600" />
+                {etiqueta}
+              </span>
+              <span class="font-mono text-gray-400">{ejemplo}</span>
+            </label>
+
+            <div class="flex justify-end gap-2 pt-2">
+              <button type="button" phx-click="cerrar_form_formato_fecha" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
                 Cancelar
               </button>
               <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">

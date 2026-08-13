@@ -681,6 +681,19 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     end
   end
 
+  # "Disponible como vista" — independiente de publicar/despublicar (ver
+  # MetaPlantillas.listar_disponibles_multi_vista/1): habilita/deshabilita
+  # que FichaLive la ofrezca en su selector "Vista" a usuarios finales.
+  def handle_event("alternar_disponible_multi_vista", _params, socket) do
+    case MetaPlantillas.alternar_disponible_multi_vista(socket.assigns.plantilla) do
+      {:ok, plantilla} ->
+        {:noreply, socket |> assign(:plantilla, plantilla) |> actualizar_en_lista(plantilla)}
+
+      {:error, _changeset} ->
+        {:noreply, assign(socket, :mensaje, {:error, "No se pudo cambiar la disponibilidad."})}
+    end
+  end
+
   # Recarga esta plantilla (y la lista, por si otra cambió de estado) desde
   # la base, descartando el borrador local — botón "Recargar" del banner de
   # conflicto.
@@ -928,7 +941,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           <select :if={@plantillas != []} phx-change="seleccionar_plantilla" name="id"
             class="border border-gray-300 rounded-lg text-sm px-2 py-1.5 text-gray-700">
             <option :for={p <- @plantillas} value={p.id} selected={@plantilla && @plantilla.id == p.id}>
-              {p.nombre} · {p.estado}
+              {p.nombre} · {p.estado}{if p.disponible_multi_vista, do: " · disponible", else: ""}
             </option>
           </select>
           <span :if={@plantilla} class={[
@@ -938,6 +951,12 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           ]}>
             {if @plantilla.estado == "publicada", do: "● Publicada", else: "○ Borrador"}
           </span>
+          <label :if={@plantilla} class="flex items-center gap-1.5 text-[11px] text-gray-600 whitespace-nowrap cursor-pointer select-none"
+            title="Los usuarios podrán elegir este PostView desde el selector Vista al ver un registro de este catálogo.">
+            <input type="checkbox" phx-click="alternar_disponible_multi_vista" checked={@plantilla.disponible_multi_vista}
+              class="rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+            Disponible como vista
+          </label>
           <div class="w-px h-5 bg-gray-200 mx-1"></div>
           <button type="button" phx-click="nueva_plantilla" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50">
             + Nuevo PostView

@@ -499,6 +499,18 @@ defmodule MetadataApp.Autenticacion do
     end
   end
 
+  # Sin filtrar por usuario/empresa a propósito -- a diferencia de
+  # obtener_branch_de_usuario/4 y compañía (que validan que el id venga de
+  # sesión/form contra el universo permitido), estas son para MOSTRAR el
+  # branch_id/sales_unit_id/inventory_id YA GUARDADO en un registro
+  # cualquiera (ver FichaLive, badges de contexto en el encabezado) -- ese
+  # valor puede pertenecer a una sucursal que el usuario actual ya no
+  # tenga asignada, y aun así hay que poder mostrar su nombre. `nil` si no
+  # existe (id inválido/borrado), igual que Repo.get/2.
+  def obtener_branch(id), do: Repo.get(Branch, id)
+  def obtener_sales_unit(id), do: Repo.get(SalesUnit, id)
+  def obtener_inventory_location(id), do: Repo.get(InventoryLocation, id)
+
   @doc """
   Inventory Location / Sales Unit "default" del usuario para UNA
   sucursal puntual (2026-08-13, vive en UsuarioBranch -- ver el moduledoc

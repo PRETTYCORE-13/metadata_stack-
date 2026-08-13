@@ -30,7 +30,7 @@ defmodule MetadataAppWeb.CampoInputComponents do
   attr :disabled, :boolean, default: false
   attr :mensaje_dependencia, :string, default: nil
 
-  @modos_posicionales ~w(telefono cp rfc fecha personalizada)
+  @modos_posicionales ~w(telefono cp rfc curp fecha personalizada)
 
   def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
     assigns = assign_name(assigns)
@@ -45,6 +45,11 @@ defmodule MetadataAppWeb.CampoInputComponents do
     """
   end
 
+  # "valores" tiene dos formas posibles: Simple (lista de string, el texto
+  # ES el valor guardado) o Mapeado (lista de %{"valor"=>, "descripcion"=>},
+  # ver Diseñador de campos → Lista → "Guardar un código distinto al
+  # texto mostrado") — opciones_enum/1 normaliza las dos a {valor,
+  # etiqueta} para no duplicar el <option> por forma.
   def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "enum"}}} = assigns) do
     assigns = assign_name(assigns)
 
@@ -53,7 +58,7 @@ defmodule MetadataAppWeb.CampoInputComponents do
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
       <select name={@name} required={@required} disabled={@disabled}
         class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed">
-        <option :for={v <- @columna.schema_context_properties["valores"]} value={v} selected={v == @valor}>{v}</option>
+        <option :for={{v, etiqueta} <- opciones_enum(@columna.schema_context_properties["valores"])} value={v} selected={v == @valor}>{etiqueta}</option>
       </select>
     </div>
     """
@@ -113,30 +118,61 @@ defmodule MetadataAppWeb.CampoInputComponents do
     <div>
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
       <input type="number" step={@step} name={@name} value={@valor} required={@required} disabled={@disabled}
+        placeholder={@columna.schema_context_properties["placeholder"]}
         class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
     </div>
     """
   end
 
-  # phx-hook="AbrirCalendario" (2026-08-13, a pedido explícito) -- mismo
-  # hook que ya usa "Fecha libre" (formato_captura modo "fecha", más
-  # abajo), acá reusado directo sobre el <input type="date"> nativo en
-  # vez de uno oculto sincronizado a otro campo (no hace falta: este SÍ
-  # es el campo real). Sin esto, algunos navegadores/temas no dibujan el
-  # ícono del selector nativo de forma visible -- el hook fuerza
-  # showPicker() con un click O foco en cualquier parte del input, así
-  # no depende de acertarle al ícono.
+  # AbrirCalendario (mismo hook que ya usa "Filtros por default" en
+  # BcMotorLive): sin esto, un clic en cualquier parte del input que no
+  # sea el iconito diminuto del calendario nativo deja al usuario
+  # tipeando dígito por dígito sin ningún selector visual — showPicker()
+  # fuerza el calendario con cualquier clic/foco en el campo.
   def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "date"}}} = assigns) do
-    assigns =
-      assigns
-      |> assign_name()
-      |> then(&assign(&1, :dom_id, &1.id || "campo-#{String.replace(&1.name, ~r/[\[\]]/, "-")}"))
+    assigns = assign_name(assigns)
+    assigns = assign(assigns, :dom_id, assigns.id || "campo-#{String.replace(assigns.name, ~r/[\[\]]/, "-")}")
 
     ~H"""
     <div>
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
-      <input type="date" id={@dom_id} name={@name} value={@valor} required={@required} disabled={@disabled} phx-hook="AbrirCalendario"
+      <input type="date" name={@name} value={@valor} required={@required} disabled={@disabled}
+        id={@dom_id} phx-hook="AbrirCalendario"
         class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+    </div>
+    """
+  end
+
+  # AbrirCalendario también sirve acá tal cual — showPicker() es genérico
+  # para date/time/datetime-local/month/week (ver comentario en la
+  # cláusula "date" arriba).
+  def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "hora"}}} = assigns) do
+    assigns = assign_name(assigns)
+    assigns = assign(assigns, :dom_id, assigns.id || "campo-#{String.replace(assigns.name, ~r/[\[\]]/, "-")}")
+
+    ~H"""
+    <div>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <input type="time" name={@name} value={@valor} required={@required} disabled={@disabled}
+        id={@dom_id} phx-hook="AbrirCalendario"
+        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+    </div>
+    """
+  end
+
+  # "Texto largo" (memo/comentarios) — a diferencia del texto corto no
+  # tiene `longitud` (columna :text sin límite, ver
+  # CatalogoGenerador.columna_migracion/3) ni `formato_captura` (es para
+  # texto libre, no un dato con patrón).
+  def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "texto_largo"}}} = assigns) do
+    assigns = assign_name(assigns)
+
+    ~H"""
+    <div>
+      <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
+      <textarea name={@name} required={@required} disabled={@disabled} rows="3"
+        placeholder={@columna.schema_context_properties["placeholder"]}
+        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-1 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed">{@valor}</textarea>
     </div>
     """
   end
@@ -283,6 +319,7 @@ defmodule MetadataAppWeb.CampoInputComponents do
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
       <input type="text" name={@name} value={@valor} required={@required} disabled={@disabled}
         maxlength={@columna.schema_context_properties["longitud"]}
+        placeholder={@columna.schema_context_properties["placeholder"]}
         class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
     </div>
     """
@@ -301,5 +338,12 @@ defmodule MetadataAppWeb.CampoInputComponents do
       {_id, etiqueta} -> etiqueta
       nil -> ""
     end
+  end
+
+  defp opciones_enum(valores) do
+    Enum.map(valores || [], fn
+      %{"valor" => v, "descripcion" => d} -> {v, d}
+      v when is_binary(v) -> {v, v}
+    end)
   end
 end

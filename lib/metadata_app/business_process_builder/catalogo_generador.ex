@@ -204,6 +204,32 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     end
   end
 
+  @doc """
+  Tamaño real de cada columna, tal como quedó en Postgres — a propósito
+  `information_schema`, no la metadata: un campo puede no tener
+  `"longitud"`/`"precision"`/`"escala"` guardados en
+  `schema_context_properties` (nunca se tocó esa capacidad al crearlo) y
+  aun así la columna real cayó en el default del motor (varchar(255), ver
+  `construir_opciones/2`) — leer la metadata ahí mentiría por omisión.
+  `%{"campo" => "varchar(255)" | "10,2" | "sin límite" | nil}` — `nil`
+  para tipos sin concepto de tamaño (integer/boolean/date/time).
+  """
+  def info_longitud_columnas(schema_context_name) do
+    %{rows: filas} =
+      Repo.query!(
+        "select column_name, data_type, character_maximum_length, numeric_precision, numeric_scale from information_schema.columns where table_name = $1",
+        [schema_context_name]
+      )
+
+    Map.new(filas, fn [campo, tipo, longitud, precision, escala] -> {campo, formatear_tamano_columna(tipo, longitud, precision, escala)} end)
+  end
+
+  defp formatear_tamano_columna("character varying", longitud, _precision, _escala) when is_integer(longitud), do: "varchar(#{longitud})"
+  defp formatear_tamano_columna("text", _longitud, _precision, _escala), do: "sin límite"
+  defp formatear_tamano_columna("numeric", _longitud, precision, escala) when is_integer(precision) and is_integer(escala), do: "#{precision},#{escala}"
+  defp formatear_tamano_columna("numeric", _longitud, _precision, _escala), do: "sin límite"
+  defp formatear_tamano_columna(_tipo, _longitud, _precision, _escala), do: nil
+
   # Quita un campo de un catálogo YA generado: soft-delete del Detail +
   # DROP COLUMN real (migración hacia adelante, mismo criterio que
   # crear_migracion_drop/1 — nunca se toca la migración de creación) +
@@ -474,7 +500,13 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   # antes de insertarse SIN comillas — insertar ese texto crudo sin validar
   # sería, en los hechos, ejecutar lo que sea que alguien haya escrito ahí.
   defp formatear_default(_tipo, valor) when valor in [nil, ""], do: nil
-  defp formatear_default(tipo, valor) when tipo in [:string, :date], do: inspect(valor)
+  # "hoy"/"ahora" (ver MetaCatalogoGenerico.resolver_valor_default/2) son
+  # sentinelas que la APP resuelve en cada alta -- nunca un default de
+  # columna real (Postgres rechazaría un default de fecha que sea texto
+  # literal). La columna queda nullable, igual que "sin default" (rama de
+  # abajo) -- el valor real siempre lo pone forzar_defaults/2, no la BD.
+  defp formatear_default(tipo, valor) when tipo in [:date, :time] and valor in ["hoy", "ahora"], do: nil
+  defp formatear_default(tipo, valor) when tipo in [:string, :date, :time], do: inspect(valor)
   defp formatear_default(:boolean, valor) when valor in ["true", "false"], do: valor
   defp formatear_default(:boolean, _valor), do: nil
 
@@ -680,14 +712,34 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   defp tipo_ecto("decimal"), do: :decimal
   defp tipo_ecto("boolean"), do: :boolean
   defp tipo_ecto("date"), do: :date
+  defp tipo_ecto("hora"), do: :time
   defp tipo_ecto("enum"), do: :string
   defp tipo_ecto("referencia"), do: :integer
+  # "texto_largo" (Diseñador de campos, Paso 1) no es un tipo Ecto
+  # distinto — Ecto no diferencia varchar/text al castear, ambos son
+  # String.t() de punta a punta. La única diferencia real es la columna
+  # física (ver construir_opciones/2 y columna_migracion/3, que usan la
+  # marca :texto_largo en `opciones` para elegir `:text` en la migración
+  # en vez de `:string, size: N`).
   defp tipo_ecto(_string_u_otro), do: :string
 
   defp construir_opciones("string", propiedades) do
     base_opciones(propiedades)
     |> Map.put(:longitud, Map.get(propiedades, "longitud", 255))
     |> Map.put(:formato, Map.get(propiedades, "formato"))
+    |> Map.put(:longitud_minima, Map.get(propiedades, "longitud_minima"))
+    |> Map.put(:transformacion, Map.get(propiedades, "transformacion"))
+  end
+
+  # "Texto largo": sin límite MÁXIMO de longitud ni regex de formato (es
+  # para comentarios/descripciones libres, no para un dato con patrón) —
+  # la columna física es :text, no varchar(255) (ver columna_migracion/3).
+  # Sí admite longitud mínima y transformación, igual que "string".
+  defp construir_opciones("texto_largo", propiedades) do
+    base_opciones(propiedades)
+    |> Map.put(:texto_largo, true)
+    |> Map.put(:longitud_minima, Map.get(propiedades, "longitud_minima"))
+    |> Map.put(:transformacion, Map.get(propiedades, "transformacion"))
   end
 
   defp construir_opciones("integer", propiedades) do
@@ -704,9 +756,15 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     |> Map.put(:escala, Map.get(propiedades, "escala"))
   end
 
+  # "valores" (compile-time, ver validate_inclusion en
+  # MetaCatalogoGenerico.aplicar_valores/3) tiene que ser la lista de
+  # valores REALMENTE guardables — para una Lista "Mapeada" (Diseñador de
+  # campos: valores => [%{"valor"=>, "descripcion"=>}, ...]) eso es el
+  # lado "valor" (el código), nunca la descripción; para una Lista
+  # "Simple" (lista de string) el texto mismo ya es el valor guardable.
   defp construir_opciones("enum", propiedades) do
     base_opciones(propiedades)
-    |> Map.put(:valores, Map.fetch!(propiedades, "valores"))
+    |> Map.put(:valores, valores_guardables(Map.fetch!(propiedades, "valores")))
   end
 
   defp construir_opciones("referencia", propiedades) do
@@ -718,6 +776,13 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   end
 
   defp construir_opciones(_tipo, propiedades), do: base_opciones(propiedades)
+
+  defp valores_guardables(valores) do
+    Enum.map(valores, fn
+      %{"valor" => v} -> v
+      v when is_binary(v) -> v
+    end)
+  end
 
   defp base_opciones(propiedades) do
     opcional = Map.get(propiedades, "opcional", false)
@@ -732,6 +797,9 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   defp columna_migracion(campo, _tipo, %{tabla_referenciada: tabla_ref}),
     do: "      add :#{campo}, references(:#{tabla_ref}), null: false"
 
+  defp columna_migracion(campo, :string, %{texto_largo: true} = opciones),
+    do: "      add :#{campo}, :text, null: #{nulo?(opciones)}"
+
   defp columna_migracion(campo, :string, opciones),
     do:
       "      add :#{campo}, :string, size: #{opciones[:longitud] || 255}, null: #{nulo?(opciones)}"
@@ -742,7 +810,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
          "      add :#{campo}, :decimal, precision: #{precision}, scale: #{escala}, null: #{nulo?(opciones)}"
 
   defp columna_migracion(campo, tipo, opciones)
-       when tipo in [:integer, :decimal, :boolean, :date],
+       when tipo in [:integer, :decimal, :boolean, :date, :time],
        do: "      add :#{campo}, :#{tipo}, null: #{nulo?(opciones)}"
 
   # "opcional" (opt-in en schema_context_properties) es la única forma de que

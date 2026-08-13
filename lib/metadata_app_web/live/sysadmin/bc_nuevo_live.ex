@@ -61,6 +61,11 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
         componentes_map ->
           componentes =
             componentes_map
+            # Ver comentario en bc_motor_live.ex/dependencia_cambiar: el
+            # cliente de LiveView puede mandar una clave sombra
+            # "componentes[_unused_N]" al agregar/quitar filas de un :for
+            # sin key estable — String.to_integer/1 sobre eso crashea.
+            |> Enum.filter(fn {idx, _} -> match?({_n, ""}, Integer.parse(idx)) end)
             |> Enum.sort_by(fn {idx, _} -> String.to_integer(idx) end)
             |> Enum.map(fn {_idx, c} -> Map.put(c, "visible", c["visible"] == "true") end)
 
@@ -107,6 +112,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
     componentes =
       params
       |> Map.get("componentes", %{})
+      |> Enum.filter(fn {idx, _} -> match?({_n, ""}, Integer.parse(idx)) end)
       |> Enum.sort_by(fn {idx, _} -> String.to_integer(idx) end)
       |> Enum.map(fn {_idx, c} -> c end)
 

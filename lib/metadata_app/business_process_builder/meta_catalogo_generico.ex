@@ -13,7 +13,12 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
   #   :valor_default     — solo con opcional != true: si el campo llega vacío,
   #                        se fuerza este valor en vez de rechazar el cambio
   #                        (ver forzar_defaults/2) — "obligatorio" blando, sin
-  #                        tocar la columna física (esa sigue nullable)
+  #                        tocar la columna física (esa sigue nullable).
+  #                        Para :date/:time acepta los sentinelas "hoy"/
+  #                        "ahora" -- se resuelven a Date.utc_today()/
+  #                        Time.utc_now() EN CADA alta (ver
+  #                        resolver_valor_default/2), no a la fecha en que
+  #                        se configuró el campo.
   defmacro __using__(opts) do
     tabla = Keyword.fetch!(opts, :tabla)
     campos_ast = Keyword.fetch!(opts, :campos)
@@ -108,6 +113,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
       def changeset(struct, attrs) do
         struct
         |> cast(MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.forzar_defaults(attrs, @campos_meta), @campos)
+        |> MetadataApp.BusinessProcessBuilder.MetaSchemaContext.aplicar_campos_calculados(unquote(tabla))
         |> validate_required(@campos_requeridos, message: "no puede quedar vacío")
         |> MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.aplicar_validaciones(@campos_meta)
         |> MetadataApp.BusinessProcessBuilder.MetaSchemaContext.validar_dependencias_referencia(unquote(tabla))
@@ -170,21 +176,25 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
   # vacío -- es una elección legítima de quien carga el dato, no un hueco
   # que forzar a rellenar.
   def forzar_defaults(attrs, campos_meta) do
-    Enum.reduce(campos_meta, attrs, fn {campo, _tipo, opciones}, acc ->
-      aplicar_default_forzoso(acc, campo, opciones)
+    Enum.reduce(campos_meta, attrs, fn {campo, tipo, opciones}, acc ->
+      aplicar_default_forzoso(acc, campo, tipo, opciones)
     end)
   end
 
-  defp aplicar_default_forzoso(attrs, campo, %{opcional: opcional, valor_default: valor_default})
+  defp aplicar_default_forzoso(attrs, campo, tipo, %{opcional: opcional, valor_default: valor_default})
        when opcional != true and valor_default not in [nil, ""] do
     if valor_en_blanco?(attrs, campo) do
-      attrs |> Map.delete(campo) |> Map.put(Atom.to_string(campo), valor_default)
+      attrs |> Map.delete(campo) |> Map.put(Atom.to_string(campo), resolver_valor_default(tipo, valor_default))
     else
       attrs
     end
   end
 
-  defp aplicar_default_forzoso(attrs, _campo, _opciones), do: attrs
+  defp aplicar_default_forzoso(attrs, _campo, _tipo, _opciones), do: attrs
+
+  defp resolver_valor_default(:date, "hoy"), do: Date.utc_today()
+  defp resolver_valor_default(:time, "ahora"), do: Time.utc_now() |> Time.truncate(:second)
+  defp resolver_valor_default(_tipo, valor), do: valor
 
   defp valor_en_blanco?(attrs, campo) do
     valor = Map.get(attrs, campo, Map.get(attrs, Atom.to_string(campo)))
@@ -194,6 +204,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
   def aplicar_validaciones(changeset, campos_meta) do
     Enum.reduce(campos_meta, changeset, fn {campo, _tipo, opciones}, cs ->
       cs
+      |> aplicar_transformacion(campo, opciones)
       |> aplicar_longitud(campo, opciones)
       |> aplicar_formato(campo, opciones)
       |> aplicar_rango(campo, opciones)
@@ -204,10 +215,41 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
     end)
   end
 
-  defp aplicar_longitud(cs, campo, %{longitud: longitud}) when is_integer(longitud),
+  # Corre ANTES que el resto (longitud/formato validan el valor YA
+  # transformado — ej. una "Mayúsculas" + un regex que exige mayúsculas
+  # tienen que ver lo mismo). update_change/3 no hace nada si el campo no
+  # tiene cambio, así que es seguro para cualquier campo sin tocar.
+  defp aplicar_transformacion(cs, campo, %{transformacion: transformacion})
+       when transformacion in ["mayusculas", "minusculas", "capitalizar"] do
+    update_change(cs, campo, &transformar_texto(&1, transformacion))
+  end
+
+  defp aplicar_transformacion(cs, _campo, _opciones), do: cs
+
+  defp transformar_texto(valor, "mayusculas") when is_binary(valor), do: String.upcase(valor)
+  defp transformar_texto(valor, "minusculas") when is_binary(valor), do: String.downcase(valor)
+
+  defp transformar_texto(valor, "capitalizar") when is_binary(valor) do
+    valor |> String.downcase() |> String.split(" ") |> Enum.map_join(" ", &String.capitalize/1)
+  end
+
+  defp transformar_texto(valor, _transformacion), do: valor
+
+  defp aplicar_longitud(cs, campo, opciones) do
+    cs
+    |> aplicar_longitud_maxima(campo, opciones[:longitud])
+    |> aplicar_longitud_minima(campo, opciones[:longitud_minima])
+  end
+
+  defp aplicar_longitud_maxima(cs, campo, longitud) when is_integer(longitud),
     do: validate_length(cs, campo, max: longitud, message: "no puede tener más de %{count} caracteres")
 
-  defp aplicar_longitud(cs, _campo, _opciones), do: cs
+  defp aplicar_longitud_maxima(cs, _campo, _longitud), do: cs
+
+  defp aplicar_longitud_minima(cs, campo, longitud) when is_integer(longitud),
+    do: validate_length(cs, campo, min: longitud, message: "tiene que tener al menos %{count} caracteres")
+
+  defp aplicar_longitud_minima(cs, _campo, _longitud), do: cs
 
   defp aplicar_formato(cs, campo, %{formato: formato}) when is_binary(formato),
     do: validate_format(cs, campo, Regex.compile!(formato), message: "no tiene el formato correcto")
