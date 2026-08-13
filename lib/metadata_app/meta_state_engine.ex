@@ -265,6 +265,7 @@ defmodule MetadataApp.MetaStateEngine do
     else
       catalogo
       |> MetaSchemaContext.listar_detalles()
+      |> Enum.reject(&(&1.schema_context_properties["editable"] == false))
       |> Enum.map(& &1.schema_context_field)
     end
   end
