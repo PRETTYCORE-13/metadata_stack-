@@ -93,14 +93,6 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     from(r in query, where: field(r, ^campo) >= ^desde and field(r, ^campo) <= ^hasta)
   end
 
-  # Pertenencia a una lista — usado por CatalogoLive para el filtro
-  # "por default" de fecha de alta (ver MetaAuditoria.ids_creados_en_rango/3):
-  # como los catálogos generados no tienen columna de timestamp propia, se
-  # resuelve la lista de :id por afuera (vía auditoría) y se filtra acá.
-  defp aplicar_filtro(query, campo, {:en, lista}) do
-    from(r in query, where: field(r, ^campo) in ^lista)
-  end
-
   defp aplicar_filtro(query, campo, valor) do
     from(r in query, where: field(r, ^campo) == ^valor)
   end
@@ -212,7 +204,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
         schema_mod
         |> struct()
         |> schema_mod.changeset(attrs)
-        |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+        |> Ecto.Changeset.change(%{insert_guid: generar_guid(), fecha_registro: DateTime.utc_now() |> DateTime.truncate(:second)})
         |> asignar_estado_inicial(estado_inicial)
         |> MetadataApp.Renglones.preparar(catalogo, attrs)
         |> Repo.insert()
@@ -360,7 +352,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # respectivamente, nunca un PATCH.
   defp rechazar_no_editables(changeset, attrs, todos_los_campos, editables) do
     editables_set = MapSet.new(editables)
-    protegidos = ["estado_id", "trn", "ulid" | todos_los_campos]
+    protegidos = ["estado_id", "trn", "ulid", "fecha_registro" | todos_los_campos]
 
     attrs
     |> Map.keys()

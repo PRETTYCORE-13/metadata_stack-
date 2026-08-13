@@ -7,7 +7,6 @@ defmodule MetadataAppWeb.CatalogoLive do
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerico
   alias MetadataApp.MetaStateEngine
   alias MetadataApp.MetaConsultas
-  alias MetadataApp.MetaAuditoria
   alias MetadataApp.FiltrosDefault
   alias MetadataApp.Permissions
   alias MetadataApp.Autenticacion.Scope
@@ -167,14 +166,18 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   # Get View → "Filtros por default" (bc_motor_live.ex): "Agregar todos
   # los registros" + acotar por fecha de alta — arma el @filtros INICIAL
-  # de la tabla, en vez de arrancar vacía. No es un campo real de la
-  # tabla (los catálogos generados no tienen columna de timestamp
-  # propia), así que va aparte como "__fecha_ids__" y no aparece como
-  # fila editable en el panel de Filtros normal.
+  # de la tabla, en vez de arrancar vacía. Filtra directo sobre la
+  # columna real "fecha_registro" (2026-08-06, en TODA tabla de catálogo
+  # — ver MetaCatalogoGenerico) — antes de que existiera, esto resolvía
+  # la fecha vía la tabla de auditoría (MetaAuditoria.ids_creados_en_rango/3,
+  # ya no hace falta). Va aparte como "__fecha_registro__" (no es una
+  # fila editable del panel de Filtros normal, así que no puede sumarse
+  # a @filtros con la clave "fecha_registro_desde"/"_hasta" de siempre —
+  # eso dejaría ver/tocar un input que no existe en el panel).
   defp filtros_por_default(header) do
     case FiltrosDefault.rango_fecha(header.filtro_default_fecha_modo, header.filtro_default_fecha_valor, header.filtro_default_fecha_valor_hasta) do
       nil -> %{}
-      {desde, hasta} -> %{"__fecha_ids__" => MetaAuditoria.ids_creados_en_rango(header.schema_context_name, desde, hasta)}
+      {desde, hasta} -> %{"__fecha_registro__" => {desde, hasta}}
     end
   end
 
@@ -235,28 +238,6 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   def handle_event("change_page", %{"id" => id}, socket) do
     AdminNav.handle_nav(id, socket, socket.assigns.current_page)
-  end
-
-  # "Máscara" de la Suma/Promedio/Mín/Máx de un campo integer/decimal en
-  # la fila de Resumen (ver celdas_resumen/1 y formatear_agregacion/2) —
-  # a propósito EN la tabla que ve el usuario final (no en Get View de
-  # BcMotorLive): es una preferencia de cómo LEER el total, no de qué
-  # trae la API, así que tiene más sentido ajustarla ahí mismo donde se
-  # está mirando. Se persiste en el Detail igual que "Recomendado" (mismo
-  # criterio de guardado inmediato), así que la elección le queda a
-  # cualquiera que abra este catálogo después, no solo a quien la cambió.
-  def handle_event("cambiar_mascara_totales", %{"campo" => campo, "separador" => separador, "simbolo" => simbolo}, socket) do
-    detalle = MetaSchemaContext.listar_detalles(socket.assigns.current_page) |> Enum.find(&(&1.schema_context_field == campo))
-
-    props =
-      detalle.schema_context_properties
-      |> Map.put("mascara_separador", separador)
-      |> Map.put("mascara_simbolo", simbolo)
-
-    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
-      {:ok, _detalle} -> {:noreply, assign(socket, :columnas, construir_columnas(socket.assigns.current_page))}
-      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la máscara de \"#{campo}\".")}
-    end
   end
 
   # Búsqueda general: mismo texto contra CUALQUIER columna (OR), a
@@ -381,7 +362,7 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   defp datos_solicitados?(socket) do
     socket.assigns.cargar_todos_por_default? or
-      Map.has_key?(socket.assigns.filtros, "__fecha_ids__") or
+      Map.has_key?(socket.assigns.filtros, "__fecha_registro__") or
       contar_filtros_activos(socket.assigns.filtros) > 0 or
       String.trim(socket.assigns.busqueda_general) != ""
   end
@@ -589,12 +570,16 @@ defmodule MetadataAppWeb.CatalogoLive do
         agregar_filtro_ecto(acc, campo, tipo, filtros)
       end)
 
-    # "__fecha_ids__" (ver filtros_por_default/2): no es un campo real de
-    # la tabla, así que no pasa por el reduce de arriba (que solo mira
-    # @columnas) — se suma aparte como filtro por :id.
-    case Map.get(filtros, "__fecha_ids__") do
+    # "__fecha_registro__" (ver filtros_por_default/1) — mismo campo real
+    # "fecha_registro" que ya procesó el reduce de arriba (si el usuario
+    # final lo agregó a mano desde el panel de Filtros normal), pero con
+    # su PROPIA clave para no pisarse con "fecha_registro_desde"/"_hasta"
+    # ni viceversa — son dos filtros independientes sobre la misma
+    # columna, el de acá con bordes de DateTime completos (00:00:00 a
+    # 23:59:59) en vez de un %Date{} suelto.
+    case Map.get(filtros, "__fecha_registro__") do
       nil -> base
-      ids -> Map.put(base, :id, {:en, ids})
+      {desde, hasta} -> Map.put(base, :fecha_registro, {:entre, {desde, hasta}})
     end
   end
 
@@ -657,8 +642,8 @@ defmodule MetadataAppWeb.CatalogoLive do
   # Cuenta campos con un valor realmente puesto (no solo agregados al panel
   # pero todavía vacíos) — un rango cuenta una sola vez aunque tenga
   # _desde/_hasta. Usado para el badge del botón "Filtros". Ignora claves
-  # internas tipo "__fecha_ids__" (filtro por default de fecha, ver
-  # filtros_por_default/2) — no es una fila real del panel, no debe sumar
+  # internas tipo "__fecha_registro__" (filtro por default de fecha, ver
+  # filtros_por_default/1) — no es una fila real del panel, no debe sumar
   # al contador que ve el usuario final.
   defp contar_filtros_activos(filtros) do
     filtros
@@ -1181,6 +1166,11 @@ defmodule MetadataAppWeb.CatalogoLive do
     formatear_agregacion(valor, props)
   end
 
+  # "fecha_registro" (campo de sistema, ver MetaCatalogoGenerico) es un
+  # %DateTime{} crudo — sin esto se veía en ISO 8601 ("2026-08-06T22:03:07Z"),
+  # técnicamente correcto pero difícil de leer de un vistazo.
+  defp formatear_celda(%DateTime{} = valor, _props), do: Calendar.strftime(valor, "%d/%m/%Y %H:%M")
+
   defp formatear_celda(valor, _props), do: valor
 
   # Selector de columnas visibles ("Campos") — a propósito 100% del lado
@@ -1338,18 +1328,6 @@ defmodule MetadataAppWeb.CatalogoLive do
                 {formatear_agregacion(@valores[clave], props)}
               </span>
             <% end %>
-
-            <form :if={numerico? and not @es_consulta?} phx-change="cambiar_mascara_totales" class="flex items-center gap-0.5">
-              <input type="hidden" name="campo" value={clave} />
-              <select name="separador" title="Separador de miles" class="text-[9px] text-gray-400 bg-transparent border-0 p-0 pr-2.5 focus:outline-none focus:ring-0 cursor-pointer">
-                <option value="," selected={Map.get(props, "mascara_separador", ",") == ","}>1,234.56</option>
-                <option value="." selected={Map.get(props, "mascara_separador", ",") == "."}>1.234,56</option>
-              </select>
-              <select name="simbolo" title="Símbolo" class="text-[9px] text-gray-400 bg-transparent border-0 p-0 pr-2.5 focus:outline-none focus:ring-0 cursor-pointer">
-                <option value="" selected={Map.get(props, "mascara_simbolo", "") == ""}>Sin $</option>
-                <option value="$" selected={Map.get(props, "mascara_simbolo", "") == "$"}>$</option>
-              </select>
-            </form>
 
             <% {minimo, maximo} = @minmax_valores[clave] || {nil, nil} %>
             <span :if={minmax_recomendado?} class="text-[11px] font-bold text-gray-700 tabular-nums whitespace-nowrap">

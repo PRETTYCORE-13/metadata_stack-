@@ -22,10 +22,9 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
 
     # "Filtros por default" (bc_motor_live.ex, independiente de
     # cargar_todos_por_default) — acota lo que ve el usuario final por
-    # fecha de ALTA (cuándo se creó cada uno, ver
-    # MetaAuditoria.ids_creados_en_rango/3 — los catálogos generados no
-    # tienen columna de timestamp propia, se resuelve vía la tabla de
-    # auditoría). Modos: "primer_dia_anio" (desde el 1/1 del AÑO de
+    # fecha de ALTA, filtrando directo sobre la columna real
+    # "fecha_registro" (ver MetaCatalogoGenerico, en TODA tabla de
+    # catálogo desde 2026-08-06). Modos: "primer_dia_anio" (desde el 1/1 del AÑO de
     # filtro_default_fecha_valor, elegido por calendario), "ultimo_dia_anio"
     # (hasta el 31/12 del año de filtro_default_fecha_valor), "actual" (el
     # día exacto de filtro_default_fecha_valor, elegido por calendario —

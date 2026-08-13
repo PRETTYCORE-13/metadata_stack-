@@ -104,7 +104,7 @@ defmodule MetadataApp.MetaStateEngine do
 
   defp rechazar_no_editables_transicion(changeset, contexto, todos_los_campos, editables) do
     editables_set = MapSet.new(editables)
-    protegidos = ["estado_id" | todos_los_campos]
+    protegidos = ["estado_id", "fecha_registro" | todos_los_campos]
 
     contexto
     |> Map.keys()
@@ -548,7 +548,7 @@ defmodule MetadataApp.MetaStateEngine do
       schema_mod
       |> struct()
       |> schema_mod.changeset(attrs)
-      |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+      |> Ecto.Changeset.change(%{insert_guid: generar_guid(), fecha_registro: DateTime.utc_now() |> DateTime.truncate(:second)})
 
     if changeset.valid?, do: {:ok, changeset}, else: {:error, changeset}
   end

@@ -1,9 +1,8 @@
 defmodule MetadataApp.FiltrosDefault do
   @moduledoc """
   Toda la lógica de "Filtros por default" (Header.filtro_default_fecha_modo/
-  filtro_default_fecha_valor/filtro_default_fecha_valor_hasta) — separado de
-  `MetaAuditoria` (que solo sabe resolver "qué IDs se crearon en tal rango")
-  y de `BcMotorLive`/`FiltrosDefaultComponents` (que solo dibujan) para que
+  filtro_default_fecha_valor/filtro_default_fecha_valor_hasta) — separado
+  de `BcMotorLive`/`FiltrosDefaultComponents` (que solo dibujan) para que
   cualquier otra pantalla que sume su propio tipo de "filtro por default"
   más adelante reuse este módulo en vez de duplicar los `case modo do`.
 
@@ -26,11 +25,12 @@ defmodule MetadataApp.FiltrosDefault do
   @doc """
   Traduce modo ("primer_dia_anio"/"ultimo_dia_anio"/"actual"/"rango") +
   valor/valor_hasta (Date, elegidos por calendario) a un {desde, hasta} en
-  UTC listo para MetaAuditoria.ids_creados_en_rango/3. "actual" usa el día
-  completo de `valor`; "primer_dia_anio" y "ultimo_dia_anio" usan el AÑO de
-  `valor` para calcular el 1/1 o 31/12 correspondiente. nil si el modo no
-  matchea ninguno de los cuatro (filtro de fecha apagado) o si todavía
-  falta alguna fecha que ese modo necesita.
+  UTC — filtro directo contra la columna real "fecha_registro" (ver
+  CatalogoLive.filtros_por_default/1). "actual" usa el día completo de
+  `valor`; "primer_dia_anio" y "ultimo_dia_anio" usan el AÑO de `valor`
+  para calcular el 1/1 o 31/12 correspondiente. nil si el modo no matchea
+  ninguno de los cuatro (filtro de fecha apagado) o si todavía falta
+  alguna fecha que ese modo necesita.
   """
   def rango_fecha(modo, valor, valor_hasta \\ nil)
 

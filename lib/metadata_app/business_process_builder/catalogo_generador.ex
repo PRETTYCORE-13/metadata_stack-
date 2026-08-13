@@ -23,13 +23,15 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
     if File.exists?(schema_path) do
       asegurar_estado_id(schema_context_name)
+      asegurar_fecha_registro(schema_context_name)
+      asegurar_detalle_fecha_registro(header)
       asegurar_campos_nuevos(schema_context_name)
       {:ok, %{tabla: schema_context_name, ya_existia: true}}
     else
       detalles =
         schema_context_name
         |> MetaSchemaContext.listar_detalles()
-        |> Enum.reject(&(&1.schema_context_field == "id"))
+        |> Enum.reject(&(&1.schema_context_field in ["id", "fecha_registro"]))
 
       case detalles do
         [] ->
@@ -61,6 +63,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
             # Best-effort: si falla, el catálogo ya está creado igual, que
             # es lo que de verdad importa.
             MetaPlantillas.crear_plantilla_default(header)
+            asegurar_detalle_fecha_registro(header)
 
             {:ok, %{tabla: schema_context_name, modulo: modulo, ya_existia: false}}
           end
@@ -233,6 +236,51 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     :ok
   end
 
+  # Mismo criterio que asegurar_estado_id/1 de arriba — un catálogo
+  # generado ANTES de que fecha_registro existiera (2026-08-06) no tiene
+  # esta columna todavía; se agrega sola la próxima vez que gen.catalogos
+  # lo toca. Backfill de las filas YA existentes (desde meta_schema_auditoria)
+  # va aparte, en una migración de una sola vez — ver
+  # priv/repo/migrations/*_backfill_fecha_registro.exs.
+  defp asegurar_fecha_registro(schema_context_name) do
+    Repo.query!("""
+    ALTER TABLE #{schema_context_name}
+    ADD COLUMN IF NOT EXISTS fecha_registro timestamptz
+    """)
+
+    :ok
+  end
+
+  # fecha_registro es un campo de SISTEMA (fuera de @campos/meta_schema_detail
+  # normal, ver MetaCatalogoGenerico) — pero para que el usuario final lo
+  # vea en Get View/tabla como cualquier otro campo real (a diferencia de
+  # estado_id/trn, que son puramente internos), necesita SU PROPIA fila en
+  # meta_schema_detail igual. "editable" => false porque no hay ningún
+  # camino para cambiarlo por PATCH (ver rechazar_no_editables/4 en
+  # CatalogoGenerico). Idempotente — no duplica la fila si ya existe (ej.
+  # gen.catalogos corriendo de nuevo sobre un catálogo que ya la tiene).
+  defp asegurar_detalle_fecha_registro(header) do
+    ya_existe? =
+      header.schema_context_name
+      |> MetaSchemaContext.listar_detalles()
+      |> Enum.any?(&(&1.schema_context_field == "fecha_registro"))
+
+    unless ya_existe? do
+      MetaSchemaContext.agregar_detalle(header, %{
+        "schema_context_field" => "fecha_registro",
+        "schema_context_properties" => %{
+          "etiqueta" => "Fecha de registro",
+          "tipo" => "date",
+          "orden" => 9999,
+          "visible" => true,
+          "editable" => false
+        }
+      })
+    end
+
+    :ok
+  end
+
   # Agrega al catálogo YA generado los campos de meta_schema_detail que
   # todavía no son columnas físicas de la tabla — permite extender un
   # catálogo existente (ej. sumarle un campo nuevo) sin borrar y recrear
@@ -245,7 +293,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     detalles =
       schema_context_name
       |> MetaSchemaContext.listar_detalles()
-      |> Enum.reject(&(&1.schema_context_field == "id"))
+      |> Enum.reject(&(&1.schema_context_field in ["id", "fecha_registro"]))
 
     campos =
       for detalle <- detalles do
@@ -676,6 +724,8 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
           add :delete_guid, :string, size: 32, null: true
 
           add :estado_id, references(:meta_schema_estados), null: true
+
+          add :fecha_registro, :utc_datetime, null: true
     #{columnas_trn}#{columnas_encab}
         end
 

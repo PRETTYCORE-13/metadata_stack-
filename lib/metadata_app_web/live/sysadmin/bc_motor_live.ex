@@ -822,6 +822,27 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
+  # "Máscara" — separador de miles ("," 1,234.56 / "." 1.234,56) y símbolo
+  # ("$" antepuesto o ninguno) con que CatalogoLive formatea la fila de
+  # Resumen (formatear_agregacion/2 ahí lee estas mismas dos claves).
+  # Antes se elegía inline en esa misma fila (cualquier usuario final la
+  # podía tocar); ahora es un ajuste de admin, igual que Mín. Máx./Total
+  # 25/Totalizado — mismo criterio: formato es una decisión de quien
+  # configura el catálogo, no de quien solo lo mira.
+  def handle_event("cambiar_mascara", %{"campo" => campo, "separador" => separador, "simbolo" => simbolo}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+
+    props =
+      detalle.schema_context_properties
+      |> Map.put("mascara_separador", separador)
+      |> Map.put("mascara_simbolo", simbolo)
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la máscara de \"#{campo}\".")}
+    end
+  end
+
   # --- Get View: qué campos ve el usuario final en la tabla del catálogo ------
 
   def handle_event("guardar_get_view", params, socket) do
@@ -2154,7 +2175,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       </div>
       <div class="p-3 pt-4 overflow-x-auto">
         <p class="text-gray-500 mb-2">
-          Qué campos calculan un total en la fila de Resumen del catálogo — Suma/Promedio/Conteo si el campo es numérico, Conteo si no. "Mín. Máx.", "Total 25" y "Totalizado" solo aplican a campos numéricos (integer/decimal).
+          Qué campos calculan un total en la fila de Resumen del catálogo — Suma/Promedio/Conteo si el campo es numérico, Conteo si no. "Mín. Máx.", "Total 25", "Totalizado" y "Máscara" solo aplican a campos numéricos (integer/decimal).
         </p>
 
         <%= if @filtros_activos == [] do %>
@@ -2167,6 +2188,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th :if={@hay_numericos?} class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Mín. Máx.</th>
                 <th :if={@hay_numericos?} class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Total 25</th>
                 <th :if={@hay_numericos?} class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Totalizado</th>
+                <th :if={@hay_numericos?} class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Máscara</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Valor por default</th>
                 <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Bloqueado</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
@@ -2233,6 +2255,23 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                       >
                         Totalizado
                       </button>
+                    <% else %>
+                      <span class="text-gray-300 text-[11px]">—</span>
+                    <% end %>
+                  </td>
+                  <td :if={@hay_numericos?} class="px-1.5 py-1 text-center">
+                    <%= if numerico? do %>
+                      <form phx-change="cambiar_mascara" class="flex items-center justify-center gap-0.5">
+                        <input type="hidden" name="campo" value={c.schema_context_field} />
+                        <select name="separador" title="Separador de miles" class="text-[11px] border border-gray-300 rounded px-1 py-0.5">
+                          <option value="," selected={Map.get(props, "mascara_separador", ",") == ","}>1,234.56</option>
+                          <option value="." selected={Map.get(props, "mascara_separador", ",") == "."}>1.234,56</option>
+                        </select>
+                        <select name="simbolo" title="Símbolo" class="text-[11px] border border-gray-300 rounded px-1 py-0.5">
+                          <option value="" selected={Map.get(props, "mascara_simbolo", "") == ""}>Sin $</option>
+                          <option value="$" selected={Map.get(props, "mascara_simbolo", "") == "$"}>$</option>
+                        </select>
+                      </form>
                     <% else %>
                       <span class="text-gray-300 text-[11px]">—</span>
                     <% end %>
@@ -2343,9 +2382,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # se puede usar sola o las dos juntas), cada una en su propia caja:
   #   - "Campos por default": trae TODOS los registros y columnas sin
   #     esperar filtro/búsqueda.
-  #   - "Filtros por default": acota por fecha de alta (ver Header y
-  #     MetaAuditoria.ids_creados_en_rango/3 — los catálogos generados no
-  #     tienen columna de timestamp propia, se resuelve vía auditoría).
+  #   - "Filtros por default": acota por fecha de alta, filtrando directo
+  #     sobre la columna real "fecha_registro" (ver Header y
+  #     MetaCatalogoGenerico — en TODA tabla de catálogo).
   attr :header, :any, required: true
 
   defp panel_campos_default(assigns) do
