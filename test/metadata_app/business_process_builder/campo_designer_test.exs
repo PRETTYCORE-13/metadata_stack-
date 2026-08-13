@@ -46,7 +46,11 @@ defmodule MetadataApp.BusinessProcessBuilder.CampoDesignerTest do
         |> Ecto.Changeset.cast(%{meta_fixture_cliente_nombre: "Juan Perez"}, [:meta_fixture_cliente_nombre])
         |> MetaCatalogoGenerico.aplicar_validaciones([{:meta_fixture_cliente_nombre, :string, %{}}])
 
-      refute Ecto.Changeset.get_change(changeset, :meta_fixture_cliente_nombre)
+      # get_change/2 siempre trae "Juan Perez" acá -- cast/3 ya lo registra
+      # como cambio contra el nil default del struct, con o sin
+      # transformación. Lo que hay que probar es que el VALOR quede igual
+      # a lo tecleado (aplicar_transformacion/3 hace `do: cs` sin tocarlo).
+      assert Ecto.Changeset.get_change(changeset, :meta_fixture_cliente_nombre) == "Juan Perez"
     end
   end
 
