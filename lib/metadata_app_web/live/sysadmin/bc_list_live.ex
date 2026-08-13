@@ -197,8 +197,34 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     end
   end
 
+  # Mismo motivo que "cancelar_wizard_publicar" con procesando?:true: no
+  # dejar cerrar el modal mientras el despublicar está en vuelo (armando
+  # bundle, llamadas de red a GitHub) -- cerrar acá no cancela el Task, solo
+  # perdería la referencia visual a que sigue corriendo.
+  def handle_event("cancelar_eliminar", _params, %{assigns: %{accion_eliminar: %{tipo: :despublicar, procesando?: true}}} = socket),
+    do: {:noreply, socket}
+
   def handle_event("cancelar_eliminar", _params, socket) do
     {:noreply, assign(socket, :accion_eliminar, nil)}
+  end
+
+  # Contraparte de "confirmar_publicar" para un catálogo pty_*/demo100_* ya
+  # borrado local -- reutiliza los mismos MetaPublicador.armar_bundle/
+  # persistir_bundle/disparar_deploy que mix motor.despublicar (y que
+  # "Publicar"), solo que acá ya no queda .ex/meta/motor/reglas del
+  # catálogo (se borraron con "Eliminar" de recién) -- lo único que
+  # armar_bundle/1 encuentra es la migración de DROP, que es justo lo que
+  # tiene que viajar. start_async/3 por el mismo motivo que publicar_paquete:
+  # tarda unos segundos de verdad (tar, red), no bloquear el proceso LiveView.
+  def handle_event("confirmar_despublicar", _params, socket) do
+    %{tabla: tabla} = socket.assigns.accion_eliminar
+
+    socket =
+      socket
+      |> update(:accion_eliminar, &Map.merge(&1, %{procesando?: true, error: nil}))
+      |> start_async(:despublicar_catalogo, fn -> despublicar_catalogo(tabla) end)
+
+    {:noreply, socket}
   end
 
   # Una carpeta no tiene tabla ni filas que perder — a diferencia de
@@ -340,7 +366,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         {:ok, _resultado} ->
           {:noreply,
            socket
-           |> assign(:accion_eliminar, nil)
+           |> assign(:accion_eliminar, siguiente_paso_tras_eliminar(tabla, socket.assigns.accion_eliminar.label))
            |> put_flash(:info, "Catálogo #{tabla} eliminado.")
            |> cargar_headers()}
 
@@ -350,6 +376,19 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
            |> assign(:accion_eliminar, nil)
            |> put_flash(:error, "No se pudo eliminar #{tabla}: #{inspect(motivo)}")}
       end
+    end
+  end
+
+  # Un catálogo pty_*/demo100_* nunca pasa por git (.gitignore, ver
+  # docs/roadmap.md #7) -- ni su .ex, ni sus migraciones, ni su borrado.
+  # commit/push no alcanza para que esto llegue a producción, así que acá
+  # mismo se ofrece el paso siguiente ("despublicar", mix motor.despublicar
+  # equivalente en la UI) en vez de dejarlo como un pendiente invisible.
+  # Un catálogo normal SÍ sincroniza solo por el pipeline de git+CI de
+  # siempre -- no necesita este paso.
+  defp siguiente_paso_tras_eliminar(tabla, label) do
+    if String.starts_with?(tabla, "pty_") or String.starts_with?(tabla, "demo100_") do
+      %{tipo: :despublicar, tabla: tabla, label: label, procesando?: false, error: nil}
     end
   end
 
@@ -997,6 +1036,40 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   def handle_async(:publicar_paquete, {:exit, razon}, socket) do
     {:noreply,
      update(socket, :wizard_publicar, &Map.merge(&1, %{error: "Error inesperado: #{inspect(razon)}", procesando?: false}))}
+  end
+
+  def handle_async(:despublicar_catalogo, {:ok, {:ok, _salida}}, socket) do
+    tabla = socket.assigns.accion_eliminar.tabla
+
+    {:noreply,
+     socket
+     |> assign(:accion_eliminar, nil)
+     |> put_flash(
+       :info,
+       "Despublicado — el borrado de #{tabla} va camino a producción. Seguí el progreso con \"gh run watch\" o \"gh run list\"."
+     )}
+  end
+
+  def handle_async(:despublicar_catalogo, {:ok, {:error, mensaje}}, socket) do
+    {:noreply, update(socket, :accion_eliminar, &Map.merge(&1, %{error: mensaje, procesando?: false}))}
+  end
+
+  def handle_async(:despublicar_catalogo, {:exit, razon}, socket) do
+    {:noreply,
+     update(socket, :accion_eliminar, &Map.merge(&1, %{error: "Error inesperado: #{inspect(razon)}", procesando?: false}))}
+  end
+
+  # Espejo de MetadataApp.MetaPublicador (armar_bundle/1's rutas_de/1): con
+  # el .ex/meta/motor/reglas ya borrados por Eliminar, lo único que queda
+  # en disco para este catálogo es la migración de DROP -- el bundle se
+  # arma solo con eso, sin código de empaquetado nuevo (mismo camino que
+  # "mix motor.despublicar", ver lib/mix/tasks/motor.despublicar.ex).
+  defp despublicar_catalogo(tabla) do
+    with {:ok, bundle_path} <- MetaPublicador.armar_bundle([tabla]),
+         {:ok, _tags} <- MetaPublicador.persistir_bundle([tabla], bundle_path),
+         {:ok, salida} <- MetaPublicador.disparar_deploy([tabla], bundle_path) do
+      {:ok, salida}
+    end
   end
 
   # Orquesta el paquete completo desde la UI, sin pasar por ningún
@@ -2018,6 +2091,61 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             Eliminar
           </button>
         </div>
+      </div>
+    </div>
+    """
+  end
+
+  # Paso siguiente tras borrar un catálogo pty_*/demo100_* local (ver
+  # siguiente_paso_tras_eliminar/2) -- ofrece llevar ese borrado a
+  # producción ya mismo, sin salir de BC List. "Omitir" no deshace nada:
+  # el catálogo ya está borrado acá, solo pospone la sincronización con
+  # producción para hacerla después con "mix motor.despublicar" a mano.
+  defp modal_eliminar(%{accion: %{tipo: :despublicar}} = assigns) do
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+        <h2 class="text-lg font-bold text-gray-900 mb-2">Despublicar de producción</h2>
+
+        <%= if @accion.procesando? do %>
+          <div class="flex flex-col items-center justify-center py-10 gap-3">
+            <svg class="animate-spin h-8 w-8 text-purple-600" viewBox="0 0 24 24" fill="none">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+            </svg>
+            <p class="text-sm font-semibold text-gray-700">Procesando…</p>
+            <p class="text-xs text-gray-500 text-center max-w-xs">
+              No cierres esta ventana — se está armando el paquete y disparando el deploy a producción.
+            </p>
+          </div>
+        <% else %>
+          <p class="text-sm text-gray-700 mb-4">
+            <strong>{@accion.label}</strong> ({@accion.tabla}) ya se borró acá, pero es un catálogo
+            <span class="font-mono">pty_*</span> — nunca pasa por git, así que <code>commit</code>/<code>push</code>
+            no alcanza. Producción todavía lo tiene.
+          </p>
+
+          <div :if={@accion.error} class="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2">
+            {@accion.error}
+          </div>
+
+          <div class="flex justify-end gap-3">
+            <button
+              type="button"
+              phx-click="cancelar_eliminar"
+              class="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50"
+            >
+              Omitir
+            </button>
+            <button
+              type="button"
+              phx-click="confirmar_despublicar"
+              class="px-4 py-2 rounded bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700"
+            >
+              Despublicar de producción
+            </button>
+          </div>
+        <% end %>
       </div>
     </div>
     """
