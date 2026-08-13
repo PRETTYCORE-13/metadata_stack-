@@ -203,6 +203,32 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     end
   end
 
+  @doc """
+  Tamaño real de cada columna, tal como quedó en Postgres — a propósito
+  `information_schema`, no la metadata: un campo puede no tener
+  `"longitud"`/`"precision"`/`"escala"` guardados en
+  `schema_context_properties` (nunca se tocó esa capacidad al crearlo) y
+  aun así la columna real cayó en el default del motor (varchar(255), ver
+  `construir_opciones/2`) — leer la metadata ahí mentiría por omisión.
+  `%{"campo" => "varchar(255)" | "10,2" | "sin límite" | nil}` — `nil`
+  para tipos sin concepto de tamaño (integer/boolean/date/time).
+  """
+  def info_longitud_columnas(schema_context_name) do
+    %{rows: filas} =
+      Repo.query!(
+        "select column_name, data_type, character_maximum_length, numeric_precision, numeric_scale from information_schema.columns where table_name = $1",
+        [schema_context_name]
+      )
+
+    Map.new(filas, fn [campo, tipo, longitud, precision, escala] -> {campo, formatear_tamano_columna(tipo, longitud, precision, escala)} end)
+  end
+
+  defp formatear_tamano_columna("character varying", longitud, _precision, _escala) when is_integer(longitud), do: "varchar(#{longitud})"
+  defp formatear_tamano_columna("text", _longitud, _precision, _escala), do: "sin límite"
+  defp formatear_tamano_columna("numeric", _longitud, precision, escala) when is_integer(precision) and is_integer(escala), do: "#{precision},#{escala}"
+  defp formatear_tamano_columna("numeric", _longitud, _precision, _escala), do: "sin límite"
+  defp formatear_tamano_columna(_tipo, _longitud, _precision, _escala), do: nil
+
   # Quita un campo de un catálogo YA generado: soft-delete del Detail +
   # DROP COLUMN real (migración hacia adelante, mismo criterio que
   # crear_migracion_drop/1 — nunca se toca la migración de creación) +
@@ -473,6 +499,12 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   # antes de insertarse SIN comillas — insertar ese texto crudo sin validar
   # sería, en los hechos, ejecutar lo que sea que alguien haya escrito ahí.
   defp formatear_default(_tipo, valor) when valor in [nil, ""], do: nil
+  # "hoy"/"ahora" (ver MetaCatalogoGenerico.resolver_valor_default/2) son
+  # sentinelas que la APP resuelve en cada alta -- nunca un default de
+  # columna real (Postgres rechazaría un default de fecha que sea texto
+  # literal). La columna queda nullable, igual que "sin default" (rama de
+  # abajo) -- el valor real siempre lo pone forzar_defaults/2, no la BD.
+  defp formatear_default(tipo, valor) when tipo in [:date, :time] and valor in ["hoy", "ahora"], do: nil
   defp formatear_default(tipo, valor) when tipo in [:string, :date, :time], do: inspect(valor)
   defp formatear_default(:boolean, valor) when valor in ["true", "false"], do: valor
   defp formatear_default(:boolean, _valor), do: nil
@@ -697,9 +729,15 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     |> Map.put(:escala, Map.get(propiedades, "escala"))
   end
 
+  # "valores" (compile-time, ver validate_inclusion en
+  # MetaCatalogoGenerico.aplicar_valores/3) tiene que ser la lista de
+  # valores REALMENTE guardables — para una Lista "Mapeada" (Diseñador de
+  # campos: valores => [%{"valor"=>, "descripcion"=>}, ...]) eso es el
+  # lado "valor" (el código), nunca la descripción; para una Lista
+  # "Simple" (lista de string) el texto mismo ya es el valor guardable.
   defp construir_opciones("enum", propiedades) do
     base_opciones(propiedades)
-    |> Map.put(:valores, Map.fetch!(propiedades, "valores"))
+    |> Map.put(:valores, valores_guardables(Map.fetch!(propiedades, "valores")))
   end
 
   defp construir_opciones("referencia", propiedades) do
@@ -711,6 +749,13 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   end
 
   defp construir_opciones(_tipo, propiedades), do: base_opciones(propiedades)
+
+  defp valores_guardables(valores) do
+    Enum.map(valores, fn
+      %{"valor" => v} -> v
+      v when is_binary(v) -> v
+    end)
+  end
 
   defp base_opciones(propiedades) do
     opcional = Map.get(propiedades, "opcional", false)

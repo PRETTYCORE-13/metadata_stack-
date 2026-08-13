@@ -120,6 +120,32 @@ defmodule MetadataApp.MetaPlantillas do
     )
   end
 
+  @doc """
+  Plantillas que un admin marcó a propósito como elegibles por el usuario
+  final (`disponible_multi_vista`) — ver el selector "Vista" de
+  `FichaLive`. Independiente de `estado`: una plantilla puede ser
+  "disponible" estando en borrador (el admin la sigue puliendo) o
+  publicada (redundante con la que ya se ve por default, pero inofensivo).
+  Nunca devuelve TODAS las plantillas del catálogo — ese es justo el
+  comportamiento que se pidió evitar (un usuario final viendo borradores
+  que nadie eligió mostrarle).
+  """
+  def listar_disponibles_multi_vista(header_id) do
+    from(p in Plantilla,
+      where: p.meta_schema_header_id == ^header_id and p.disponible_multi_vista == true and is_nil(p.delete_guid),
+      order_by: p.nombre
+    )
+    |> Repo.all()
+  end
+
+  @doc "Prende/apaga `disponible_multi_vista` de `plantilla` — botón del Constructor, ver PlantillaConstructorLive."
+  def alternar_disponible_multi_vista(%Plantilla{} = plantilla) do
+    plantilla
+    |> Plantilla.changeset(%{"disponible_multi_vista" => !plantilla.disponible_multi_vista})
+    |> Ecto.Changeset.change(%{update_guid: generar_guid()})
+    |> Repo.update()
+  end
+
   # --- Árbol (puro, sin DB) ---------------------------------------------
 
   @propiedades_default %{

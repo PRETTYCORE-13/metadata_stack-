@@ -41,6 +41,13 @@ defmodule MetadataAppWeb.FichaLive do
   alias MetadataAppWeb.AdminNav
   alias MetadataAppWeb.GridEditableComponents
 
+  # "Formato de visualización" (Diseñador de campos, campos date/hora) —
+  # ver formatear_fecha/2 más abajo. Solo afecta cómo se MUESTRA el valor
+  # ya guardado (esta lista) — el selector nativo para editar sigue igual,
+  # `<input type="date">` no puede mostrar "15 de agosto" mientras se
+  # edita (limitación real del navegador, no de la app).
+  @meses_es ~w(enero febrero marzo abril mayo junio julio agosto septiembre octubre noviembre diciembre)
+
   def mount(%{"tabla" => tabla, "id" => id} = params, _session, socket) do
     socket =
       socket
@@ -137,6 +144,8 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:header, header)
          |> assign(:es_detalle?, es_detalle?)
          |> assign(:plantilla, plantilla)
+         |> assign(:vistas_disponibles, MetaPlantillas.listar_disponibles_multi_vista(header.id))
+         |> assign(:contexto_alcance, resolver_contexto_alcance_activo(schema_mod, socket.assigns[:current_scope]))
          |> assign(:tab, "datos")
          |> assign(:registro, %{})
          |> assign(:columnas, columnas)
@@ -181,6 +190,23 @@ defmodule MetadataAppWeb.FichaLive do
 
   def handle_event("cambiar_tab", %{"tab" => tab}, socket) do
     {:noreply, assign(socket, :tab, tab)}
+  end
+
+  # Selector "Vista" (Multi vista) — nunca confía en el id crudo del
+  # cliente: solo acepta uno que ya esté en @vistas_disponibles, la lista
+  # que el propio servidor calculó (MetaPlantillas.listar_disponibles_multi_vista/1).
+  # "" vuelve a la publicada de siempre. Vive solo en el socket (mismo
+  # criterio que @tab) -- no toca @plantilla_preview_id/?plantilla_id=,
+  # que sigue siendo el atajo aparte de "Vista previa" del Constructor.
+  def handle_event("cambiar_vista", %{"id" => ""}, socket) do
+    {:noreply, assign(socket, :plantilla, MetaPlantillas.obtener_plantilla_publicada(socket.assigns.header.id))}
+  end
+
+  def handle_event("cambiar_vista", %{"id" => id}, socket) do
+    case Enum.find(socket.assigns.vistas_disponibles, &(&1.id == String.to_integer(id))) do
+      nil -> {:noreply, socket}
+      plantilla -> {:noreply, assign(socket, :plantilla, plantilla)}
+    end
   end
 
   # No hay más modo edición separado — los campos editables ya se muestran
@@ -1011,6 +1037,64 @@ defmodule MetadataAppWeb.FichaLive do
     Ecto.NoResultsError -> MetaPlantillas.obtener_plantilla_publicada(header_id)
   end
 
+  # Badges de contexto (Sucursal/Almacén/Unidad de venta) del encabezado —
+  # el DEL REGISTRO (branch_id/inventory_id/sales_unit_id ya guardados),
+  # nunca el de la banda de sesión actual (current_scope), que puede ser
+  # otro. Solo aparece la dimensión que ese catálogo realmente tenga
+  # habilitada (mismo criterio no-op que CatalogoGenerico.con_columna/3) y
+  # solo si el registro tiene un valor cargado ahí.
+  @dimensiones_alcance [{:branch_id, "Sucursal", :branch}, {:inventory_id, "Almacén", :inventory}, {:sales_unit_id, "Unidad de venta", :sales_unit}]
+
+  defp resolver_contexto_alcance(schema_mod, registro) do
+    campos = schema_mod.__schema__(:fields)
+
+    for {campo, etiqueta, dimension} <- @dimensiones_alcance,
+        campo in campos,
+        valor_id = Map.get(registro, campo),
+        not is_nil(valor_id) do
+      {etiqueta, etiqueta_dimension_alcance(dimension, valor_id)}
+    end
+  end
+
+  defp etiqueta_dimension_alcance(:branch, id) do
+    case MetadataApp.Autenticacion.obtener_branch(id) do
+      nil -> "##{id}"
+      branch -> branch.branch_name
+    end
+  end
+
+  defp etiqueta_dimension_alcance(:inventory, id) do
+    case MetadataApp.Autenticacion.obtener_inventory_location(id) do
+      nil -> "##{id}"
+      inventory_location -> inventory_location.inventory_name
+    end
+  end
+
+  defp etiqueta_dimension_alcance(:sales_unit, id) do
+    case MetadataApp.Autenticacion.obtener_sales_unit(id) do
+      nil -> "##{id}"
+      sales_unit -> sales_unit.sales_unit_name
+    end
+  end
+
+  # Mismos badges, para modo :alta (todavía no hay registro guardado, así
+  # que no hay branch_id/inventory_id/sales_unit_id que leer) — acá SÍ es
+  # la banda de sesión activa (Scope.branch_activo, etc., ya structs
+  # completos, sin ir a buscar de nuevo), a propósito: es exactamente lo
+  # que estampar_jerarquia_activa_en_attrs/3 va a grabar en el registro
+  # cuando se guarde, mostrado de antemano.
+  defp resolver_contexto_alcance_activo(schema_mod, scope) do
+    campos = schema_mod.__schema__(:fields)
+
+    [
+      {:branch_id, "Sucursal", scope && scope.branch_activo, & &1.branch_name},
+      {:inventory_id, "Almacén", scope && scope.inventory_location_activo, & &1.inventory_name},
+      {:sales_unit_id, "Unidad de venta", scope && scope.sales_unit_activo, & &1.sales_unit_name}
+    ]
+    |> Enum.filter(fn {campo, _etiqueta, activo, _nombre} -> campo in campos and not is_nil(activo) end)
+    |> Enum.map(fn {_campo, etiqueta, activo, nombre} -> {etiqueta, nombre.(activo)} end)
+  end
+
   defp cargar_registro(socket, registro) do
     %{tabla: tabla, header: header, es_detalle?: es_detalle?} = socket.assigns
 
@@ -1069,7 +1153,9 @@ defmodule MetadataAppWeb.FichaLive do
 
     socket
     |> assign(:registro, registro)
+    |> assign(:contexto_alcance, resolver_contexto_alcance(socket.assigns.schema_mod, registro))
     |> assign(:plantilla, plantilla_a_mostrar(socket, header.id))
+    |> assign(:vistas_disponibles, MetaPlantillas.listar_disponibles_multi_vista(header.id))
     |> assign(:columnas, columnas)
     |> assign(:estados_por_id, estados_por_id)
     |> assign(:mostrar_estado?, estados_por_id != %{})
@@ -1404,11 +1490,23 @@ defmodule MetadataAppWeb.FichaLive do
         </span>
       </div>
 
+      <.link :if={@modo == :alta} navigate={@header.schema_context_nav}
+        class="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 hover:underline mb-2">
+        ← Regresar
+      </.link>
+
       <div class="bg-white border border-gray-200 rounded-2xl shadow-sm px-4 py-2.5 mb-3">
         <div class="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <div class="flex items-center flex-wrap gap-2">
               <h1 :if={@modo == :alta} class="text-base font-bold text-gray-900">Nuevo — {@header.schema_context_label}</h1>
+              <div :if={@modo == :alta} class="flex items-center flex-wrap gap-2 text-xs text-gray-500">
+                <span :for={{etiqueta, valor} <- @contexto_alcance}
+                  class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-500"
+                  title={"#{etiqueta} — se va a guardar con este registro"}>
+                  {valor}
+                </span>
+              </div>
               <h1 :if={@modo == :ver} class="text-base font-bold text-gray-900">{@header.schema_context_label} #{@registro.id}</h1>
               <div :if={@modo == :ver} class="flex items-center flex-wrap gap-2 text-xs text-gray-500">
                 <span :if={@mostrar_estado?} class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 font-semibold">
@@ -1431,11 +1529,27 @@ defmodule MetadataAppWeb.FichaLive do
                 <span :if={@header.schema_es_transaccional and !@trn_registro} class="text-gray-400 italic">
                   Sin TRN (registro anterior a activar TRN en este catálogo)
                 </span>
+                <span :for={{etiqueta, valor} <- @contexto_alcance}
+                  class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-500"
+                  title={etiqueta}>
+                  {valor}
+                </span>
               </div>
             </div>
           </div>
 
           <div class="flex items-center gap-2 flex-wrap">
+            <select :if={@vistas_disponibles != []} phx-change="cambiar_vista" name="id"
+              title="Elegí cómo ver este registro — el admin del catálogo definió estas vistas alternativas."
+              class="border border-gray-300 rounded-lg text-xs px-2 py-1 text-gray-700">
+              <option value="" selected={is_nil(@plantilla) or not Enum.any?(@vistas_disponibles, &(&1.id == @plantilla.id))}>
+                Vista: Predeterminada
+              </option>
+              <option :for={v <- @vistas_disponibles} value={v.id} selected={@plantilla && @plantilla.id == v.id}>
+                Vista: {v.nombre}
+              </option>
+            </select>
+
             <button :for={accion <- @acciones_externas} type="button"
               phx-click="ejecutar_accion_externa" phx-value-accion_id={accion.id}
               disabled={!is_nil(@accion_externa_en_curso)}
@@ -2278,7 +2392,13 @@ defmodule MetadataAppWeb.FichaLive do
           {valor_mostrado, deshabilitado_dependencia}
       end
 
-    valor_legible = if props["tipo"] == "referencia", do: etiqueta_opcion(opciones_referencia, valor_actual), else: valor_actual
+    valor_legible =
+      cond do
+        props["tipo"] == "referencia" -> etiqueta_opcion(opciones_referencia, valor_actual)
+        props["tipo"] in ["date", "hora"] and props["formato_fecha"] not in [nil, ""] -> formatear_fecha(valor_actual, props["formato_fecha"])
+        props["tipo"] == "enum" -> etiqueta_enum(props["valores"], valor_actual)
+        true -> valor_actual
+      end
 
     assigns =
       assigns
@@ -2331,6 +2451,34 @@ defmodule MetadataAppWeb.FichaLive do
       {_id, etiqueta} -> etiqueta
       nil -> "##{id}"
     end
+  end
+
+  # "Formato de visualización" — presets tipo DevExpress (Fecha Corta/
+  # Larga, Mes y día, Año y mes, Hora Corta). Nombres de mes en español a
+  # mano (sin librería de localización en el proyecto) — sale del mismo
+  # `Date`/`Time` ya casteado por Ecto, nunca reparsea un string.
+  defp formatear_fecha(nil, _modo), do: nil
+  defp formatear_fecha(%Date{} = fecha, "corta"), do: Calendar.strftime(fecha, "%d/%m/%Y")
+  defp formatear_fecha(%Date{} = fecha, "larga"), do: "#{fecha.day} de #{mes_es(fecha.month)} de #{fecha.year}"
+  defp formatear_fecha(%Date{} = fecha, "mes_dia"), do: "#{fecha.day} de #{mes_es(fecha.month)}"
+  defp formatear_fecha(%Date{} = fecha, "anio_mes"), do: "#{String.capitalize(mes_es(fecha.month))} #{fecha.year}"
+  defp formatear_fecha(%Time{} = hora, "hora_corta"), do: Calendar.strftime(hora, "%H:%M")
+  defp formatear_fecha(valor, _modo), do: valor
+
+  defp mes_es(numero), do: Enum.at(@meses_es, numero - 1)
+
+  # Lista "Mapeada" (Diseñador de campos): en modo solo lectura hay que
+  # mostrar la DESCRIPCIÓN, no el código guardado — mismo criterio que
+  # etiqueta_opcion/2 para referencia. Lista "Simple" (lista de string):
+  # el valor guardado y lo que se muestra ya son lo mismo, no hay nada
+  # que resolver.
+  defp etiqueta_enum(nil, valor), do: valor
+
+  defp etiqueta_enum(valores, valor) do
+    Enum.find_value(valores, valor, fn
+      %{"valor" => v, "descripcion" => d} -> v == valor && d
+      v when is_binary(v) -> v == valor && v
+    end)
   end
 
   attr :relaciones, :list, required: true

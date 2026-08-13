@@ -13,7 +13,12 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
   #   :valor_default     — solo con opcional != true: si el campo llega vacío,
   #                        se fuerza este valor en vez de rechazar el cambio
   #                        (ver forzar_defaults/2) — "obligatorio" blando, sin
-  #                        tocar la columna física (esa sigue nullable)
+  #                        tocar la columna física (esa sigue nullable).
+  #                        Para :date/:time acepta los sentinelas "hoy"/
+  #                        "ahora" -- se resuelven a Date.utc_today()/
+  #                        Time.utc_now() EN CADA alta (ver
+  #                        resolver_valor_default/2), no a la fecha en que
+  #                        se configuró el campo.
   defmacro __using__(opts) do
     tabla = Keyword.fetch!(opts, :tabla)
     campos_ast = Keyword.fetch!(opts, :campos)
@@ -171,21 +176,25 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
   # vacío -- es una elección legítima de quien carga el dato, no un hueco
   # que forzar a rellenar.
   def forzar_defaults(attrs, campos_meta) do
-    Enum.reduce(campos_meta, attrs, fn {campo, _tipo, opciones}, acc ->
-      aplicar_default_forzoso(acc, campo, opciones)
+    Enum.reduce(campos_meta, attrs, fn {campo, tipo, opciones}, acc ->
+      aplicar_default_forzoso(acc, campo, tipo, opciones)
     end)
   end
 
-  defp aplicar_default_forzoso(attrs, campo, %{opcional: opcional, valor_default: valor_default})
+  defp aplicar_default_forzoso(attrs, campo, tipo, %{opcional: opcional, valor_default: valor_default})
        when opcional != true and valor_default not in [nil, ""] do
     if valor_en_blanco?(attrs, campo) do
-      attrs |> Map.delete(campo) |> Map.put(Atom.to_string(campo), valor_default)
+      attrs |> Map.delete(campo) |> Map.put(Atom.to_string(campo), resolver_valor_default(tipo, valor_default))
     else
       attrs
     end
   end
 
-  defp aplicar_default_forzoso(attrs, _campo, _opciones), do: attrs
+  defp aplicar_default_forzoso(attrs, _campo, _tipo, _opciones), do: attrs
+
+  defp resolver_valor_default(:date, "hoy"), do: Date.utc_today()
+  defp resolver_valor_default(:time, "ahora"), do: Time.utc_now() |> Time.truncate(:second)
+  defp resolver_valor_default(_tipo, valor), do: valor
 
   defp valor_en_blanco?(attrs, campo) do
     valor = Map.get(attrs, campo, Map.get(attrs, Atom.to_string(campo)))

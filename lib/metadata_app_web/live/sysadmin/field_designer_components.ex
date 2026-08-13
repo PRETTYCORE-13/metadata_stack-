@@ -48,6 +48,7 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
       "transformacion_tipo" => "mayusculas",
       "placeholder_texto" => "",
       "valor_inicial" => "",
+      "valor_inicial_hoy" => false,
       "longitud_min_valor" => "",
       "longitud_max_valor" => "",
       "regex_modo" => "solo_numeros",
@@ -57,6 +58,9 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
       "dependencias" => [],
       "formula" => "",
       "valores_lista" => ["", ""],
+      "lista_mapeado" => false,
+      "valores_mapeado" => [%{"valor" => "", "descripcion" => ""}, %{"valor" => "", "descripcion" => ""}],
+      "formato_fecha" => "",
       "error" => nil
     }
   end
@@ -102,6 +106,7 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
     |> Map.put("transformacion_tipo", params["transformacion_tipo"] || form["transformacion_tipo"])
     |> Map.put("placeholder_texto", Map.get(params, "placeholder_texto", form["placeholder_texto"]))
     |> Map.put("valor_inicial", Map.get(params, "valor_inicial", form["valor_inicial"]))
+    |> Map.put("valor_inicial_hoy", params["valor_inicial_hoy"] == "true")
     |> Map.put("longitud_min_valor", Map.get(params, "longitud_min_valor", form["longitud_min_valor"]))
     |> Map.put("longitud_max_valor", Map.get(params, "longitud_max_valor", form["longitud_max_valor"]))
     |> Map.put("regex_modo", params["regex_modo"] || form["regex_modo"])
@@ -111,23 +116,48 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
     |> Map.put("dependencias", dependencias_desde_params(params, form))
     |> Map.put("formula", Map.get(params, "formula", form["formula"]))
     |> Map.put("valores_lista", valores_lista_desde_params(params, form))
+    |> Map.put("lista_mapeado", params["lista_mapeado"] == "true")
+    |> Map.put("valores_mapeado", valores_mapeado_desde_params(params, form))
+    |> Map.put("formato_fecha", Map.get(params, "formato_fecha", form["formato_fecha"]))
     |> Map.put("error", nil)
     |> validar_nombre_duplicado(campos_existentes)
   end
 
   defp dependencias_desde_params(%{"dependencias" => deps_params}, _form) do
     deps_params
-    |> Enum.sort_by(fn {indice, _valores} -> String.to_integer(indice) end)
+    |> filas_por_indice()
     |> Enum.map(fn {_indice, v} -> %{"campo_padre" => v["campo_padre"], "campo_remoto" => v["campo_remoto"], "obligatorio" => v["obligatorio"] == "true"} end)
   end
 
   defp dependencias_desde_params(_params, form), do: form["dependencias"]
 
   defp valores_lista_desde_params(%{"valores_lista" => vl}, _form) when is_map(vl) do
-    vl |> Enum.sort_by(fn {i, _v} -> String.to_integer(i) end) |> Enum.map(fn {_i, v} -> v end)
+    vl |> filas_por_indice() |> Enum.map(fn {_i, v} -> v end)
   end
 
   defp valores_lista_desde_params(_params, form), do: form["valores_lista"]
+
+  defp valores_mapeado_desde_params(%{"valores_mapeado" => vm}, _form) when is_map(vm) do
+    vm
+    |> filas_por_indice()
+    |> Enum.map(fn {_i, v} -> %{"valor" => v["valor"] || "", "descripcion" => v["descripcion"] || ""} end)
+  end
+
+  defp valores_mapeado_desde_params(_params, form), do: form["valores_mapeado"]
+
+  # phx-change de una lista de filas indexadas ("campo[0]", "campo[1]",
+  # ...) — el cliente de LiveView, al agregar/quitar una fila del medio de
+  # un `:for` sin key estable, manda ADEMÁS una clave sombra
+  # "campo[_unused_N]" (recycling de nodos DOM entre renders) que no es un
+  # índice de verdad — bug real, reproducido en vivo: `String.to_integer/1`
+  # sobre esa clave tira ArgumentError y tumba el LiveView entero. Se
+  # descarta cualquier clave que no sea puramente un número antes de
+  # ordenar, en vez de confiar en que el índice siempre parsea.
+  defp filas_por_indice(mapa) do
+    mapa
+    |> Enum.filter(fn {indice, _valor} -> match?({_n, ""}, Integer.parse(indice)) end)
+    |> Enum.sort_by(fn {indice, _valor} -> String.to_integer(indice) end)
+  end
 
   # No bloquea el avance (el error real, si el nombre choca de verdad,
   # sale recién al guardar contra `campos_existentes` fresco) — es solo
@@ -200,7 +230,7 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
     cap = form["capacidades"] || %{}
     obligatorio? = cap["obligatorio"] == true
     nombre = "#{catalogo_nombre}_#{sufijo}"
-    valores_lista = (form["valores_lista"] || []) |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+    valores_enum = valores_enum_desde_form(form)
 
     cond do
       not Regex.match?(~r/^[a-z][a-z0-9_]{0,49}$/, sufijo) ->
@@ -209,8 +239,11 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
       etiqueta == "" ->
         {:error, "La etiqueta no puede quedar vacía."}
 
-      tipo == "enum" and valores_lista == [] ->
+      tipo == "enum" and valores_enum == [] ->
         {:error, "Una Lista necesita al menos una opción."}
+
+      tipo == "enum" and form["lista_mapeado"] == true and Enum.any?(valores_enum, &(&1["valor"] == "")) ->
+        {:error, "Cada opción mapeada necesita un Valor (el código que se guarda), no solo la Descripción."}
 
       Enum.any?(campos_existentes, &(&1.schema_context_field == nombre)) ->
         {:error, "Ya existe un campo \"#{sufijo}\" en este catálogo."}
@@ -231,8 +264,9 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
           |> agregar_placeholder(form, cap)
           |> agregar_valor_inicial(form, cap)
           |> agregar_regex(form, cap)
-          |> agregar_valores_lista(valores_lista, tipo)
+          |> agregar_valores_lista(valores_enum, tipo)
           |> agregar_formula(form, cap)
+          |> agregar_formato_fecha(form, cap)
 
         {:ok, nombre, propiedades}
     end
@@ -303,10 +337,19 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
 
   defp agregar_placeholder(propiedades, _form, _cap), do: propiedades
 
+  # "Hoy"/"Ahora" -- sentinel de texto, resuelto en cada alta (nunca la
+  # fecha/hora de HOY, la de configuración) por
+  # MetaCatalogoGenerico.resolver_valor_default/2. Reemplaza al valor
+  # tipeado en el input nativo, que en ese modo ni se muestra (ver
+  # config_capacidad("valor_inicial", ...) más abajo).
   defp agregar_valor_inicial(propiedades, form, %{"valor_inicial" => true}) do
-    case String.trim(form["valor_inicial"] || "") do
-      "" -> propiedades
-      valor -> Map.put(propiedades, "valor_default", valor)
+    if form["tipo"] in ["date", "hora"] and form["valor_inicial_hoy"] do
+      Map.put(propiedades, "valor_default", if(form["tipo"] == "date", do: "hoy", else: "ahora"))
+    else
+      case String.trim(form["valor_inicial"] || "") do
+        "" -> propiedades
+        valor -> Map.put(propiedades, "valor_default", valor)
+      end
     end
   end
 
@@ -333,6 +376,37 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
   defp agregar_valores_lista(propiedades, valores, "enum"), do: Map.put(propiedades, "valores", valores)
   defp agregar_valores_lista(propiedades, _valores, _tipo), do: propiedades
 
+  # "Simple" (hoy, siempre): valores => ["Activo", "Inactivo"] — el texto
+  # ES el valor guardado. "Mapeado" (DevExpress ComboEdit "Tipo:
+  # Mapeado"): valores => [%{"valor" => "A", "descripcion" => "Activo"}]
+  # — se guarda "valor" (un código propio), se MUESTRA "descripcion".
+  # `campo_input_components.ex` y `CatalogoGenerador.construir_opciones/2`
+  # distinguen las dos formas por shape (lista de string vs. lista de
+  # mapa) una vez guardado, no por un flag aparte — la forma de `valores`
+  # ya lo dice todo, no hace falta duplicar el dato.
+  defp valores_enum_desde_form(%{"lista_mapeado" => true} = form) do
+    (form["valores_mapeado"] || [])
+    |> Enum.map(fn v -> %{"valor" => String.trim(v["valor"] || ""), "descripcion" => String.trim(v["descripcion"] || "")} end)
+    |> Enum.reject(&(&1["valor"] == "" and &1["descripcion"] == ""))
+  end
+
+  defp valores_enum_desde_form(form) do
+    (form["valores_lista"] || []) |> Enum.map(&String.trim/1) |> Enum.reject(&(&1 == ""))
+  end
+
+  # {valor, etiqueta} para el <select> de "Valor inicial" — funciona tanto
+  # para Simple (etiqueta = valor) como Mapeado (etiqueta = descripción,
+  # o el valor si todavía no se completó la descripción).
+  defp opciones_enum_form(form) do
+    form
+    |> valores_enum_desde_form()
+    |> Enum.map(fn
+      %{"valor" => v, "descripcion" => d} -> {v, if(d == "", do: v, else: d)}
+      v when is_binary(v) -> {v, v}
+    end)
+    |> Enum.reject(fn {v, _etiqueta} -> v == "" end)
+  end
+
   defp agregar_formula(propiedades, form, %{"calculado" => true}) do
     case String.trim(form["formula"] || "") do
       "" -> propiedades
@@ -341,6 +415,15 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
   end
 
   defp agregar_formula(propiedades, _form, _cap), do: propiedades
+
+  defp agregar_formato_fecha(propiedades, form, %{"formato_fecha" => true}) do
+    case form["formato_fecha"] do
+      valor when is_binary(valor) and valor != "" -> Map.put(propiedades, "formato_fecha", valor)
+      _ -> propiedades
+    end
+  end
+
+  defp agregar_formato_fecha(propiedades, _form, _cap), do: propiedades
 
   defp agregar_relaciones(propiedades, form, cap) do
     propiedades
@@ -429,7 +512,16 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
     ]
   end
 
-  defp capacidades_para_tipo(tipo) when tipo in ["date", "hora", "boolean"] do
+  defp capacidades_para_tipo(tipo) when tipo in ["date", "hora"] do
+    [
+      {"Captura", [{"valor_inicial", "Valor inicial"}]},
+      {"Validación", [{"obligatorio", "Obligatorio"}]},
+      {"Automatización", [{"calculado", "Campo calculado"}]},
+      {"Visual", [{"formato_fecha", "Formato de visualización"}, {"solo_lectura", "Solo lectura"}, {"oculto", "Oculto"}]}
+    ]
+  end
+
+  defp capacidades_para_tipo("boolean") do
     [
       {"Captura", [{"valor_inicial", "Valor inicial"}]},
       {"Validación", [{"obligatorio", "Obligatorio"}]},
@@ -443,6 +535,18 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
   defp presets_formato("string"), do: [{"telefono", "Teléfono"}, {"cp", "Código postal"}, {"rfc", "RFC"}, {"curp", "CURP"}, {"fecha", "Fecha libre"}, {"personalizada", "Personalizada"}]
   defp presets_formato(tipo) when tipo in ["integer", "decimal"], do: [{"numero", "Número"}, {"moneda", "Moneda"}]
   defp presets_formato(_tipo), do: []
+
+  # "Formato de visualización" (date/hora) — mismo criterio y mismos
+  # presets que modal_formato_fecha/1 en BcMotorLive (edición de un campo
+  # ya existente), duplicados acá a propósito: son dos módulos distintos
+  # sin nada más en común, no vale la pena acoplarlos por 6 tuplas.
+  @presets_formato_fecha_date [
+    {"corta", "Fecha corta", "15/08/2026"},
+    {"larga", "Fecha larga", "15 de agosto de 2026"},
+    {"mes_dia", "Mes y día", "15 de agosto"},
+    {"anio_mes", "Año y mes", "Agosto 2026"}
+  ]
+  @presets_formato_fecha_hora [{"hora_corta", "Hora corta", "14:30"}]
 
   # =========================================================================
   # Inteligencia: sugerencias por nombre de campo
@@ -594,6 +698,53 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
               <span class="material-symbols-outlined" style="font-size:12px">auto_awesome</span>{desc}
             </button>
           </div>
+
+          <%!-- Igual que "Catálogo destino" para Referencia arriba: sin
+               opciones, una Lista no es nada — no tiene sentido esconderlo
+               atrás de una capacidad togglable. --%>
+          <div :if={@form["tipo"] == "enum"}>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-gray-700 font-semibold">Opciones de la lista</label>
+              <label class="flex items-center gap-1.5 text-gray-500">
+                <input type="hidden" name="lista_mapeado" value="false" />
+                <input type="checkbox" name="lista_mapeado" value="true" checked={@form["lista_mapeado"]} class="accent-purple-600" />
+                Guardar un código distinto al texto mostrado
+              </label>
+            </div>
+
+            <%= if @form["lista_mapeado"] do %>
+              <div class="flex flex-col gap-1.5">
+                <div class="flex items-center gap-1.5 text-gray-400 text-[10.5px] font-semibold uppercase tracking-wide">
+                  <span class="flex-1">Valor (se guarda)</span>
+                  <span class="flex-1">Descripción (se muestra)</span>
+                  <span class="w-6"></span>
+                </div>
+                <div :for={{fila, i} <- Enum.with_index(@form["valores_mapeado"])} class="flex items-center gap-1.5">
+                  <input type="text" name={"valores_mapeado[#{i}][valor]"} value={fila["valor"]} placeholder="Ej. A"
+                    class="flex-1 border border-gray-300 rounded-lg px-2 py-1 font-mono" />
+                  <input type="text" name={"valores_mapeado[#{i}][descripcion]"} value={fila["descripcion"]} placeholder="Ej. Activo"
+                    class="flex-1 border border-gray-300 rounded-lg px-2 py-1" />
+                  <button type="button" phx-click="asistente_lista_mapeado_quitar" phx-value-indice={i}
+                    class="text-red-600 hover:text-red-800 font-semibold w-6">×</button>
+                </div>
+              </div>
+              <button type="button" phx-click="asistente_lista_mapeado_agregar" class="text-purple-700 hover:text-purple-900 font-semibold mt-1.5">
+                + Agregar opción
+              </button>
+            <% else %>
+              <div class="flex flex-col gap-1.5">
+                <div :for={{valor, i} <- Enum.with_index(@form["valores_lista"])} class="flex items-center gap-1.5">
+                  <input type="text" name={"valores_lista[#{i}]"} value={valor} placeholder="Ej. Activo"
+                    class="flex-1 border border-gray-300 rounded-lg px-2 py-1" />
+                  <button type="button" phx-click="asistente_lista_quitar" phx-value-indice={i}
+                    class="text-red-600 hover:text-red-800 font-semibold px-1.5">×</button>
+                </div>
+              </div>
+              <button type="button" phx-click="asistente_lista_agregar" class="text-purple-700 hover:text-purple-900 font-semibold mt-1.5">
+                + Agregar opción
+              </button>
+            <% end %>
+          </div>
         <% end %>
 
         <div :for={{grupo, items} <- @grupos} class="border-t border-gray-100 pt-2.5">
@@ -700,23 +851,53 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
 
   defp config_capacidad("valor_inicial", assigns) do
     ~H"""
-    <%= if @form["tipo"] == "enum" do %>
-      <select name="valor_inicial" class="w-full border border-gray-300 rounded-lg px-2 py-1">
-        <option value="">— Sin valor inicial —</option>
-        <option :for={v <- (@form["valores_lista"] || []) |> Enum.reject(&(&1 in [nil, ""]))} value={v} selected={@form["valor_inicial"] == v}>{v}</option>
-      </select>
-    <% else %>
-      <%= if @form["tipo"] == "boolean" do %>
+    <%= cond do %>
+      <% @form["tipo"] in ["date", "hora"] -> %>
+        <label class="flex items-center gap-1.5 text-gray-600 mb-1.5">
+          <input type="hidden" name="valor_inicial_hoy" value="false" />
+          <input type="checkbox" name="valor_inicial_hoy" value="true" checked={@form["valor_inicial_hoy"]} class="accent-purple-600" />
+          {if @form["tipo"] == "date", do: "Usar la fecha de hoy automáticamente", else: "Usar la hora actual automáticamente"}
+        </label>
+        <input :if={!@form["valor_inicial_hoy"]} type={if @form["tipo"] == "date", do: "date", else: "time"}
+          name="valor_inicial" value={@form["valor_inicial"]} class="w-full border border-gray-300 rounded-lg px-2 py-1" />
+        <p :if={@form["valor_inicial_hoy"]} class="text-gray-400">
+          Se completa solo con {if @form["tipo"] == "date", do: "la fecha", else: "la hora"} del momento en que se crea cada registro.
+        </p>
+      <% @form["tipo"] == "enum" -> %>
+        <select name="valor_inicial" class="w-full border border-gray-300 rounded-lg px-2 py-1">
+          <option value="">— Sin valor inicial —</option>
+          <option :for={{valor, etiqueta} <- opciones_enum_form(@form)} value={valor} selected={@form["valor_inicial"] == valor}>{etiqueta}</option>
+        </select>
+      <% @form["tipo"] == "boolean" -> %>
         <select name="valor_inicial" class="w-full border border-gray-300 rounded-lg px-2 py-1">
           <option value="" selected={@form["valor_inicial"] in [nil, ""]}>— Sin valor inicial —</option>
           <option value="true" selected={@form["valor_inicial"] == "true"}>Verdadero</option>
           <option value="false" selected={@form["valor_inicial"] == "false"}>Falso</option>
         </select>
-      <% else %>
-        <input type={if @form["tipo"] in ["date"], do: "date", else: (if @form["tipo"] == "hora", do: "time", else: "text")}
-          name="valor_inicial" value={@form["valor_inicial"]} class="w-full border border-gray-300 rounded-lg px-2 py-1" />
-      <% end %>
+      <% true -> %>
+        <input type="text" name="valor_inicial" value={@form["valor_inicial"]} class="w-full border border-gray-300 rounded-lg px-2 py-1" />
     <% end %>
+    """
+  end
+
+  # Presets tipo DevExpress (Fecha corta/larga, Mes y día, Año y mes, Hora
+  # corta) — solo cómo se MUESTRA el valor ya guardado (Ficha 360° de solo
+  # lectura, ver FichaLive.formatear_fecha/2); el selector nativo para
+  # editar no cambia.
+  defp config_capacidad("formato_fecha", assigns) do
+    presets = if assigns.form["tipo"] == "date", do: @presets_formato_fecha_date, else: @presets_formato_fecha_hora
+    assigns = assign(assigns, :presets, presets)
+
+    ~H"""
+    <div class="flex flex-col gap-1">
+      <label :for={{valor, etiqueta, ejemplo} <- @presets} class="flex items-center justify-between gap-2">
+        <span class="flex items-center gap-1.5">
+          <input type="radio" name="formato_fecha" value={valor} checked={@form["formato_fecha"] == valor} class="accent-purple-600" />
+          {etiqueta}
+        </span>
+        <span class="font-mono text-gray-400">{ejemplo}</span>
+      </label>
+    </div>
     """
   end
 
