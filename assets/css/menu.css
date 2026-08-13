@@ -1596,6 +1596,14 @@
   flex-shrink: 0;
 }
 
+/* Botón flotante para mostrar/ocultar el footer en móvil (ver el
+   @media (max-width: 768px) más abajo, donde pasa a display: flex) --
+   oculto en desktop, mismo criterio que .pc-mobile-menu-btn arriba. */
+.pc-footer-toggle-btn {
+  display: none;
+  cursor: pointer;
+}
+
 /* ---- MOBILE CLOSE BUTTON (inside sidebar, hidden on desktop) ---- */
 .pc-sidebar-close-mobile {
   display: none;
@@ -1648,11 +1656,41 @@
   /* El buscador TRN (ahora en el footer, input de ancho fijo 190px
      pensado para desktop) no entraba en pantallas angostas y se salía
      del viewport, generando scroll horizontal en TODA la página. Acá se
-     lo deja wrappear, y el input se angosta en vez de quedarse fijo. */
+     lo deja wrappear, y el input se angosta en vez de quedarse fijo.
+
+     Ajuste UI (2026-08-13, a pedido explícito): en móvil el footer
+     (jerarquía operativa + buscador TRN) ocupa demasiado espacio de
+     pantalla siempre visible -- se oculta por default acá y se revela
+     con el botón flotante .pc-footer-toggle-btn (ver más abajo),
+     agregando/sacando la clase .pc-footer-abierto por click
+     (Phoenix.LiveView.JS.toggle_class, sin ida al servidor). Desktop no
+     se toca -- este bloque entero es solo dentro del @media de arriba. */
   .pc-footer {
+    display: none;
     padding: 6px 12px;
     flex-wrap: wrap;
     row-gap: 4px;
+  }
+
+  .pc-footer.pc-footer-abierto {
+    display: flex;
+  }
+
+  .pc-footer-toggle-btn {
+    display: flex;
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    z-index: 40;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 9999px;
+    background: #7c3aed;
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    border: none;
   }
 
   .pc-footer-buscar-trn {

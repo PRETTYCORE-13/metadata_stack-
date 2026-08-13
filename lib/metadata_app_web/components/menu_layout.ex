@@ -339,6 +339,26 @@ defmodule MetadataAppWeb.MenuLayout do
            que ahora sin el texto al lado. El buscador TRN también se movió
            acá (antes en la topbar) — misma razón que el resto de esta
            banda: dejar la topbar solo con branding/acciones. -->
+
+      <!-- Ajuste UI (2026-08-13, a pedido explícito, solo móvil): el
+           footer ocupa demasiado espacio de pantalla siempre visible en
+           celular -- @media (max-width: 768px) en menu.css lo oculta por
+           default y este botón lo revela, 100% client-side (JS.toggle_class,
+           sin evento al servidor). El botón mismo también vive oculto en
+           desktop (mismo CSS), así que no hace falta gatearlo acá con
+           ninguna condición de Elixir. -->
+      <button
+        type="button"
+        class="pc-footer-toggle-btn"
+        phx-click={JS.toggle_class("pc-footer-abierto", to: ".pc-footer")}
+        title="Mostrar/ocultar barra inferior"
+        aria-label="Mostrar/ocultar barra inferior"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="18 15 12 9 6 15" />
+        </svg>
+      </button>
+
       <div class="pc-footer">
         <span class="pc-footer-copyright">Prettycore {@anio_actual}</span>
 

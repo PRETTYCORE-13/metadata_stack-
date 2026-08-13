@@ -118,13 +118,24 @@ defmodule MetadataAppWeb.CampoInputComponents do
     """
   end
 
+  # phx-hook="AbrirCalendario" (2026-08-13, a pedido explícito) -- mismo
+  # hook que ya usa "Fecha libre" (formato_captura modo "fecha", más
+  # abajo), acá reusado directo sobre el <input type="date"> nativo en
+  # vez de uno oculto sincronizado a otro campo (no hace falta: este SÍ
+  # es el campo real). Sin esto, algunos navegadores/temas no dibujan el
+  # ícono del selector nativo de forma visible -- el hook fuerza
+  # showPicker() con un click O foco en cualquier parte del input, así
+  # no depende de acertarle al ícono.
   def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "date"}}} = assigns) do
-    assigns = assign_name(assigns)
+    assigns =
+      assigns
+      |> assign_name()
+      |> then(&assign(&1, :dom_id, &1.id || "campo-#{String.replace(&1.name, ~r/[\[\]]/, "-")}"))
 
     ~H"""
     <div>
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
-      <input type="date" name={@name} value={@valor} required={@required} disabled={@disabled}
+      <input type="date" id={@dom_id} name={@name} value={@valor} required={@required} disabled={@disabled} phx-hook="AbrirCalendario"
         class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
     </div>
     """

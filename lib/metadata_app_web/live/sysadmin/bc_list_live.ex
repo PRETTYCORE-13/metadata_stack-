@@ -2180,7 +2180,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               phx-disable-with="Procesando…"
               class="px-4 py-2 rounded bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700 disabled:opacity-60"
             >
-              Publicar y desplegar
+              Publicar
             </button>
           </div>
         <% end %>
