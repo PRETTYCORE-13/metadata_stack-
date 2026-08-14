@@ -129,6 +129,15 @@ defmodule MetadataApp.Autenticacion do
   end
 
   @doc """
+  ¿Existe ya un sysadmin? Usado por `MetadataAppWeb.RequierePrimerArranque`
+  (el plug que redirige al wizard de primer arranque) y por el propio
+  wizard (guard en mount/3, para que no se pueda usar dos veces).
+  """
+  def existe_sysadmin? do
+    Repo.exists?(from u in Usuario, where: u.super_admin == true)
+  end
+
+  @doc """
   Puerta de rescate para un usuario.super_admin: unirse como
   `administrador` a una empresa YA EXISTENTE de la que todavía no es
   miembro (a diferencia de crear_empresa_para_usuario/2, que crea el
