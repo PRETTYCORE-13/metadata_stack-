@@ -80,12 +80,16 @@ defmodule MetadataApp.Release do
   # en un sistema ya bootstrapeado, cada paso es un no-op real, no un
   # "ya existe, error" -- seguro de repetir siempre.
   #
-  # SYSADMIN_EMAIL/SYSADMIN_PASSWORD se validan acá ARRIBA de todo (antes
-  # de tocar la base) para no repetir lo que ya pasó en vivo: migrar,
-  # importar metadata, y recién ahí enterarse de que falta una variable
-  # -- mejor fallar en el primer segundo que a mitad de camino.
+  # SYSADMIN_EMAIL/SYSADMIN_PASSWORD son OPCIONALES a propósito (roadmap
+  # #onboarding, Fase 2): si no vienen, setup/0 igual termina bien -- deja
+  # el sistema sin sysadmin/empresa, listo para que alguien lo complete
+  # desde el wizard de primer arranque en el navegador (sin que
+  # Operaciones tenga que inventar/generar una contraseña por variable de
+  # entorno para cada uno de ~100 sistemas). Si viene SOLO UNA de las dos,
+  # eso sí es un error real (typo probable, no "uso el wizard a propósito")
+  # -- ahí se falla fuerte, antes de tocar la base.
   def setup do
-    validar_variables_requeridas!(["SYSADMIN_EMAIL", "SYSADMIN_PASSWORD"])
+    validar_par_o_ninguna!("SYSADMIN_EMAIL", "SYSADMIN_PASSWORD")
 
     IO.puts("== Migrando ==")
     migrate()
@@ -104,20 +108,27 @@ defmodule MetadataApp.Release do
         IO.puts("ADVERTENCIA: import_meta falló, revisar manualmente -- #{Exception.message(error)}")
     end
 
-    IO.puts("== Sysadmin ==")
-    seed_sysadmin()
+    if System.get_env("SYSADMIN_EMAIL") not in [nil, ""] do
+      IO.puts("== Sysadmin ==")
+      seed_sysadmin()
 
-    IO.puts("== Empresa inicial ==")
-    asegurar_empresa_inicial()
+      IO.puts("== Empresa inicial ==")
+      asegurar_empresa_inicial()
+    else
+      IO.puts("SYSADMIN_EMAIL no configurado -- completá el primer arranque desde el navegador (wizard).")
+    end
 
     IO.puts("Setup completo.")
   end
 
-  defp validar_variables_requeridas!(nombres) do
-    faltantes = Enum.filter(nombres, &(System.get_env(&1) in [nil, ""]))
+  defp validar_par_o_ninguna!(nombre_a, nombre_b) do
+    presente_a? = System.get_env(nombre_a) not in [nil, ""]
+    presente_b? = System.get_env(nombre_b) not in [nil, ""]
 
-    if faltantes != [] do
-      raise "Faltan variables de entorno requeridas para el setup: #{Enum.join(faltantes, ", ")}"
+    cond do
+      presente_a? == presente_b? -> :ok
+      presente_a? -> raise "#{nombre_a} está configurada pero falta #{nombre_b}"
+      true -> raise "#{nombre_b} está configurada pero falta #{nombre_a}"
     end
   end
 
