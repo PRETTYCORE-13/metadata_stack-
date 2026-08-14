@@ -1049,19 +1049,53 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   # mismo segundo generan el mismo número de versión — Ecto trata la segunda
   # migración como "ya aplicada" y la salta en silencio, sin correr su
   # contenido. Se agregan milisegundos para que eso no vuelva a pasar.
+  # Bug real (roadmap #13, encontrado en vivo 2026-08-14): esto ANTES
+  # devolvía 17 dígitos (14 de fecha + 3 de milisegundos, para no chocar
+  # si el generador arma dos migraciones en el mismo segundo). Ecto
+  # ordena las migraciones por el ENTERO completo de la versión, no por
+  # fecha real -- un número de 17 dígitos siempre ordena después que
+  # cualquiera de 14, sin importar la fecha, así que una migración
+  # generada (17 dígitos) de una catálogo podía terminar corriendo
+  # DESPUÉS de una migración escrita a mano (14 dígitos) de fecha
+  # posterior real -- nunca importa en un deploy normal (la de creación
+  # ya corrió hace tiempo), pero migrar una base 100% vacía de una sola
+  # pasada mezclaba ambos formatos fuera de orden real (confirmado en
+  # vivo contra pty_gasto_diario: "agregar_trn" corría antes que "crear").
+  #
+  # Ahora devuelve 14 dígitos, el mismo formato que Ecto usa para
+  # cualquier migración escrita a mano -- mismo espacio numérico, mismo
+  # criterio de orden. La colisión de mismo segundo (el motivo original
+  # de los milisegundos) se resuelve avanzando un segundo hasta encontrar
+  # un valor que todavía no tenga archivo en priv/repo/migrations/, en
+  # vez de agregar dígitos que rompen la comparación.
   defp timestamp_utc do
-    {{y, mo, d}, {h, mi, s}} = :calendar.universal_time()
+    :calendar.universal_time() |> desambiguar_timestamp()
+  end
 
-    ms =
-      :erlang.system_time(:millisecond)
-      |> rem(1000)
-      |> Integer.to_string()
-      |> String.pad_leading(3, "0")
+  # +1 segundo con aritmética de calendario real (no +1 al entero
+  # formateado) -- así un choque a las 23:59:59 avanza al minuto/hora/día
+  # siguiente como corresponde, en vez de generar un "...60" que no es un
+  # instante real (Ecto no lo valida como fecha, pero no hay motivo para
+  # dejar una versión con pinta de inválida cuando avanzar el calendario
+  # de verdad es igual de simple).
+  defp desambiguar_timestamp(data_hora) do
+    candidato = formatear_timestamp(data_hora)
 
+    if Path.wildcard("priv/repo/migrations/#{candidato}_*.exs") == [] do
+      candidato
+    else
+      data_hora
+      |> :calendar.datetime_to_gregorian_seconds()
+      |> Kernel.+(1)
+      |> :calendar.gregorian_seconds_to_datetime()
+      |> desambiguar_timestamp()
+    end
+  end
+
+  defp formatear_timestamp({{y, mo, d}, {h, mi, s}}) do
     [y, mo, d, h, mi, s]
     |> Enum.zip([4, 2, 2, 2, 2, 2])
     |> Enum.map(fn {n, len} -> n |> Integer.to_string() |> String.pad_leading(len, "0") end)
     |> Enum.join()
-    |> Kernel.<>(ms)
   end
 end
