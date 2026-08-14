@@ -155,7 +155,16 @@ if config_env() == :prod do
       verify: :verify_peer,
       cacerts: :public_key.cacerts_get(),
       server_name_indication: String.to_charlist(smtp_relay),
-      depth: 3
+      depth: 3,
+      # Sin esto, un relay cuyo cert solo cubre "*.hostinger.com" (sin la
+      # entrada exacta "smtp.hostinger.com" en el SAN) falla con
+      # {bad_cert, {hostname_check_failed, ...}} -- confirmado en vivo
+      # (2026-08-14) contra smtp.hostinger.com. El chequeo de hostname por
+      # default de :ssl no expande comodines de SAN (a diferencia de
+      # OpenSSL/navegadores); pkix_verify_hostname_match_fun(:https) le
+      # pide el mismo criterio de matching que ya usa cualquier navegador.
+      # Gmail nunca lo necesitó porque su cert trae el nombre exacto.
+      customize_hostname_check: [match_fun: :public_key.pkix_verify_hostname_match_fun(:https)]
     ],
     auth: :always,
     retries: 2
