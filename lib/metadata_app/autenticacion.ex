@@ -117,6 +117,18 @@ defmodule MetadataApp.Autenticacion do
   end
 
   @doc """
+  ¿Hay al menos UNA empresa en esta base? (onboarding, roadmap
+  docs/onboarding-nuevo-sistema.md #1 — sin esto, un sistema recién
+  migrado de cero no tiene forma de crear la primera empresa: la UI
+  entera queda en loop contra "seleccionar-empresa" porque no hay
+  ninguna para elegir. Usado por `MetadataApp.Release.setup/0` para
+  decidir si hace falta crear una por default.
+  """
+  def existe_alguna_empresa? do
+    Repo.exists?(Empresa)
+  end
+
+  @doc """
   Puerta de rescate para un usuario.super_admin: unirse como
   `administrador` a una empresa YA EXISTENTE de la que todavía no es
   miembro (a diferencia de crear_empresa_para_usuario/2, que crea el
