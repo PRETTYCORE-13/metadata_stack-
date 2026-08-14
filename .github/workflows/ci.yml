@@ -194,5 +194,4 @@ jobs:
               echo "No se encontró el contenedor de metadata_stack_app corriendo, no se pudo migrar"
               exit 1
             fi
-            docker exec "$CONTAINER_ID" /app/bin/migrate
-            docker exec "$CONTAINER_ID" /app/bin/seed_sysadmin
+            docker exec "$CONTAINER_ID" /app/bin/setup
