@@ -90,8 +90,15 @@ jobs:
       - name: Compilar sin warnings
         run: mix compile --warning-as-errors
 
+      # --exclude external_http: tests que llaman httpbin.org de verdad, a
+      # propósito (sin mocks, ver el moduledoc de integraciones_reglas_post_test.exs)
+      # -- valioso correrlos a mano, pero un servicio de terceros caído
+      # (encontrado real, 2026-08-16: 3 corridas seguidas bloqueadas por
+      # httpbin.org respondiendo 500/timeout) no puede bloquear el deploy de
+      # un cambio que no tiene nada que ver. Siguen andando igual en
+      # `mix test` local sin este flag.
       - name: Test
-        run: mix test
+        run: mix test --exclude external_http
 
   # Solo corre si "validate" pasó. Arma la imagen de producción con el mismo
   # Dockerfile que se probó a mano (build stage con compilador, runtime sin
