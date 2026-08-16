@@ -17,7 +17,7 @@ defmodule MetadataAppWeb.Sysadmin.AccionesExternasLive do
   use MetadataAppWeb, :live_view_admin
 
   on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
-  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"rbac_admin", "leer"}}
+  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_acciones_externas", "leer"}}
 
   alias MetadataApp.Integraciones
   alias MetadataApp.Integraciones.AccionExterna

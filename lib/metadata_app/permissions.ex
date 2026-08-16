@@ -787,6 +787,48 @@ defmodule MetadataApp.Permissions do
     Repo.exists?(from r in Rol, where: r.id == ^rol_id and r.es_sistema == true and r.nombre == "administrador")
   end
 
+  ## Capacidades de Sysadmin (UI/permisos-sysadmin, 2026-08-16) -- un
+  ## recurso propio por pantalla del menú "Sysadmin" (ver menu_layout.ex),
+  ## cada uno con SU rol de sistema dedicado (sembrado en la migración
+  ## 20260816014352). El switch de la pestaña "Sysadmin" en
+  ## UsuariosEmpresaLive concede/revoca uno de estos roles con
+  ## asignar_rol/revocar_rol tal cual -- no hay mecanismo nuevo, es la
+  ## misma tabla meta_schema_usuario_rol de siempre. Lista fija en código
+  ## (no en DB) a propósito: son las pantallas de ESTA app, no algo que un
+  ## admin dé de alta dinámicamente como un catálogo pty_*.
+
+  @capacidades_sysadmin [
+    {"sysadmin_bc", "acceso_sysadmin_bc", "Business Process Builder"},
+    {"sysadmin_tepache", "acceso_sysadmin_tepache", "Tepache Exp/Imp"},
+    {"sysadmin_roles", "acceso_sysadmin_roles", "Roles"},
+    {"sysadmin_empresas", "acceso_sysadmin_empresas", "Empresas"},
+    {"sysadmin_usuarios", "acceso_sysadmin_usuarios", "RBAC Usuarios"},
+    {"sysadmin_catalogos_permisos", "acceso_sysadmin_catalogos_permisos", "RBAC Business Context"},
+    {"sysadmin_jerarquia", "acceso_sysadmin_jerarquia", "Jerarquía organizacional"},
+    {"sysadmin_credenciales", "acceso_sysadmin_credenciales", "Credenciales"},
+    {"sysadmin_acciones_externas", "acceso_sysadmin_acciones_externas", "Acciones externas"}
+  ]
+
+  @doc "Las 9 capacidades de Sysadmin, `{recurso, rol_nombre, etiqueta}` -- fuente única para la migración de seed y para la pestaña Sysadmin de UsuariosEmpresaLive."
+  def capacidades_sysadmin, do: @capacidades_sysadmin
+
+  @doc """
+  Los roles de sistema (uno por capacidad) ya sembrados, como
+  `%{recurso => %Rol{}}` -- una sola query, para que la pestaña "Sysadmin"
+  resuelva de un tirón contra qué `rol_id` togglear cada switch. Si la
+  migración de seed no corrió todavía, el mapa sale incompleto (una
+  capacidad sin su rol no se puede togglear -- se filtra en el render en
+  vez de romper).
+  """
+  def roles_de_capacidades_sysadmin do
+    nombres = Enum.map(@capacidades_sysadmin, fn {_recurso, rol_nombre, _etiqueta} -> rol_nombre end)
+    roles_por_nombre = from(r in Rol, where: r.nombre in ^nombres and r.es_sistema == true) |> Repo.all() |> Map.new(&{&1.nombre, &1})
+
+    for {recurso, rol_nombre, _etiqueta} <- @capacidades_sysadmin, rol = Map.get(roles_por_nombre, rol_nombre), not is_nil(rol), into: %{} do
+      {recurso, rol}
+    end
+  end
+
   defp generar_guid do
     Ecto.UUID.generate() |> String.replace("-", "")
   end

@@ -14,13 +14,16 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
 
   use MetadataAppWeb, :live_view_admin
 
-  # Sin permiso de rbac_admin a propósito: un usuario recién registrado no
-  # tiene ningún rol todavía, y esta es la única pantalla que le permite
-  # crear su propia empresa y quedar admin ahí (bootstrap, ver
-  # Autenticacion.crear_empresa_para_usuario/2). Exigir "rbac_admin"/"leer"
-  # acá sería pedirle el permiso que esta misma pantalla otorga. Seguro
-  # porque la lista siempre está limitada a "mis empresas".
+  # Gateada desde 2026-08-16 (UI/permisos-sysadmin, a pedido explícito:
+  # switch por pantalla de Sysadmin) -- antes quedaba deliberadamente
+  # abierta para el bootstrap de un usuario recién registrado sin ningún
+  # rol todavía, pero esta pantalla vive en live_session :app_autenticada
+  # (router.ex), que ya exige :require_authenticated_con_empresa ANTES de
+  # llegar acá -- alguien sin ninguna empresa nunca pasa de
+  # /seleccionar-empresa (o del wizard de primer arranque) para
+  # alcanzarla, así que el caso que esta excepción cubría ya no ocurre.
   on_mount {MetadataAppWeb.UsuarioAuth, :require_authenticated}
+  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_empresas", "leer"}}
 
   alias MetadataApp.Autenticacion
   alias MetadataAppWeb.AdminNav

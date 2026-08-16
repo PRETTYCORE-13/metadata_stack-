@@ -12,7 +12,7 @@ defmodule MetadataAppWeb.Sysadmin.RolesLive do
   use MetadataAppWeb, :live_view_admin
 
   on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
-  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"rbac_admin", "leer"}}
+  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_roles", "leer"}}
 
   alias MetadataApp.Permissions
   alias MetadataAppWeb.AdminNav

@@ -11,7 +11,7 @@ defmodule MetadataAppWeb.Sysadmin.CredencialesLive do
   use MetadataAppWeb, :live_view_admin
 
   on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
-  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"rbac_admin", "leer"}}
+  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_credenciales", "leer"}}
 
   alias MetadataApp.Integraciones
   alias MetadataApp.Integraciones.Credencial
