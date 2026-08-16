@@ -221,6 +221,27 @@ defmodule MetadataApp.PermissionsTest do
 
       assert {:ok, _} = Permissions.asignar_rol(usuario.id, rol_consulta.id, empresa.id)
     end
+
+    # Bug real (2026-08-16, encontrado en vivo con los switches de la
+    # pestaña "Sysadmin" -- prender/apagar/prender un mismo rol de
+    # sistema rompía en el segundo "prender"): revocar_rol/3 es
+    # soft-delete, y el índice único de meta_schema_usuario_rol es
+    # (usuario_id, rol_id, empresa_id) SIN filtrar por delete_guid IS
+    # NULL -- un Repo.insert() plano chocaba contra la fila muerta y
+    # fallaba para siempre. asignar_rol/3 ahora la revive en vez de
+    # intentar insertar una segunda.
+    test "reasignar un rol ya revocado antes lo revive en vez de fallar" do
+      usuario = usuario_fixture()
+      empresa = empresa_fixture()
+      rol = rol_fixture(empresa.id)
+
+      assert {:ok, _} = Permissions.asignar_rol(usuario.id, rol.id, empresa.id)
+      assert {:ok, _} = Permissions.revocar_rol(usuario.id, rol.id, empresa.id)
+      refute rol.id in Enum.map(Permissions.roles_de_usuario(usuario.id, empresa.id), & &1.id)
+
+      assert {:ok, _} = Permissions.asignar_rol(usuario.id, rol.id, empresa.id)
+      assert rol.id in Enum.map(Permissions.roles_de_usuario(usuario.id, empresa.id), & &1.id)
+    end
   end
 
   describe "invalidación de cache" do

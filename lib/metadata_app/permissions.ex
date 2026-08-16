@@ -286,6 +286,17 @@ defmodule MetadataApp.Permissions do
   Asigna un rol a un usuario dentro de una empresa. Si el rol no es de
   sistema (tiene `empresa_id` propio), tiene que coincidir con la empresa
   que se le está asignando — no se puede prestar un rol de otra empresa.
+
+  `on_conflict`/`conflict_target` a propósito -- revocar_rol/3 es
+  soft-delete (deja la fila con `delete_guid` seteado), y el índice único
+  de `meta_schema_usuario_rol` es sobre `(usuario_id, rol_id, empresa_id)`
+  SIN filtrar por `delete_guid IS NULL` (a diferencia de otros índices del
+  sistema) -- un `Repo.insert()` plano chocaba con esa fila muerta y
+  fallaba para SIEMPRE después de la primera vez que alguien revocaba un
+  rol y volvía a asignarlo (bug real, encontrado en vivo con los switches
+  de la pestaña "Sysadmin": prender/apagar/prender un rol de sistema
+  como "Jerarquía organizacional" rompía en el segundo "prender"). Acá se
+  "revive" la fila existente en vez de intentar insertar una segunda.
   """
   def asignar_rol(usuario_id, rol_id, empresa_id) do
     with :ok <- validar_rol_de_la_empresa(rol_id, empresa_id) do
@@ -293,7 +304,10 @@ defmodule MetadataApp.Permissions do
         %UsuarioRol{}
         |> UsuarioRol.changeset(%{usuario_id: usuario_id, rol_id: rol_id, empresa_id: empresa_id})
         |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
-        |> Repo.insert()
+        |> Repo.insert(
+          on_conflict: [set: [delete_guid: nil, update_guid: generar_guid()]],
+          conflict_target: [:usuario_id, :rol_id, :empresa_id]
+        )
 
       invalidar_cache(usuario_id, empresa_id)
       resultado
@@ -806,7 +820,8 @@ defmodule MetadataApp.Permissions do
     {"sysadmin_catalogos_permisos", "acceso_sysadmin_catalogos_permisos", "RBAC Business Context"},
     {"sysadmin_jerarquia", "acceso_sysadmin_jerarquia", "Jerarquía organizacional"},
     {"sysadmin_credenciales", "acceso_sysadmin_credenciales", "Credenciales"},
-    {"sysadmin_acciones_externas", "acceso_sysadmin_acciones_externas", "Acciones externas"}
+    {"sysadmin_acciones_externas", "acceso_sysadmin_acciones_externas", "Acciones externas"},
+    {"sysadmin_ambientes", "acceso_sysadmin_ambientes", "Ambientes de Deploy"}
   ]
 
   @doc "Las 9 capacidades de Sysadmin, `{recurso, rol_nombre, etiqueta}` -- fuente única para la migración de seed y para la pestaña Sysadmin de UsuariosEmpresaLive."

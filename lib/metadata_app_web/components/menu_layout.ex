@@ -41,6 +41,9 @@ defmodule MetadataAppWeb.MenuLayout do
       |> assign(:bpb_habilitado, Application.get_env(:metadata_app, :bpb_habilitado, false))
       |> asignar_datos_usuario()
 
+    bpb_habilitado = assigns.bpb_habilitado
+    assigns = assign(assigns, :capacidades_sysadmin_visibles, capacidades_sysadmin_visibles(assigns[:current_scope], bpb_habilitado))
+
     ~H"""
     <div class="pc-platform">
       <!-- Mobile overlay -->
@@ -258,33 +261,36 @@ defmodule MetadataAppWeb.MenuLayout do
               class="pc-user-menu-dropdown"
               phx-click-away={JS.hide(to: "#user-menu-dropdown")}
             >
-              <details class="pc-user-menu-submenu">
+              <details :if={@capacidades_sysadmin_visibles != []} class="pc-user-menu-submenu">
                 <summary class="pc-user-menu-item pc-user-menu-item-submenu">Sysadmin</summary>
-                <.link :if={@bpb_habilitado} navigate="/sysadmin/bc-list" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_bc" in @capacidades_sysadmin_visibles} navigate="/sysadmin/bc-list" class="pc-user-menu-item pc-user-menu-subitem">
                   Business Process Builder
                 </.link>
-                <.link :if={@bpb_habilitado} navigate="/sysadmin/tepache" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_tepache" in @capacidades_sysadmin_visibles} navigate="/sysadmin/tepache" class="pc-user-menu-item pc-user-menu-subitem">
                   Tepache Exp/Imp
                 </.link>
-                <.link navigate="/sysadmin/roles" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_roles" in @capacidades_sysadmin_visibles} navigate="/sysadmin/roles" class="pc-user-menu-item pc-user-menu-subitem">
                   Roles Admin
                 </.link>
-                <.link navigate="/sysadmin/empresas" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_empresas" in @capacidades_sysadmin_visibles} navigate="/sysadmin/empresas" class="pc-user-menu-item pc-user-menu-subitem">
                   Empresas
                 </.link>
-                <.link navigate="/sysadmin/usuarios" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_usuarios" in @capacidades_sysadmin_visibles} navigate="/sysadmin/usuarios" class="pc-user-menu-item pc-user-menu-subitem">
                   RBAC Usuarios
                 </.link>
-                <.link navigate="/sysadmin/catalogos/permisos" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_catalogos_permisos" in @capacidades_sysadmin_visibles} navigate="/sysadmin/catalogos/permisos" class="pc-user-menu-item pc-user-menu-subitem">
                   RBAC Bisness Context
                 </.link>
-                 <.link navigate="/sysadmin/jerarquia" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_jerarquia" in @capacidades_sysadmin_visibles} navigate="/sysadmin/jerarquia" class="pc-user-menu-item pc-user-menu-subitem">
                   Jerarquía organizacional
                 </.link>
-                <.link navigate="/sysadmin/credenciales" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_credenciales" in @capacidades_sysadmin_visibles} navigate="/sysadmin/credenciales" class="pc-user-menu-item pc-user-menu-subitem">
                   Credenciales
                 </.link>
-                <.link navigate="/sysadmin/acciones-externas" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_ambientes" in @capacidades_sysadmin_visibles} navigate="/sysadmin/ambientes" class="pc-user-menu-item pc-user-menu-subitem">
+                  Ambientes de Deploy
+                </.link>
+                <.link :if={"sysadmin_acciones_externas" in @capacidades_sysadmin_visibles} navigate="/sysadmin/acciones-externas" class="pc-user-menu-item pc-user-menu-subitem">
                   Acciones externas
                 </.link>
               </details>
@@ -767,6 +773,29 @@ defmodule MetadataAppWeb.MenuLayout do
   end
 
   defp firma_unidad_operativa(_scope), do: ""
+
+  # Dropdown "Sysadmin" (2026-08-16, a pedido explícito) -- antes mostraba
+  # las 10 opciones a CUALQUIER usuario autenticado sin importar sus
+  # permisos (la enforcement real vivía solo en el on_mount de cada
+  # pantalla, ver Hooks.Autorizacion) -- entrar por un link roto con "No
+  # tienes permiso" es peor UX que directamente no ofrecerlo. Ahora: cada
+  # capacidad se filtra contra Permissions.can?/3 (mismo criterio de
+  # "administrador ve todo" que ya usa el resto de RBAC), y sysadmin_bc/
+  # sysadmin_tepache ADEMÁS respetan bpb_habilitado (compile-time, no hay
+  # BPB en producción) -- si eso los apaga, no cuentan para "¿hay algo que
+  # mostrar?" tampoco. Con la lista vacía, el <details> entero desaparece
+  # en vez de quedar como un submenú sin nada adentro.
+  defp capacidades_sysadmin_visibles(%MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa} = scope, bpb_habilitado)
+       when not is_nil(usuario) and not is_nil(empresa) do
+    MetadataApp.Permissions.capacidades_sysadmin()
+    |> Enum.filter(fn {recurso, _rol_nombre, _etiqueta} ->
+      (bpb_habilitado or recurso not in ["sysadmin_bc", "sysadmin_tepache"]) and
+        MetadataApp.Permissions.can?(scope, "leer", recurso)
+    end)
+    |> Enum.map(fn {recurso, _rol_nombre, _etiqueta} -> recurso end)
+  end
+
+  defp capacidades_sysadmin_visibles(_scope, _bpb_habilitado), do: []
 
   defp asignar_datos_usuario(assigns) do
     case assigns[:current_scope] do
