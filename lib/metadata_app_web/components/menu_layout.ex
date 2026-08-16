@@ -289,6 +289,17 @@ defmodule MetadataAppWeb.MenuLayout do
                 </.link>
               </details>
               <button
+                :if={@current_scope && @current_scope.empresa_activa}
+                type="button"
+                class="pc-user-menu-item"
+                phx-click={
+                  JS.hide(to: "#user-menu-dropdown")
+                  |> JS.push("abrir", target: "#cambiar-unidad-modal")
+                }
+              >
+                Cambiar Unidad Operativa
+              </button>
+              <button
                 type="button"
                 class="pc-user-menu-item"
                 phx-click={
@@ -311,6 +322,12 @@ defmodule MetadataAppWeb.MenuLayout do
         </div>
       </div>
       <.live_component module={MetadataAppWeb.ConfiguracionCuentaModal} id="config-cuenta-modal" current_scope={@current_scope} />
+      <.live_component
+        :if={@current_scope && @current_scope.empresa_activa}
+        module={MetadataAppWeb.CambiarUnidadOperativaModal}
+        id="cambiar-unidad-modal"
+        current_scope={@current_scope}
+      />
       <!-- CONTENIDO -->
       <main class="pc-platform-main">
           <%!-- Banda de publicidad (valores por defecto, sin backend todavía)
@@ -362,79 +379,35 @@ defmodule MetadataAppWeb.MenuLayout do
       <div class="pc-footer">
         <span class="pc-footer-copyright">Prettycore {@anio_actual}</span>
 
-        <!-- Jerarquía operativa activa (Fase 4, 2026-08-11) — 4 selectores
-             independientes, cada uno un form POST plano (id va en el
-             body, no en la URL) que se auto-envía al cambiar el <select>
-             (onchange="this.form.requestSubmit()"), sin fetch/JS hook:
-             mismo criterio "funciona igual desde cualquier pantalla" que
-             el buscador TRN de más abajo. Solo aparece con sesión+empresa
-             resueltas -- ver opciones_jerarquia_activa/1. -->
+        <!-- Jerarquía operativa activa (Fase 4, 2026-08-11) -- SOLO LECTURA
+             acá desde Fase 1 de docs/ui (2026-08-15, a pedido explícito):
+             antes eran 4 <select> independientes que se auto-enviaban al
+             cambiar (onchange="this.form.requestSubmit()"), lo que
+             activaba una Unidad Operativa distinta en CADA paso intermedio
+             de la cadena Empresa -> Sucursal -> Almacén -> Unidad de Venta,
+             no solo al confirmar. Cambiarla ahora se hace desde el modal
+             "Cambiar Unidad Operativa" del menú de usuario (Fase 2/3), que
+             junta los 4 pasos y activa recién al aceptar. Solo aparece con
+             sesión+empresa resueltas -- ver opciones_jerarquia_activa/1. -->
         <div :if={@jerarquia_opciones.empresas != []} class="pc-footer-jerarquia">
           <div class="pc-footer-jerarquia-item">
             <span class="pc-footer-jerarquia-label">Emp</span>
-            <form method="post" action="/meta_schema_usuario/empresa/activar">
-              <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
-              <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">
-                <option
-                  :for={empresa <- @jerarquia_opciones.empresas}
-                  value={empresa.id}
-                  selected={@current_scope.empresa_activa && @current_scope.empresa_activa.id == empresa.id}
-                >
-                  {empresa.nombre}
-                </option>
-              </select>
-            </form>
+            <span class="pc-footer-jerarquia-valor">{(@current_scope.empresa_activa && @current_scope.empresa_activa.nombre) || "—"}</span>
           </div>
 
           <div :if={@jerarquia_opciones.branches != []} class="pc-footer-jerarquia-item">
             <span class="pc-footer-jerarquia-label">Suc</span>
-            <form method="post" action="/meta_schema_usuario/branch/activar">
-              <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
-              <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">
-                <option value="" disabled selected={is_nil(@current_scope.branch_activo)}>Elegir...</option>
-                <option
-                  :for={branch <- @jerarquia_opciones.branches}
-                  value={branch.id}
-                  selected={@current_scope.branch_activo && @current_scope.branch_activo.id == branch.id}
-                >
-                  {branch.branch_name}
-                </option>
-              </select>
-            </form>
+            <span class="pc-footer-jerarquia-valor">{(@current_scope.branch_activo && @current_scope.branch_activo.branch_name) || "—"}</span>
           </div>
 
           <div :if={@jerarquia_opciones.inventory_locations != []} class="pc-footer-jerarquia-item">
             <span class="pc-footer-jerarquia-label">Alm</span>
-            <form method="post" action="/meta_schema_usuario/inventory-location/activar">
-              <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
-              <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">
-                <option value="" disabled selected={is_nil(@current_scope.inventory_location_activo)}>Elegir...</option>
-                <option
-                  :for={inventory_location <- @jerarquia_opciones.inventory_locations}
-                  value={inventory_location.id}
-                  selected={@current_scope.inventory_location_activo && @current_scope.inventory_location_activo.id == inventory_location.id}
-                >
-                  {inventory_location.inventory_name}
-                </option>
-              </select>
-            </form>
+            <span class="pc-footer-jerarquia-valor">{(@current_scope.inventory_location_activo && @current_scope.inventory_location_activo.inventory_name) || "—"}</span>
           </div>
 
           <div :if={@jerarquia_opciones.sales_units != []} class="pc-footer-jerarquia-item">
             <span class="pc-footer-jerarquia-label">U.Vta</span>
-            <form method="post" action="/meta_schema_usuario/sales-unit/activar">
-              <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
-              <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">
-                <option value="ninguna" selected={is_nil(@current_scope.sales_unit_activo)}>Ninguna</option>
-                <option
-                  :for={sales_unit <- @jerarquia_opciones.sales_units}
-                  value={sales_unit.id}
-                  selected={@current_scope.sales_unit_activo && @current_scope.sales_unit_activo.id == sales_unit.id}
-                >
-                  {sales_unit.sales_unit_name}
-                </option>
-              </select>
-            </form>
+            <span class="pc-footer-jerarquia-valor">{(@current_scope.sales_unit_activo && @current_scope.sales_unit_activo.sales_unit_name) || "Ninguna"}</span>
           </div>
         </div>
 

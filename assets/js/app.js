@@ -550,12 +550,13 @@ const UnidadOperativaWatcher = {
     this.setTexto("modal-unidad-operativa-sales-unit", this.el.dataset.salesUnit || "")
 
     modal.classList.remove("hidden")
-    // 5 segundos bloqueando la pantalla (overlay, no un toast que se
+    // 1 segundo bloqueando la pantalla (overlay, no un toast que se
     // pueda ignorar de reojo) -- fricción deliberada para que el usuario
     // registre el cambio antes de seguir operando y evitar que arranque
-    // a hacer algo en la Unidad Operativa equivocada por apuro.
+    // a hacer algo en la Unidad Operativa equivocada por apuro. Bajado de
+    // 5s a 3s y después a 1s (2026-08-15, a pedido explícito).
     clearTimeout(this.temporizador)
-    this.temporizador = setTimeout(() => modal.classList.add("hidden"), 5000)
+    this.temporizador = setTimeout(() => modal.classList.add("hidden"), 1000)
   },
 
   setTexto(id, valor) {
