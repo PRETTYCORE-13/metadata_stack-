@@ -120,6 +120,20 @@ body {
   overflow-x: hidden;
 }
 
+/* Auto-zoom al enfocar un input en iOS Safari (y algunos Android) — pasa
+   SIEMPRE que el font-size del campo sea menor a 16px, sin importar si el
+   contenido entra bien en pantalla o no; el navegador zoomea igual y
+   corre todo el layout (ver captura real: Ficha 360° en móvil, campo
+   "Valor ($)"). La mayoría de los inputs de la app usan text-sm (14px),
+   así que hace falta este piso de 16px SOLO en pantallas de celular —
+   arriba de 640px el font-size real (el de Tailwind/daisyUI de cada
+   input) sigue aplicando sin cambios. */
+@media (max-width: 640px) {
+  input, select, textarea {
+    font-size: 16px;
+  }
+}
+
 /* Add variants based on LiveView classes */
 @custom-variant phx-click-loading (.phx-click-loading&, .phx-click-loading &);
 @custom-variant phx-submit-loading (.phx-submit-loading&, .phx-submit-loading &);
