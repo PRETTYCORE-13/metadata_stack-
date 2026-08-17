@@ -392,6 +392,83 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     :ok
   end
 
+  @doc """
+  Alinea el NOT NULL real de una columna YA EXISTENTE con lo que dice
+  "opcional" en meta_schema_detail — a diferencia de asegurar_campos_nuevos/1
+  (que nunca hace ALTER COLUMN sobre una columna que ya existe, a propósito,
+  ver el bug real de 2026-08-17: pty_dsd_empleados_fecha_baja se marcó
+  "opcional" en el diseñador pero la columna siguió NOT NULL, y el primer
+  alta sin ese campo reventó con un 23502 sin atrapar), esto SÍ altera la
+  columna física, pero solo en la dirección segura o cuando de verdad se
+  puede:
+
+    - "opcional" pasa a true: siempre corre un DROP NOT NULL — relajar una
+      restricción nunca puede fallar por datos existentes.
+    - "opcional" pasa a false: solo si HOY no hay ninguna fila con esa
+      columna en NULL (si las hay, un SET NOT NULL fallaría igual que
+      fallaba el alta real — mejor bloquearlo acá, ANTES de guardar, con
+      un mensaje claro, que dejarlo reventar en el próximo alta).
+
+  Devuelve `:ok` (incluye el caso "no había nada que sincronizar": columna
+  todavía no es física, o ya estaba como corresponde) o `{:error, mensaje}`
+  cuando se bloquea el caso riesgoso de arriba. Nunca levanta — cualquier
+  otro fallo real de Postgres al correr la migración sí se propaga como
+  excepción, igual que el resto del generador.
+
+  No toca campos tipo "referencia" — una FK sigue el criterio propio de
+  columna_migracion_agregar/3 (siempre nullable al agregarse a una tabla
+  existente), nunca el de acá.
+  """
+  def sincronizar_nulabilidad_campo(schema_context_name, campo) do
+    with {:ok, detalle} <- buscar_detalle(schema_context_name, campo) do
+      propiedades = detalle.schema_context_properties || %{}
+      tipo_str = Map.get(propiedades, "tipo", "string")
+      opcional? = Map.get(propiedades, "opcional", false)
+
+      case {tipo_str, nulable_fisica(schema_context_name, campo)} do
+        {"referencia", _} ->
+          :ok
+
+        {_tipo, nil} ->
+          :ok
+
+        {_tipo, ^opcional?} ->
+          :ok
+
+        {_tipo, _distinto} when opcional? ->
+          alterar_nulabilidad(schema_context_name, campo, tipo_ecto(tipo_str), construir_opciones(tipo_str, propiedades), true)
+
+        {_tipo, _distinto} ->
+          case contar_nulos(schema_context_name, campo) do
+            0 ->
+              alterar_nulabilidad(schema_context_name, campo, tipo_ecto(tipo_str), construir_opciones(tipo_str, propiedades), false)
+
+            n ->
+              {:error, "hay #{n} registro(s) con \"#{campo}\" vacío — no se puede exigir sin completarlos antes"}
+          end
+      end
+    end
+  end
+
+  defp nulable_fisica(schema_context_name, campo) do
+    %{rows: filas} =
+      Repo.query!(
+        "select is_nullable from information_schema.columns where table_name = $1 and column_name = $2",
+        [schema_context_name, to_string(campo)]
+      )
+
+    case filas do
+      [["YES"]] -> true
+      [["NO"]] -> false
+      [] -> nil
+    end
+  end
+
+  defp contar_nulos(schema_context_name, campo) do
+    %{rows: [[n]]} = Repo.query!("select count(*) from #{schema_context_name} where #{campo} is null")
+    n
+  end
+
   # Backfill de trn/ulid para un catálogo que se marcó transaccional
   # DESPUÉS de ya haber sido generado (mismo criterio que
   # asegurar_estado_id/1 — no versionado, IF NOT EXISTS, idempotente).
@@ -460,6 +537,52 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     File.write!(path, contenido)
     migrar()
   end
+
+  # Mismo criterio de nombre único que agregar_columnas/2 y quitar_columna/2
+  # (sufijo con timestamp, migración hacia adelante). `modify` (no `add`,
+  # esto SIEMPRE es sobre una columna que ya existe) necesita el tipo
+  # completo igual que `add` — Ecto arma un solo ALTER TABLE con la cláusula
+  # TYPE + la de null; pasarle el mismo tipo/tamaño que ya tiene la columna
+  # (derivado de la misma metadata que la creó) hace que la parte de TYPE
+  # sea un no-op en Postgres, y lo único que cambia de verdad es la
+  # restricción NOT NULL.
+  defp alterar_nulabilidad(schema_context_name, campo, tipo, opciones, nulable?) do
+    timestamp = timestamp_utc()
+    verbo = if nulable?, do: "PermitirNuloEn", else: "ExigirNoNuloEn"
+    modulo_migracion = verbo <> Macro.camelize(to_string(campo)) <> Macro.camelize(schema_context_name) <> timestamp
+    descripcion = if nulable?, do: "permitir_nulo_en", else: "exigir_no_nulo_en"
+    path = "priv/repo/migrations/#{timestamp}_#{descripcion}_#{campo}_#{schema_context_name}_#{timestamp}.exs"
+
+    contenido = """
+    defmodule MetadataApp.Repo.Migrations.#{modulo_migracion} do
+      use Ecto.Migration
+
+      def change do
+        alter table(:#{schema_context_name}) do
+    #{modificar_columna_migracion(campo, tipo, opciones, nulable?)}
+        end
+      end
+    end
+    """
+
+    File.write!(path, contenido)
+    migrar()
+    :ok
+  end
+
+  defp modificar_columna_migracion(campo, :string, %{texto_largo: true}, nulable?),
+    do: "      modify :#{campo}, :text, null: #{nulable?}"
+
+  defp modificar_columna_migracion(campo, :string, opciones, nulable?),
+    do: "      modify :#{campo}, :string, size: #{opciones[:longitud] || 255}, null: #{nulable?}"
+
+  defp modificar_columna_migracion(campo, :decimal, %{precision: precision, escala: escala}, nulable?)
+       when is_integer(precision) and is_integer(escala),
+       do: "      modify :#{campo}, :decimal, precision: #{precision}, scale: #{escala}, null: #{nulable?}"
+
+  defp modificar_columna_migracion(campo, tipo, _opciones, nulable?)
+       when tipo in [:integer, :decimal, :boolean, :date, :time],
+       do: "      modify :#{campo}, :#{tipo}, null: #{nulable?}"
 
   # Los registros ya existentes no tienen valor para este campo nuevo — a
   # diferencia de columna_migracion/3 (pensada para CREATE TABLE, tabla

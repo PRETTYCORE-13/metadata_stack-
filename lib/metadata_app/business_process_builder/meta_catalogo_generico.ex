@@ -165,9 +165,10 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
   import Ecto.Changeset
 
   # "Obligatorio + valor default forzoso" (2026-08-05, a pedido explícito)
-  # — regla de negocio BLANDA, no de integridad de datos: la columna
-  # física se queda nullable siempre (sin ALTER COLUMN, sin verificar
-  # NULLs existentes en producción antes de nada). Opera sobre `attrs`
+  # — regla de negocio a nivel changeset, aparte de la restricción física de
+  # la columna (esa la alinea CatalogoGenerador.sincronizar_nulabilidad_
+  # campo/2 cuando se cambia "obligatorio" desde BcMotorLive, agregado
+  # 2026-08-17). Opera sobre `attrs`
   # ANTES de cast/2 a propósito, no con put_change/3 después: así el valor
   # default (guardado como texto plano en la metadata) pasa por el mismo
   # casteo de tipo que cualquier valor que llegara de un formulario real
