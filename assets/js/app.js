@@ -383,7 +383,7 @@ const SelectorCampos = {
     const ordenGuardado = memoriaOrdenColumnas[this.clave]
     if (ordenGuardado) this.reordenarLista(ordenGuardado)
 
-    const ocultos = memoriaColumnasOcultas[this.clave] || []
+    const ocultos = memoriaColumnasOcultas[this.clave] || this.ocultosPorDefecto()
     this.casillas().forEach((cb) => { cb.checked = !ocultos.includes(cb.dataset.campo) })
 
     this.aplicar()
@@ -436,6 +436,22 @@ const SelectorCampos = {
 
   casillas() {
     return this.el.querySelectorAll("input[type=checkbox][data-campo]")
+  },
+
+  // En celular, sin que el usuario haya tocado "Campos" todavía en esta
+  // sesión (ver memoriaColumnasOcultas arriba), arranca ocultando las
+  // columnas "estructurales" (Estado/TRN/Empresa/Sucursal/Almacén/Unidad
+  // de venta) — son las que más empujan la tabla a scroll horizontal en
+  // una pantalla angosta, y casi nunca son el dato que alguien busca de
+  // un vistazo. Siguen ahí, un tilde en "Campos" las trae de vuelta. En
+  // desktop (>= 640px, mismo corte que el resto de la vista) no cambia
+  // nada de lo que ya había.
+  ocultosPorDefecto() {
+    if (!window.matchMedia("(max-width: 639px)").matches) return []
+    const estructurales = ["estado", "trn", "empresa", "branch", "inventory_location", "sales_unit"]
+    return Array.from(this.casillas())
+      .map((cb) => cb.dataset.campo)
+      .filter((clave) => estructurales.includes(clave))
   },
 
   ordenActual() {
