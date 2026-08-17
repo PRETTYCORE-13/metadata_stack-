@@ -894,9 +894,13 @@ defmodule MetadataAppWeb.CatalogoLive do
   def render(assigns) do
     ~H"""
     <div class="p-6">
+      <%!-- bottom-20/right-3, no bottom-5/right-5: el botón flotante de
+      .pc-footer-toggle-btn (menu.css, "mostrar/ocultar barra inferior")
+      ya vive fixed bottom:12px/right:12px en mobile -- con menos separación
+      quedaban los dos círculos superpuestos en la misma esquina. --%>
       <.link :if={@campos_alta != []} navigate={"/registro/#{@current_page}/nuevo"}
         aria-label="Nuevo registro"
-        class="sm:hidden fixed bottom-5 right-5 z-30 flex items-center justify-center w-14 h-14 rounded-full bg-purple-600 text-white shadow-lg shadow-purple-600/30 hover:bg-purple-700 active:scale-95 transition">
+        class="sm:hidden fixed bottom-20 right-3 z-30 flex items-center justify-center w-14 h-14 rounded-full bg-purple-600 text-white shadow-lg shadow-purple-600/30 hover:bg-purple-700 active:scale-95 transition">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
         </svg>
