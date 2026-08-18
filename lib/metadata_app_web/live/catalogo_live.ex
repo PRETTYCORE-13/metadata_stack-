@@ -16,6 +16,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   alias MetadataApp.Autenticacion.Empresa
   alias MetadataApp.Repo
   alias MetadataAppWeb.AdminNav
+  alias MetadataAppWeb.CampoInputComponents
   import Ecto.Query
 
   @por_pagina 25
@@ -661,6 +662,24 @@ defmodule MetadataAppWeb.CatalogoLive do
     if desde || hasta, do: Map.put(acc, campo, {:entre, {desde, hasta}}), else: acc
   end
 
+  # "enum"/"referencia" tienen un <select> dedicado (ver filtro_columna/1 y
+  # fila_filtro_columna/1) — a diferencia del catch-all de abajo, acá el
+  # valor es una coincidencia EXACTA (código del enum / id de la fila
+  # referenciada), no un substring vía ILIKE.
+  defp agregar_filtro_ecto(acc, campo, "enum", filtros) do
+    case Map.get(filtros, campo) |> valor_no_vacio() do
+      nil -> acc
+      valor -> Map.put(acc, campo, valor)
+    end
+  end
+
+  defp agregar_filtro_ecto(acc, campo, "referencia", filtros) do
+    case Map.get(filtros, campo) |> valor_no_vacio() |> convertir("referencia") do
+      nil -> acc
+      valor -> Map.put(acc, campo, valor)
+    end
+  end
+
   defp agregar_filtro_ecto(acc, campo, _tipo, filtros) do
     case Map.get(filtros, campo) |> valor_no_vacio() do
       nil -> acc
@@ -735,6 +754,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   defp convertir(v, "integer"), do: parsear(fn -> String.to_integer(v) end)
   defp convertir(v, "decimal"), do: parsear(fn -> Decimal.new(v) end)
   defp convertir(v, "date"), do: parsear(fn -> Date.from_iso8601!(v) end)
+  defp convertir(v, "referencia"), do: parsear(fn -> String.to_integer(v) end)
 
   # Si el usuario deja algo no parseable a medio escribir (ej. "10." en un
   # decimal), se ignora ese lado del rango en vez de tronar la pantalla.
@@ -767,6 +787,8 @@ defmodule MetadataAppWeb.CatalogoLive do
             {@inicio}-{@fin} de {@total_filas}
           </span>
         </div>
+
+        <form id="form-filtros" phx-change="filtrar" class="hidden" aria-hidden="true"></form>
 
         <div class="flex flex-col gap-2 mb-4 sm:flex-row sm:items-center">
           <div class="relative sm:flex-1">
@@ -832,6 +854,9 @@ defmodule MetadataAppWeb.CatalogoLive do
                     {columna.schema_context_properties["etiqueta"]}
                   </th>
                 <% end %>
+              </tr>
+              <tr class="bg-gray-50/60 border-t border-gray-100">
+                <.fila_filtros_columnas columnas={@columnas} filtros={@filtros} />
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
@@ -948,6 +973,8 @@ defmodule MetadataAppWeb.CatalogoLive do
           </div>
         </div>
 
+        <form id="form-filtros" phx-change="filtrar" class="hidden" aria-hidden="true"></form>
+
         <div class="flex flex-col gap-2 mb-4 sm:flex-row sm:items-center">
           <div class="relative sm:flex-1">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
@@ -1046,6 +1073,17 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <% end %>
                 <th class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"></th>
               </tr>
+              <tr class="bg-gray-50/60 border-t border-gray-100">
+                <th :if={@mostrar_id?} data-col="id" class="px-2 py-1.5 sm:px-4"></th>
+                <.fila_filtros_columnas columnas={@columnas} filtros={@filtros} />
+                <th :if={@mostrar_estado?} data-col="estado" class="px-2 py-1.5 sm:px-4"></th>
+                <th :if={@mostrar_trn?} data-col="trn" class="px-2 py-1.5 sm:px-4"></th>
+                <th :if={@mostrar_empresa?} data-col="empresa" class="px-2 py-1.5 sm:px-4"></th>
+                <th :if={@mostrar_branch?} data-col="branch" class="px-2 py-1.5 sm:px-4"></th>
+                <th :if={@mostrar_inventory_location?} data-col="inventory_location" class="px-2 py-1.5 sm:px-4"></th>
+                <th :if={@mostrar_sales_unit?} data-col="sales_unit" class="px-2 py-1.5 sm:px-4"></th>
+                <th class="px-2 py-1.5 sm:px-4"></th>
+              </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
               <%= for fila <- @filas do %>
@@ -1118,7 +1156,7 @@ defmodule MetadataAppWeb.CatalogoLive do
             </tbody>
             <tfoot class="bg-gray-50 border-t-2 border-gray-300">
               <tr>
-                <td :if={@mostrar_id?} class="px-4 py-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 whitespace-nowrap">Resumen</td>
+                <td :if={@mostrar_id?} data-col="id" class="px-4 py-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 whitespace-nowrap">Resumen</td>
                 <.celdas_resumen
                   columnas={@columnas}
                   agregaciones={@agregaciones}
@@ -1127,12 +1165,12 @@ defmodule MetadataAppWeb.CatalogoLive do
                   totales_generales={@totales_generales}
                   filas={@filas}
                 />
-                <td :if={@mostrar_estado?}></td>
-                <td :if={@mostrar_trn?}></td>
-                <td :if={@mostrar_empresa?}></td>
-                <td :if={@mostrar_branch?}></td>
-                <td :if={@mostrar_inventory_location?}></td>
-                <td :if={@mostrar_sales_unit?}></td>
+                <td :if={@mostrar_estado?} data-col="estado"></td>
+                <td :if={@mostrar_trn?} data-col="trn"></td>
+                <td :if={@mostrar_empresa?} data-col="empresa"></td>
+                <td :if={@mostrar_branch?} data-col="branch"></td>
+                <td :if={@mostrar_inventory_location?} data-col="inventory_location"></td>
+                <td :if={@mostrar_sales_unit?} data-col="sales_unit"></td>
                 <td></td>
               </tr>
             </tfoot>
@@ -1565,7 +1603,7 @@ defmodule MetadataAppWeb.CatalogoLive do
         <% end %>
       </div>
 
-      <form phx-change="filtrar" class="overflow-y-auto px-4 py-3 flex flex-col gap-3">
+      <div class="overflow-y-auto px-4 py-3 flex flex-col gap-3">
         <%= if @filtros_activos == [] do %>
           <p class="text-xs text-gray-400 text-center py-4">
             Sin filtros agregados — usa "Agregar filtro" para elegir un campo.
@@ -1600,7 +1638,7 @@ defmodule MetadataAppWeb.CatalogoLive do
             </button>
           </div>
         <% end %>
-      </form>
+      </div>
 
       <div class="px-4 py-2.5 border-t border-gray-200 flex justify-between items-center">
         <button
@@ -1622,6 +1660,26 @@ defmodule MetadataAppWeb.CatalogoLive do
     """
   end
 
+  # Opciones del <select> de un filtro "enum"/"referencia" — usado tanto por
+  # filtro_columna/1 (popover) como por fila_filtro_columna/1 (fila fija en
+  # el thead), para que las dos UIs filtren el mismo campo con la misma
+  # semántica (coincidencia exacta, no ILIKE).
+  defp opciones_para_columna(%{schema_context_properties: %{"tipo" => "enum"} = props}),
+    do: CampoInputComponents.opciones_enum(props["valores"])
+
+  defp opciones_para_columna(%{schema_context_properties: %{"tipo" => "referencia"} = props}),
+    do: CatalogoGenerico.opciones_referencia(props)
+
+  # Etiqueta legible del valor actualmente elegido (para la rama
+  # "bloqueado" de un filtro enum/referencia) — sin esto se mostraría el
+  # código del enum o el id numérico crudo en vez de algo legible.
+  defp etiqueta_seleccionada(opciones, valor) do
+    case Enum.find(opciones, fn {v, _etiqueta} -> to_string(v) == to_string(valor) end) do
+      {_v, etiqueta} -> etiqueta
+      nil -> valor
+    end
+  end
+
   # Un widget de filtro distinto según el tipo de la columna (guardado en
   # meta_schema_detail) — así un catálogo nuevo sale con filtros
   # funcionando sin escribir nada a mano por catálogo. Los nombres de los
@@ -1632,9 +1690,15 @@ defmodule MetadataAppWeb.CatalogoLive do
   # el usuario final ve el valor pero no lo puede tocar — en vez del
   # control editable normal, dibuja el valor como texto fijo + un
   # `<input type="hidden">` con el mismo `name` para que el submit del
-  # form ("filtrar", phx-change en el <form> de panel_filtros/1) lo siga
-  # mandando igual (un input con `disabled` NO se manda en absoluto, por
-  # eso hidden en vez de eso).
+  # form ("filtrar") lo siga mandando igual (un input con `disabled` NO se
+  # manda en absoluto, por eso hidden en vez de eso).
+  #
+  # `form="form-filtros"`: este popover ya no es un <form> en sí (ver
+  # panel_filtros/1) — el <form phx-change="filtrar"> real vive SIEMPRE
+  # montado más arriba en el render (id="form-filtros"), aunque el popover
+  # esté cerrado, para que la fila fija del thead (fila_filtro_columna/1)
+  # tenga algo a que asociarse por `form=""` incluso sin abrir "Filtros".
+  # Los inputs de acá se asocian al mismo form por el mismo mecanismo.
   attr :columna, :map, required: true
   attr :valores, :map, required: true
   attr :bloqueado?, :boolean, default: false
@@ -1647,12 +1711,12 @@ defmodule MetadataAppWeb.CatalogoLive do
     <div class="flex flex-col gap-1">
       <label class="text-[11px] font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
       <%= if @bloqueado? do %>
-        <input type="hidden" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
+        <input type="hidden" form="form-filtros" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
         <div class="w-full border border-gray-200 rounded bg-gray-50 text-gray-500 text-xs px-2 py-1.5">
           {texto_filtro_boolean(@valores[@campo])}
         </div>
       <% else %>
-        <select name={"filtros[#{@campo}]"} class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5">
+        <select form="form-filtros" name={"filtros[#{@campo}]"} class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5">
           <option value="" selected={@valores[@campo] in [nil, ""]}>Todos</option>
           <option value="true" selected={@valores[@campo] == "true"}>Sí</option>
           <option value="false" selected={@valores[@campo] == "false"}>No</option>
@@ -1672,8 +1736,8 @@ defmodule MetadataAppWeb.CatalogoLive do
     <div class="flex flex-col gap-1">
       <label class="text-[11px] font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
       <%= if @bloqueado? do %>
-        <input type="hidden" name={"filtros[#{@campo}_desde]"} value={@valores["#{@campo}_desde"]} />
-        <input type="hidden" name={"filtros[#{@campo}_hasta]"} value={@valores["#{@campo}_hasta"]} />
+        <input type="hidden" form="form-filtros" name={"filtros[#{@campo}_desde]"} value={@valores["#{@campo}_desde"]} />
+        <input type="hidden" form="form-filtros" name={"filtros[#{@campo}_hasta]"} value={@valores["#{@campo}_hasta"]} />
         <div class="w-full border border-gray-200 rounded bg-gray-50 text-gray-500 text-xs px-2 py-1.5">
           {@valores["#{@campo}_desde"] || "…"} – {@valores["#{@campo}_hasta"] || "…"}
         </div>
@@ -1681,6 +1745,7 @@ defmodule MetadataAppWeb.CatalogoLive do
         <div class="flex items-center gap-1">
           <input
             type={@tipo_input}
+            form="form-filtros"
             name={"filtros[#{@campo}_desde]"}
             value={@valores["#{@campo}_desde"]}
             placeholder="Desde"
@@ -1690,6 +1755,7 @@ defmodule MetadataAppWeb.CatalogoLive do
           <span class="text-gray-400 text-xs">–</span>
           <input
             type={@tipo_input}
+            form="form-filtros"
             name={"filtros[#{@campo}_hasta]"}
             value={@valores["#{@campo}_hasta"]}
             placeholder="Hasta"
@@ -1697,6 +1763,32 @@ defmodule MetadataAppWeb.CatalogoLive do
             class="w-0 flex-1 min-w-0 border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5"
           />
         </div>
+      <% end %>
+    </div>
+    """
+  end
+
+  defp filtro_columna(%{columna: %{schema_context_properties: %{"tipo" => tipo}}} = assigns)
+       when tipo in ["enum", "referencia"] do
+    campo = assigns.columna.schema_context_field
+    opciones = opciones_para_columna(assigns.columna)
+    assigns = assigns |> assign(:campo, campo) |> assign(:opciones, opciones)
+
+    ~H"""
+    <div class="flex flex-col gap-1">
+      <label class="text-[11px] font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
+      <%= if @bloqueado? do %>
+        <input type="hidden" form="form-filtros" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
+        <div class="w-full border border-gray-200 rounded bg-gray-50 text-gray-500 text-xs px-2 py-1.5">
+          {etiqueta_seleccionada(@opciones, @valores[@campo])}
+        </div>
+      <% else %>
+        <select form="form-filtros" name={"filtros[#{@campo}]"} class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5">
+          <option value="" selected={@valores[@campo] in [nil, ""]}>Todos</option>
+          <option :for={{valor, etiqueta} <- @opciones} value={valor} selected={to_string(@valores[@campo]) == to_string(valor)}>
+            {etiqueta}
+          </option>
+        </select>
       <% end %>
     </div>
     """
@@ -1710,13 +1802,14 @@ defmodule MetadataAppWeb.CatalogoLive do
     <div class="flex flex-col gap-1">
       <label class="text-[11px] font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
       <%= if @bloqueado? do %>
-        <input type="hidden" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
+        <input type="hidden" form="form-filtros" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
         <div class="w-full border border-gray-200 rounded bg-gray-50 text-gray-500 text-xs px-2 py-1.5">
           {@valores[@campo]}
         </div>
       <% else %>
         <input
           type="text"
+          form="form-filtros"
           name={"filtros[#{@campo}]"}
           value={@valores[@campo]}
           placeholder="Buscar..."
@@ -1732,5 +1825,143 @@ defmodule MetadataAppWeb.CatalogoLive do
   defp texto_filtro_boolean("false"), do: "No"
   defp texto_filtro_boolean(_valor), do: "Todos"
 
+  # Fila de filtros SIEMPRE visible, pegada al encabezado de columna (thead)
+  # — misma idea que filtro_columna/1 (popover "Filtros") y mismo despacho
+  # por tipo, pero compacta (sin <label>, el nombre de columna ya está en
+  # el <th> de arriba) y pensada para vivir en una celda angosta.
+  #
+  # `form="form-filtros"` en cada control: estos inputs viven en el thead
+  # de la tabla, fuera del <form phx-change="filtrar" id="form-filtros">
+  # (montado siempre, ver el bloque justo antes de la barra de búsqueda en
+  # render/1 — TIENE que estar siempre en el DOM, no solo cuando el
+  # popover de Filtros está abierto, si no `form=""` no tiene a qué
+  # asociarse). El atributo `form` los asocia igual estando afuera
+  # (estándar HTML5, ver Form.elements/FormData), así un solo submit
+  # ("filtrar") junta los valores de las dos UIs sin pisarse.
+  attr :columna, :map, required: true
+  attr :valores, :map, required: true
+  attr :bloqueado?, :boolean, default: false
 
+  defp fila_filtro_columna(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
+    campo = assigns.columna.schema_context_field
+    assigns = assign(assigns, :campo, campo)
+
+    ~H"""
+    <%= if @bloqueado? do %>
+      <input type="hidden" form="form-filtros" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
+      <span class="block truncate text-[10px] text-gray-400" title={texto_filtro_boolean(@valores[@campo])}>
+        {texto_filtro_boolean(@valores[@campo])}
+      </span>
+    <% else %>
+      <select form="form-filtros" name={"filtros[#{@campo}]"} class="w-full border border-gray-300 rounded text-gray-900 text-[10px] px-1.5 py-1">
+        <option value="" selected={@valores[@campo] in [nil, ""]}>Todos</option>
+        <option value="true" selected={@valores[@campo] == "true"}>Sí</option>
+        <option value="false" selected={@valores[@campo] == "false"}>No</option>
+      </select>
+    <% end %>
+    """
+  end
+
+  defp fila_filtro_columna(%{columna: %{schema_context_properties: %{"tipo" => tipo}}} = assigns)
+       when tipo in ["integer", "decimal", "date"] do
+    campo = assigns.columna.schema_context_field
+    tipo_input = if tipo == "date", do: "date", else: "number"
+    assigns = assigns |> assign(:campo, campo) |> assign(:tipo_input, tipo_input)
+
+    ~H"""
+    <%= if @bloqueado? do %>
+      <input type="hidden" form="form-filtros" name={"filtros[#{@campo}_desde]"} value={@valores["#{@campo}_desde"]} />
+      <input type="hidden" form="form-filtros" name={"filtros[#{@campo}_hasta]"} value={@valores["#{@campo}_hasta"]} />
+      <span class="block truncate text-[10px] text-gray-400">
+        {@valores["#{@campo}_desde"] || "…"} – {@valores["#{@campo}_hasta"] || "…"}
+      </span>
+    <% else %>
+      <div class="flex items-center gap-0.5">
+        <input
+          type={@tipo_input}
+          form="form-filtros"
+          name={"filtros[#{@campo}_desde]"}
+          value={@valores["#{@campo}_desde"]}
+          placeholder="Desde"
+          phx-debounce="400"
+          class="w-0 flex-1 min-w-0 border border-gray-300 rounded text-gray-900 text-[10px] px-1.5 py-1"
+        />
+        <input
+          type={@tipo_input}
+          form="form-filtros"
+          name={"filtros[#{@campo}_hasta]"}
+          value={@valores["#{@campo}_hasta"]}
+          placeholder="Hasta"
+          phx-debounce="400"
+          class="w-0 flex-1 min-w-0 border border-gray-300 rounded text-gray-900 text-[10px] px-1.5 py-1"
+        />
+      </div>
+    <% end %>
+    """
+  end
+
+  defp fila_filtro_columna(%{columna: %{schema_context_properties: %{"tipo" => tipo}}} = assigns)
+       when tipo in ["enum", "referencia"] do
+    campo = assigns.columna.schema_context_field
+    opciones = opciones_para_columna(assigns.columna)
+    assigns = assigns |> assign(:campo, campo) |> assign(:opciones, opciones)
+
+    ~H"""
+    <%= if @bloqueado? do %>
+      <input type="hidden" form="form-filtros" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
+      <span class="block truncate text-[10px] text-gray-400" title={etiqueta_seleccionada(@opciones, @valores[@campo])}>
+        {etiqueta_seleccionada(@opciones, @valores[@campo])}
+      </span>
+    <% else %>
+      <select form="form-filtros" name={"filtros[#{@campo}]"} class="w-full border border-gray-300 rounded text-gray-900 text-[10px] px-1.5 py-1">
+        <option value="" selected={@valores[@campo] in [nil, ""]}>Todos</option>
+        <option :for={{valor, etiqueta} <- @opciones} value={valor} selected={to_string(@valores[@campo]) == to_string(valor)}>
+          {etiqueta}
+        </option>
+      </select>
+    <% end %>
+    """
+  end
+
+  defp fila_filtro_columna(assigns) do
+    campo = assigns.columna.schema_context_field
+    assigns = assign(assigns, :campo, campo)
+
+    ~H"""
+    <%= if @bloqueado? do %>
+      <input type="hidden" form="form-filtros" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
+      <span class="block truncate text-[10px] text-gray-400" title={@valores[@campo]}>{@valores[@campo]}</span>
+    <% else %>
+      <input
+        type="text"
+        form="form-filtros"
+        name={"filtros[#{@campo}]"}
+        value={@valores[@campo]}
+        placeholder="Buscar..."
+        phx-debounce="400"
+        class="w-full border border-gray-300 rounded text-gray-900 text-[10px] px-1.5 py-1"
+      />
+    <% end %>
+    """
+  end
+
+  # Recorre @columnas armando un <th data-col={...}> por columna dentro de
+  # la fila fija de filtros — mismo data-col que la fila de encabezado de
+  # arriba, así SelectorCampos (assets/js/app.js) la oculta/reordena en
+  # sync sola cuando el usuario toca "Campos", igual que ya hace con
+  # celdas_resumen/1 en el <tfoot>. Se reusa tal cual en la tabla de
+  # catálogo y en la de consulta.
+  attr :columnas, :list, required: true
+  attr :filtros, :map, required: true
+
+  defp fila_filtros_columnas(assigns) do
+    ~H"""
+    <%= for columna <- @columnas do %>
+      <% bloqueado? = columna.schema_context_properties["filtro_default_bloqueado"] == true %>
+      <th data-col={col_key(columna)} class="px-2 py-1.5 sm:px-4 align-top">
+        <.fila_filtro_columna columna={columna} valores={@filtros} bloqueado?={bloqueado?} />
+      </th>
+    <% end %>
+    """
+  end
 end
