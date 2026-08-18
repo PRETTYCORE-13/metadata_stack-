@@ -129,6 +129,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     |> assign(:resultados_usuario, [])
     |> assign(:usuario_seleccionado, nil)
     |> assign(:roles, [])
+    |> assign(:roles_con_permiso, [])
     |> assign(:estado, %{})
     |> assign(:alcance_por_rol, %{})
     |> assign(:tipos_alcance, @tipos_alcance)
@@ -332,12 +333,26 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
         true -> @acciones_crud
       end
     acciones_transiciones = Enum.map(socket.assigns.transiciones, & &1.accion)
+    acciones_todas = acciones_crud ++ acciones_transiciones
     rol_ids = Enum.map(roles, & &1.id)
-    estado = Permissions.estado_permisos_para_roles(recurso, rol_ids, acciones_crud ++ acciones_transiciones)
+    estado = Permissions.estado_permisos_para_roles(recurso, rol_ids, acciones_todas)
     alcance_por_rol = Permissions.alcance_de_catalogo(socket.assigns.catalogo.id)
+
+    # "Alcance de datos por rol" para un rol SIN ningún permiso/transición
+    # concedida en este catálogo no tiene nada que configurar todavía —
+    # a pedido explícito, para que esa sección no se sature con roles que
+    # todavía no pueden ni leer el catálogo. "administrador" siempre
+    # queda (ve todo sin depender de @estado, mismo criterio que ya tenía
+    # su fila fija arriba en la matriz de permisos).
+    roles_con_permiso =
+      Enum.filter(roles, fn rol ->
+        rol.nombre == "administrador" or
+          Enum.any?(acciones_todas, &Map.get(estado, {rol.id, &1}, %{concedido: false}).concedido)
+      end)
 
     socket
     |> assign(:roles, roles)
+    |> assign(:roles_con_permiso, roles_con_permiso)
     |> assign(:estado, estado)
     |> assign(:acciones_crud, acciones_crud)
     |> assign(:alcance_por_rol, alcance_por_rol)
@@ -552,7 +567,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
       </div>
 
       <.panel_alcance_de_rol :if={@catalogo && @catalogo.alcance_habilitado}
-        roles={@roles} alcance_por_rol={@alcance_por_rol} tipos_alcance={@tipos_alcance} />
+        roles={@roles_con_permiso} alcance_por_rol={@alcance_por_rol} tipos_alcance={@tipos_alcance} />
     </div>
     """
   end
@@ -562,6 +577,9 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   # distinto (QUÉ FILAS, no QUÉ ACCIONES). Solo aparece si el catálogo ya
   # activó alcance_habilitado (toggle arriba, relocado 2026-08-12 desde
   # BcMotorLive/Get View), la mayoría de los catálogos hoy no lo tiene prendido.
+  # `roles` acá es @roles_con_permiso (cargar_matriz/1), no @roles -- un rol
+  # sin ningún permiso/transición concedida en este catálogo no tiene nada
+  # que configurar todavía, a pedido explícito para no saturar esta lista.
   attr :roles, :list, required: true
   attr :alcance_por_rol, :map, required: true
   attr :tipos_alcance, :list, required: true
@@ -600,7 +618,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
             </td>
           </tr>
           <tr :if={@roles == []}>
-            <td colspan="2" class="px-4 py-6 text-center text-sm text-gray-400">Todavía no hay roles en esta empresa.</td>
+            <td colspan="2" class="px-4 py-6 text-center text-sm text-gray-400">Ningún rol tiene permisos en este catálogo todavía — configuralos arriba primero.</td>
           </tr>
         </tbody>
       </table>
