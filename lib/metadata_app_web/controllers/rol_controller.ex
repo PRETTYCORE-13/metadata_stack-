@@ -73,6 +73,7 @@ defmodule MetadataAppWeb.RolController do
       nombre: rol.nombre,
       descripcion: rol.descripcion,
       es_sistema: rol.es_sistema,
+      tipo: rol.tipo,
       empresa_id: rol.empresa_id
     }
   end

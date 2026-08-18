@@ -47,20 +47,32 @@ defmodule MetadataAppWeb.Sysadmin.RolesLive do
      |> assign(:busqueda_usuario, "")
      |> assign(:resultados_usuario, [])
      |> assign(:usuarios_del_rol, [])
+     |> assign(:mostrar_sysadmin?, false)
      |> cargar_roles()}
   end
 
   def handle_params(%{"id" => id}, _uri, socket) do
     case Permissions.obtener_rol(id) do
       {:ok, rol} ->
-        {:noreply,
-         socket
-         |> assign(:rol, rol)
-         |> assign(:editando_rol, false)
-         |> assign(:error_editar_rol, nil)
-         |> assign(:busqueda_usuario, "")
-         |> assign(:resultados_usuario, [])
-         |> cargar_usuarios_del_rol()}
+        # Cierra por URL directa el mismo hueco que el checkbox tapa en la
+        # lista -- sin esto, alguien sin super_admin podía escribir
+        # /sysadmin/roles/<id de un rol sysadmin> a mano y verlo igual,
+        # aunque nunca apareciera en la tabla de la izquierda.
+        if rol.tipo == :sysadmin and not socket.assigns.current_scope.usuario.super_admin do
+          {:noreply,
+           socket
+           |> put_flash(:error, "Ese rol no existe.")
+           |> push_patch(to: ~p"/sysadmin/roles")}
+        else
+          {:noreply,
+           socket
+           |> assign(:rol, rol)
+           |> assign(:editando_rol, false)
+           |> assign(:error_editar_rol, nil)
+           |> assign(:busqueda_usuario, "")
+           |> assign(:resultados_usuario, [])
+           |> cargar_usuarios_del_rol()}
+        end
 
       {:error, :no_encontrado} ->
         {:noreply,
@@ -76,6 +88,19 @@ defmodule MetadataAppWeb.Sysadmin.RolesLive do
 
   def handle_event("change_page", %{"id" => id}, socket) do
     AdminNav.handle_nav(id, socket, "roles")
+  end
+
+  # El checkbox ya está oculto en el render para cualquiera que no sea
+  # super_admin (ver :if en la tabla) -- este chequeo server-side es
+  # defensa en profundidad, mismo criterio que cambiar_empresa_en_foco/2
+  # en UsuariosEmpresaLive: nunca confiar en que el cliente no mande el
+  # evento igual.
+  def handle_event("toggle_mostrar_sysadmin", _params, socket) do
+    if socket.assigns.current_scope.usuario.super_admin do
+      {:noreply, socket |> update(:mostrar_sysadmin?, &(!&1)) |> cargar_roles()}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_event("seleccionar_rol", %{"id" => id}, socket) do
@@ -179,7 +204,11 @@ defmodule MetadataAppWeb.Sysadmin.RolesLive do
 
   defp cargar_roles(socket) do
     empresa_id = socket.assigns.current_scope.empresa_activa.id
-    assign(socket, :roles, Permissions.listar_roles(empresa_id))
+    # Segundo "and" server-side: aunque mostrar_sysadmin? ya solo se puede
+    # prender vía toggle_mostrar_sysadmin/2 (que a su vez ya valida
+    # super_admin), no cuesta nada no confiar en un solo lugar para esto.
+    incluir_sysadmin? = socket.assigns.mostrar_sysadmin? and socket.assigns.current_scope.usuario.super_admin
+    assign(socket, :roles, Permissions.listar_roles(empresa_id, incluir_sysadmin?))
   end
 
   defp cargar_usuarios_del_rol(socket) do
@@ -198,13 +227,27 @@ defmodule MetadataAppWeb.Sysadmin.RolesLive do
           </.link>
           <h1 class="text-2xl font-bold">Roles y Usuarios</h1>
         </div>
-        <button
-          type="button"
-          phx-click="abrir_form_nuevo_rol"
-          class="pc-btn-secundario bg-linear-to-b from-white to-gray-100 hover:to-gray-200 border border-gray-100 text-gray-800 shadow-sm font-semibold text-xs px-4 py-1.5 rounded-full transition-colors"
-        >
-          + Nuevo rol
-        </button>
+        <div class="flex items-center gap-4">
+          <label
+            :if={@current_scope.usuario.super_admin}
+            class="flex items-center gap-1.5 text-xs font-medium text-gray-600 cursor-pointer select-none"
+          >
+            <input
+              type="checkbox"
+              checked={@mostrar_sysadmin?}
+              phx-click="toggle_mostrar_sysadmin"
+              class="accent-purple-600"
+            />
+            Mostrar roles de Sysadmin
+          </label>
+          <button
+            type="button"
+            phx-click="abrir_form_nuevo_rol"
+            class="pc-btn-secundario bg-linear-to-b from-white to-gray-100 hover:to-gray-200 border border-gray-100 text-gray-800 shadow-sm font-semibold text-xs px-4 py-1.5 rounded-full transition-colors"
+          >
+            + Nuevo rol
+          </button>
+        </div>
       </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-[360px_1fr] gap-4 items-start">

@@ -346,11 +346,20 @@ defmodule MetadataApp.Permissions do
     end
   end
 
-  @doc "Roles visibles para una empresa: los suyos propios + los de sistema (empresa_id nil)."
-  def listar_roles(empresa_id) do
+  @doc """
+  Roles visibles para una empresa: los suyos propios + los de sistema
+  (empresa_id nil). `incluir_sysadmin?` (default true, o sea sin cambio de
+  comportamiento para quien ya llamaba esto con 1 argumento — RolController
+  y CatalogoPermisosLive siguen viendo todo) — en false filtra los roles
+  tipo :sysadmin (los 10 "acceso_sysadmin_*"): RolesLive pasa explícito
+  `false` por default y solo `true` cuando quien mira es super_admin.
+  """
+  def listar_roles(empresa_id, incluir_sysadmin? \\ true) do
     Repo.all(
       from r in Rol,
-        where: is_nil(r.delete_guid) and (r.empresa_id == ^empresa_id or is_nil(r.empresa_id))
+        where:
+          is_nil(r.delete_guid) and (r.empresa_id == ^empresa_id or is_nil(r.empresa_id)) and
+            (^incluir_sysadmin? or r.tipo != :sysadmin)
     )
   end
 
