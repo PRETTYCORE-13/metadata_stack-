@@ -135,10 +135,11 @@ defmodule MetadataApp.MetaPublicador do
         nombres_raiz
         |> Enum.reduce_while({:ok, []}, fn nombre, {:ok, acc} ->
           tag = "bc-#{nombre}"
-          asegurar_release(tag, nombre)
 
-          case ejecutar("gh", ["release", "upload", tag, bundle_nombre_fijo, "--clobber"]) do
-            {:ok, {_salida, 0}} -> {:cont, {:ok, [tag | acc]}}
+          with :ok <- asegurar_release(tag, nombre),
+               {:ok, {_salida, 0}} <- ejecutar("gh", ["release", "upload", tag, bundle_nombre_fijo, "--clobber"]) do
+            {:cont, {:ok, [tag | acc]}}
+          else
             {:ok, {salida, status}} -> {:halt, {:error, "gh release upload #{tag} falló (status #{status}):\n#{salida}"}}
             {:error, mensaje} -> {:halt, {:error, mensaje}}
           end
@@ -153,18 +154,41 @@ defmodule MetadataApp.MetaPublicador do
     end
   end
 
+  # "gh release view" con status != 0 puede significar dos cosas muy
+  # distintas: el release genuinamente no existe todavía (primera
+  # publicación de este catálogo -- el caso esperado, hay que crearlo), o
+  # la API de GitHub está teniendo un problema transitorio (encontrado en
+  # vivo: un 503 de GitHub durante un corte breve del servicio). Antes acá
+  # se trataba cualquier fallo como "no existe" y se intentaba crear sin
+  # mirar el resultado -- con la API caída, "create" fallaba en silencio
+  # y el flujo seguía derecho a "upload" contra un release que en
+  # realidad ya existía, así que el error real quedaba escondido detrás
+  # de un mensaje de "upload" que no explicaba nada.
   defp asegurar_release(tag, nombre) do
     case ejecutar("gh", ["release", "view", tag]) do
       {:ok, {_salida, 0}} ->
         :ok
 
-      _otro ->
-        ejecutar(
-          "gh",
-          ["release", "create", tag, "--title", nombre, "--notes", "Bundle de #{nombre}, publicado por motor.publicar / el wizard de BC List."]
-        )
+      {:ok, {salida, _status}} ->
+        if salida =~ "release not found" do
+          crear_release(tag, nombre)
+        else
+          {:error, "No se pudo confirmar si el release \"#{tag}\" ya existe (gh release view falló):\n#{salida}"}
+        end
 
-        :ok
+      {:error, mensaje} ->
+        {:error, mensaje}
+    end
+  end
+
+  defp crear_release(tag, nombre) do
+    case ejecutar(
+           "gh",
+           ["release", "create", tag, "--title", nombre, "--notes", "Bundle de #{nombre}, publicado por motor.publicar / el wizard de BC List."]
+         ) do
+      {:ok, {_salida, 0}} -> :ok
+      {:ok, {salida, status}} -> {:error, "gh release create #{tag} falló (status #{status}):\n#{salida}"}
+      {:error, mensaje} -> {:error, mensaje}
     end
   end
 

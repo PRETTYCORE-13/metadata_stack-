@@ -18,6 +18,15 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     * BC — de solo lectura: catálogos que el usuario puede "leer" por
       herencia de sus roles en la empresa activa (mismo permiso que ya
       poda el menú, ver MenuLayout.podar_menu_por_permisos/1).
+    * Sysadmin — UI/permisos-sysadmin (2026-08-16, a pedido explícito): un
+      switch por pantalla del menú "Sysadmin" (Roles, Empresas, RBAC
+      Usuarios, etc, ver Permissions.capacidades_sysadmin/0) para poder
+      dar de alta usuarios que administran RBAC/jerarquía sin ser
+      "administrador" completo. No es un mecanismo nuevo -- cada switch
+      concede/revoca el rol de sistema dedicado de esa capacidad
+      (asignar_rol/revocar_rol tal cual, la misma tabla que ya usa la
+      pestaña "Roles" de al lado) -- una forma más cómoda de tildar esos 9
+      roles puntuales sin tener que buscarlos por nombre ahí.
     * Alcance — Fase 7 del modelo de Alcance de Datos (2026-08-11),
       rediseñada 2026-08-12 a pedido explícito ("estaba desordenado"): 4
       secciones verticales, mismo orden siempre -- Empresa, Sucursales,
@@ -41,7 +50,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
   use MetadataAppWeb, :live_view_admin
 
   on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
-  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"rbac_admin", "leer"}}
+  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_usuarios", "leer"}}
 
   alias MetadataApp.Autenticacion
   alias MetadataApp.Autenticacion.Usuario
@@ -57,6 +66,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
     %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"},
     %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
+    %{tipo: :pagina, id: "ambientes", label: "Ambientes de Deploy", nav: "/sysadmin/ambientes"},
     %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
     %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
   ]
@@ -96,6 +106,9 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
      |> assign(:busqueda_rol, "")
      |> assign(:roles_busqueda_resultado, [])
      |> assign(:bcs_lectura, [])
+     |> assign(:capacidades_sysadmin, Permissions.capacidades_sysadmin())
+     |> assign(:capacidades_sysadmin_roles, Permissions.roles_de_capacidades_sysadmin())
+     |> assign(:capacidades_sysadmin_concedidas, MapSet.new())
      |> assign(:alcance, @alcance_vacio)
      |> assign(:alias_form, nil)
      |> assign(:crear_usuario_error, nil)
@@ -128,6 +141,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
          busqueda_rol: "",
          roles_busqueda_resultado: [],
          bcs_lectura: [],
+         capacidades_sysadmin_concedidas: MapSet.new(),
          alcance: @alcance_vacio
        )
        |> cargar_usuarios()}
@@ -247,6 +261,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
        busqueda_rol: "",
        roles_busqueda_resultado: [],
        bcs_lectura: [],
+       capacidades_sysadmin_concedidas: MapSet.new(),
        alcance: @alcance_vacio
      )}
   end
@@ -269,6 +284,30 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     %{usuario_seleccionado: usuario, empresa_en_foco: empresa} = socket.assigns
     Permissions.revocar_rol(usuario.id, String.to_integer(rol_id), empresa.id)
     {:noreply, cargar_detalle_usuario(socket)}
+  end
+
+  # Switch de la pestaña "Sysadmin" -- concede/revoca el rol de sistema
+  # dedicado de esa capacidad puntual, ni más ni menos que lo que ya hacen
+  # agregar_rol_a_usuario/quitar_rol_de_usuario de la pestaña "Roles" de al
+  # lado (misma tabla, mismas funciones). Si la migración de seed no corrió
+  # todavía, la capacidad no tiene rol resuelto en @capacidades_sysadmin_roles
+  # y el click no hace nada -- no hay nada que togglear.
+  def handle_event("toggle_capacidad_sysadmin", %{"recurso" => recurso}, socket) do
+    %{usuario_seleccionado: usuario, empresa_en_foco: empresa, capacidades_sysadmin_roles: roles_por_recurso} = socket.assigns
+
+    case Map.get(roles_por_recurso, recurso) do
+      nil ->
+        {:noreply, socket}
+
+      rol ->
+        if MapSet.member?(socket.assigns.capacidades_sysadmin_concedidas, recurso) do
+          Permissions.revocar_rol(usuario.id, rol.id, empresa.id)
+        else
+          Permissions.asignar_rol(usuario.id, rol.id, empresa.id)
+        end
+
+        {:noreply, cargar_detalle_usuario(socket)}
+    end
   end
 
   def handle_event("buscar_rol", %{"value" => texto}, socket) do
@@ -320,6 +359,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
          busqueda_rol: "",
          roles_busqueda_resultado: [],
          bcs_lectura: [],
+         capacidades_sysadmin_concedidas: MapSet.new(),
          alcance: @alcance_vacio
        )
        |> cargar_usuarios()}
@@ -436,9 +476,13 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
   end
 
   defp cargar_detalle_usuario(socket) do
-    %{usuario_seleccionado: usuario, empresa_en_foco: empresa} = socket.assigns
+    %{usuario_seleccionado: usuario, empresa_en_foco: empresa, capacidades_sysadmin_roles: roles_por_recurso} = socket.assigns
 
     roles_concedidos = Permissions.roles_de_usuario(usuario.id, empresa.id)
+    rol_ids_concedidos = MapSet.new(roles_concedidos, & &1.id)
+
+    capacidades_sysadmin_concedidas =
+      for {recurso, rol} <- roles_por_recurso, MapSet.member?(rol_ids_concedidos, rol.id), into: MapSet.new(), do: recurso
 
     bcs_lectura =
       usuario.id
@@ -454,6 +498,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     |> assign(:busqueda_rol, "")
     |> assign(:roles_busqueda_resultado, [])
     |> assign(:bcs_lectura, bcs_lectura)
+    |> assign(:capacidades_sysadmin_concedidas, capacidades_sysadmin_concedidas)
     |> assign(:alcance, cargar_alcance(usuario))
     |> assign(:alias_form, to_form(Autenticacion.change_usuario_alias(usuario)))
   end
@@ -588,6 +633,45 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     """
   end
 
+  # Switch visual (no daisyUI "toggle" -- mismo motivo que
+  # ConfiguracionCuentaModal, colores explícitos para que se vea igual sin
+  # importar el theme de la página) -- track + thumb con Tailwind puro,
+  # phx-click en el <button> completo, sin <input> ni <form> de por medio.
+  attr :recurso, :string, required: true
+  attr :etiqueta, :string, required: true
+  attr :prendido?, :boolean, required: true
+  attr :resuelto?, :boolean, required: true, doc: "false si la migración de seed no corrió -- sin rol que togglear"
+
+  defp switch_capacidad(assigns) do
+    ~H"""
+    <div class="flex items-center justify-between px-3 py-2.5 border border-gray-100 rounded-lg">
+      <span class="text-sm text-gray-800">{@etiqueta}</span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={to_string(@prendido?)}
+        disabled={!@resuelto?}
+        phx-click={@resuelto? && "toggle_capacidad_sysadmin"}
+        phx-value-recurso={@recurso}
+        title={if @resuelto?, do: nil, else: "Corré la migración de seed para habilitar este switch"}
+        class={[
+          "relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0",
+          @prendido? && "bg-purple-600",
+          !@prendido? && "bg-gray-300",
+          !@resuelto? && "opacity-40 cursor-not-allowed"
+        ]}
+      >
+        <span class={[
+          "inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform",
+          @prendido? && "translate-x-[18px]",
+          !@prendido? && "translate-x-[3px]"
+        ]}>
+        </span>
+      </button>
+    </div>
+    """
+  end
+
   def render(assigns) do
     assigns = assign(assigns, :usuarios_visibles, usuarios_filtrados(assigns.usuarios, assigns.busqueda))
 
@@ -709,6 +793,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
             <.tabs_motor id="usuario-detalle" tabs={[
               %{key: "generales", label: "Generales"},
               %{key: "roles", label: "Roles"},
+              %{key: "sysadmin", label: "Sysadmin"},
               %{key: "bc", label: "BC"},
               %{key: "alcance", label: "Alcance"}
             ]} />
@@ -797,6 +882,21 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
                 </li>
                 <li :if={@roles_busqueda_resultado == []} class="px-3 py-4 text-center text-xs text-gray-400">Sin resultados.</li>
               </ul>
+            </div>
+
+            <div id="usuario-detalle-panel-sysadmin" class="hidden">
+              <p class="text-xs text-gray-400 mb-2">
+                Acceso a cada pantalla del menú "Sysadmin" en {@empresa_en_foco.nombre} -- independiente de "administrador" (que ya ve todo).
+              </p>
+              <div class="space-y-1.5">
+                <.switch_capacidad
+                  :for={{recurso, _rol_nombre, etiqueta} <- @capacidades_sysadmin}
+                  recurso={recurso}
+                  etiqueta={etiqueta}
+                  prendido?={MapSet.member?(@capacidades_sysadmin_concedidas, recurso)}
+                  resuelto?={Map.has_key?(@capacidades_sysadmin_roles, recurso)}
+                />
+              </div>
             </div>
 
             <div id="usuario-detalle-panel-bc" class="hidden">

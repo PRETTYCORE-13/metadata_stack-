@@ -32,6 +32,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
     %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"},
     %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
+    %{tipo: :pagina, id: "ambientes", label: "Ambientes de Deploy", nav: "/sysadmin/ambientes"},
     %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
     %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
   ]
@@ -788,18 +789,42 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # — inverso de "opcional" en schema_context_properties (se guarda con
   # ese nombre por compatibilidad: CatalogoGenerador/MetaCatalogoGenerico
   # ya lo leen así en cada regeneración, ver @campos_requeridos en
-  # MetaCatalogoGenerico.__using__/1). A propósito SOLO nivel app
-  # (validate_required vía el schema regenerado) — nunca ALTER COLUMN, la
-  # columna física se queda nullable siempre. Por eso, a diferencia de
-  # cambiar_etiqueta_campo/2, este SÍ necesita CatalogoGenerador.generar/1
-  # después de guardar: es lo que recompila el schema con
-  # @campos_requeridos actualizado (ver comentario en
+  # MetaCatalogoGenerico.__using__/1). Nivel app (validate_required vía el
+  # schema regenerado) Y columna física — CatalogoGenerador.sincronizar_
+  # nulabilidad_campo/2 alinea el NOT NULL real con este valor (agregado
+  # 2026-08-17 tras un bug real: pty_dsd_empleados_fecha_baja se marcó
+  # "opcional" acá pero la columna siguió NOT NULL, y el primer alta sin
+  # ese campo reventó el proceso de LiveView entero con un 23502 sin
+  # atrapar). A diferencia de cambiar_etiqueta_campo/2, este SÍ necesita
+  # CatalogoGenerador.generar/1 después de guardar: es lo que recompila el
+  # schema con @campos_requeridos actualizado (ver comentario en
   # CatalogoGenerador.generar/1 sobre por qué siempre regenera, no solo
   # cuando hay columnas nuevas).
   def handle_event("cambiar_obligatorio_campo", %{"campo" => campo, "obligatorio" => valor}, socket) do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
     props = Map.put(detalle.schema_context_properties, "opcional", valor != "true")
-    actualizar_campo_y_regenerar(socket, detalle, props, "la obligatoriedad")
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} ->
+        tabla = socket.assigns.header.schema_context_name
+        resultado_columna = CatalogoGenerador.sincronizar_nulabilidad_campo(tabla, campo)
+
+        case CatalogoGenerador.generar(tabla) do
+          {:ok, _resultado} ->
+            socket = cargar_motor(socket)
+
+            case resultado_columna do
+              :ok -> {:noreply, socket}
+              {:error, motivo} -> {:noreply, put_flash(socket, :error, "La obligatoriedad se guardó, pero la columna física no se pudo actualizar: #{motivo}")}
+            end
+
+          {:error, motivo} ->
+            {:noreply, socket |> cargar_motor() |> put_flash(:error, "Se guardó, pero no se pudo regenerar el catálogo: #{motivo}")}
+        end
+
+      {:error, _changeset} ->
+        {:noreply, put_flash(socket, :error, "No se pudo actualizar la obligatoriedad de \"#{campo}\".")}
+    end
   end
 
   # "Valor default forzoso" — si el campo es obligatorio Y llega vacío al

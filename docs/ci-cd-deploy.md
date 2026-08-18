@@ -197,3 +197,12 @@ También se corrigió que agregar un campo nuevo a un catálogo ya publicado nun
 ## Estado actual
 
 El servidor de oficina (`reiayanami.mine.nu`) funciona hoy como **producción simulada** — todavía no hay un ambiente de staging separado. El objetivo de esta etapa es dominar el proceso de punta a punta antes de sumar más ambientes. Ver la memoria del proyecto para el detalle operativo (credenciales, nombres exactos de servicios) — no se documenta acá porque este archivo es público.
+
+## Ambientes de Deploy (2026-08-16)
+
+`ci.yml`/`bc-deploy.yml` siguen desplegando siempre al MISMO servidor: `DEPLOY_HOST`/`DEPLOY_USER`/`DEPLOY_SSH_KEY` son secrets fijos del repo, y `gh workflow run` (lo que dispara `motor.publicar`) no puede pasar secrets como input — solo strings planos. Elegir servidor en tiempo de deploy no se puede resolver ADENTRO de esos workflows sin GitHub Environments (alta manual en la UI de GitHub).
+
+Para eso existe un camino aparte, pensado para desplegar a mano a un servidor puntual (no reemplaza el push-a-`main` automático):
+
+- **`/sysadmin/ambientes`** (`Sysadmin.AmbientesLive`) — CRUD de servidores (host, usuario SSH, contraseña/llave privada cifradas con `MetadataApp.Encriptado`, servicio Docker Swarm, imagen). Gateado por `sysadmin_ambientes`/`leer`, mismo mecanismo de switches por pantalla que el resto de Sysadmin (ver `Permissions.capacidades_sysadmin/0`).
+- **`mix motor.desplegar <ambiente> [--imagen tag]`** — asume que la imagen YA está en `ghcr.io` (por un push a `main` normal, o por `mix motor.publicar` para un `pty_*`) y hace los mismos 4 pasos que el job `deploy` de los workflows (`docker pull` + `service update --force` + esperar `1/1` + `docker exec .../app/bin/setup`), pero por SSH directo desde la máquina de quien lo corre, con las credenciales del ambiente elegido. Útil para reforzar un deploy en un servidor específico, o para desplegar un tag puntual (`--imagen ghcr.io/.../metadata_stack:bc-<catalogo>-<run>`) sin esperar al próximo push a `main`.

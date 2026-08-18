@@ -47,6 +47,17 @@ config :metadata_app, generar_catalogos_en_caliente: Mix.env() != :prod
 # decisiones de diseño distintas, ver docs/roadmap.md #7.
 config :metadata_app, bpb_habilitado: Mix.env() != :prod
 
+# Wizard de primer arranque (docs/onboarding-nuevo-sistema.md, Fase 2,
+# ver MetadataAppWeb.RequierePrimerArranque) -- deshabilitado en :test a
+# propósito. El plug redirige CUALQUIER request al wizard mientras no
+# exista un sysadmin; casi ningún test de la suite crea uno (no es lo
+# que están probando), así que sin este gate quedarían todos redirigidos
+# ahí. Además, el cache en :persistent_term (global al nodo BEAM, no por
+# test) quedaría contaminado entre tests por el sandboxing de Ecto: el
+# primer test que sembrara un sysadmin lo dejaría "true" para siempre,
+# aun para tests después cuya base sandboxeada no tiene ninguno.
+config :metadata_app, requiere_primer_arranque_habilitado: Mix.env() != :test
+
 # Configures the endpoint
 config :metadata_app, MetadataAppWeb.Endpoint,
   url: [host: "localhost"],

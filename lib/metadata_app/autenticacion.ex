@@ -117,6 +117,27 @@ defmodule MetadataApp.Autenticacion do
   end
 
   @doc """
+  ¿Hay al menos UNA empresa en esta base? (onboarding, roadmap
+  docs/onboarding-nuevo-sistema.md #1 — sin esto, un sistema recién
+  migrado de cero no tiene forma de crear la primera empresa: la UI
+  entera queda en loop contra "seleccionar-empresa" porque no hay
+  ninguna para elegir. Usado por `MetadataApp.Release.setup/0` para
+  decidir si hace falta crear una por default.
+  """
+  def existe_alguna_empresa? do
+    Repo.exists?(Empresa)
+  end
+
+  @doc """
+  ¿Existe ya un sysadmin? Usado por `MetadataAppWeb.RequierePrimerArranque`
+  (el plug que redirige al wizard de primer arranque) y por el propio
+  wizard (guard en mount/3, para que no se pueda usar dos veces).
+  """
+  def existe_sysadmin? do
+    Repo.exists?(from u in Usuario, where: u.super_admin == true)
+  end
+
+  @doc """
   Puerta de rescate para un usuario.super_admin: unirse como
   `administrador` a una empresa YA EXISTENTE de la que todavía no es
   miembro (a diferencia de crear_empresa_para_usuario/2, que crea el
@@ -461,22 +482,25 @@ defmodule MetadataApp.Autenticacion do
   defp seleccion_automatica_o_pendiente([unica]), do: {:automatico, unica}
   defp seleccion_automatica_o_pendiente(varias), do: {:pendiente, varias}
 
-  defp branches_operables(_usuario_id, empresa_id, true), do: listar_branches(empresa_id)
-  defp branches_operables(usuario_id, empresa_id, false), do: branches_de_usuario(usuario_id, empresa_id)
+  @doc "Branches operables por el usuario en una empresa -- TODAS si es_administrador?, si no solo las asignadas (branches_de_usuario/2). Público (2026-08-15) para el modal Cambiar Unidad Operativa, ver MetadataAppWeb.CambiarUnidadOperativaModal."
+  def branches_operables(_usuario_id, empresa_id, true), do: listar_branches(empresa_id)
+  def branches_operables(usuario_id, empresa_id, false), do: branches_de_usuario(usuario_id, empresa_id)
 
   # Acotados a UNA sucursal puntual (2026-08-13) -- ya no "todo lo de la
   # empresa", mismo criterio que MenuLayout.opciones_de_la_sucursal_activa/4
   # en la banda de pie (este helper es el que ese código debería terminar
   # reusando, quedó duplicado a propósito para no acoplar el layout web a
   # este contexto en esta pasada).
-  defp inventory_locations_operables(_usuario_id, _empresa_id, branch_id, true), do: listar_inventory_locations(branch_id)
+  @doc "Igual que branches_operables/3, para Inventory Location -- acotado a UNA sucursal puntual. Público (2026-08-15), mismo motivo."
+  def inventory_locations_operables(_usuario_id, _empresa_id, branch_id, true), do: listar_inventory_locations(branch_id)
 
-  defp inventory_locations_operables(usuario_id, empresa_id, branch_id, false),
+  def inventory_locations_operables(usuario_id, empresa_id, branch_id, false),
     do: inventory_locations_de_usuario(usuario_id, empresa_id) |> Enum.filter(&(&1.branch_id == branch_id))
 
-  defp sales_units_operables(_usuario_id, _empresa_id, branch_id, true), do: listar_sales_units(branch_id)
+  @doc "Igual que branches_operables/3, para Sales Unit -- acotado a UNA sucursal puntual. Público (2026-08-15), mismo motivo."
+  def sales_units_operables(_usuario_id, _empresa_id, branch_id, true), do: listar_sales_units(branch_id)
 
-  defp sales_units_operables(usuario_id, empresa_id, branch_id, false),
+  def sales_units_operables(usuario_id, empresa_id, branch_id, false),
     do: sales_units_de_usuario(usuario_id, empresa_id) |> Enum.filter(&(&1.branch_id == branch_id))
 
   @doc "El branch operable por el usuario en esa empresa cuyo id coincide, o nil -- nunca confiar en un id que llega de sesión/form sin revalidar (mismo criterio que obtener_empresa_de_usuario/2). `es_administrador?` amplía el universo a TODAS las branches de la empresa, ver resolver_jerarquia_operativa/3."

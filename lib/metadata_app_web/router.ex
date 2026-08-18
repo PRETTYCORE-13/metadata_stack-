@@ -12,6 +12,7 @@ defmodule MetadataAppWeb.Router do
     plug :put_secure_browser_headers
     plug MetadataAppWeb.DevAutoLogin
     plug :fetch_current_scope_for_usuario
+    plug MetadataAppWeb.RequierePrimerArranque
   end
 
   pipeline :api do
@@ -110,6 +111,13 @@ defmodule MetadataAppWeb.Router do
     post "/meta_schema_usuario/branch/activar", JerarquiaSessionController, :activar_branch
     post "/meta_schema_usuario/inventory-location/activar", JerarquiaSessionController, :activar_inventory_location
     post "/meta_schema_usuario/sales-unit/activar", JerarquiaSessionController, :activar_sales_unit
+    # Modal "Cambiar Unidad Operativa" del menú de usuario (2026-08-15) --
+    # a diferencia de las 4 rutas de arriba (una dimensión a la vez, ya sin
+    # UI que las dispare desde que el footer pasó a solo lectura, pero se
+    # mantienen: las ejercita jerarquia_operativa_test.exs), esta activa
+    # empresa+branch+inventory+sales_unit juntos en un solo POST, recién
+    # al aceptar el modal.
+    post "/meta_schema_usuario/unidad-operativa/activar", UnidadOperativaSessionController, :activar
   end
 
   scope "/", MetadataAppWeb do
@@ -119,6 +127,10 @@ defmodule MetadataAppWeb.Router do
       on_mount: [{MetadataAppWeb.UsuarioAuth, :mount_current_scope}] do
       live "/meta_schema_usuario/log-in", UsuarioLive.Login, :new
       live "/meta_schema_usuario/log-in/:token", UsuarioLive.Confirmation, :new
+      # Sin on_mount de auth a propósito -- por definición, nadie está
+      # logueado todavía la primera vez que esto se visita (ver
+      # RequierePrimerArranque, el plug que redirige acá).
+      live "/primer-arranque", UsuarioLive.PrimerArranque, :new
     end
 
     post "/meta_schema_usuario/log-in", UsuarioSessionController, :create
@@ -170,6 +182,7 @@ defmodule MetadataAppWeb.Router do
       live "/sysadmin/usuarios", Sysadmin.UsuariosEmpresaLive
       live "/sysadmin/empresas", Sysadmin.EmpresasLive
       live "/sysadmin/credenciales", Sysadmin.CredencialesLive
+      live "/sysadmin/ambientes", Sysadmin.AmbientesLive
       live "/sysadmin/acciones-externas", Sysadmin.AccionesExternasLive
       live "/sysadmin/jerarquia", Sysadmin.JerarquiaOrganizacionalLive
       live "/sysadmin/catalogos/permisos", Sysadmin.CatalogoPermisosLive

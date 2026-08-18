@@ -235,10 +235,16 @@ defmodule MetadataAppWeb.JerarquiaOperativaTest do
     conn = get(recycle(conn), ~p"/")
     html = html_response(conn, 200)
 
-    # El de Toluca (sucursal ya no activa) ni aparece como opción --
-    # solo se ofrecen los almacenes de la sucursal ACTIVA (Puebla).
+    # El almacén de Toluca (sucursal ya no activa) sale de circulación --
+    # la Unidad Operativa activa en el footer (solo lectura desde Fase 1
+    # de UI/cambio-unidad-operativa) refleja el Scope ya REVALIDADO
+    # (current_scope.inventory_location_activo), no el valor crudo de
+    # sesión -- si la hidratación no lo hubiera invalidado, seguiría
+    # apareciendo acá aunque ya no pertenezca a la sucursal activa. No se
+    # verifica que "Materia prima" (almacén de Puebla) aparezca en su
+    # lugar -- nunca se activó explícitamente ninguno para Puebla en este
+    # test, así que el footer muestra "—" ahí, lo cual es correcto.
     refute html =~ inventory_a.inventory_name
-    assert html =~ inventory_b.inventory_name
   end
 
   # Regresión (2026-08-13): hidratar_jerarquia_activa/4 no pasaba

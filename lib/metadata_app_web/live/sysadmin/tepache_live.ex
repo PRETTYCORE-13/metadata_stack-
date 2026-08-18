@@ -15,7 +15,7 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
   use MetadataAppWeb, :live_view_admin
 
   on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
-  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "leer"}}
+  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_tepache", "leer"}}
 
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaTepache
@@ -28,6 +28,7 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
     %{tipo: :pagina, id: "roles", label: "Roles y Usuarios", nav: "/sysadmin/roles"},
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
     %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
+    %{tipo: :pagina, id: "ambientes", label: "Ambientes de Deploy", nav: "/sysadmin/ambientes"},
     %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
     %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
   ]

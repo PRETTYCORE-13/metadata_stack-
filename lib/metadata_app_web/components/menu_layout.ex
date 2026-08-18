@@ -41,6 +41,9 @@ defmodule MetadataAppWeb.MenuLayout do
       |> assign(:bpb_habilitado, Application.get_env(:metadata_app, :bpb_habilitado, false))
       |> asignar_datos_usuario()
 
+    bpb_habilitado = assigns.bpb_habilitado
+    assigns = assign(assigns, :capacidades_sysadmin_visibles, capacidades_sysadmin_visibles(assigns[:current_scope], bpb_habilitado))
+
     ~H"""
     <div class="pc-platform">
       <!-- Mobile overlay -->
@@ -258,36 +261,50 @@ defmodule MetadataAppWeb.MenuLayout do
               class="pc-user-menu-dropdown"
               phx-click-away={JS.hide(to: "#user-menu-dropdown")}
             >
-              <details class="pc-user-menu-submenu">
+              <details :if={@capacidades_sysadmin_visibles != []} class="pc-user-menu-submenu">
                 <summary class="pc-user-menu-item pc-user-menu-item-submenu">Sysadmin</summary>
-                <.link :if={@bpb_habilitado} navigate="/sysadmin/bc-list" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_bc" in @capacidades_sysadmin_visibles} navigate="/sysadmin/bc-list" class="pc-user-menu-item pc-user-menu-subitem">
                   Business Process Builder
                 </.link>
-                <.link :if={@bpb_habilitado} navigate="/sysadmin/tepache" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_tepache" in @capacidades_sysadmin_visibles} navigate="/sysadmin/tepache" class="pc-user-menu-item pc-user-menu-subitem">
                   Tepache Exp/Imp
                 </.link>
-                <.link navigate="/sysadmin/roles" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_roles" in @capacidades_sysadmin_visibles} navigate="/sysadmin/roles" class="pc-user-menu-item pc-user-menu-subitem">
                   Roles Admin
                 </.link>
-                <.link navigate="/sysadmin/empresas" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_empresas" in @capacidades_sysadmin_visibles} navigate="/sysadmin/empresas" class="pc-user-menu-item pc-user-menu-subitem">
                   Empresas
                 </.link>
-                <.link navigate="/sysadmin/usuarios" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_usuarios" in @capacidades_sysadmin_visibles} navigate="/sysadmin/usuarios" class="pc-user-menu-item pc-user-menu-subitem">
                   RBAC Usuarios
                 </.link>
-                <.link navigate="/sysadmin/catalogos/permisos" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_catalogos_permisos" in @capacidades_sysadmin_visibles} navigate="/sysadmin/catalogos/permisos" class="pc-user-menu-item pc-user-menu-subitem">
                   RBAC Bisness Context
                 </.link>
-                 <.link navigate="/sysadmin/jerarquia" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_jerarquia" in @capacidades_sysadmin_visibles} navigate="/sysadmin/jerarquia" class="pc-user-menu-item pc-user-menu-subitem">
                   Jerarquía organizacional
                 </.link>
-                <.link navigate="/sysadmin/credenciales" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_credenciales" in @capacidades_sysadmin_visibles} navigate="/sysadmin/credenciales" class="pc-user-menu-item pc-user-menu-subitem">
                   Credenciales
                 </.link>
-                <.link navigate="/sysadmin/acciones-externas" class="pc-user-menu-item pc-user-menu-subitem">
+                <.link :if={"sysadmin_ambientes" in @capacidades_sysadmin_visibles} navigate="/sysadmin/ambientes" class="pc-user-menu-item pc-user-menu-subitem">
+                  Ambientes de Deploy
+                </.link>
+                <.link :if={"sysadmin_acciones_externas" in @capacidades_sysadmin_visibles} navigate="/sysadmin/acciones-externas" class="pc-user-menu-item pc-user-menu-subitem">
                   Acciones externas
                 </.link>
               </details>
+              <button
+                :if={@current_scope && @current_scope.empresa_activa}
+                type="button"
+                class="pc-user-menu-item"
+                phx-click={
+                  JS.hide(to: "#user-menu-dropdown")
+                  |> JS.push("abrir", target: "#cambiar-unidad-modal")
+                }
+              >
+                Cambiar Unidad Operativa
+              </button>
               <button
                 type="button"
                 class="pc-user-menu-item"
@@ -311,6 +328,12 @@ defmodule MetadataAppWeb.MenuLayout do
         </div>
       </div>
       <.live_component module={MetadataAppWeb.ConfiguracionCuentaModal} id="config-cuenta-modal" current_scope={@current_scope} />
+      <.live_component
+        :if={@current_scope && @current_scope.empresa_activa}
+        module={MetadataAppWeb.CambiarUnidadOperativaModal}
+        id="cambiar-unidad-modal"
+        current_scope={@current_scope}
+      />
       <!-- CONTENIDO -->
       <main class="pc-platform-main">
           <%!-- Banda de publicidad (valores por defecto, sin backend todavía)
@@ -362,79 +385,35 @@ defmodule MetadataAppWeb.MenuLayout do
       <div class="pc-footer">
         <span class="pc-footer-copyright">Prettycore {@anio_actual}</span>
 
-        <!-- Jerarquía operativa activa (Fase 4, 2026-08-11) — 4 selectores
-             independientes, cada uno un form POST plano (id va en el
-             body, no en la URL) que se auto-envía al cambiar el <select>
-             (onchange="this.form.requestSubmit()"), sin fetch/JS hook:
-             mismo criterio "funciona igual desde cualquier pantalla" que
-             el buscador TRN de más abajo. Solo aparece con sesión+empresa
-             resueltas -- ver opciones_jerarquia_activa/1. -->
+        <!-- Jerarquía operativa activa (Fase 4, 2026-08-11) -- SOLO LECTURA
+             acá desde Fase 1 de docs/ui (2026-08-15, a pedido explícito):
+             antes eran 4 <select> independientes que se auto-enviaban al
+             cambiar (onchange="this.form.requestSubmit()"), lo que
+             activaba una Unidad Operativa distinta en CADA paso intermedio
+             de la cadena Empresa -> Sucursal -> Almacén -> Unidad de Venta,
+             no solo al confirmar. Cambiarla ahora se hace desde el modal
+             "Cambiar Unidad Operativa" del menú de usuario (Fase 2/3), que
+             junta los 4 pasos y activa recién al aceptar. Solo aparece con
+             sesión+empresa resueltas -- ver opciones_jerarquia_activa/1. -->
         <div :if={@jerarquia_opciones.empresas != []} class="pc-footer-jerarquia">
           <div class="pc-footer-jerarquia-item">
             <span class="pc-footer-jerarquia-label">Emp</span>
-            <form method="post" action="/meta_schema_usuario/empresa/activar">
-              <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
-              <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">
-                <option
-                  :for={empresa <- @jerarquia_opciones.empresas}
-                  value={empresa.id}
-                  selected={@current_scope.empresa_activa && @current_scope.empresa_activa.id == empresa.id}
-                >
-                  {empresa.nombre}
-                </option>
-              </select>
-            </form>
+            <span class="pc-footer-jerarquia-valor">{(@current_scope.empresa_activa && @current_scope.empresa_activa.nombre) || "—"}</span>
           </div>
 
           <div :if={@jerarquia_opciones.branches != []} class="pc-footer-jerarquia-item">
             <span class="pc-footer-jerarquia-label">Suc</span>
-            <form method="post" action="/meta_schema_usuario/branch/activar">
-              <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
-              <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">
-                <option value="" disabled selected={is_nil(@current_scope.branch_activo)}>Elegir...</option>
-                <option
-                  :for={branch <- @jerarquia_opciones.branches}
-                  value={branch.id}
-                  selected={@current_scope.branch_activo && @current_scope.branch_activo.id == branch.id}
-                >
-                  {branch.branch_name}
-                </option>
-              </select>
-            </form>
+            <span class="pc-footer-jerarquia-valor">{(@current_scope.branch_activo && @current_scope.branch_activo.branch_name) || "—"}</span>
           </div>
 
           <div :if={@jerarquia_opciones.inventory_locations != []} class="pc-footer-jerarquia-item">
             <span class="pc-footer-jerarquia-label">Alm</span>
-            <form method="post" action="/meta_schema_usuario/inventory-location/activar">
-              <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
-              <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">
-                <option value="" disabled selected={is_nil(@current_scope.inventory_location_activo)}>Elegir...</option>
-                <option
-                  :for={inventory_location <- @jerarquia_opciones.inventory_locations}
-                  value={inventory_location.id}
-                  selected={@current_scope.inventory_location_activo && @current_scope.inventory_location_activo.id == inventory_location.id}
-                >
-                  {inventory_location.inventory_name}
-                </option>
-              </select>
-            </form>
+            <span class="pc-footer-jerarquia-valor">{(@current_scope.inventory_location_activo && @current_scope.inventory_location_activo.inventory_name) || "—"}</span>
           </div>
 
           <div :if={@jerarquia_opciones.sales_units != []} class="pc-footer-jerarquia-item">
             <span class="pc-footer-jerarquia-label">U.Vta</span>
-            <form method="post" action="/meta_schema_usuario/sales-unit/activar">
-              <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
-              <select name="id" class="pc-footer-jerarquia-select" onchange="this.form.requestSubmit()">
-                <option value="ninguna" selected={is_nil(@current_scope.sales_unit_activo)}>Ninguna</option>
-                <option
-                  :for={sales_unit <- @jerarquia_opciones.sales_units}
-                  value={sales_unit.id}
-                  selected={@current_scope.sales_unit_activo && @current_scope.sales_unit_activo.id == sales_unit.id}
-                >
-                  {sales_unit.sales_unit_name}
-                </option>
-              </select>
-            </form>
+            <span class="pc-footer-jerarquia-valor">{(@current_scope.sales_unit_activo && @current_scope.sales_unit_activo.sales_unit_name) || "Ninguna"}</span>
           </div>
         </div>
 
@@ -794,6 +773,29 @@ defmodule MetadataAppWeb.MenuLayout do
   end
 
   defp firma_unidad_operativa(_scope), do: ""
+
+  # Dropdown "Sysadmin" (2026-08-16, a pedido explícito) -- antes mostraba
+  # las 10 opciones a CUALQUIER usuario autenticado sin importar sus
+  # permisos (la enforcement real vivía solo en el on_mount de cada
+  # pantalla, ver Hooks.Autorizacion) -- entrar por un link roto con "No
+  # tienes permiso" es peor UX que directamente no ofrecerlo. Ahora: cada
+  # capacidad se filtra contra Permissions.can?/3 (mismo criterio de
+  # "administrador ve todo" que ya usa el resto de RBAC), y sysadmin_bc/
+  # sysadmin_tepache ADEMÁS respetan bpb_habilitado (compile-time, no hay
+  # BPB en producción) -- si eso los apaga, no cuentan para "¿hay algo que
+  # mostrar?" tampoco. Con la lista vacía, el <details> entero desaparece
+  # en vez de quedar como un submenú sin nada adentro.
+  defp capacidades_sysadmin_visibles(%MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa} = scope, bpb_habilitado)
+       when not is_nil(usuario) and not is_nil(empresa) do
+    MetadataApp.Permissions.capacidades_sysadmin()
+    |> Enum.filter(fn {recurso, _rol_nombre, _etiqueta} ->
+      (bpb_habilitado or recurso not in ["sysadmin_bc", "sysadmin_tepache"]) and
+        MetadataApp.Permissions.can?(scope, "leer", recurso)
+    end)
+    |> Enum.map(fn {recurso, _rol_nombre, _etiqueta} -> recurso end)
+  end
+
+  defp capacidades_sysadmin_visibles(_scope, _bpb_habilitado), do: []
 
   defp asignar_datos_usuario(assigns) do
     case assigns[:current_scope] do

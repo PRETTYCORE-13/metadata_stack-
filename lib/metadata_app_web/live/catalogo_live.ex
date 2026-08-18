@@ -919,6 +919,17 @@ defmodule MetadataAppWeb.CatalogoLive do
   def render(assigns) do
     ~H"""
     <div class="p-6">
+      <%!-- bottom-20/right-3, no bottom-5/right-5: el botón flotante de
+      .pc-footer-toggle-btn (menu.css, "mostrar/ocultar barra inferior")
+      ya vive fixed bottom:12px/right:12px en mobile -- con menos separación
+      quedaban los dos círculos superpuestos en la misma esquina. --%>
+      <.link :if={@campos_alta != []} navigate={"/registro/#{@current_page}/nuevo"}
+        aria-label="Nuevo registro"
+        class="sm:hidden fixed bottom-20 right-3 z-30 flex items-center justify-center w-14 h-14 rounded-full bg-purple-600 text-white shadow-lg shadow-purple-600/30 hover:bg-purple-700 active:scale-95 transition">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+      </.link>
       <div class="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
           <h1 class="text-xl font-bold text-gray-900">{@label}</h1>
@@ -926,11 +937,11 @@ defmodule MetadataAppWeb.CatalogoLive do
           <div class="flex items-center gap-2 flex-wrap">
             <.link :if={@campos_alta != []} navigate={"/registro/#{@current_page}/nuevo"}
               aria-label="Nuevo registro"
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">
+              class="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
               </svg>
-              <span class="hidden sm:inline">Nuevo registro</span>
+              <span>Nuevo registro</span>
             </.link>
             <span class="text-xs font-medium text-gray-500 bg-gray-100 rounded-full px-3 py-1">
               {@inicio}-{@fin} de {@total_filas}
@@ -1077,7 +1088,8 @@ defmodule MetadataAppWeb.CatalogoLive do
             <tbody class="divide-y divide-gray-100">
               <%= for fila <- @filas do %>
                 <tr class="hover:bg-purple-50/60 transition-colors cursor-pointer"
-                  ondblclick={"window.location='/registro/#{@current_page}/#{fila.id}'"}>
+                  ondblclick={"window.location='/registro/#{@current_page}/#{fila.id}'"}
+                  onclick={"if (window.matchMedia('(pointer: coarse)').matches && !event.target.closest('a')) { window.location='/registro/#{@current_page}/#{fila.id}' }"}>
                   <%= if @mostrar_id? do %>
                     <td data-col="id" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">
                       {fila.id}
@@ -1088,7 +1100,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                     <td data-col={col_key(columna)} class={[
                       "px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px]",
                       alineacion_columna(columna),
-                      if(is_map(valor) and not is_struct(valor), do: "text-blue-700 font-medium", else: "text-gray-700")
+                      clase_valor_celda(valor, columna.schema_context_properties)
                     ]}>
                       {formatear_celda(valor, columna.schema_context_properties)}
                     </td>
@@ -1176,6 +1188,17 @@ defmodule MetadataAppWeb.CatalogoLive do
        do: "text-right"
 
   defp alineacion_columna(_columna), do: "text-left"
+
+  # En celular la columna de plata (integer/decimal) se resalta — es el
+  # número que más se escanea de un vistazo en una tabla angosta. En
+  # desktop queda como cualquier otra celda (sm:font-normal sm:text-gray-700
+  # pisa el resalte), sin cambiar nada de lo que ya se veía ahí.
+  defp clase_valor_celda(valor, %{"tipo" => tipo})
+       when tipo in ["integer", "decimal"] and (is_number(valor) or is_struct(valor, Decimal)),
+       do: "font-semibold text-gray-900 sm:font-normal sm:text-gray-700"
+
+  defp clase_valor_celda(valor, _props) when is_map(valor) and not is_struct(valor), do: "text-blue-700 font-medium"
+  defp clase_valor_celda(_valor, _props), do: "text-gray-700"
 
   # Identificador de columna para el selector de campos (data-col en
   # <th>/<td>, ver panel_campos/1 y el hook SelectorCampos en app.js).

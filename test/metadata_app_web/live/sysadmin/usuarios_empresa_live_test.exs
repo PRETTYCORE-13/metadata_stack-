@@ -22,7 +22,8 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLiveTest do
   setup %{conn: conn} do
     admin = usuario_fixture()
     # crear_empresa_para_usuario/2 ya deja al creador como "administrador"
-    # de esa empresa -- satisface el gate rbac_admin/leer de esta pantalla.
+    # de esa empresa -- bypasea el gate sysadmin_usuarios/leer de esta
+    # pantalla (y cualquier otro permiso vivo, ver Permissions.administrador?/2).
     {:ok, empresa} = Autenticacion.crear_empresa_para_usuario("Empresa alcance usuario UI #{System.unique_integer()}", admin.id)
 
     objetivo = usuario_fixture()
@@ -53,6 +54,10 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLiveTest do
 
   defp seleccionar(view, usuario) do
     view |> element("button[phx-click=seleccionar_usuario][phx-value-id=\"#{usuario.id}\"]") |> render_click()
+  end
+
+  defp scope_de(usuario, empresa) do
+    %MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa}
   end
 
   test "agrega y quita una sucursal en la sección Sucursales", %{conn: conn, empresa: empresa, objetivo: objetivo, branch: branch} do
@@ -183,5 +188,44 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLiveTest do
     refute html =~ "usuario-detalle-panel-empresas"
     assert html =~ "usuario-detalle-panel-alcance"
     assert html =~ "Empresa</h3>"
+  end
+
+  describe "pestaña Sysadmin (switches de capacidad)" do
+    test "prende y apaga el acceso a una pantalla puntual de Sysadmin", %{conn: conn, empresa: empresa, objetivo: objetivo} do
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+      html = seleccionar(view, objetivo)
+
+      refute html =~ ~s(aria-checked="true")
+      refute MetadataApp.Permissions.can?(scope_de(objetivo, empresa), "leer", "sysadmin_roles")
+
+      html =
+        view
+        |> element(~s(button[phx-click=toggle_capacidad_sysadmin][phx-value-recurso="sysadmin_roles"]))
+        |> render_click()
+
+      assert html =~ ~s(aria-checked="true")
+      assert MetadataApp.Permissions.can?(scope_de(objetivo, empresa), "leer", "sysadmin_roles")
+
+      html =
+        view
+        |> element(~s(button[phx-click=toggle_capacidad_sysadmin][phx-value-recurso="sysadmin_roles"]))
+        |> render_click()
+
+      refute html =~ ~s(aria-checked="true")
+      refute MetadataApp.Permissions.can?(scope_de(objetivo, empresa), "leer", "sysadmin_roles")
+    end
+
+    test "prender un switch no habilita OTRA capacidad distinta", %{conn: conn, empresa: empresa, objetivo: objetivo} do
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+      seleccionar(view, objetivo)
+
+      view
+      |> element(~s(button[phx-click=toggle_capacidad_sysadmin][phx-value-recurso="sysadmin_credenciales"]))
+      |> render_click()
+
+      assert MetadataApp.Permissions.can?(scope_de(objetivo, empresa), "leer", "sysadmin_credenciales")
+      refute MetadataApp.Permissions.can?(scope_de(objetivo, empresa), "leer", "sysadmin_roles")
+      refute MetadataApp.Permissions.can?(scope_de(objetivo, empresa), "leer", "sysadmin_jerarquia")
+    end
   end
 end

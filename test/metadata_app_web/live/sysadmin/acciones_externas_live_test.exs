@@ -111,6 +111,7 @@ defmodule MetadataAppWeb.Sysadmin.AccionesExternasLiveTest do
   # badge de la lista de CredencialesLive (test aparte, mismo archivo de
   # abajo) tienen que reflejar ejecuciones REALES, no un mock — mismo
   # criterio de la Fase 4/5/6: llamadas de red reales a httpbin.org.
+  @tag :external_http
   test "el panel de últimas ejecuciones muestra corridas reales (éxito y error)", %{
     conn: conn,
     credencial: credencial,
@@ -152,6 +153,7 @@ defmodule MetadataAppWeb.Sysadmin.AccionesExternasLiveTest do
     assert html =~ "regla_post"
   end
 
+  @tag :external_http
   test "el badge de CredencialesLive refleja las ejecuciones de los últimos 7 días", %{conn: conn, credencial: credencial} do
     header = Repo.get_by!(MetadataApp.BusinessProcessBuilder.MetaSchema.Header, schema_context_name: "meta_fixture_cliente")
 

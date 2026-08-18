@@ -79,6 +79,7 @@ defmodule MetadataAppWeb.FichaLiveAccionExternaTest do
     accion
   end
 
+  @tag :external_http
   test "click real en el botón ejecuta la acción y muestra la respuesta cruda en el modal", %{conn: conn} do
     header = header_clientes()
     credencial = fixture_credencial()

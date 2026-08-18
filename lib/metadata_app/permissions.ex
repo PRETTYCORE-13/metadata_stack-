@@ -286,6 +286,17 @@ defmodule MetadataApp.Permissions do
   Asigna un rol a un usuario dentro de una empresa. Si el rol no es de
   sistema (tiene `empresa_id` propio), tiene que coincidir con la empresa
   que se le está asignando — no se puede prestar un rol de otra empresa.
+
+  `on_conflict`/`conflict_target` a propósito -- revocar_rol/3 es
+  soft-delete (deja la fila con `delete_guid` seteado), y el índice único
+  de `meta_schema_usuario_rol` es sobre `(usuario_id, rol_id, empresa_id)`
+  SIN filtrar por `delete_guid IS NULL` (a diferencia de otros índices del
+  sistema) -- un `Repo.insert()` plano chocaba con esa fila muerta y
+  fallaba para SIEMPRE después de la primera vez que alguien revocaba un
+  rol y volvía a asignarlo (bug real, encontrado en vivo con los switches
+  de la pestaña "Sysadmin": prender/apagar/prender un rol de sistema
+  como "Jerarquía organizacional" rompía en el segundo "prender"). Acá se
+  "revive" la fila existente en vez de intentar insertar una segunda.
   """
   def asignar_rol(usuario_id, rol_id, empresa_id) do
     with :ok <- validar_rol_de_la_empresa(rol_id, empresa_id) do
@@ -293,7 +304,10 @@ defmodule MetadataApp.Permissions do
         %UsuarioRol{}
         |> UsuarioRol.changeset(%{usuario_id: usuario_id, rol_id: rol_id, empresa_id: empresa_id})
         |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
-        |> Repo.insert()
+        |> Repo.insert(
+          on_conflict: [set: [delete_guid: nil, update_guid: generar_guid()]],
+          conflict_target: [:usuario_id, :rol_id, :empresa_id]
+        )
 
       invalidar_cache(usuario_id, empresa_id)
       resultado
@@ -785,6 +799,49 @@ defmodule MetadataApp.Permissions do
 
   defp administrador_es_sistema?(rol_id) do
     Repo.exists?(from r in Rol, where: r.id == ^rol_id and r.es_sistema == true and r.nombre == "administrador")
+  end
+
+  ## Capacidades de Sysadmin (UI/permisos-sysadmin, 2026-08-16) -- un
+  ## recurso propio por pantalla del menú "Sysadmin" (ver menu_layout.ex),
+  ## cada uno con SU rol de sistema dedicado (sembrado en la migración
+  ## 20260816014352). El switch de la pestaña "Sysadmin" en
+  ## UsuariosEmpresaLive concede/revoca uno de estos roles con
+  ## asignar_rol/revocar_rol tal cual -- no hay mecanismo nuevo, es la
+  ## misma tabla meta_schema_usuario_rol de siempre. Lista fija en código
+  ## (no en DB) a propósito: son las pantallas de ESTA app, no algo que un
+  ## admin dé de alta dinámicamente como un catálogo pty_*.
+
+  @capacidades_sysadmin [
+    {"sysadmin_bc", "acceso_sysadmin_bc", "Business Process Builder"},
+    {"sysadmin_tepache", "acceso_sysadmin_tepache", "Tepache Exp/Imp"},
+    {"sysadmin_roles", "acceso_sysadmin_roles", "Roles"},
+    {"sysadmin_empresas", "acceso_sysadmin_empresas", "Empresas"},
+    {"sysadmin_usuarios", "acceso_sysadmin_usuarios", "RBAC Usuarios"},
+    {"sysadmin_catalogos_permisos", "acceso_sysadmin_catalogos_permisos", "RBAC Business Context"},
+    {"sysadmin_jerarquia", "acceso_sysadmin_jerarquia", "Jerarquía organizacional"},
+    {"sysadmin_credenciales", "acceso_sysadmin_credenciales", "Credenciales"},
+    {"sysadmin_acciones_externas", "acceso_sysadmin_acciones_externas", "Acciones externas"},
+    {"sysadmin_ambientes", "acceso_sysadmin_ambientes", "Ambientes de Deploy"}
+  ]
+
+  @doc "Las 9 capacidades de Sysadmin, `{recurso, rol_nombre, etiqueta}` -- fuente única para la migración de seed y para la pestaña Sysadmin de UsuariosEmpresaLive."
+  def capacidades_sysadmin, do: @capacidades_sysadmin
+
+  @doc """
+  Los roles de sistema (uno por capacidad) ya sembrados, como
+  `%{recurso => %Rol{}}` -- una sola query, para que la pestaña "Sysadmin"
+  resuelva de un tirón contra qué `rol_id` togglear cada switch. Si la
+  migración de seed no corrió todavía, el mapa sale incompleto (una
+  capacidad sin su rol no se puede togglear -- se filtra en el render en
+  vez de romper).
+  """
+  def roles_de_capacidades_sysadmin do
+    nombres = Enum.map(@capacidades_sysadmin, fn {_recurso, rol_nombre, _etiqueta} -> rol_nombre end)
+    roles_por_nombre = from(r in Rol, where: r.nombre in ^nombres and r.es_sistema == true) |> Repo.all() |> Map.new(&{&1.nombre, &1})
+
+    for {recurso, rol_nombre, _etiqueta} <- @capacidades_sysadmin, rol = Map.get(roles_por_nombre, rol_nombre), not is_nil(rol), into: %{} do
+      {recurso, rol}
+    end
   end
 
   defp generar_guid do

@@ -17,7 +17,7 @@ defmodule MetadataAppWeb.Sysadmin.AccionesExternasLive do
   use MetadataAppWeb, :live_view_admin
 
   on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
-  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"rbac_admin", "leer"}}
+  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_acciones_externas", "leer"}}
 
   alias MetadataApp.Integraciones
   alias MetadataApp.Integraciones.AccionExterna
@@ -32,6 +32,7 @@ defmodule MetadataAppWeb.Sysadmin.AccionesExternasLive do
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
     %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"},
     %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
+    %{tipo: :pagina, id: "ambientes", label: "Ambientes de Deploy", nav: "/sysadmin/ambientes"},
     %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"}
   ]
 

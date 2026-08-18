@@ -120,6 +120,24 @@ body {
   overflow-x: hidden;
 }
 
+/* Auto-zoom al enfocar un input en iOS Safari (y algunos Android) — pasa
+   SIEMPRE que el font-size del campo sea menor a 16px, sin importar si el
+   contenido entra bien en pantalla o no; el navegador zoomea igual y
+   corre todo el layout (ver captura real: Ficha 360° en móvil, campo
+   "Valor ($)"). !important hace falta acá -- los inputs reales usan las
+   clases de daisyUI (.input/.select/.textarea, ver CoreComponents.input/1),
+   que fijan su propio font-size vía selector de CLASE; un selector de
+   ELEMENTO plano (input, select, textarea) pierde esa pulseada de
+   especificidad sin importar el orden en la hoja de estilos -- probado en
+   vivo, la primera versión de esta regla (sin !important) no alcanzaba.
+   Piso de 16px SOLO en pantallas de celular -- arriba de 640px el
+   font-size real de cada input sigue aplicando sin cambios. */
+@media (max-width: 640px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
 /* Add variants based on LiveView classes */
 @custom-variant phx-click-loading (.phx-click-loading&, .phx-click-loading &);
 @custom-variant phx-submit-loading (.phx-submit-loading&, .phx-submit-loading &);
@@ -300,3 +318,32 @@ body {
    Tailwind (@layer base) ya pone `max-width:100%; height:auto` en TODA
    imagen/video de la app, así que ninguna puede desbordar su contenedor
    y ensanchar la página en un celular. */
+
+/* #client-error/#server-error (layouts.ex, banners "Intentando reconectar"
+   / "¡Algo salió mal!") se muestran apenas el socket se desconecta, sin
+   ningún margen -- un blip de red de un parpadeo (navegación entre
+   páginas, laptop que despierta, celular que va a segundo plano un
+   instante) alcanza a sacar el `hidden` y mostrar el banner, aunque
+   reconecte solo unos milisegundos después. A pedido explícito: dar un
+   respiro antes de asustar al usuario con un error que en los hechos no
+   pasó. `animation-delay` (no `transition-delay`): con `transition`, el
+   salto de `display:none` (por el atributo `hidden`) a `display:flex` no
+   es animable -- el navegador no tiene un valor "desde" del que partir.
+   Una `animation` sí corre igual, y con `opacity:0` en el estado inicial
+   de la keyframe, el elemento queda invisible durante todo el delay; si
+   `phx-connected` vuelve a poner `hidden` antes de que el delay termine
+   (reconexión rápida, el caso común), la animación nunca llega a
+   mostrarlo -- el usuario no ve nada. */
+@keyframes pc-mostrar-tras-espera {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+#client-error,
+#server-error {
+  animation: pc-mostrar-tras-espera 0.2s ease-in 1800ms both;
+}

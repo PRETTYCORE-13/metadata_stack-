@@ -422,10 +422,8 @@
 
 /* Selector de jerarquía operativa activa (Empresa/Sucursal/Almacén/
    Unidad de venta) en la banda de pie (2026-08-11) — cada uno es un
-   <form> plano que se auto-envía al cambiar el <select> (onchange, sin
-   JS de framework), mismo motivo que el buscador TRN de abajo: tiene que
-   funcionar igual desde CUALQUIER pantalla que use este layout
-   compartido, sin depender de un handle_event por LiveView. */
+   Solo lectura desde Fase 1 (2026-08-15) -- ver comentario en
+   menu_layout.ex sobre por qué se sacaron los <select> auto-enviados. */
 .pc-footer-jerarquia {
   display: flex;
   align-items: center;
@@ -448,20 +446,14 @@
   letter-spacing: 0.02em;
 }
 
-.pc-footer-jerarquia-select {
-  max-width: 140px;
-  padding: 2px 6px;
+.pc-footer-jerarquia-valor {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+  font-weight: 500;
   color: #111827;
-  background: #fff;
-}
-
-.pc-footer-jerarquia-select:focus {
-  outline: none;
-  border-color: #7c3aed;
-  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15);
 }
 
 /* Buscador TRN compacto (PrettyCore TRN, Fase 3) — a propósito sin
