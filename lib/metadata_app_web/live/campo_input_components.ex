@@ -340,7 +340,8 @@ defmodule MetadataAppWeb.CampoInputComponents do
     end
   end
 
-  defp opciones_enum(valores) do
+  @doc "Normaliza `schema_context_properties[\"valores\"]` de un campo enum a `[{valor, etiqueta}, ...]` — acepta tanto strings sueltos como `%{\"valor\" => , \"descripcion\" => }`."
+  def opciones_enum(valores) do
     Enum.map(valores || [], fn
       %{"valor" => v, "descripcion" => d} -> {v, d}
       v when is_binary(v) -> {v, v}
