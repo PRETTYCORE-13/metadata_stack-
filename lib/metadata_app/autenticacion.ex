@@ -107,7 +107,8 @@ defmodule MetadataApp.Autenticacion do
              |> UsuarioEmpresa.changeset(%{usuario_id: usuario_id, empresa_id: empresa.id})
              |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
              |> Repo.insert(),
-           rol_admin <- Repo.get_by!(Rol, nombre: "administrador"),
+           rol_admin <-
+             Repo.one!(from(r in Rol, where: r.nombre == "administrador" and is_nil(r.empresa_id))),
            {:ok, _} <- MetadataApp.Permissions.asignar_rol(usuario_id, rol_admin.id, empresa.id) do
         empresa
       else
@@ -155,7 +156,8 @@ defmodule MetadataApp.Autenticacion do
                  |> UsuarioEmpresa.changeset(%{usuario_id: usuario_id, empresa_id: empresa_id})
                  |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
                  |> Repo.insert(),
-               rol_admin <- Repo.get_by!(Rol, nombre: "administrador"),
+               rol_admin <-
+                 Repo.one!(from(r in Rol, where: r.nombre == "administrador" and is_nil(r.empresa_id))),
                {:ok, _} <- MetadataApp.Permissions.asignar_rol(usuario_id, rol_admin.id, empresa_id) do
             :ok
           else
