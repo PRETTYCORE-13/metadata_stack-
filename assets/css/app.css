@@ -221,27 +221,31 @@ body {
   }
 }
 
-/* Editor de grid (hoja de cálculo) del Constructor — ver
-   PlantillaConstructorLive.grid_editor/1. A propósito con bordes bien
-   visibles (estilo hoja de cálculo real, encabezados numerados incluidos)
-   — es la ÚNICA parte de todo el sistema de plantillas que se ve así; el
-   render final en FichaLive (.pc-grid-dinamica arriba) nunca muestra
-   ninguno de estos bordes. */
+/* Editor de grid del Constructor — ver PlantillaConstructorLive.grid_editor/1.
+   Fase 1 (2026-08-17): antes cada celda ocupada era un chip esquemático
+   "Ícono + Tipo — etiqueta" sobre bordes de hoja de cálculo; ahora cada
+   celda se ve parecida al documento final (ver vista_documento_nodo/1 y
+   las clases .gc-doc-* más abajo) — los encabezados de fila/columna
+   numerados se mantienen (siguen sirviendo para ubicarse y como "regla"),
+   pero mucho más discretos. El render final en FichaLive (.pc-grid-dinamica
+   arriba) sigue sin mostrar ninguno de estos bordes/números — esto es
+   únicamente la experiencia de edición. */
 .gc-editor {
   border: 1px solid #e5e7eb;
-  border-radius: 0.5rem;
+  border-radius: 0.75rem;
   overflow: hidden;
-  background: #f9fafb;
+  background: #f3f1fb;
+  transition: transform 0.1s ease-out;
 }
 
 .gc-header {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f3f4f6;
-  border: 1px solid #e5e7eb;
-  color: #6b7280;
-  font-size: 10px;
+  background: #f3f1fb;
+  border: 1px solid #ece8fa;
+  color: #a49bcf;
+  font-size: 9.5px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -251,24 +255,36 @@ body {
   color: #6d28d9;
 }
 
+.gc-editor.gc-reglas-on .gc-header {
+  background: #ede9fe;
+  color: #6d28d9;
+  font-size: 10.5px;
+}
+
+.gc-editor.gc-cuadricula-on {
+  background-image: linear-gradient(rgba(124, 58, 237, 0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(124, 58, 237, 0.08) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
 .gc-celda {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid #e5e7eb;
+  align-items: flex-start;
+  border: 1px solid #ece8fa;
   background: #fff;
-  padding: 2px 8px;
-  font-size: 11px;
+  padding: 8px 10px;
+  font-size: 12px;
   cursor: pointer;
   overflow: hidden;
   min-width: 0;
 }
 
 .gc-vacia {
+  align-items: center;
   justify-content: center;
-  color: #d1d5db;
+  color: #d7cff5;
   border-style: dashed;
-  background: #fafafa;
+  background: #fbfaff;
+  font-size: 15px;
 }
 
 .gc-vacia:hover {
@@ -283,8 +299,26 @@ body {
 
 .gc-celda-activa {
   border-color: #7c3aed !important;
-  border-width: 2px;
-  background: #f5f3ff;
+  border-width: 1.5px;
+  background: #faf9ff;
+  position: relative;
+  z-index: 5;
+}
+
+.gc-ocupada.gc-celda-activa::before {
+  content: "Seleccionado";
+  position: absolute;
+  top: -9px;
+  left: 8px;
+  background: #7c3aed;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  z-index: 6;
+  white-space: nowrap;
 }
 
 .gc-drop-valido {
@@ -298,6 +332,330 @@ body {
   border-color: #ef4444 !important;
   border-style: dashed;
   cursor: not-allowed;
+}
+
+/* Vista "documento" de una celda ocupada — ver vista_documento_nodo/1 en
+   PlantillaConstructorLive. Tipografía/colores parecidos a como se ve el
+   render final (FichaLive), simplificados: sin registro real en tiempo de
+   diseño, los campos de datos muestran {{campo}} en vez de un valor. */
+.gc-doc-campo,
+.gc-doc-calculado {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.gc-doc-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #9a93b3;
+}
+.gc-doc-var {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #7c3aed;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gc-doc-etiqueta {
+  color: #17171f;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.gc-doc-estilo-titulo {
+  font-size: 15px;
+  font-weight: 800;
+}
+.gc-doc-estilo-subtitulo {
+  font-size: 13px;
+  font-weight: 700;
+  color: #6d28d9;
+}
+.gc-doc-estilo-ayuda,
+.gc-doc-estilo-nota {
+  font-size: 11px;
+  color: #8b8b97;
+  font-style: italic;
+}
+.gc-doc-estilo-advertencia {
+  font-size: 11.5px;
+  color: #9a6b00;
+  font-weight: 600;
+}
+.gc-doc-tarjeta {
+  border: 1px solid #ece8fa;
+  border-radius: 8px;
+  padding: 8px 10px;
+  width: 100%;
+}
+.gc-doc-tarjeta-titulo {
+  font-weight: 700;
+  font-size: 12px;
+  color: #17171f;
+  margin-bottom: 2px;
+}
+.gc-doc-tarjeta-texto {
+  font-size: 11px;
+  color: #8b8b97;
+}
+.gc-doc-alerta {
+  font-size: 11.5px;
+  border-left: 3px solid #a49bcf;
+  padding: 4px 4px 4px 8px;
+  color: #4a4a57;
+  width: 100%;
+}
+.gc-doc-nivel-info {
+  border-color: #7c3aed;
+}
+.gc-doc-nivel-advertencia {
+  border-color: #f5b92d;
+}
+.gc-doc-nivel-error {
+  border-color: #dc2626;
+}
+.gc-doc-divisor {
+  width: 100%;
+  border-top: 1px solid #e6e6ec;
+  margin-top: 10px;
+  text-align: center;
+  font-size: 10px;
+  color: #9a93b3;
+}
+.gc-doc-divisor span {
+  position: relative;
+  top: -8px;
+  background: #fff;
+  padding: 0 8px;
+}
+.gc-doc-tabla {
+  width: 100%;
+}
+.gc-doc-tabla-titulo {
+  font-weight: 700;
+  font-size: 12px;
+  color: #17171f;
+  margin-bottom: 4px;
+}
+.gc-doc-tabla-head {
+  display: flex;
+  gap: 10px;
+  background: #17171f;
+  color: #fff;
+  border-radius: 5px;
+  padding: 4px 8px;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.gc-doc-hint {
+  font-size: 10.5px;
+  color: #c7c0da;
+}
+.gc-doc-fx {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #6d28d9;
+  background: #f4eefe;
+  padding: 1px 5px;
+  border-radius: 999px;
+  margin-right: 3px;
+}
+.gc-doc-formula {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: #4a4a57;
+}
+.gc-doc-boton {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 12px;
+  border-radius: 7px;
+  border: none;
+  cursor: default;
+}
+.gc-doc-boton-primario {
+  background: #7c3aed;
+  color: #fff;
+}
+.gc-doc-boton-secundario {
+  background: #f4eefe;
+  color: #6d28d9;
+}
+.gc-doc-boton-peligro {
+  background: #fdeded;
+  color: #dc2626;
+}
+.gc-doc-generico {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #6b6478;
+  font-weight: 600;
+  font-size: 11.5px;
+  width: 100%;
+}
+
+/* Paleta vertical del Constructor */
+.gc-paleta-icono {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: #f6f4fc;
+  color: #8b8b97;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.gc-paleta-item:hover .gc-paleta-icono {
+  background: #ece3fd;
+  color: #6d28d9;
+}
+
+/* Toggle switch — mismo truco de <input hidden>+checkbox de siempre
+   (ver toggle_switch/1), solo cambia la apariencia. */
+.gc-toggle-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.gc-toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.gc-toggle-track {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: #d8d8e2;
+  flex: none;
+  transition: background 0.15s;
+}
+.gc-toggle-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.gc-toggle-input:checked + .gc-toggle-track {
+  background: #7c3aed;
+}
+.gc-toggle-input:checked + .gc-toggle-track::after {
+  transform: translateX(14px);
+}
+.gc-toggle-label {
+  font-size: 12px;
+  color: #4a4a57;
+  font-weight: 600;
+}
+
+/* Swatches de color — reemplazan al <select> de nombres de antes. */
+.gc-swatch-row {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.gc-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px #d8d8e2;
+  cursor: pointer;
+  display: block;
+}
+.gc-swatch-ninguno {
+  background: repeating-linear-gradient(45deg, #fff 0 3px, #e5e7eb 3px 6px);
+}
+.gc-swatch-on {
+  box-shadow: 0 0 0 2px #7c3aed;
+}
+
+/* Botones de alineación e ícono (reemplazan <select> de texto). */
+.gc-align-row {
+  display: flex;
+  gap: 4px;
+}
+.gc-align-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d8d8e2;
+  border-radius: 6px;
+  color: #4a4a57;
+  cursor: pointer;
+}
+.gc-align-on {
+  background: #f4eefe;
+  color: #6d28d9;
+  border-color: #ece3fd;
+}
+
+/* Control segmentado (Padding) */
+.gc-seg-row {
+  display: flex;
+  border: 1px solid #d8d8e2;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.gc-seg-btn {
+  flex: 1;
+  text-align: center;
+  padding: 5px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b6478;
+  border-right: 1px solid #d8d8e2;
+  cursor: pointer;
+}
+.gc-seg-btn:last-child {
+  border-right: none;
+}
+.gc-seg-on {
+  background: #f4eefe;
+  color: #6d28d9;
+}
+
+/* Zoom del lienzo — ver hook ZoomLienzo en assets/js/app.js. */
+.gc-zoom-btn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e5e7eb;
+  border-radius: 5px;
+  color: #6b6478;
+  font-weight: 700;
+  font-size: 13px;
+  background: #fff;
+}
+.gc-zoom-btn:hover {
+  background: #f6f4fc;
+}
+.gc-zoom-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #6b6478;
+  min-width: 32px;
+  text-align: center;
 }
 
 /* Red de seguridad para TODOS los modales (actuales y futuros): en este
@@ -318,6 +676,27 @@ body {
    Tailwind (@layer base) ya pone `max-width:100%; height:auto` en TODA
    imagen/video de la app, así que ninguna puede desbordar su contenedor
    y ensanchar la página en un celular. */
+
+/* <input type="date/time">: el iconito nativo del calendario queda
+   escondido -- cada campo trae su propia flechita visible al lado
+   (`[data-abrir-calendario]`, ver campo_input_components.ex y
+   filtros_default_components.ex) que es la que de verdad abre el picker
+   (hook AbrirCalendario, app.js). Sin esto quedarían los dos superpuestos
+   -- el nativo (chico, a veces invisible según el tema del SO) detrás
+   del propio. pointer-events:none además evita que un clic ahí dispare
+   el picker nativo por su cuenta -- ese camino ya no existe. */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.pc-abrir-calendario {
+  color: rgb(156 163 175);
+}
+.pc-abrir-calendario:hover {
+  color: rgb(147 51 234);
+}
 
 /* #client-error/#server-error (layouts.ex, banners "Intentando reconectar"
    / "¡Algo salió mal!") se muestran apenas el socket se desconecta, sin
@@ -346,4 +725,19 @@ body {
 #client-error,
 #server-error {
   animation: pc-mostrar-tras-espera 0.2s ease-in 1800ms both;
+}
+/* Botón "Imprimir" de la Ficha 360° (ver ficha_live.ex, icono rápido del
+   header): Ctrl+P / window.print() no debe sacar el chrome de navegación
+   (sidebar, topbar) ni los controles de edición de la propia ficha — solo
+   el encabezado y el contenido de la pestaña activa (las inactivas ni
+   siquiera están en el DOM, gracias al :if de cambiar_tab). */
+@media print {
+  #pc-sidebar,
+  .pc-topbar,
+  .pc-ficha-regresar,
+  .pc-ficha-acciones,
+  .pc-ficha-tabs,
+  .pc-ficha-aside {
+    display: none !important;
+  }
 }

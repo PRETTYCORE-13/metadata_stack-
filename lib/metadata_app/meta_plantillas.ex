@@ -98,7 +98,9 @@ defmodule MetadataApp.MetaPlantillas do
   def publicar_plantilla(%Plantilla{} = plantilla) do
     Repo.transaction(fn ->
       from(p in Plantilla,
-        where: p.meta_schema_header_id == ^plantilla.meta_schema_header_id and p.estado == "publicada" and p.id != ^plantilla.id
+        where:
+          p.meta_schema_header_id == ^plantilla.meta_schema_header_id and p.estado == "publicada" and
+            p.proposito == ^plantilla.proposito and p.id != ^plantilla.id
       )
       |> Repo.update_all(set: [estado: "borrador"])
 
@@ -113,10 +115,12 @@ defmodule MetadataApp.MetaPlantillas do
     end)
   end
 
-  def obtener_plantilla_publicada(header_id) do
+  def obtener_plantilla_publicada(header_id, proposito \\ "vista") do
     Repo.one(
       from p in Plantilla,
-        where: p.meta_schema_header_id == ^header_id and p.estado == "publicada" and is_nil(p.delete_guid)
+        where:
+          p.meta_schema_header_id == ^header_id and p.estado == "publicada" and p.proposito == ^proposito and
+            is_nil(p.delete_guid)
     )
   end
 
@@ -132,7 +136,9 @@ defmodule MetadataApp.MetaPlantillas do
   """
   def listar_disponibles_multi_vista(header_id) do
     from(p in Plantilla,
-      where: p.meta_schema_header_id == ^header_id and p.disponible_multi_vista == true and is_nil(p.delete_guid),
+      where:
+        p.meta_schema_header_id == ^header_id and p.disponible_multi_vista == true and p.proposito == "vista" and
+          is_nil(p.delete_guid),
       order_by: p.nombre
     )
     |> Repo.all()
@@ -159,14 +165,19 @@ defmodule MetadataApp.MetaPlantillas do
     },
     "campo" => %{"campo" => nil, "tipo_filtro" => nil},
     "campo_calculado" => %{"etiqueta" => "Campo calculado", "formula" => "", "decimales" => 2},
+    "resumen" => %{"etiqueta" => "Resumen", "formula" => "", "formato" => "numero", "decimales" => 0, "icono" => "", "color" => "purpura"},
+    "timeline" => %{"titulo" => "Línea de tiempo"},
     "autocompletar" => %{
       "titulo" => "",
       "campo_referencia" => nil,
       "catalogo_destino" => nil,
       "campos_destino" => []
     },
+    "vista_previa" => %{"campo" => nil, "titulo" => "", "tipo" => "auto"},
     "divisor" => %{},
     "tabla" => %{"catalogo" => nil, "titulo" => "Registros relacionados"},
+    "lista_rapida" => %{"catalogo" => nil, "titulo" => "Actividad reciente", "campos" => [], "limite" => 5},
+    "renglones" => %{"catalogo" => nil, "titulo" => "", "campos" => [], "mostrar_total" => false, "campo_total" => nil},
     "etiqueta" => %{"texto" => "Texto", "estilo" => "parrafo"},
     "alerta" => %{"texto" => "Mensaje", "nivel" => "info"},
     "tarjeta" => %{"titulo" => "Tarjeta", "texto" => "", "icono" => ""},
