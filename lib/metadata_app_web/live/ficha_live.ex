@@ -40,6 +40,7 @@ defmodule MetadataAppWeb.FichaLive do
   alias MetadataApp.Integraciones
   alias MetadataAppWeb.AdminNav
   alias MetadataAppWeb.GridEditableComponents
+  alias Phoenix.LiveView.JS
 
   # "Formato de visualización" (Diseñador de campos, campos date/hora) —
   # ver formatear_fecha/2 más abajo. Solo afecta cómo se MUESTRA el valor
@@ -80,6 +81,12 @@ defmodule MetadataAppWeb.FichaLive do
          # publicarlo. nil (el caso normal, sin query param) = comportamiento
          # de siempre.
          |> assign(:plantilla_preview_id, Map.get(params, "plantilla_id"))
+         # ?imprimir=1 (icono Imprimir de la Ficha 360°, modo :ver): abre
+         # esta misma ruta en una pestaña nueva y render/1 usa una cláusula
+         # aparte (ver más abajo) que muestra SOLO el contenido, de solo
+         # lectura, con la plantilla de impresión publicada si el catálogo
+         # tiene una (si no, cae a la misma plantilla/campos de siempre).
+         |> assign(:modo_impresion?, Map.get(params, "imprimir") == "1")
          |> assign(:tab, "datos")
          |> assign(:form_values, %{})
          |> assign(:errores_campos, %{})
@@ -126,6 +133,11 @@ defmodule MetadataAppWeb.FichaLive do
             do: [],
             else: tabla |> MetaStateEngine.campos_editables(transicion_alta) |> campos_editables_propios(columnas)
 
+        # "Duplicar" (icono rápido de la Ficha, modo :ver) llega acá con
+        # ?duplicar_de=<id> — ver valores_duplicados/4 más abajo.
+        form_values_iniciales =
+          valores_duplicados(Map.get(params, "duplicar_de"), schema_mod, socket.assigns[:current_scope], campos_editables)
+
         # ?plantilla_id=N — mismo criterio que el modo :ver (ver plantilla_a_mostrar/2):
         # "Vista previa" del Constructor apunta acá con un registro en blanco
         # (nunca hizo falta que el catálogo ya tuviera datos cargados para
@@ -139,6 +151,9 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:current_page, tabla)
          |> assign(:encontrado?, true)
          |> assign(:modo, :alta)
+         # El ícono Imprimir solo existe en modo :ver — acá siempre false,
+         # nada más que para que la key exista siempre (ver render/1).
+         |> assign(:modo_impresion?, false)
          |> assign(:tabla, tabla)
          |> assign(:schema_mod, schema_mod)
          |> assign(:header, header)
@@ -158,7 +173,7 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:relaciones, [])
          |> assign(:relaciones_total, 0)
          |> assign(:historial, [])
-         |> assign(:form_values, %{})
+         |> assign(:form_values, form_values_iniciales)
          |> assign(:errores_campos, %{})
          |> assign(:error_guardado, nil)
          # Sin registro todavía (modo alta) no hay contra qué resolver
@@ -182,6 +197,28 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:detalle_seleccion, %{})
          |> assign(:detalle_form_error, nil)}
     end
+  end
+
+  # "Duplicar": precarga @form_values (lo que de verdad viaja a
+  # CatalogoGenerico.crear/4 en guardar_alta/1, NO @registro, que sigue en
+  # blanco como en cualquier alta normal) con los valores actuales de un
+  # registro existente. Solo copia campos que YA están en la whitelist
+  # `campos_editables` de la transición "alta" — así nunca arrastra
+  # id/estado_id/timestamps/TRN sin necesitar una lista de exclusión a
+  # mano. to_string/1 es la misma conversión que campo_row/1 ya usa para
+  # precargar un campo editable existente (ver "valor_mostrado" ahí) —
+  # mismo formato de string que cada campo_input/1 ya sabe interpretar.
+  defp valores_duplicados(nil, _schema_mod, _scope, _campos_editables), do: %{}
+
+  defp valores_duplicados(id, schema_mod, scope, campos_editables) do
+    origen = CatalogoGenerico.obtener!(schema_mod, scope, id)
+
+    campos_editables
+    |> Enum.map(&{&1, to_string(Map.get(origen, String.to_existing_atom(&1)))})
+    |> Enum.reject(fn {_campo, valor} -> valor == "" end)
+    |> Map.new()
+  rescue
+    Ecto.NoResultsError -> %{}
   end
 
   def handle_event("change_page", %{"id" => id}, socket) do
@@ -1159,6 +1196,10 @@ defmodule MetadataAppWeb.FichaLive do
     |> assign(:registro, registro)
     |> assign(:contexto_alcance, resolver_contexto_alcance(socket.assigns.schema_mod, registro))
     |> assign(:plantilla, plantilla_a_mostrar(socket, header.id))
+    # ?imprimir=1 (ver mount/3 y render/1): plantilla de impresión publicada
+    # si el catálogo tiene una, si no, la misma que ya se ve en pantalla —
+    # nunca rompe para catálogos sin plantilla de impresión configurada.
+    |> assign(:plantilla_impresion, MetaPlantillas.obtener_plantilla_publicada(header.id, "impresion") || plantilla_a_mostrar(socket, header.id))
     |> assign(:vistas_disponibles, MetaPlantillas.listar_disponibles_multi_vista(header.id))
     |> assign(:columnas, columnas)
     |> assign(:estados_por_id, estados_por_id)
@@ -1327,6 +1368,64 @@ defmodule MetadataAppWeb.FichaLive do
     end)
   end
 
+  # Vista Kanban de "tabla" -- agrupa @r.filas en columnas según Estado
+  # (pseudo-campo "__estado__", mismo criterio que "Mostrar solo si") o un
+  # campo tipo Lista real del catálogo relacionado. Columnas dinámicas
+  # (solo las que de verdad tienen al menos una fila) en vez de TODOS los
+  # estados/opciones posibles configurados -- evita una consulta extra y
+  # un tablero con columnas vacías; el orden es el de primera aparición
+  # entre las filas.
+  defp columnas_kanban(r, "__estado__") do
+    nombres = MetaStateEngine.mapa_nombres_estados(r.catalogo)
+    agrupar_filas_kanban(r.filas, &Map.get(nombres, &1.estado_id, "Sin estado"))
+  end
+
+  defp columnas_kanban(r, campo) do
+    detalles = MetaSchemaContext.listar_detalles(r.catalogo)
+    campo_atom = String.to_existing_atom(campo)
+    agrupar_filas_kanban(r.filas, &valor_mostrable_enum(detalles, campo, Map.get(&1, campo_atom)))
+  end
+
+  defp agrupar_filas_kanban(filas, etiqueta_de) do
+    grupos = Enum.group_by(filas, etiqueta_de)
+    orden = filas |> Enum.map(etiqueta_de) |> Enum.uniq()
+    Enum.map(orden, &{&1, Map.fetch!(grupos, &1)})
+  end
+
+  # Vista Calendario de "tabla" -- agrupa @r.filas por fecha (un campo
+  # tipo Fecha real del catálogo relacionado, elegido en el Constructor),
+  # en orden cronológico ascendente. Filas sin esa fecha cargada van
+  # juntas al final, bajo "Sin fecha" -- nunca se pierden silenciosamente.
+  # formatear_fecha/2 (ya existe, usado por "Formato de visualización" de
+  # campos date/hora) arma la etiqueta "15 de agosto de 2026".
+  defp columnas_calendario(r, campo) do
+    campo_atom = String.to_existing_atom(campo)
+    grupos = Enum.group_by(r.filas, &Map.get(&1, campo_atom))
+    {con_fecha, sin_fecha} = grupos |> Map.keys() |> Enum.split_with(&(&1 != nil))
+
+    columnas =
+      con_fecha
+      |> Enum.sort(Date)
+      |> Enum.map(&{formatear_fecha(&1, "larga"), Map.fetch!(grupos, &1)})
+
+    if sin_fecha == [], do: columnas, else: columnas ++ [{"Sin fecha", Map.fetch!(grupos, nil)}]
+  end
+
+  defp valor_mostrable_enum(_detalles, _campo, nil), do: "Sin valor"
+
+  defp valor_mostrable_enum(detalles, campo, valor_crudo) do
+    case Enum.find(detalles, &(&1.schema_context_field == campo)) do
+      nil ->
+        to_string(valor_crudo)
+
+      d ->
+        Enum.find_value(d.schema_context_properties["valores"] || [], to_string(valor_crudo), fn
+          %{"valor" => v, "descripcion" => desc} -> v == valor_crudo && desc
+          v when is_binary(v) -> v == valor_crudo && v
+        end)
+    end
+  end
+
   # No existía ninguna consulta de "eventos de este registro" — se agrega
   # acá, de solo lectura, sin tocar cómo `MetaStateEngine` los escribe.
   #
@@ -1469,6 +1568,36 @@ defmodule MetadataAppWeb.FichaLive do
     """
   end
 
+  # ?imprimir=1 (icono Imprimir del header, modo :ver): SOLO el contenido,
+  # de solo lectura (campos_editables: [] fuerza el mismo camino de solo
+  # lectura que campo_row/1 ya usa para un campo no editable), sin
+  # sidebar/topbar/tabs/barra de acciones. AutoImprimir (assets/js/app.js)
+  # dispara window.print() al montar — el PDF real lo genera el navegador
+  # ("Guardar como PDF" del diálogo de impresión), no hay librería de PDF
+  # server-side acá.
+  def render(%{modo_impresion?: true} = assigns) do
+    contexto_formula = contexto_actual(assigns[:current_scope])
+
+    assigns =
+      assigns
+      |> assign(:contexto_formula, contexto_formula)
+      |> assign(
+        :valores_calculados,
+        valores_con_calculados(assigns.columnas, assigns.registro, %{}, contexto_formula, assigns.plantilla_impresion)
+      )
+
+    ~H"""
+    <div class="p-8 max-w-3xl mx-auto" id="auto-imprimir" phx-hook="AutoImprimir">
+      <h1 class="text-lg font-bold text-gray-900 mb-3">{@header.schema_context_label} #{@registro.id}</h1>
+      <.tab_datos columnas={@columnas} registro={@registro} campos_editables={[]}
+        plantilla={@plantilla_impresion} relaciones={@relaciones} detalle={%{catalogos: @catalogos_detalle, renglones: @detalle_renglones}}
+        estados_por_id={@estados_por_id}
+        otras_transiciones={@otras_transiciones}
+        edicion={%{valores: %{}, errores: %{}, contexto: @contexto_formula, calculados: @valores_calculados}} />
+    </div>
+    """
+  end
+
   def render(assigns) do
     contexto_formula = contexto_actual(assigns[:current_scope])
 
@@ -1493,7 +1622,7 @@ defmodule MetadataAppWeb.FichaLive do
       )
 
     ~H"""
-    <div class="p-6 max-w-5xl">
+    <div class="p-6 max-w-6xl">
       <div :if={@plantilla_preview_id} class="text-xs rounded-lg px-3 py-2 mb-3 bg-purple-50 text-purple-700 flex items-center gap-2">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" /><circle cx="12" cy="12" r="3" /></svg>
         <span>
@@ -1502,11 +1631,13 @@ defmodule MetadataAppWeb.FichaLive do
         </span>
       </div>
 
-      <.link :if={@modo == :alta} navigate={@header.schema_context_nav}
-        class="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 hover:underline mb-2">
+      <.link navigate={@header.schema_context_nav}
+        class="pc-ficha-regresar inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 hover:underline mb-2">
         ← Regresar
       </.link>
 
+      <div class="flex gap-4 items-start">
+      <div class="flex-1 min-w-0">
       <div class="bg-white border border-gray-200 rounded-2xl shadow-sm px-4 py-2.5 mb-3">
         <div class="flex items-center justify-between gap-4 flex-wrap">
           <div>
@@ -1550,7 +1681,7 @@ defmodule MetadataAppWeb.FichaLive do
             </div>
           </div>
 
-          <div class="flex items-center gap-2 flex-wrap">
+          <div class="pc-ficha-acciones flex items-center gap-2 flex-wrap">
             <select :if={@vistas_disponibles != []} phx-change="cambiar_vista" name="id"
               title="Elegí cómo ver este registro — el admin del catálogo definió estas vistas alternativas."
               class="border border-gray-300 rounded-lg text-xs px-2 py-1 text-gray-700">
@@ -1572,6 +1703,67 @@ defmodule MetadataAppWeb.FichaLive do
               ]}>
               {if @accion_externa_en_curso == accion.id, do: "Ejecutando…", else: accion.etiqueta || accion.nombre}
             </button>
+
+            <div :if={@modo == :ver} class="flex items-center gap-0.5">
+              <.link href={~p"/registro/#{@tabla}/#{@registro.id}?imprimir=1"} target="_blank" title="Imprimir"
+                class="p-1.5 rounded-lg text-gray-500 hover:text-purple-700 hover:bg-purple-50 transition-colors">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 6 2 18 2 18 9" /><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><rect x="6" y="14" width="12" height="8" />
+                </svg>
+              </.link>
+
+              <.link navigate={~p"/registro/#{@tabla}/nuevo?#{[duplicar_de: @registro.id]}"} title="Duplicar este registro"
+                class="p-1.5 rounded-lg text-gray-500 hover:text-purple-700 hover:bg-purple-50 transition-colors">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+              </.link>
+
+              <button type="button" phx-click="cambiar_tab" phx-value-tab="historial" title="Ver historial"
+                class="p-1.5 rounded-lg text-gray-500 hover:text-purple-700 hover:bg-purple-50 transition-colors">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 15" />
+                </svg>
+              </button>
+
+              <div class="relative">
+                <button type="button" title="Más acciones"
+                  phx-click={
+                    JS.toggle(
+                      to: "#mas-acciones-#{@registro.id}",
+                      display: "flex",
+                      in: {"ease-out duration-150", "opacity-0 scale-95", "opacity-100 scale-100"},
+                      out: {"ease-in duration-100", "opacity-100 scale-100", "opacity-0 scale-95"}
+                    )
+                  }
+                  class="p-1.5 rounded-lg text-gray-500 hover:text-purple-700 hover:bg-purple-50 transition-colors">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
+                </button>
+
+                <div id={"mas-acciones-#{@registro.id}"} style="display:none" phx-click-away={JS.hide(to: "#mas-acciones-#{@registro.id}")}
+                  class="flex-col absolute right-0 top-full mt-1 z-30 w-52 bg-white border border-gray-200 rounded-xl shadow-lg py-1 text-xs">
+                  <div class="px-3 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Productividad</div>
+                  <.link navigate={~p"/registro/#{@tabla}/nuevo"} class="block px-3 py-1.5 text-gray-700 hover:bg-gray-50">
+                    + Nuevo registro
+                  </.link>
+
+                  <div class="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400 border-t border-gray-100 mt-1">Herramientas</div>
+                  <button type="button" id={"copiar-enlace-#{@registro.id}"} phx-hook="CopiarRuta" data-nav={~p"/registro/#{@tabla}/#{@registro.id}"}
+                    class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-50">
+                    Copiar enlace
+                  </button>
+
+                  <%= if Enum.any?(@otras_transiciones, &(&1.accion == "baja")) do %>
+                    <div class="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400 border-t border-gray-100 mt-1">Zona de peligro</div>
+                    <button type="button" phx-click="ejecutar_transicion" phx-value-accion="baja"
+                      data-confirm="¿Eliminar este registro? Esta acción no se puede deshacer."
+                      class="w-full text-left px-3 py-1.5 text-red-600 hover:bg-red-50 font-medium">
+                      Eliminar
+                    </button>
+                  <% end %>
+                </div>
+              </div>
+            </div>
 
             <button :for={t <- @otras_transiciones} type="button"
               phx-click="ejecutar_transicion" phx-value-accion={t.accion} disabled={!t.disponible}
@@ -1621,7 +1813,7 @@ defmodule MetadataAppWeb.FichaLive do
 
       <.modal_resultado_accion_externa :if={@resultado_accion_externa} resultado={@resultado_accion_externa} />
 
-      <div class="flex gap-5 border-b border-gray-200 mb-4 text-sm">
+      <div class="pc-ficha-tabs flex gap-5 border-b border-gray-200 mb-4 text-sm">
         <button type="button" phx-click="cambiar_tab" phx-value-tab="datos"
           class={["pb-2 -mb-px font-semibold", @tab == "datos" && "text-purple-700 border-b-2 border-purple-600", @tab != "datos" && "text-gray-400"]}>
           Datos
@@ -1641,13 +1833,50 @@ defmodule MetadataAppWeb.FichaLive do
       </div>
 
       <.tab_datos :if={@tab == "datos"} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
-        plantilla={@plantilla} relaciones={@relaciones} estados_por_id={@estados_por_id} otras_transiciones={@otras_transiciones}
+        plantilla={@plantilla} relaciones={@relaciones} detalle={%{catalogos: @catalogos_detalle, renglones: @detalle_renglones}}
+        estados_por_id={@estados_por_id} otras_transiciones={@otras_transiciones}
         edicion={%{valores: @form_values, errores: @errores_campos, contexto: @contexto_formula, calculados: @valores_calculados}} />
       <.tab_relaciones :if={@tab == "relaciones"} relaciones={@relaciones} />
       <.tab_historial :if={@tab == "historial"} historial={@historial} estados_por_id={@estados_por_id} />
       <.tab_detalle :if={@tab == "detalle"} modo={@modo} catalogos_detalle={@catalogos_detalle} detalle_renglones={@detalle_renglones}
         otras_transiciones={@otras_transiciones} detalle_form_error={@detalle_form_error} estados_por_id={@estados_por_id}
         detalle_seleccion={@detalle_seleccion} detalle_campos_editables={@detalle_campos_editables} />
+      </div>
+
+      <aside :if={@modo == :ver} class="pc-ficha-aside w-60 flex-none hidden lg:flex flex-col gap-3">
+        <div class="bg-white border border-gray-200 rounded-2xl shadow-sm px-3.5 py-3">
+          <h3 class="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Información del registro</h3>
+          <dl class="space-y-1.5 text-xs">
+            <div :if={Map.get(@registro, :fecha_registro)} class="flex justify-between gap-2">
+              <dt class="text-gray-500">Creado</dt>
+              <dd class="text-gray-900 font-medium text-right">{Calendar.strftime(@registro.fecha_registro, "%d/%m/%Y %H:%M")}</dd>
+            </div>
+            <div :if={@header.schema_es_transaccional and @trn_registro} class="flex justify-between gap-2">
+              <dt class="text-gray-500">TRN</dt>
+              <dd class="text-gray-900 font-medium text-right font-mono">{@trn_registro}</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="bg-white border border-gray-200 rounded-2xl shadow-sm px-3.5 py-3">
+          <h3 class="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Estado</h3>
+          <span :if={@mostrar_estado?} class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 font-semibold text-xs mb-2">
+            {Map.get(@estados_por_id, @registro.estado_id) || "—"}
+          </span>
+          <p :if={!@mostrar_estado?} class="text-xs text-gray-400 italic mb-2">Este catálogo no usa estados.</p>
+
+          <div :if={@otras_transiciones != []}>
+            <p class="text-[11px] text-gray-500 mb-1">Transiciones disponibles</p>
+            <ul class="space-y-1">
+              <li :for={t <- @otras_transiciones} class="text-xs text-gray-700 flex items-center gap-1.5">
+                <span class={["w-1.5 h-1.5 rounded-full flex-none", t.disponible && "bg-purple-400", !t.disponible && "bg-gray-300"]}></span>
+                {t.etiqueta}
+              </li>
+            </ul>
+          </div>
+        </div>
+      </aside>
+      </div>
     </div>
     """
   end
@@ -1695,6 +1924,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :campos_editables, :list, required: true
   attr :plantilla, :any, default: nil
   attr :relaciones, :list, default: []
+  attr :detalle, :any, default: %{}
   attr :estados_por_id, :map, default: %{}
   attr :edicion, :map, required: true
   attr :otras_transiciones, :list, default: []
@@ -1732,10 +1962,17 @@ defmodule MetadataAppWeb.FichaLive do
   # que arma hijos_grid/estilo_grid_hijos directo sobre `@plantilla.definicion`
   # en vez de despachar por `nodo_plantilla_render/1`.
   defp tab_datos(assigns) do
+    botones_pie =
+      assigns.plantilla.definicion
+      |> MetaPlantillas.nodos_de_tipo("boton")
+      |> Enum.filter(&(&1["propiedades"]["ubicacion"] == "pie"))
+      |> Enum.filter(&condicion_cumplida?(&1, assigns.registro, assigns.estados_por_id))
+
     assigns =
       assigns
       |> assign(:estilo_grid, estilo_grid_hijos(assigns.plantilla.definicion))
       |> assign(:hijos, hijos_grid(assigns.plantilla.definicion))
+      |> assign(:botones_pie, botones_pie)
 
     ~H"""
     <form id="form-ficha-datos" phx-change="validar" phx-submit="guardar" class="space-y-4">
@@ -1744,11 +1981,14 @@ defmodule MetadataAppWeb.FichaLive do
       </div>
       <div class="pc-grid-dinamica" style={@estilo_grid}>
         <.celda_grid :for={hijo <- @hijos} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
-          relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+          relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
       </div>
       <p :if={@hijos == []} class="px-4 py-8 text-center text-gray-400 text-sm bg-white border border-gray-200 rounded-xl">
         La plantilla publicada todavía no tiene componentes.
       </p>
+      <div :if={@botones_pie != []} class="flex items-center justify-end gap-2 pt-4 border-t border-gray-100">
+        <.boton_nodo :for={nodo <- @botones_pie} nodo={nodo} otras_transiciones={@otras_transiciones} />
+      </div>
     </form>
     """
   end
@@ -1758,6 +1998,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :registro, :map, required: true
   attr :campos_editables, :list, required: true
   attr :relaciones, :list, required: true
+  attr :detalle, :any, default: %{}
   attr :estados_por_id, :map, required: true
   attr :edicion, :map, required: true
   attr :otras_transiciones, :list, default: []
@@ -1772,7 +2013,7 @@ defmodule MetadataAppWeb.FichaLive do
     ~H"""
     <.nodo_plantilla_render :if={condicion_cumplida?(@nodo, @registro, @estados_por_id)}
       nodo={@nodo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
-      relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+      relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
     """
   end
 
@@ -1781,6 +2022,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :registro, :map, required: true
   attr :campos_editables, :list, required: true
   attr :relaciones, :list, required: true
+  attr :detalle, :any, default: %{}
   attr :estados_por_id, :map, required: true
   attr :edicion, :map, required: true
   attr :otras_transiciones, :list, default: []
@@ -1797,18 +2039,22 @@ defmodule MetadataAppWeb.FichaLive do
       |> assign(:padding, padding_seccion(assigns.nodo))
       |> assign(:estilo_grid, estilo_grid_hijos(assigns.nodo))
       |> assign(:hijos, hijos_grid(assigns.nodo))
+      |> assign(:contador, if(assigns.nodo["propiedades"]["contador_campos"] == true, do: length(MetaPlantillas.nodos_de_tipo(assigns.nodo, "campo"))))
 
     ~H"""
-    <details class="bg-white border border-gray-200 rounded-xl overflow-hidden" open>
+    <details id={"seccion-#{@nodo["id"]}"} class="bg-white border border-gray-200 rounded-xl overflow-hidden"
+      open={@nodo["propiedades"]["iniciar_expandida"] != false}
+      phx-hook={@nodo["propiedades"]["recordar_estado"] == true && "RecordarSeccion"}>
       <summary class={["cursor-pointer bg-gray-50 border-b border-gray-100 list-none", @padding]} style="list-style: none">
         <span class="font-bold text-gray-700 text-sm">
           <span :if={@nodo["propiedades"]["icono"] not in [nil, ""]}>{@nodo["propiedades"]["icono"]} </span>{@nodo["propiedades"]["titulo"]}
+          <span :if={@contador} class="text-gray-400 font-normal">({@contador})</span>
         </span>
         <div :if={@nodo["propiedades"]["descripcion"] not in [nil, ""]} class="text-xs text-gray-400 mt-0.5 font-normal">{@nodo["propiedades"]["descripcion"]}</div>
       </summary>
       <div class="pc-grid-dinamica p-3" style={@estilo_grid}>
         <.celda_grid :for={hijo <- @hijos} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
-          relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+          relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
       </div>
     </details>
     """
@@ -1820,18 +2066,20 @@ defmodule MetadataAppWeb.FichaLive do
       |> assign(:padding, padding_seccion(assigns.nodo))
       |> assign(:estilo_grid, estilo_grid_hijos(assigns.nodo))
       |> assign(:hijos, hijos_grid(assigns.nodo))
+      |> assign(:contador, if(assigns.nodo["propiedades"]["contador_campos"] == true, do: length(MetaPlantillas.nodos_de_tipo(assigns.nodo, "campo"))))
 
     ~H"""
     <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
       <div class={["border-b border-gray-100 bg-gray-50", @padding]}>
         <div class="font-bold text-gray-700 text-sm">
           <span :if={@nodo["propiedades"]["icono"] not in [nil, ""]}>{@nodo["propiedades"]["icono"]} </span>{@nodo["propiedades"]["titulo"]}
+          <span :if={@contador} class="text-gray-400 font-normal">({@contador})</span>
         </div>
         <div :if={@nodo["propiedades"]["descripcion"] not in [nil, ""]} class="text-xs text-gray-400 mt-0.5">{@nodo["propiedades"]["descripcion"]}</div>
       </div>
       <div class="pc-grid-dinamica p-3" style={@estilo_grid}>
         <.celda_grid :for={hijo <- @hijos} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
-          relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+          relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
       </div>
     </div>
     """
@@ -1848,7 +2096,7 @@ defmodule MetadataAppWeb.FichaLive do
          en app.css, que las colapsa a 1 columna bajo 640px), quedaría
          cada campo apretadísimo e ilegible. -->
     <div class="pc-fila-dinamica" style={@estilo_grid}>
-      <.nodo_plantilla :for={hijo <- @nodo["hijos"]} nodo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables} relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+      <.nodo_plantilla :for={hijo <- @nodo["hijos"]} nodo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables} relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
     </div>
     """
   end
@@ -1856,13 +2104,47 @@ defmodule MetadataAppWeb.FichaLive do
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "columna"}} = assigns) do
     ~H"""
     <div class="flex flex-col gap-3">
-      <.nodo_plantilla :for={hijo <- @nodo["hijos"]} nodo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables} relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+      <.nodo_plantilla :for={hijo <- @nodo["hijos"]} nodo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables} relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
     </div>
     """
   end
 
   # Contenedor visual simple, sin encabezado — a diferencia de "seccion" no
   # tiene título/descripción, solo agrupa visualmente con borde + espaciado.
+  # "Distribución" != "grid"/nil (Vertical/Horizontal/Automática): mismos
+  # hijos y misma celda_grid/1 de siempre (grid-column/grid-row en el
+  # style de cada hijo quedan como no-op bajo display:flex, el navegador
+  # los ignora sin romper nada) -- solo cambia el contenedor de
+  # "pc-grid-dinamica" (CSS grid) a flex, y hay que ORDENAR los hijos por
+  # (fila, columna) primero: con grid el orden real lo da la posición
+  # explícita de cada uno, no el orden de la lista -- con flex si no se
+  # ordena acá el layout sale con los hijos salteados.
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "panel", "propiedades" => %{"distribucion" => distribucion}}} = assigns)
+       when distribucion in ["vertical", "horizontal", "automatica"] do
+    hijos =
+      assigns.nodo
+      |> hijos_grid()
+      |> Enum.sort_by(fn h ->
+        celda = h["propiedades"]["celda"] || %{}
+        {celda["fila"] || 0, celda["columna"] || 0}
+      end)
+
+    assigns =
+      assigns
+      |> assign(:padding, padding_seccion(assigns.nodo))
+      |> assign(:hijos, hijos)
+      |> assign(:clase_flex, clase_distribucion_panel(distribucion, assigns.nodo["propiedades"]["separacion"]))
+
+    ~H"""
+    <div class={["bg-white border border-gray-200 rounded-xl", @padding]}>
+      <div class={@clase_flex}>
+        <.celda_grid :for={hijo <- @hijos} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
+          relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+      </div>
+    </div>
+    """
+  end
+
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "panel"}} = assigns) do
     assigns =
       assigns
@@ -1874,7 +2156,102 @@ defmodule MetadataAppWeb.FichaLive do
     <div class={["bg-white border border-gray-200 rounded-xl", @padding]}>
       <div class="pc-grid-dinamica" style={@estilo_grid}>
         <.celda_grid :for={hijo <- @hijos} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
-          relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+          relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+      </div>
+    </div>
+    """
+  end
+
+  # "Tipo" (Diseñador de Pestañas) -- 3 presentaciones alternativas a la
+  # de siempre (tabs, cláusula catch-all más abajo), MISMO contenido
+  # interno (cada pestaña sigue siendo su propio grid vía hijos_grid/1 +
+  # celda_grid/1) — solo cambia CÓMO se navega entre ellas.
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "pestanas", "propiedades" => %{"tipo" => "acordeon"}}} = assigns) do
+    assigns = assign(assigns, :contador?, assigns.nodo["propiedades"]["contador_campos"] == true)
+
+    ~H"""
+    <div class="flex flex-col gap-2">
+      <details :for={{pestana, i} <- Enum.with_index(@nodo["hijos"])} open={i == 0} class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <summary class="cursor-pointer bg-gray-50 border-b border-gray-100 px-4 py-2.5 font-bold text-gray-700 text-sm list-none" style="list-style: none">
+          {titulo_pestana(pestana, @contador?)}
+        </summary>
+        <div class="pc-grid-dinamica p-3" style={estilo_grid_hijos(pestana)}>
+          <.celda_grid :for={hijo <- hijos_grid(pestana)} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
+            relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+        </div>
+      </details>
+    </div>
+    """
+  end
+
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "pestanas", "propiedades" => %{"tipo" => "paso_a_paso"}}} = assigns) do
+    pasos_id = "paso-" <> assigns.nodo["id"]
+    hijos = assigns.nodo["hijos"]
+    assigns =
+      assigns
+      |> assign(:pasos_id, pasos_id)
+      |> assign(:hijos_pasos, hijos)
+      |> assign(:total, length(hijos))
+      |> assign(:contador?, assigns.nodo["propiedades"]["contador_campos"] == true)
+
+    ~H"""
+    <div class="bg-white border border-gray-200 rounded-xl p-4">
+      <div :for={{pestana, i} <- Enum.with_index(@hijos_pasos)} id={"#{@pasos_id}-panel-#{pestana["id"]}"} class={i != 0 && "hidden"}>
+        <div class="text-xs font-semibold text-gray-400 mb-3 pb-3 border-b border-gray-100">
+          Paso {i + 1} de {@total} — {titulo_pestana(pestana, @contador?)}
+        </div>
+        <div class="pc-grid-dinamica" style={estilo_grid_hijos(pestana)}>
+          <.celda_grid :for={hijo <- hijos_grid(pestana)} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
+            relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+        </div>
+        <div class="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
+          <button :if={i > 0} type="button" phx-click={js_activar_paso(@pasos_id, @hijos_pasos, Enum.at(@hijos_pasos, i - 1)["id"])}
+            class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 text-xs font-semibold hover:bg-gray-50">
+            ← Anterior
+          </button>
+          <span :if={i == 0}></span>
+          <button :if={i < @total - 1} type="button" phx-click={js_activar_paso(@pasos_id, @hijos_pasos, Enum.at(@hijos_pasos, i + 1)["id"])}
+            class="px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">
+            Siguiente →
+          </button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "pestanas", "propiedades" => %{"tipo" => "menu_lateral"}}} = assigns) do
+    menu_id = "menu-" <> assigns.nodo["id"]
+    hijos = assigns.nodo["hijos"]
+    primera_id = hijos |> List.first() |> then(&(&1 && &1["id"]))
+
+    assigns =
+      assigns
+      |> assign(:menu_id, menu_id)
+      |> assign(:hijos_menu, hijos)
+      |> assign(:primera_id, primera_id)
+      |> assign(:contador?, assigns.nodo["propiedades"]["contador_campos"] == true)
+
+    ~H"""
+    <div class="bg-white border border-gray-200 rounded-xl overflow-hidden flex flex-col sm:flex-row">
+      <div class="flex sm:flex-col gap-1 p-2 border-b sm:border-b-0 sm:border-r border-gray-100 sm:w-48 flex-shrink-0 overflow-x-auto">
+        <button :for={pestana <- @hijos_menu} type="button" id={"#{@menu_id}-tab-#{pestana["id"]}"}
+          phx-click={js_activar_menu(@menu_id, @hijos_menu, pestana["id"])}
+          class={[
+            "text-left px-3 py-2 rounded-lg text-sm font-semibold whitespace-nowrap",
+            pestana["id"] == @primera_id && "bg-purple-50 text-purple-700",
+            pestana["id"] != @primera_id && "text-gray-500 hover:bg-gray-50"
+          ]}>
+          {titulo_pestana(pestana, @contador?)}
+        </button>
+      </div>
+      <div class="flex-1 p-4 min-w-0">
+        <div :for={{pestana, i} <- Enum.with_index(@hijos_menu)} id={"#{@menu_id}-panel-#{pestana["id"]}"} class={i != 0 && "hidden"}>
+          <div class="pc-grid-dinamica" style={estilo_grid_hijos(pestana)}>
+            <.celda_grid :for={hijo <- hijos_grid(pestana)} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
+              relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+          </div>
+        </div>
       </div>
     </div>
     """
@@ -1887,7 +2264,8 @@ defmodule MetadataAppWeb.FichaLive do
   # falta inventar una clave aparte.
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "pestanas"}} = assigns) do
     tabs_id = "pest-" <> assigns.nodo["id"]
-    tabs = Enum.map(assigns.nodo["hijos"], &%{key: &1["id"], label: &1["propiedades"]["titulo"] || "Pestaña"})
+    contador? = assigns.nodo["propiedades"]["contador_campos"] == true
+    tabs = Enum.map(assigns.nodo["hijos"], &%{key: &1["id"], label: titulo_pestana(&1, contador?)})
     assigns = assigns |> assign(:tabs_id, tabs_id) |> assign(:tabs, tabs)
 
     ~H"""
@@ -1896,7 +2274,7 @@ defmodule MetadataAppWeb.FichaLive do
       <div :for={{pestana, i} <- Enum.with_index(@nodo["hijos"])} id={"#{@tabs_id}-panel-#{pestana["id"]}"} class={i != 0 && "hidden"}>
         <div class="pc-grid-dinamica" style={estilo_grid_hijos(pestana)}>
           <.celda_grid :for={hijo <- hijos_grid(pestana)} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
-            relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+            relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
         </div>
       </div>
     </div>
@@ -1925,8 +2303,8 @@ defmodule MetadataAppWeb.FichaLive do
   # el evaluador es un campo más del mapa, como cualquier {campo} real).
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "campo_calculado"}} = assigns) do
     formula = assigns.nodo["propiedades"]["formula"] || ""
-    resultado = formula |> Formula.evaluar(assigns.edicion.calculados) |> Formula.formatear(assigns.nodo["propiedades"])
-    assigns = assign(assigns, :resultado, resultado)
+    evaluado = Formula.evaluar(formula, assigns.edicion.calculados)
+    assigns = assign(assigns, :evaluado, evaluado)
 
     ~H"""
     <div class="flex items-center gap-3 px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm">
@@ -1938,7 +2316,64 @@ defmodule MetadataAppWeb.FichaLive do
         </svg>
       </span>
       <span class="w-56 flex-shrink-0 text-gray-500">{@nodo["propiedades"]["etiqueta"]}</span>
-      <span class="text-gray-900 font-semibold">{@resultado}</span>
+      <.resultado_calculado evaluado={@evaluado} propiedades={@nodo["propiedades"]} />
+    </div>
+    """
+  end
+
+  # Resumen/KPI: MISMO motor que Campo calculado (Formula.evaluar/2 +
+  # Formula.formatear/2, ver arriba) -- lo único distinto es el render,
+  # una tarjeta grande con acento de color en vez de una fila
+  # etiqueta+valor. Sin el armador de chips (fórmula como texto plano,
+  # ver panel_propiedades/1 en el Constructor).
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "resumen"}} = assigns) do
+    formula = assigns.nodo["propiedades"]["formula"] || ""
+    evaluado = Formula.evaluar(formula, assigns.edicion.calculados)
+    color = assigns.nodo["propiedades"]["color"] || "purpura"
+
+    assigns =
+      assigns
+      |> assign(:evaluado, evaluado)
+      |> assign(:texto_color, swatch_texto(color))
+      |> assign(:borde_color, borde_resumen(color))
+
+    ~H"""
+    <div class={["bg-white border border-gray-200 rounded-xl px-4 py-3 border-l-4", @borde_color]}>
+      <div class="text-xs text-gray-500 font-semibold">
+        <span :if={@nodo["propiedades"]["icono"] not in [nil, ""]}>{@nodo["propiedades"]["icono"]} </span>{@nodo["propiedades"]["etiqueta"]}
+      </div>
+      <div class={["text-2xl font-bold mt-0.5", @texto_color]}>{Formula.formatear(@evaluado, @nodo["propiedades"])}</div>
+    </div>
+    """
+  end
+
+  # Timeline: recorrido de ESTADOS de ESTE registro (nunca de otro
+  # catálogo) -- consulta TransicionEvento directo, con @registro/
+  # @estados_por_id que YA viajan a cualquier nodo (sin threading nuevo,
+  # a diferencia de reusar @historial -- ese vive solo en el nivel de
+  # render/1, no baja hasta acá). En :alta (@registro es %{} sin
+  # __struct__) no hay transiciones que mostrar, se resuelve solo.
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "timeline"}} = assigns) do
+    header_id = registro_header_id(assigns.registro)
+    eventos = if header_id, do: eventos_timeline(header_id, assigns.registro.id, assigns.estados_por_id), else: []
+    assigns = assign(assigns, :eventos, eventos)
+
+    ~H"""
+    <div class="bg-white border border-gray-200 rounded-xl overflow-hidden p-4">
+      <div :if={@nodo["propiedades"]["titulo"] not in [nil, ""]} class="font-bold text-gray-700 text-sm mb-3">
+        {@nodo["propiedades"]["titulo"]}
+      </div>
+      <p :if={@eventos == []} class="text-center text-gray-400 text-xs py-3">Todavía no hay transiciones registradas.</p>
+      <div :if={@eventos != []} class="flex items-center overflow-x-auto py-1">
+        <div :for={{evento, i} <- Enum.with_index(@eventos)} class="flex items-center flex-shrink-0">
+          <div :if={i > 0} class="w-6 h-px bg-gray-200"></div>
+          <div class="flex flex-col items-center px-1.5">
+            <div class="w-2.5 h-2.5 rounded-full bg-purple-500"></div>
+            <div class="text-xs font-semibold text-gray-700 mt-1 whitespace-nowrap">{evento.estado}</div>
+            <div class="text-[10px] text-gray-400 whitespace-nowrap">{Calendar.strftime(evento.inserted_at, "%d/%m/%Y")}</div>
+          </div>
+        </div>
+      </div>
     </div>
     """
   end
@@ -1961,22 +2396,67 @@ defmodule MetadataAppWeb.FichaLive do
     # esta lista se lee de verdad.
     campos_destino = props["campos_destino"] |> List.wrap() |> Enum.reject(&(&1 in [nil, ""]))
     resultado = buscar_relacionado(props["catalogo_destino"], id_texto, campos_destino)
-    assigns = assigns |> assign(:resultado, resultado) |> assign(:titulo, props["titulo"])
+
+    assigns =
+      assigns
+      |> assign(:resultado, resultado)
+      |> assign(:titulo, props["titulo"])
+      |> assign(:mostrar, props["mostrar"] || "lista")
 
     ~H"""
     <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
       <div :if={@titulo not in [nil, ""]} class="px-4 py-2 border-b border-gray-100 bg-gray-50 font-bold text-gray-700 text-sm">
         {@titulo}
       </div>
-      <div :if={match?({:ok, _}, @resultado)}>
-        <div :for={{etiqueta, valor} <- elem(@resultado, 1)} class="flex items-center gap-3 px-4 py-2 border-b border-gray-100 last:border-b-0 text-sm">
-          <span class="w-40 flex-shrink-0 text-gray-500">{etiqueta}</span>
-          <span class="text-gray-900 font-medium">{valor}</span>
-        </div>
-      </div>
+      <.contenido_relacionado :if={match?({:ok, _}, @resultado)} pares={elem(@resultado, 1)} mostrar={@mostrar} />
       <p :if={match?({:error, _}, @resultado)} class="px-4 py-3 text-center text-gray-400 text-xs">
         Elegí un valor en el campo de referencia para autocompletar.
       </p>
+    </div>
+    """
+  end
+
+  # Vista previa -- muestra imagen/PDF de una URL que YA vive en un campo
+  # de texto de este catálogo (@edicion.calculados, mismo mapa que usa
+  # campo_calculado -- refleja lo tipeado sin guardar todavía). Sin
+  # storage/upload propio a propósito, ver panel_propiedades/1 en el
+  # Constructor. url_segura/1 rechaza cualquier esquema que no sea
+  # http(s) -- una URL guardada en un campo de texto es, en los hechos,
+  # contenido no confiable, y un <a href> con "javascript:"/"data:" sería
+  # un vector de XSS real si se dejara pasar tal cual.
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "vista_previa"}} = assigns) do
+    campo = assigns.nodo["propiedades"]["campo"]
+    url_cruda = campo && Map.get(assigns.edicion.calculados, campo)
+    url = url_segura(url_cruda)
+    tipo = tipo_vista_previa(assigns.nodo["propiedades"]["tipo"] || "auto", url)
+
+    assigns = assigns |> assign(:url, url) |> assign(:tipo_archivo, tipo)
+
+    ~H"""
+    <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div :if={@nodo["propiedades"]["titulo"] not in [nil, ""]} class="px-4 py-2 border-b border-gray-100 bg-gray-50 font-bold text-gray-700 text-sm">
+        {@nodo["propiedades"]["titulo"]}
+      </div>
+      <div :if={is_nil(@url)} class="px-4 py-6 text-center text-gray-400 text-xs">Sin archivo cargado.</div>
+      <div :if={@url && @tipo_archivo == "imagen"} class="p-3">
+        <img src={@url} class="max-w-full rounded-lg border border-gray-100 mx-auto" />
+        <a href={@url} target="_blank" rel="noopener noreferrer" class="block text-center text-xs text-purple-700 hover:underline mt-2">Ver imagen completa</a>
+      </div>
+      <div :if={@url && @tipo_archivo == "pdf"} class="p-3">
+        <iframe src={@url} class="w-full h-96 rounded-lg border border-gray-100"></iframe>
+        <a href={@url} target="_blank" rel="noopener noreferrer" class="block text-center text-xs text-purple-700 hover:underline mt-2">Abrir en pestaña nueva</a>
+      </div>
+      <div :if={@url && @tipo_archivo == "otro"} class="px-4 py-6 text-center">
+        <a href={@url} target="_blank" rel="noopener noreferrer" class="text-purple-700 font-semibold hover:underline text-sm">📄 Ver documento</a>
+      </div>
+    </div>
+    """
+  end
+
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "divisor", "propiedades" => %{"titulo" => titulo}}} = assigns) when titulo not in [nil, ""] do
+    ~H"""
+    <div class="flex items-center gap-3 text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+      <hr class="flex-1 border-gray-200" /> {@nodo["propiedades"]["titulo"]} <hr class="flex-1 border-gray-200" />
     </div>
     """
   end
@@ -1994,17 +2474,161 @@ defmodule MetadataAppWeb.FichaLive do
       assigns.nodo["propiedades"]["campos"] |> List.wrap() |> Enum.reject(&(&1 in [nil, ""]))
 
     columnas = if r, do: columnas_tabla_relacion(r.catalogo, campos_elegidos), else: []
-    assigns = assigns |> assign(:r, r) |> assign(:columnas, columnas)
+    vista = assigns.nodo["propiedades"]["vista"] || "tabla"
+
+    columnas_kanban =
+      if r && vista == "kanban",
+        do: columnas_kanban(r, assigns.nodo["propiedades"]["kanban_campo"] || "__estado__"),
+        else: []
+
+    columnas_calendario =
+      if r && vista == "calendario" && assigns.nodo["propiedades"]["calendario_campo"] not in [nil, ""],
+        do: columnas_calendario(r, assigns.nodo["propiedades"]["calendario_campo"]),
+        else: []
+
+    assigns =
+      assigns
+      |> assign(:r, r)
+      |> assign(:columnas, columnas)
+      |> assign(:vista, vista)
+      |> assign(:columnas_kanban, columnas_kanban)
+      |> assign(:columnas_calendario, columnas_calendario)
 
     ~H"""
-    <.tabla_relacion :if={@r} r={@r} titulo={@nodo["propiedades"]["titulo"]} columnas={@columnas} />
+    <.tabla_relacion :if={@r && @vista == "tabla"} r={@r} titulo={@nodo["propiedades"]["titulo"]} columnas={@columnas} />
+    <.tarjetas_relacion :if={@r && @vista == "tarjetas"} r={@r} titulo={@nodo["propiedades"]["titulo"]} columnas={@columnas} />
+    <.kanban_relacion :if={@r && @vista == "kanban"} r={@r} titulo={@nodo["propiedades"]["titulo"]} columnas={@columnas_kanban} />
+    <.calendario_relacion :if={@r && @vista == "calendario"} r={@r} titulo={@nodo["propiedades"]["titulo"]} columnas={@columnas_calendario} />
     """
   end
 
-  defp nodo_plantilla_render(%{nodo: %{"tipo" => "etiqueta"}} = assigns) do
+  # "Lista rápida" -- versión liviana de "tabla" (MISMOS @relaciones/
+  # columnas_tabla_relacion/2), acotada a los primeros @limite registros,
+  # un ítem clickeable por línea en vez de una tabla con encabezados.
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "lista_rapida"}} = assigns) do
+    r = Enum.find(assigns.relaciones, &(&1.catalogo == assigns.nodo["propiedades"]["catalogo"]))
+    campos_elegidos = assigns.nodo["propiedades"]["campos"] |> List.wrap() |> Enum.reject(&(&1 in [nil, ""]))
+    columnas = if r, do: columnas_tabla_relacion(r.catalogo, campos_elegidos), else: []
+    limite = assigns.nodo["propiedades"]["limite"] |> a_numero_propiedad() |> Kernel.||(5.0) |> trunc() |> max(1)
+    filas = if r, do: Enum.take(r.filas, limite), else: []
+    restantes = if r, do: max(length(r.filas) - limite, 0), else: 0
+
+    assigns =
+      assigns
+      |> assign(:r, r)
+      |> assign(:columnas, columnas)
+      |> assign(:filas, filas)
+      |> assign(:restantes, restantes)
+
     ~H"""
-    <div :if={@nodo["propiedades"]["estilo"] == "titulo"} class="text-sm font-bold text-gray-800 px-1">{@nodo["propiedades"]["texto"]}</div>
-    <div :if={@nodo["propiedades"]["estilo"] != "titulo"} class="text-xs text-gray-500 px-1">{@nodo["propiedades"]["texto"]}</div>
+    <div :if={@r} class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div :if={@nodo["propiedades"]["titulo"] not in [nil, ""]} class="px-4 py-2 border-b border-gray-100 bg-gray-50 font-bold text-gray-700 text-sm">
+        {@nodo["propiedades"]["titulo"]}
+      </div>
+      <div :if={@filas == []} class="px-4 py-6 text-center text-gray-400 text-xs">Sin registros todavía.</div>
+      <div :if={@filas != []} class="divide-y divide-gray-50">
+        <.link :for={fila <- @filas} navigate={"/registro/#{@r.catalogo}/#{fila.id}"}
+          class="flex items-center justify-between gap-3 px-4 py-2 hover:bg-purple-50/50 text-sm">
+          <span class="font-semibold text-gray-800 truncate">{etiqueta_fila(fila, @r.campo_descriptivo) || "##{fila.id}"}</span>
+          <span class="text-xs text-gray-400 flex-shrink-0 truncate">
+            <span :for={{col, i} <- Enum.with_index(@columnas)}>
+              <span :if={i > 0} class="mx-1">·</span>{(Map.get(fila, col.campo) not in [nil, ""] && Map.get(fila, col.campo)) || "—"}
+            </span>
+          </span>
+        </.link>
+      </div>
+      <p :if={@restantes > 0} class="px-4 py-1.5 text-[11px] text-gray-400 border-t border-gray-50">y {@restantes} más…</p>
+    </div>
+    """
+  end
+
+  # "Renglones de detalle" -- a diferencia de "tabla"/"lista_rapida" (que
+  # miran @relaciones, catálogos con un campo tipo "referencia" apuntando
+  # de vuelta a este), acá se muestran los renglones REALES de un catálogo
+  # detalle de ESTE registro (maestro-detalle vía encabezado_id/renglon_id
+  # -- ver Renglones, la pestaña "Detalle" de siempre). @detalle llega
+  # armado desde los 2 call-sites de tab_datos/1 (modo normal y modo
+  # impresión por igual, mismo dato que ya cargaba cargar_catalogos_detalle/1
+  # y cargar_detalle_renglones/4 -- nunca una consulta nueva acá).
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "renglones"}} = assigns) do
+    catalogo_nombre = assigns.nodo["propiedades"]["catalogo"]
+    detalle_info = Enum.find(assigns.detalle[:catalogos] || [], &(&1.nombre == catalogo_nombre))
+    campos_elegidos = assigns.nodo["propiedades"]["campos"] |> List.wrap() |> Enum.reject(&(&1 in [nil, ""]))
+
+    columnas_serializadas =
+      cond do
+        is_nil(detalle_info) -> []
+        campos_elegidos == [] -> detalle_info.columnas_tabla
+        true -> Enum.filter(detalle_info.columnas, &(&1.schema_context_field in campos_elegidos))
+      end
+
+    # String.to_existing_atom/1 abajo asume que el módulo Ecto generado de
+    # ESTE detalle ya cargó sus átomos de campo (los declara `field/2` a
+    # nivel de módulo) -- normalmente ya pasó porque cargar_detalle_renglones/4
+    # ya hizo una query contra ese módulo. Pero en modo :alta (ej. "Vista
+    # previa" del Constructor) @detalle_renglones queda vacío a propósito
+    # (nunca hay encabezado_id todavía) y nada más en este request toca ese
+    # módulo -- sin este ensure_loaded, un catálogo detalle que nadie
+    # consultó todavía en este proceso rompía acá (bug real, reportado).
+    if detalle_info, do: catalogo_nombre |> MetaSchemaContext.modulo_por_nombre() |> then(&(&1 && Code.ensure_loaded(&1)))
+
+    columnas =
+      Enum.map(columnas_serializadas, &%{campo: String.to_existing_atom(&1.schema_context_field), etiqueta: &1.schema_context_properties["etiqueta"], propiedades: &1.schema_context_properties})
+
+    filas = if detalle_info, do: Map.get(assigns.detalle[:renglones] || %{}, catalogo_nombre, []), else: []
+
+    titulo =
+      case assigns.nodo["propiedades"]["titulo"] do
+        t when t in [nil, ""] -> (detalle_info && detalle_info.etiqueta) || "Renglones"
+        t -> t
+      end
+
+    campo_total = assigns.nodo["propiedades"]["campo_total"]
+    mostrar_total = assigns.nodo["propiedades"]["mostrar_total"] == true and campo_total not in [nil, ""] and detalle_info != nil
+
+    {total, etiqueta_total} =
+      if mostrar_total do
+        campo_atom = String.to_existing_atom(campo_total)
+        columna_total = Enum.find(detalle_info.columnas, &(&1.schema_context_field == campo_total))
+        etiqueta = (columna_total && columna_total.schema_context_properties["etiqueta"]) || campo_total
+        propiedades_total = (columna_total && columna_total.schema_context_properties) || %{}
+        suma = total_columna(filas, campo_atom)
+        {formatear_numero_columna(Decimal.to_float(suma), propiedades_total), "Total " <> String.downcase(etiqueta)}
+      else
+        {nil, nil}
+      end
+
+    assigns =
+      assigns
+      |> assign(:detalle_info, detalle_info)
+      |> assign(:titulo, titulo)
+      |> assign(:columnas, columnas)
+      |> assign(:filas, filas)
+      |> assign(:mostrar_total, mostrar_total)
+      |> assign(:total, total)
+      |> assign(:etiqueta_total, etiqueta_total)
+
+    ~H"""
+    <.renglones_relacion :if={@detalle_info} titulo={@titulo} columnas={@columnas} filas={@filas}
+      mostrar_total={@mostrar_total} total={@total} etiqueta_total={@etiqueta_total} />
+    <p :if={!@detalle_info} class="text-center text-gray-400 text-xs py-4">Elegí un detalle en las propiedades de este componente.</p>
+    """
+  end
+
+  # 6 estilos -- "parrafo" (default) y "titulo" son los originales, los
+  # otros 4 son puramente visuales (mismo criterio de Tarjeta: sin lógica
+  # nueva, solo peso/color/fondo distintos). "icono" es común a los 6.
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "etiqueta"}} = assigns) do
+    icono = assigns.nodo["propiedades"]["icono"]
+    assigns = assign(assigns, :icono, if(icono not in [nil, ""], do: icono <> " "))
+
+    ~H"""
+    <div :if={@nodo["propiedades"]["estilo"] == "titulo"} class="text-sm font-bold text-gray-800 px-1">{@icono}{@nodo["propiedades"]["texto"]}</div>
+    <div :if={@nodo["propiedades"]["estilo"] == "subtitulo"} class="text-xs font-bold uppercase tracking-wide text-gray-400 px-1">{@icono}{@nodo["propiedades"]["texto"]}</div>
+    <div :if={@nodo["propiedades"]["estilo"] == "ayuda"} class="text-xs text-gray-400 italic px-1">{@icono}{@nodo["propiedades"]["texto"]}</div>
+    <div :if={@nodo["propiedades"]["estilo"] == "nota"} class="inline-block text-xs text-gray-600 bg-gray-50 rounded-lg px-2 py-1">{@icono}{@nodo["propiedades"]["texto"]}</div>
+    <div :if={@nodo["propiedades"]["estilo"] == "advertencia"} class="inline-block text-xs text-amber-700 bg-amber-50 rounded-lg px-2 py-1">{@icono}{@nodo["propiedades"]["texto"]}</div>
+    <div :if={@nodo["propiedades"]["estilo"] not in ["titulo", "subtitulo", "ayuda", "nota", "advertencia"]} class="text-xs text-gray-500 px-1">{@icono}{@nodo["propiedades"]["texto"]}</div>
     """
   end
 
@@ -2021,6 +2645,65 @@ defmodule MetadataAppWeb.FichaLive do
     """
   end
 
+  # 5 variantes visuales (propiedades["tipo"]) -- las cláusulas específicas
+  # van ANTES del catch-all "informacion"/sin tipo (mismo criterio que
+  # "boton" con ubicacion=="pie": más específico primero). Las 5 son
+  # puramente visuales -- ninguna lee datos del registro ni dispara nada
+  # (eso sigue siendo trabajo de Campo calculado/Autocompletar y Botón,
+  # respectivamente); "Acción" solo SUGIERE clickeable con una flechita,
+  # no tiene phx-click propio.
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "tarjeta", "propiedades" => %{"tipo" => "metrica"}}} = assigns) do
+    ~H"""
+    <div class="bg-white border border-gray-200 rounded-xl px-4 py-3">
+      <div :if={@nodo["propiedades"]["titulo"] not in [nil, ""]} class="text-xs text-gray-500 font-semibold">
+        <span :if={@nodo["propiedades"]["icono"] not in [nil, ""]}>{@nodo["propiedades"]["icono"]} </span>{@nodo["propiedades"]["titulo"]}
+      </div>
+      <div :if={@nodo["propiedades"]["texto"] not in [nil, ""]} class="text-2xl font-bold text-gray-900 mt-0.5">{@nodo["propiedades"]["texto"]}</div>
+    </div>
+    """
+  end
+
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "tarjeta", "propiedades" => %{"tipo" => "estado"}}} = assigns) do
+    color = assigns.nodo["propiedades"]["color"] || "gris"
+    assigns = assigns |> assign(:fondo, swatch_fondo(color)) |> assign(:texto_color, swatch_texto(color))
+
+    ~H"""
+    <div class="bg-white border border-gray-200 rounded-xl px-4 py-3">
+      <div :if={@nodo["propiedades"]["titulo"] not in [nil, ""]} class="text-xs text-gray-500 font-semibold mb-1.5">{@nodo["propiedades"]["titulo"]}</div>
+      <span :if={@nodo["propiedades"]["texto"] not in [nil, ""]} class={["inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold", @fondo, @texto_color]}>
+        <span :if={@nodo["propiedades"]["icono"] not in [nil, ""]}>{@nodo["propiedades"]["icono"]}</span> {@nodo["propiedades"]["texto"]}
+      </span>
+    </div>
+    """
+  end
+
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "tarjeta", "propiedades" => %{"tipo" => "accion"}}} = assigns) do
+    ~H"""
+    <div class="bg-white border border-gray-200 rounded-xl px-4 py-3 hover:border-purple-300 transition-colors">
+      <div class="flex items-center justify-between gap-2">
+        <div class="font-bold text-gray-700 text-sm">
+          <span :if={@nodo["propiedades"]["icono"] not in [nil, ""]}>{@nodo["propiedades"]["icono"]} </span>{@nodo["propiedades"]["titulo"]}
+        </div>
+        <span class="text-purple-400">→</span>
+      </div>
+      <div :if={@nodo["propiedades"]["texto"] not in [nil, ""]} class="text-xs text-gray-500 mt-1">{@nodo["propiedades"]["texto"]}</div>
+    </div>
+    """
+  end
+
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "tarjeta", "propiedades" => %{"tipo" => "ayuda"}}} = assigns) do
+    ~H"""
+    <div class="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+      <div class="font-bold text-blue-800 text-sm">
+        <span :if={@nodo["propiedades"]["icono"] not in [nil, ""]}>{@nodo["propiedades"]["icono"]} </span>{@nodo["propiedades"]["titulo"] || "Ayuda"}
+      </div>
+      <div :if={@nodo["propiedades"]["texto"] not in [nil, ""]} class="text-xs text-blue-700/80 mt-1">{@nodo["propiedades"]["texto"]}</div>
+    </div>
+    """
+  end
+
+  # "informacion" (default) -- también el catch-all para tarjetas creadas
+  # antes de que "tipo" existiera (sin la llave, nunca rompen).
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "tarjeta"}} = assigns) do
     ~H"""
     <div class="bg-white border border-gray-200 rounded-xl px-4 py-3 border-l-4 border-l-purple-400">
@@ -2046,7 +2729,7 @@ defmodule MetadataAppWeb.FichaLive do
     ~H"""
     <div class="pc-grid-dinamica" style={@estilo_grid}>
       <.celda_grid :for={hijo <- @hijos} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
-        relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+        relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
     </div>
     """
   end
@@ -2057,7 +2740,25 @@ defmodule MetadataAppWeb.FichaLive do
   # @otras_transiciones (no aplica al estado actual, o typo al configurar la
   # plantilla) el botón queda deshabilitado solo, con el mismo motivo que ya
   # explica por qué una transición no está disponible.
+  # "Pie del formulario" (propiedades["ubicacion"] == "pie"): el botón NO
+  # se renderiza en el lugar del grid donde se soltó -- tab_datos/1 lo
+  # recolecta aparte (vía MetaPlantillas.nodos_de_tipo/2) y lo muestra una
+  # sola vez en una barra fija al final del formulario. Acá, en su celda
+  # de origen, no imprime nada -- así nunca aparece duplicado.
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "boton", "propiedades" => %{"ubicacion" => "pie"}}} = assigns), do: ~H""
+
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "boton"}} = assigns) do
+    ~H"""
+    <.boton_nodo nodo={@nodo} otras_transiciones={@otras_transiciones} />
+    """
+  end
+
+  defp nodo_plantilla_render(assigns), do: ~H""
+
+  attr :nodo, :map, required: true
+  attr :otras_transiciones, :list, required: true
+
+  defp boton_nodo(assigns) do
     accion = assigns.nodo["propiedades"]["accion"]
     transicion = accion not in [nil, ""] && Enum.find(assigns.otras_transiciones, &(&1.accion == accion))
     disponible? = match?(%{disponible: true}, transicion)
@@ -2069,10 +2770,28 @@ defmodule MetadataAppWeb.FichaLive do
         _ -> nil
       end
 
-    assigns = assigns |> assign(:disponible?, disponible?) |> assign(:titulo, titulo) |> assign(:accion, accion)
+    # "Confirmar antes" -- mismo mecanismo data-confirm nativo de LiveView
+    # que ya usan los botones de Acciones externas (header_acciones_externas/1)
+    # -- sin JS propio. Mensaje default si tildaron la casilla pero dejaron
+    # el texto vacío.
+    confirmar =
+      if assigns.nodo["propiedades"]["confirmar_antes"] == true do
+        case assigns.nodo["propiedades"]["mensaje_confirmacion"] do
+          texto when texto in [nil, ""] -> "¿Confirmás esta acción?"
+          texto -> texto
+        end
+      end
+
+    assigns =
+      assigns
+      |> assign(:disponible?, disponible?)
+      |> assign(:titulo, titulo)
+      |> assign(:accion, accion)
+      |> assign(:confirmar, confirmar)
 
     ~H"""
     <button type="button" phx-click="ejecutar_transicion" phx-value-accion={@accion} disabled={!@disponible?} title={@titulo}
+      data-confirm={@disponible? && @confirmar}
       class={[
         "px-4 py-2 rounded-lg text-sm font-semibold",
         @nodo["propiedades"]["estilo"] != "secundario" && @disponible? && "bg-purple-600 text-white hover:bg-purple-700",
@@ -2083,8 +2802,6 @@ defmodule MetadataAppWeb.FichaLive do
     </button>
     """
   end
-
-  defp nodo_plantilla_render(assigns), do: ~H""
 
   # Hijos de CUALQUIER contenedor-grid (raíz/seccion/panel/pestana/grid, ver
   # MetaPlantillas.tipos_grid_host/0) con la celda YA resuelta en grupo —
@@ -2105,6 +2822,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :registro, :map, required: true
   attr :campos_editables, :list, required: true
   attr :relaciones, :list, required: true
+  attr :detalle, :any, default: %{}
   attr :estados_por_id, :map, required: true
   attr :edicion, :map, required: true
   attr :otras_transiciones, :list, default: []
@@ -2137,7 +2855,7 @@ defmodule MetadataAppWeb.FichaLive do
       data-celda-colspan-movil={@responsive["colspan_movil"]} data-celda-orden-movil={@responsive["orden_movil"]}>
       <.campo_row :if={@campo_col} col={@campo_col} registro={@registro} campos_editables={@campos_editables} edicion={@edicion} compacto={true} columnas={@columnas} />
       <.nodo_plantilla :if={is_nil(@campo_col)} nodo={@hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
-        relaciones={@relaciones} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
+        relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
     </div>
     """
   end
@@ -2217,6 +2935,57 @@ defmodule MetadataAppWeb.FichaLive do
     )
   end
 
+  defp url_segura(url) when is_binary(url) do
+    if String.starts_with?(url, "http://") or String.starts_with?(url, "https://"), do: url, else: nil
+  end
+
+  defp url_segura(_url), do: nil
+
+  @extensiones_imagen_vista_previa ~w(.jpg .jpeg .png .gif .webp .svg .bmp)
+  @extensiones_pdf_vista_previa ~w(.pdf)
+
+  defp tipo_vista_previa("imagen", _url), do: "imagen"
+  defp tipo_vista_previa("pdf", _url), do: "pdf"
+
+  defp tipo_vista_previa(_auto, url) when is_binary(url) do
+    extension = url |> String.split("?") |> hd() |> Path.extname() |> String.downcase()
+
+    cond do
+      extension in @extensiones_imagen_vista_previa -> "imagen"
+      extension in @extensiones_pdf_vista_previa -> "pdf"
+      true -> "otro"
+    end
+  end
+
+  defp tipo_vista_previa(_auto, _url), do: "otro"
+
+  defp registro_header_id(registro) when is_struct(registro) do
+    case MetaSchemaContext.obtener_header_por_nombre(registro.__struct__.__schema__(:source)) do
+      nil -> nil
+      header -> header.id
+    end
+  end
+
+  # :alta -- @registro es %{} (sin __struct__ todavía, ver mount/3), no
+  # hay id ni transiciones posibles.
+  defp registro_header_id(_registro), do: nil
+
+  defp eventos_timeline(header_id, registro_id, estados_por_id) do
+    from(e in TransicionEvento,
+      where: e.meta_schema_header_id == ^header_id and e.registro_id == ^registro_id,
+      order_by: e.inserted_at
+    )
+    |> Repo.all()
+    |> Enum.map(&%{estado: Map.get(estados_por_id, &1.estado_destino_id) || &1.accion, inserted_at: &1.inserted_at})
+  end
+
+  defp borde_resumen(nombre) do
+    Map.get(
+      %{"gris" => "border-l-gray-400", "purpura" => "border-l-purple-400", "azul" => "border-l-blue-400", "verde" => "border-l-green-400", "amarillo" => "border-l-amber-400", "rojo" => "border-l-red-400"},
+      nombre
+    )
+  end
+
   # "condicion" (dinámica, ver panel_condicion en PlantillaConstructorLive):
   # %{"campo","operador","valor"} — "campo" puede ser un campo real del
   # catálogo o el pseudo-campo "__estado__" (nombre del estado actual, vía
@@ -2249,11 +3018,227 @@ defmodule MetadataAppWeb.FichaLive do
   defp comparar_condicion("distinto", actual, esperado), do: to_string(actual) != to_string(esperado || "")
   defp comparar_condicion("vacio", actual, _esperado), do: actual in [nil, ""]
   defp comparar_condicion("no_vacio", actual, _esperado), do: actual not in [nil, ""]
+  # Numéricos -- a_numero_condicion/1 puede levantar (valor no numérico,
+  # nil, etc.); condicion_cumplida?/3 ya tiene un rescue a nivel función
+  # que cae a "true" (mismo criterio fail-open que el resto de este
+  # módulo: una condición mal armada nunca oculta un componente por error,
+  # como mucho lo deja siempre visible).
+  defp comparar_condicion("mayor", actual, esperado), do: a_numero_condicion(actual) > a_numero_condicion(esperado)
+  defp comparar_condicion("menor", actual, esperado), do: a_numero_condicion(actual) < a_numero_condicion(esperado)
+  defp comparar_condicion("mayor_igual", actual, esperado), do: a_numero_condicion(actual) >= a_numero_condicion(esperado)
+  defp comparar_condicion("menor_igual", actual, esperado), do: a_numero_condicion(actual) <= a_numero_condicion(esperado)
   defp comparar_condicion(_otro, _actual, _esperado), do: true
+
+  defp a_numero_condicion(%Decimal{} = d), do: Decimal.to_float(d)
+  defp a_numero_condicion(n) when is_number(n), do: n * 1.0
+
+  defp a_numero_condicion(s) when is_binary(s) do
+    case Float.parse(String.trim(s)) do
+      {n, _resto} -> n
+      :error -> raise ArgumentError, "valor no numérico: #{inspect(s)}"
+    end
+  end
 
   defp padding_seccion(%{"propiedades" => %{"espaciado" => "compacto"}}), do: "px-3 py-1.5"
   defp padding_seccion(%{"propiedades" => %{"espaciado" => "amplio"}}), do: "px-5 py-4"
   defp padding_seccion(_nodo), do: "px-4 py-2.5"
+
+  defp clase_distribucion_panel("vertical", separacion), do: ["flex flex-col", separacion_gap(separacion)]
+  defp clase_distribucion_panel("horizontal", separacion), do: ["flex flex-row items-start", separacion_gap(separacion)]
+  defp clase_distribucion_panel("automatica", separacion), do: ["flex flex-row flex-wrap items-start", separacion_gap(separacion)]
+
+  defp separacion_gap("compacto"), do: "gap-1.5"
+  defp separacion_gap("amplio"), do: "gap-5"
+  defp separacion_gap(_), do: "gap-3"
+
+  # Ícono + contador de campos (Diseñador de Pestañas) -- mismo criterio
+  # de conteo que Sección (MetaPlantillas.nodos_de_tipo/2, recursivo,
+  # cuenta también campos dentro de un Panel anidado en la pestaña).
+  defp titulo_pestana(pestana, contador?) do
+    icono = pestana["propiedades"]["icono"]
+    base = pestana["propiedades"]["titulo"] || "Pestaña"
+    prefijo = if icono not in [nil, ""], do: icono <> " ", else: ""
+    sufijo = if contador?, do: " (#{length(MetaPlantillas.nodos_de_tipo(pestana, "campo"))})", else: ""
+    prefijo <> base <> sufijo
+  end
+
+  # 100% cliente (Phoenix.LiveView.JS, sin round-trip al servidor) --
+  # mismo mecanismo que js_activar_tab/3 de core_components.ex (privada
+  # ahí, no reusable desde acá), adaptado a "Paso a paso": solo
+  # muestra/oculta el panel del paso destino, sin botones persistentes
+  # que resaltar (Anterior/Siguiente son fijos por paso, se recalculan
+  # solos al re-renderizar ese paso).
+  defp js_activar_paso(id, hijos, paso_activo_id) do
+    Enum.reduce(hijos, %JS{}, fn hijo, js ->
+      if hijo["id"] == paso_activo_id,
+        do: JS.show(js, to: "##{id}-panel-#{hijo["id"]}"),
+        else: JS.hide(js, to: "##{id}-panel-#{hijo["id"]}")
+    end)
+  end
+
+  # Igual que js_activar_paso/3 pero para "Menú lateral" -- además alterna
+  # las clases activo/inactivo del botón del menú (el panel de contenido
+  # se muestra/oculta igual).
+  defp js_activar_menu(id, hijos, activo_id) do
+    Enum.reduce(hijos, %JS{}, fn hijo, js ->
+      if hijo["id"] == activo_id do
+        js
+        |> JS.show(to: "##{id}-panel-#{hijo["id"]}")
+        |> JS.add_class("bg-purple-50 text-purple-700", to: "##{id}-tab-#{hijo["id"]}")
+        |> JS.remove_class("text-gray-500 hover:bg-gray-50", to: "##{id}-tab-#{hijo["id"]}")
+      else
+        js
+        |> JS.hide(to: "##{id}-panel-#{hijo["id"]}")
+        |> JS.remove_class("bg-purple-50 text-purple-700", to: "##{id}-tab-#{hijo["id"]}")
+        |> JS.add_class("text-gray-500 hover:bg-gray-50", to: "##{id}-tab-#{hijo["id"]}")
+      end
+    end)
+  end
+
+  attr :evaluado, :any, required: true
+  attr :propiedades, :map, required: true
+
+  # "Mostrar como" (Diseñador de Campo calculado): 4 variantes visuales
+  # nuevas, además de Número/Moneda/Porcentaje (esas siguen siendo
+  # Formula.formatear/2 tal cual, última cláusula de acá abajo). Ninguna
+  # toca el motor de fórmulas -- todas parten del MISMO {:ok, valor} |
+  # {:error, _} que ya devuelve Formula.evaluar/2.
+  defp resultado_calculado(%{propiedades: %{"formato" => "semaforo"}} = assigns) do
+    assigns = assign(assigns, :color, color_semaforo(assigns.evaluado, assigns.propiedades))
+
+    ~H"""
+    <span class="inline-flex items-center gap-1.5">
+      <span class={["w-2.5 h-2.5 rounded-full flex-shrink-0", @color]}></span>
+      <span class="text-gray-900 font-semibold">{Formula.formatear(@evaluado, @propiedades)}</span>
+    </span>
+    """
+  end
+
+  defp resultado_calculado(%{propiedades: %{"formato" => "badge"}} = assigns) do
+    color = assigns.propiedades["color"] || "gris"
+    assigns = assigns |> assign(:fondo, swatch_fondo(color)) |> assign(:texto_color, swatch_texto(color))
+
+    ~H"""
+    <span class={["inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold", @fondo, @texto_color]}>
+      {Formula.formatear(@evaluado, @propiedades)}
+    </span>
+    """
+  end
+
+  defp resultado_calculado(%{propiedades: %{"formato" => "progreso"}} = assigns) do
+    maximo = a_numero_propiedad(assigns.propiedades["progreso_maximo"]) || 100.0
+    valor = valor_numerico(assigns.evaluado)
+    porcentaje = valor |> Kernel./(maximo) |> Kernel.*(100) |> max(0.0) |> min(100.0)
+
+    assigns =
+      assigns
+      |> assign(:porcentaje, porcentaje)
+      |> assign(:texto, Formula.formatear(assigns.evaluado, assigns.propiedades))
+
+    ~H"""
+    <span class="flex items-center gap-2 flex-1 min-w-0">
+      <span class="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden max-w-[160px]">
+        <span class="block h-full bg-purple-500 rounded-full" style={"width: #{@porcentaje}%"}></span>
+      </span>
+      <span class="text-gray-900 font-semibold whitespace-nowrap">{@texto}</span>
+    </span>
+    """
+  end
+
+  defp resultado_calculado(%{propiedades: %{"formato" => "estrellas"}} = assigns) do
+    maximo = assigns.propiedades["estrellas_maximo"] |> a_numero_propiedad() |> Kernel.||(5.0) |> trunc()
+    valor = assigns.evaluado |> valor_numerico() |> round()
+    assigns = assigns |> assign(:maximo, maximo) |> assign(:valor, valor)
+
+    ~H"""
+    <span class="text-amber-400 tracking-tight" title={"#{@valor}/#{@maximo}"}>
+      <span :for={i <- 1..@maximo}>{if i <= @valor, do: "★", else: "☆"}</span>
+    </span>
+    """
+  end
+
+  defp resultado_calculado(assigns) do
+    ~H"""
+    <span class="text-gray-900 font-semibold">{Formula.formatear(@evaluado, @propiedades)}</span>
+    """
+  end
+
+  defp valor_numerico({:ok, n}) when is_number(n), do: n * 1.0
+  defp valor_numerico(_), do: 0.0
+
+  defp color_semaforo({:ok, n}, propiedades) when is_number(n) do
+    bajo = a_numero_propiedad(propiedades["semaforo_bajo"]) || 30.0
+    alto = a_numero_propiedad(propiedades["semaforo_alto"]) || 70.0
+
+    cond do
+      n <= bajo -> "bg-red-500"
+      n <= alto -> "bg-amber-400"
+      true -> "bg-green-500"
+    end
+  end
+
+  defp color_semaforo(_evaluado, _propiedades), do: "bg-gray-300"
+
+  defp a_numero_propiedad(nil), do: nil
+  defp a_numero_propiedad(n) when is_number(n), do: n * 1.0
+
+  defp a_numero_propiedad(s) when is_binary(s) do
+    case Float.parse(String.trim(s)) do
+      {n, _resto} -> n
+      :error -> nil
+    end
+  end
+
+  attr :pares, :list, required: true
+  attr :mostrar, :string, required: true
+
+  # "Mostrar" de Datos relacionados (antes "Autocompletar"): 3 variantes
+  # nuevas sobre los MISMOS pares {etiqueta, valor} que ya arma
+  # buscar_relacionado/3 -- "lista" (última cláusula) es el layout
+  # original, sin cambios, default para nodos viejos sin "mostrar" seteado.
+  defp contenido_relacionado(%{mostrar: "tarjeta"} = assigns) do
+    ~H"""
+    <div class="grid grid-cols-2 gap-x-4 gap-y-2 p-4">
+      <div :for={{etiqueta, valor} <- @pares}>
+        <div class="text-[11px] text-gray-400 uppercase tracking-wide">{etiqueta}</div>
+        <div class="text-gray-900 font-semibold text-sm">{valor}</div>
+      </div>
+    </div>
+    """
+  end
+
+  defp contenido_relacionado(%{mostrar: "resumen"} = assigns) do
+    ~H"""
+    <p class="px-4 py-2.5 text-sm text-gray-700">
+      <span :for={{{etiqueta, valor}, i} <- Enum.with_index(@pares)}>
+        <span :if={i > 0} class="text-gray-300 mx-1.5">·</span>
+        <span class="text-gray-500">{etiqueta}:</span> <span class="font-semibold text-gray-900">{valor}</span>
+      </span>
+    </p>
+    """
+  end
+
+  defp contenido_relacionado(%{mostrar: "campos"} = assigns) do
+    ~H"""
+    <div class="flex flex-col gap-2.5 p-4">
+      <div :for={{etiqueta, valor} <- @pares}>
+        <label class="block text-xs text-gray-500 mb-0.5">{etiqueta}</label>
+        <div class="w-full border border-gray-200 bg-gray-50 rounded text-gray-700 px-2 py-1.5 text-sm">{valor}</div>
+      </div>
+    </div>
+    """
+  end
+
+  defp contenido_relacionado(assigns) do
+    ~H"""
+    <div>
+      <div :for={{etiqueta, valor} <- @pares} class="flex items-center gap-3 px-4 py-2 border-b border-gray-100 last:border-b-0 text-sm">
+        <span class="w-40 flex-shrink-0 text-gray-500">{etiqueta}</span>
+        <span class="text-gray-900 font-medium">{valor}</span>
+      </div>
+    </div>
+    """
+  end
 
   # Los 3 pseudo-campos de "Contexto" — se usan igual que cualquier campo
   # real, con la misma sintaxis "{hoy}"/"{usuario_actual}"/"{empresa_activa}"
@@ -2558,6 +3543,195 @@ defmodule MetadataAppWeb.FichaLive do
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+    """
+  end
+
+  attr :titulo, :string, required: true
+  attr :columnas, :list, required: true
+  attr :filas, :list, required: true
+  attr :mostrar_total, :boolean, default: false
+  attr :total, :any, default: nil
+  attr :etiqueta_total, :string, default: nil
+
+  # Nodo "renglones" -- mismo lenguaje visual que tabla_relacion/1 (misma
+  # tarjeta blanca/encabezado gris/tabla), sin la columna "Ver ficha" (acá
+  # las filas son los renglones de ESTE registro, no registros de otro
+  # catálogo a los que navegar) y con un pie de total opcional.
+  defp renglones_relacion(assigns) do
+    ~H"""
+    <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 bg-gray-50">
+        <span class="font-bold text-gray-700 text-sm">{@titulo}</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-xs">
+          <thead :if={@columnas != []} class="bg-gray-50">
+            <tr>
+              <th :for={col <- @columnas} class="px-4 py-2 text-left text-[10px] font-semibold text-gray-500 uppercase tracking-wide">{col.etiqueta}</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-50">
+            <tr :for={fila <- @filas} class="hover:bg-purple-50/60">
+              <td :for={col <- @columnas} class="px-4 py-1.5 text-gray-700">
+                {formatear_valor_columna(Map.get(fila, col.campo), col.propiedades) || "—"}
+              </td>
+            </tr>
+            <tr :if={@filas == []}>
+              <td class="px-4 py-4 text-center text-gray-400" colspan={max(length(@columnas), 1)}>Sin renglones todavía.</td>
+            </tr>
+          </tbody>
+          <tfoot :if={@mostrar_total and @filas != []}>
+            <tr class="border-t border-gray-200">
+              <td colspan={max(length(@columnas) - 1, 0)} class="px-4 py-2 text-right font-semibold text-gray-500">{@etiqueta_total}</td>
+              <td class="px-4 py-2 text-right font-bold text-gray-900">{@total}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+    """
+  end
+
+  # Suma tolerante a Decimal/integer/float (los 3 tipos que puede tener una
+  # columna numérica real) -- acumula en Decimal siempre para no perder
+  # precisión mezclando float+integer, valores ausentes/no numéricos se
+  # ignoran (nunca rompe el total por un renglón con ese campo vacío).
+  defp total_columna(filas, campo_atom) do
+    Enum.reduce(filas, Decimal.new(0), fn fila, acc ->
+      case Map.get(fila, campo_atom) do
+        %Decimal{} = v -> Decimal.add(acc, v)
+        v when is_number(v) -> Decimal.add(acc, Decimal.new(to_string(v)))
+        _ -> acc
+      end
+    end)
+  end
+
+  # Formato de una celda de "renglones" según el TIPO real del dato (nunca
+  # texto crudo tipo "2026-08-18T23:03:43Z" o "18500.00" sin separador) —
+  # reusa lo que YA existe en vez de inventar una "máscara" nueva por
+  # componente: formatear_fecha/2 (mismo preset "Formato de visualización"
+  # que ya configura el Diseñador de campos) para Date/Time con formato_fecha
+  # elegido, y Formula.formatear/2 (mismo formateador que ya usa Resumen/KPI,
+  # soporta "moneda"/decimales/separador de miles) para números — así que
+  # controlar la "máscara" de una columna es lo mismo de siempre: configurarla
+  # una vez en el campo real (Diseñador de campos → Formato de captura/
+  # Formato de visualización), se refleja acá solo, sin un control aparte.
+  defp formatear_valor_columna(nil, _propiedades), do: nil
+  defp formatear_valor_columna("", _propiedades), do: nil
+  defp formatear_valor_columna(%DateTime{} = v, _propiedades), do: Calendar.strftime(v, "%d/%m/%Y %H:%M")
+  defp formatear_valor_columna(%NaiveDateTime{} = v, _propiedades), do: Calendar.strftime(v, "%d/%m/%Y %H:%M")
+
+  defp formatear_valor_columna(%Date{} = v, propiedades) do
+    case propiedades["formato_fecha"] do
+      modo when modo not in [nil, ""] -> formatear_fecha(v, modo)
+      _ -> Calendar.strftime(v, "%d/%m/%Y")
+    end
+  end
+
+  defp formatear_valor_columna(%Time{} = v, _propiedades), do: Calendar.strftime(v, "%H:%M")
+  defp formatear_valor_columna(%Decimal{} = v, propiedades), do: formatear_numero_columna(Decimal.to_float(v), propiedades)
+  defp formatear_valor_columna(true, _propiedades), do: "Sí"
+  defp formatear_valor_columna(false, _propiedades), do: "No"
+  defp formatear_valor_columna(v, propiedades) when is_number(v), do: formatear_numero_columna(v, propiedades)
+  defp formatear_valor_columna(v, _propiedades), do: v
+
+  defp formatear_numero_columna(numero, propiedades) do
+    case propiedades["formato_captura"] do
+      %{"habilitada" => true, "modo" => modo} = fc when modo in ["numero", "moneda"] ->
+        Formula.formatear({:ok, numero}, %{"formato" => (modo == "moneda" && "moneda") || nil, "decimales" => fc["decimales"]})
+
+      _ ->
+        Formula.formatear({:ok, numero}, %{"decimales" => 2})
+    end
+  end
+
+  attr :r, :map, required: true
+  attr :titulo, :string, required: true
+  attr :columnas, :list, required: true
+
+  # "Vista" = Tarjetas (Diseñador de Tabla relacionada) -- MISMOS datos que
+  # tabla_relacion/1 (@r.filas, @columnas), solo cambia el layout: una
+  # grilla de bloques clickeables en vez de una tabla de filas/columnas.
+  defp tarjetas_relacion(assigns) do
+    ~H"""
+    <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div class="px-4 py-2.5 border-b border-gray-100 bg-gray-50">
+        <span class="font-bold text-gray-700 text-sm">{@titulo}</span>
+      </div>
+      <div :if={@r.filas == []} class="px-4 py-8 text-center text-gray-400 text-sm">Sin registros todavía.</div>
+      <div :if={@r.filas != []} class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-4">
+        <.link :for={fila <- @r.filas} navigate={"/registro/#{@r.catalogo}/#{fila.id}"}
+          class="block border border-gray-200 rounded-xl p-3 hover:border-purple-300 hover:bg-purple-50/30 transition-colors">
+          <div class="font-semibold text-gray-800 text-sm truncate">
+            {etiqueta_fila(fila, @r.campo_descriptivo) || "##{fila.id}"}
+          </div>
+          <div :for={col <- @columnas} class="text-xs text-gray-500 mt-1 flex items-center gap-1">
+            <span class="text-gray-400">{col.etiqueta}:</span>
+            <span class="text-gray-700 truncate">{(Map.get(fila, col.campo) not in [nil, ""] && Map.get(fila, col.campo)) || "—"}</span>
+          </div>
+        </.link>
+      </div>
+    </div>
+    """
+  end
+
+  attr :r, :map, required: true
+  attr :titulo, :string, required: true
+  attr :columnas, :list, required: true
+
+  # "Vista" = Kanban -- @columnas ya viene agrupada y ordenada (ver
+  # columnas_kanban/2), acá solo se dibuja: una columna por valor
+  # distinto, tarjetas chicas adentro, scroll horizontal si no entran
+  # todas las columnas.
+  defp kanban_relacion(assigns) do
+    ~H"""
+    <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div :if={@titulo not in [nil, ""]} class="px-4 py-2 border-b border-gray-100 bg-gray-50 font-bold text-gray-700 text-sm">
+        {@titulo}
+      </div>
+      <div :if={@columnas == []} class="px-4 py-6 text-center text-gray-400 text-xs">Sin registros todavía.</div>
+      <div :if={@columnas != []} class="flex gap-3 p-4 overflow-x-auto">
+        <div :for={{etiqueta, filas} <- @columnas} class="flex-shrink-0 w-56">
+          <div class="text-xs font-semibold text-gray-500 mb-2 px-1">{etiqueta} <span class="text-gray-400">({length(filas)})</span></div>
+          <div class="flex flex-col gap-2">
+            <.link :for={fila <- filas} navigate={"/registro/#{@r.catalogo}/#{fila.id}"}
+              class="block bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-2 text-xs hover:border-purple-300 hover:bg-purple-50/50">
+              {etiqueta_fila(fila, @r.campo_descriptivo) || "##{fila.id}"}
+            </.link>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  attr :r, :map, required: true
+  attr :titulo, :string, required: true
+  attr :columnas, :list, required: true
+
+  # "Vista" = Calendario -- @columnas ya viene agrupada por fecha y
+  # ordenada cronológicamente (ver columnas_calendario/2), acá solo se
+  # dibuja: una sección por fecha, ítems clickeables debajo (agenda
+  # vertical, no un grid mensual).
+  defp calendario_relacion(assigns) do
+    ~H"""
+    <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <div :if={@titulo not in [nil, ""]} class="px-4 py-2 border-b border-gray-100 bg-gray-50 font-bold text-gray-700 text-sm">
+        {@titulo}
+      </div>
+      <div :if={@columnas == []} class="px-4 py-6 text-center text-gray-400 text-xs">Sin registros todavía.</div>
+      <div :if={@columnas != []} class="divide-y divide-gray-50">
+        <div :for={{etiqueta, filas} <- @columnas} class="px-4 py-2.5">
+          <div class="text-xs font-semibold text-gray-500 mb-1.5">{etiqueta}</div>
+          <div class="flex flex-col gap-1">
+            <.link :for={fila <- filas} navigate={"/registro/#{@r.catalogo}/#{fila.id}"}
+              class="text-sm text-gray-800 hover:text-purple-700 hover:underline">
+              {etiqueta_fila(fila, @r.campo_descriptivo) || "##{fila.id}"}
+            </.link>
+          </div>
+        </div>
       </div>
     </div>
     """

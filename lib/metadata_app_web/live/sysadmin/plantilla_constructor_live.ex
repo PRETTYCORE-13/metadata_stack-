@@ -41,18 +41,40 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   # sigue siendo el "contenedor interno" de la moduledoc — si una celda
   # necesita más de un componente, el ocupante de esa celda es un Panel, y
   # los demás van adentro de ESE (entrando con "Editar contenido →").
-  @tipos_paleta [
-    {"seccion", "Sección"},
-    {"panel", "Panel (varios componentes en la celda)"},
-    {"pestanas", "Pestañas"},
-    {"etiqueta", "Etiqueta"},
-    {"boton", "Botón"},
-    {"alerta", "Alerta"},
-    {"divisor", "Divisor"},
-    {"tabla", "Tabla relacionada"},
-    {"campo_calculado", "Campo calculado"},
-    {"autocompletar", "Autocompletar"},
-    {"tarjeta", "Tarjeta"}
+  # Agrupada por OBJETIVO ("quiero organizar", "quiero mostrar información",
+  # etc.), no por tipo técnico -- a pedido explícito (2026-08-14): así
+  # quien arma una plantilla piensa "quiero mostrar una relación" y va al
+  # grupo Relaciones, en vez de tener que recordar de memoria si eso se
+  # llama "Tabla" o "Autocompletar". "Visualización" arrancó vacía (ver
+  # historial) -- ya tiene su primer miembro (Resumen/KPI); Timeline/
+  # Gráfico se suman ahí cuando existan.
+  @grupos_paleta [
+    {"Organización", [
+       {"seccion", "Sección"},
+       {"panel", "Panel (varios componentes en la celda)"},
+       {"pestanas", "Pestañas"},
+       {"divisor", "Divisor"}
+     ]},
+    {"Información", [
+       {"etiqueta", "Etiqueta"},
+       {"tarjeta", "Tarjeta"},
+       {"alerta", "Alerta"},
+       {"vista_previa", "Vista previa (imagen/PDF)"}
+     ]},
+    {"Relaciones", [
+       {"tabla", "Tabla relacionada"},
+       {"autocompletar", "Datos relacionados"},
+       {"lista_rapida", "Lista rápida"},
+       {"renglones", "Renglones de detalle"}
+     ]},
+    {"Automatización", [
+       {"campo_calculado", "Campo calculado"},
+       {"boton", "Botón"}
+     ]},
+    {"Visualización", [
+       {"resumen", "Resumen / KPI"},
+       {"timeline", "Timeline"}
+     ]}
   ]
 
   # filtro => etiqueta del botón de paleta — el filtro en sí (qué tipos
@@ -128,6 +150,28 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
             %{nombre: h.schema_context_name, etiqueta: h.schema_context_label, campos: campos_h}
           end)
 
+        # Catálogos detalle de ESTE maestro (Productos/Pagos/Notas, vía
+        # schema_encabezado_id) — para el nodo "renglones" del panel de
+        # propiedades. Distinto de catalogos_disponibles/catalogos_relacionables
+        # (esos son por campo "referencia"; acá es maestro-detalle real).
+        # Misma forma que cargar_catalogos_detalle/1 en FichaLive, sin
+        # compartir helper entre los dos LiveViews (mismo criterio que ya usa
+        # este archivo para las demás queries de mount).
+        catalogos_detalle_disponibles =
+          header.id
+          |> MetaSchemaContext.listar_catalogos_detalle()
+          |> Enum.map(fn h ->
+            columnas_detalle =
+              h.schema_context_name
+              |> MetaSchemaContext.listar_detalles()
+              |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
+              |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
+
+            columnas_tabla = Enum.filter(columnas_detalle, &MetaSchemaContext.mostrar_en_tabla?(&1.schema_context_properties))
+
+            %{nombre: h.schema_context_name, etiqueta: h.schema_context_label, columnas: columnas_detalle, columnas_tabla: columnas_tabla}
+          end)
+
         plantillas = MetaPlantillas.listar_plantillas(header.id)
 
         # Un registro real cualquiera del catálogo, para el link "Vista
@@ -166,6 +210,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
          |> assign(:campos, campos)
          |> assign(:catalogos_relacionables, catalogos_relacionables)
          |> assign(:catalogos_disponibles, catalogos_disponibles)
+         |> assign(:catalogos_detalle_disponibles, catalogos_detalle_disponibles)
          |> assign(:estados, estados)
          |> assign(:registro_muestra_id, registro_muestra_id)
          |> assign(:plantillas, plantillas)
@@ -200,6 +245,24 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
 
       {:error, _changeset} ->
         {:noreply, assign(socket, :mensaje, {:error, "No se pudo crear el PostView."})}
+    end
+  end
+
+  # Misma idea que "nueva_plantilla" de arriba, pero proposito: "impresion" —
+  # FichaLive la usa en ?imprimir=1 (ver MetaPlantillas.obtener_plantilla_publicada/2)
+  # en vez del selector "Vista" de pantalla.
+  def handle_event("nueva_plantilla_impresion", _params, socket) do
+    n = length(socket.assigns.plantillas) + 1
+
+    attrs = %{"nombre" => "Impresión #{n}", "estado" => "borrador", "proposito" => "impresion"}
+
+    case MetaPlantillas.crear_plantilla(socket.assigns.header.id, attrs) do
+      {:ok, plantilla} ->
+        plantillas = socket.assigns.plantillas ++ [plantilla]
+        {:noreply, socket |> assign(:plantillas, plantillas) |> seleccionar(plantilla)}
+
+      {:error, _changeset} ->
+        {:noreply, assign(socket, :mensaje, {:error, "No se pudo crear la plantilla de impresión."})}
     end
   end
 
@@ -274,7 +337,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   # — el payload trae SIEMPRE fila/columna del destino, y exactamente uno
   # de "nodo_id" (arrastró un chip ya colocado, mover_celda/4), "filtro"
   # (arrastró un botón de Campo de la paleta) o "tipo" (cualquier otro
-  # botón de la paleta, @tipos_paleta).
+  # botón de la paleta, @grupos_paleta).
   def handle_event("grid_soltar", %{"fila" => fila_str, "columna" => columna_str} = params, socket) do
     fila = String.to_integer(fila_str)
     columna = String.to_integer(columna_str)
@@ -432,9 +495,29 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
      |> assign(:herramienta_calculado, nil)}
   end
 
+  # Checkboxes de panel_propiedades/1 (hidden+checkbox "false"/"true", mismo
+  # patrón HTML en todos los tipos) -- sin esto, un checkbox tildado guarda
+  # literalmente el STRING "true" en vez del booleano `true`, y
+  # FichaLive.nodo_plantilla_render/1 hace pattern match contra el
+  # booleano (ej. %{"colapsable" => true}) -- nunca matchea un string,
+  # así que la sección quedaba silenciosamente NO colapsable pase lo que
+  # pase en el checkbox. Bug real, encontrado al agregar "confirmar_antes"
+  # de Botón (mismo patrón nuevo). panel_celda/1 (evento "actualizar_celda",
+  # celda_cambios_desde_params/4) ya hacía esta conversión bien -- acá era
+  # el único lugar que le faltaba.
+  @propiedades_booleanas ~w(colapsable visible confirmar_antes iniciar_expandida recordar_estado contador_campos mostrar_total)
+
   def handle_event("actualizar_propiedad", params, socket) do
     id = socket.assigns.nodo_seleccionado_id
-    propiedades = Map.drop(params, ["_target"])
+
+    propiedades =
+      params
+      |> Map.drop(["_target"])
+      |> Map.new(fn
+        {campo, valor} when campo in @propiedades_booleanas -> {campo, valor == "true"}
+        par -> par
+      end)
+
     definicion = MetaPlantillas.actualizar_propiedades(socket.assigns.definicion, id, propiedades)
 
     {:noreply, assign(socket, :definicion, definicion)}
@@ -756,7 +839,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   # --- Helpers privados del editor de grid ----------------------------------
 
   # "pestanas" necesita nacer con 2 pestañas ya adentro (nuevo_nodo_pestanas/0)
-  # — el resto de la paleta (@tipos_paleta) es un nuevo_nodo/1 genérico.
+  # — el resto de la paleta (@grupos_paleta) es un nuevo_nodo/1 genérico.
   defp nodo_de_paleta("pestanas"), do: MetaPlantillas.nuevo_nodo_pestanas()
   defp nodo_de_paleta(tipo), do: MetaPlantillas.nuevo_nodo(tipo)
 
@@ -927,7 +1010,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   end
 
   def render(assigns) do
-    assigns = assigns |> assign(:tipos_paleta, @tipos_paleta) |> assign(:tipos_campo, @tipos_campo)
+    assigns = assigns |> assign(:grupos_paleta, @grupos_paleta) |> assign(:tipos_campo, @tipos_campo)
 
     ~H"""
     <div class={if @embebido?, do: "", else: "p-6"}>
@@ -938,12 +1021,21 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         </div>
         <div :if={@embebido?}></div>
         <div class="flex items-center gap-2 flex-wrap">
-          <select :if={@plantillas != []} phx-change="seleccionar_plantilla" name="id"
-            class="border border-gray-300 rounded-lg text-sm px-2 py-1.5 text-gray-700">
-            <option :for={p <- @plantillas} value={p.id} selected={@plantilla && @plantilla.id == p.id}>
-              {p.nombre} · {p.estado}{if p.disponible_multi_vista, do: " · disponible", else: ""}
-            </option>
-          </select>
+          <form :if={@plantillas != []} phx-change="seleccionar_plantilla">
+            <select id={"plantilla-selector-#{@plantilla && @plantilla.id}"} name="id"
+              class="border border-gray-300 rounded-lg text-sm px-2 py-1.5 text-gray-700">
+              <optgroup label="Vistas">
+                <option :for={p <- Enum.filter(@plantillas, &(&1.proposito == "vista"))} value={p.id} selected={@plantilla && @plantilla.id == p.id}>
+                  {etiqueta_opcion_plantilla(p)}
+                </option>
+              </optgroup>
+              <optgroup :if={Enum.any?(@plantillas, &(&1.proposito == "impresion"))} label="Impresión">
+                <option :for={p <- Enum.filter(@plantillas, &(&1.proposito == "impresion"))} value={p.id} selected={@plantilla && @plantilla.id == p.id}>
+                  {p.nombre} · {p.estado}
+                </option>
+              </optgroup>
+            </select>
+          </form>
           <span :if={@plantilla} class={[
             "text-[11px] font-semibold px-2 py-1 rounded-full whitespace-nowrap",
             @plantilla.estado == "publicada" && "bg-green-50 text-green-700",
@@ -961,6 +1053,11 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           <button type="button" phx-click="nueva_plantilla" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50">
             + Nuevo PostView
           </button>
+          <button type="button" phx-click="nueva_plantilla_impresion"
+            title="Diseña qué se ve al imprimir/guardar como PDF un registro de este catálogo (botón Imprimir de la Ficha 360°)."
+            class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50">
+            + Nueva plantilla de impresión
+          </button>
           <button type="button" phx-click="regenerar_automatica"
             title={"Reconstruye 'Plantilla automática' (todos los campos, 1 columna × N filas) con el formato actual — para catálogos generados antes de que esto fuera un grid. No cambia qué plantilla está publicada."}
             class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50">
@@ -975,8 +1072,15 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           <button :if={@plantilla} type="button" phx-click="guardar" class="px-3 py-1.5 rounded-lg border border-purple-300 text-purple-700 text-xs font-semibold hover:bg-purple-50">
             Guardar
           </button>
-          <button :if={@plantilla} type="button" phx-click="publicar" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">
-            Publicar
+          <%!-- Mismo botón/acción de siempre (phx-click="publicar") — solo cambia
+               el texto cuando ya está publicada, para que no diga "Publicar"
+               sobre algo que ya lo está. Mismo criterio de texto que ya usa el
+               selector de arriba para el propósito "vista"
+               (etiqueta_opcion_plantilla/1). --%>
+          <button :if={@plantilla} type="button" phx-click="publicar"
+            title={@plantilla.estado == "publicada" && (if @plantilla.proposito == "vista", do: "Ya es la vista que ven todos los usuarios por defecto — publicar de nuevo no cambia nada", else: "Ya es la plantilla que se usa al imprimir — publicar de nuevo no cambia nada")}
+            class="px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700">
+            {if @plantilla.estado == "publicada", do: (if @plantilla.proposito == "vista", do: "Vista default", else: "Impresión activa"), else: "Publicar"}
           </button>
         </div>
       </div>
@@ -1000,19 +1104,22 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       <div :if={@plantilla} class="grid grid-cols-1 lg:grid-cols-[180px_1fr_280px] gap-4">
         <div class="bg-white border border-gray-200 rounded-xl p-3">
           <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">Componentes</div>
-          <div class="flex flex-col gap-1.5 mb-4">
-            <button :for={{tipo, etiqueta} <- @tipos_paleta} type="button" draggable="true" data-origen="paleta" data-tipo={tipo}
-              phx-click="grid_colocar_tipo" phx-value-tipo={tipo}
-              class="gc-paleta-item flex items-center gap-2 text-left px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-purple-400 hover:text-purple-700 hover:bg-purple-50/50 cursor-grab">
-              <.icono tipo={tipo} /> {etiqueta}
-            </button>
+          <div :for={{grupo, items} <- @grupos_paleta} class="mb-3">
+            <div class="text-[10px] font-semibold text-gray-400 mb-1">{grupo}</div>
+            <div class="flex flex-col gap-1.5">
+              <button :for={{tipo, etiqueta} <- items} type="button" draggable="true" data-origen="paleta" data-tipo={tipo}
+                phx-click="grid_colocar_tipo" phx-value-tipo={tipo}
+                class="gc-paleta-item flex items-center gap-2.5 text-left px-2 py-1.5 rounded-lg border border-transparent text-xs font-semibold text-gray-600 hover:border-gray-200 hover:bg-gray-50 cursor-grab">
+                <span class="gc-paleta-icono"><.icono tipo={tipo} /></span> {etiqueta}
+              </button>
+            </div>
           </div>
           <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">Campos</div>
           <div class="flex flex-col gap-1.5">
             <button :for={{filtro, etiqueta} <- @tipos_campo} type="button" draggable="true" data-origen="paleta" data-filtro={filtro}
               phx-click="grid_colocar_campo" phx-value-filtro={filtro}
-              class="gc-paleta-item flex items-center gap-2 text-left px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:border-purple-400 hover:text-purple-700 hover:bg-purple-50/50 cursor-grab">
-              <.icono tipo={filtro} /> {etiqueta}
+              class="gc-paleta-item flex items-center gap-2.5 text-left px-2 py-1.5 rounded-lg border border-transparent text-xs font-semibold text-gray-600 hover:border-gray-200 hover:bg-gray-50 cursor-grab">
+              <span class="gc-paleta-icono"><.icono tipo={filtro} /></span> {etiqueta}
             </button>
           </div>
           <p class="text-[11px] text-gray-400 mt-3">
@@ -1023,13 +1130,15 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         <div class="bg-white border border-gray-200 rounded-xl p-4 min-h-[300px]">
           <.grid_editor grid={MetaPlantillas.grid_host(@definicion, @grid_editando_id)} ruta={MetaPlantillas.ruta_hasta(@definicion, @grid_editando_id)}
             nodo_seleccionado_id={@nodo_seleccionado_id} celda_seleccionada={@celda_seleccionada}
-            puede_deshacer={@grid_historial_undo != []} puede_rehacer={@grid_historial_redo != []} />
+            puede_deshacer={@grid_historial_undo != []} puede_rehacer={@grid_historial_redo != []}
+            campos={@campos} catalogos_disponibles={@catalogos_disponibles} catalogos_detalle_disponibles={@catalogos_detalle_disponibles} />
         </div>
 
         <div class="bg-white border border-gray-200 rounded-xl p-3">
           <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">Propiedades</div>
           <.panel_celda :if={@nodo_seleccionado_id} nodo={MetaPlantillas.buscar_nodo(@definicion, @nodo_seleccionado_id)} />
           <.panel_propiedades :if={@nodo_seleccionado_id} nodo={MetaPlantillas.buscar_nodo(@definicion, @nodo_seleccionado_id)} campos={@campos} catalogos_relacionables={@catalogos_relacionables} catalogos_disponibles={@catalogos_disponibles}
+            catalogos_detalle_disponibles={@catalogos_detalle_disponibles}
             resumen_catalogo={@resumen_catalogo} resumen_funcion={@resumen_funcion} resumen_campo={@resumen_campo}
             lookup_catalogo={@lookup_catalogo} lookup_id={@lookup_id} lookup_campo={@lookup_campo} definicion={@definicion}
             herramienta_calculado={@herramienta_calculado}
@@ -1042,6 +1151,14 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     """
   end
 
+  # La plantilla "vista" publicada es la que ve cualquier usuario final sin
+  # elegir nada (mismo criterio que ya usa el selector "Vista" de FichaLive,
+  # que a esa la llama literalmente "Vista: Predeterminada") — acá mostrar
+  # su nombre técnico ("Plantilla automática", etc.) confundía sobre cuál
+  # es la que de verdad está activa para todos.
+  defp etiqueta_opcion_plantilla(%{estado: "publicada"} = p), do: "Vista predeterminada" <> (p.disponible_multi_vista && " · disponible" || "")
+  defp etiqueta_opcion_plantilla(p), do: "#{p.nombre} · #{p.estado}" <> (p.disponible_multi_vista && " · disponible" || "")
+
   defp etiqueta_nodo(%{"tipo" => "seccion", "propiedades" => p}) do
     sufijo = if p["visible"] == false, do: " (oculta)", else: ""
     "Sección — " <> (p["titulo"] || "") <> sufijo
@@ -1050,10 +1167,17 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   defp etiqueta_nodo(%{"tipo" => "campo", "propiedades" => %{"campo" => nil}}), do: "Campo — (sin elegir)"
   defp etiqueta_nodo(%{"tipo" => "campo", "propiedades" => %{"campo" => c}}), do: "Campo — #{c}"
   defp etiqueta_nodo(%{"tipo" => "campo_calculado", "propiedades" => %{"etiqueta" => e}}), do: "Campo calculado — #{e}"
-  defp etiqueta_nodo(%{"tipo" => "autocompletar", "propiedades" => %{"catalogo_destino" => nil}}), do: "Autocompletar — (sin configurar)"
-  defp etiqueta_nodo(%{"tipo" => "autocompletar", "propiedades" => %{"catalogo_destino" => c}}), do: "Autocompletar — #{c}"
+  defp etiqueta_nodo(%{"tipo" => "autocompletar", "propiedades" => %{"catalogo_destino" => nil}}), do: "Datos relacionados — (sin configurar)"
+  defp etiqueta_nodo(%{"tipo" => "autocompletar", "propiedades" => %{"catalogo_destino" => c}}), do: "Datos relacionados — #{c}"
+  defp etiqueta_nodo(%{"tipo" => "divisor", "propiedades" => %{"titulo" => titulo}}) when titulo not in [nil, ""], do: "Divisor — #{titulo}"
   defp etiqueta_nodo(%{"tipo" => "divisor"}), do: "Divisor"
   defp etiqueta_nodo(%{"tipo" => "tabla", "propiedades" => %{"titulo" => t}}), do: "Tabla — #{t}"
+  defp etiqueta_nodo(%{"tipo" => "lista_rapida", "propiedades" => %{"catalogo" => nil}}), do: "Lista rápida — (sin configurar)"
+  defp etiqueta_nodo(%{"tipo" => "lista_rapida", "propiedades" => %{"catalogo" => c}}), do: "Lista rápida — #{c}"
+  defp etiqueta_nodo(%{"tipo" => "renglones", "propiedades" => %{"catalogo" => nil}}), do: "Renglones de detalle — (sin configurar)"
+  defp etiqueta_nodo(%{"tipo" => "renglones", "propiedades" => %{"catalogo" => c}}), do: "Renglones de detalle — #{c}"
+  defp etiqueta_nodo(%{"tipo" => "vista_previa", "propiedades" => %{"campo" => nil}}), do: "Vista previa — (sin configurar)"
+  defp etiqueta_nodo(%{"tipo" => "vista_previa", "propiedades" => %{"campo" => c}}), do: "Vista previa — #{c}"
   defp etiqueta_nodo(%{"tipo" => "etiqueta", "propiedades" => %{"texto" => t}}), do: "Etiqueta — #{t}"
   defp etiqueta_nodo(%{"tipo" => "alerta", "propiedades" => %{"nivel" => n}}), do: "Alerta (#{n})"
   defp etiqueta_nodo(%{"tipo" => "tarjeta", "propiedades" => %{"titulo" => t}}), do: "Tarjeta — #{t}"
@@ -1064,6 +1188,8 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   defp etiqueta_nodo(%{"tipo" => "pestana", "propiedades" => %{"titulo" => t}}), do: "Pestaña — #{t}"
   defp etiqueta_nodo(%{"tipo" => "grid", "propiedades" => %{"filas" => f, "columnas" => c}}), do: "Grid — #{f}×#{c}"
   defp etiqueta_nodo(%{"tipo" => "boton", "propiedades" => %{"etiqueta" => e}}), do: "Botón — #{e}"
+  defp etiqueta_nodo(%{"tipo" => "resumen", "propiedades" => %{"etiqueta" => e}}), do: "Resumen/KPI — #{e}"
+  defp etiqueta_nodo(%{"tipo" => "timeline"}), do: "Timeline"
   defp etiqueta_nodo(nodo), do: nodo["tipo"]
 
   # Ícono del nodo en el lienzo — para "campo" usa el tipo_filtro elegido en
@@ -1091,6 +1217,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   attr :campos, :list, required: true
   attr :catalogos_relacionables, :list, required: true
   attr :catalogos_disponibles, :list, default: []
+  attr :catalogos_detalle_disponibles, :list, default: []
   attr :resumen_catalogo, :string, default: nil
   attr :resumen_funcion, :string, default: "SUM"
   attr :resumen_campo, :string, default: nil
@@ -1126,16 +1253,13 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           <option value="amplio" selected={@nodo["propiedades"]["espaciado"] == "amplio"}>Amplio</option>
         </select>
       </div>
-      <label class="flex items-center gap-1.5">
-        <input type="hidden" name="colapsable" value="false" />
-        <input type="checkbox" name="colapsable" value="true" checked={@nodo["propiedades"]["colapsable"] == true} class="accent-purple-600" />
-        Colapsable (se puede plegar/desplegar)
-      </label>
-      <label class="flex items-center gap-1.5">
-        <input type="hidden" name="visible" value="false" />
-        <input type="checkbox" name="visible" value="true" checked={@nodo["propiedades"]["visible"] != false} class="accent-purple-600" />
-        Visible en la Ficha 360°
-      </label>
+      <.toggle_switch name="colapsable" checked={@nodo["propiedades"]["colapsable"] == true} label="Colapsable (se puede plegar/desplegar)" />
+      <div :if={@nodo["propiedades"]["colapsable"] == true} class="flex flex-col gap-2 pl-1">
+        <.toggle_switch name="iniciar_expandida" checked={@nodo["propiedades"]["iniciar_expandida"] != false} label="Iniciar expandida" />
+        <.toggle_switch name="recordar_estado" checked={@nodo["propiedades"]["recordar_estado"] == true} label="Recordar si el usuario la dejó abierta/cerrada" />
+      </div>
+      <.toggle_switch name="contador_campos" checked={@nodo["propiedades"]["contador_campos"] == true} label="Mostrar contador de campos" />
+      <.toggle_switch name="visible" checked={@nodo["propiedades"]["visible"] != false} label="Visible en la Ficha 360°" />
     </form>
     <.boton_entrar id={@nodo["id"]} />
     """
@@ -1145,6 +1269,16 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     ~H"""
     <form phx-change="actualizar_propiedad" class="flex flex-col gap-2.5 text-xs">
       <div>
+        <label class="block text-gray-500 mb-0.5">Tipo</label>
+        <select name="tipo" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="informacion" selected={(@nodo["propiedades"]["tipo"] || "informacion") == "informacion"}>Información</option>
+          <option value="metrica" selected={@nodo["propiedades"]["tipo"] == "metrica"}>Métrica</option>
+          <option value="estado" selected={@nodo["propiedades"]["tipo"] == "estado"}>Estado</option>
+          <option value="accion" selected={@nodo["propiedades"]["tipo"] == "accion"}>Acción</option>
+          <option value="ayuda" selected={@nodo["propiedades"]["tipo"] == "ayuda"}>Ayuda</option>
+        </select>
+      </div>
+      <div>
         <label class="block text-gray-500 mb-0.5">Ícono (emoji, opcional)</label>
         <input type="text" name="icono" value={@nodo["propiedades"]["icono"]} maxlength="4" class="w-20 border border-gray-300 rounded px-2 py-1.5" />
       </div>
@@ -1153,8 +1287,14 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         <input type="text" name="titulo" value={@nodo["propiedades"]["titulo"]} class="w-full border border-gray-300 rounded px-2 py-1.5" />
       </div>
       <div>
-        <label class="block text-gray-500 mb-0.5">Texto</label>
-        <textarea name="texto" rows="2" class="w-full border border-gray-300 rounded px-2 py-1.5">{@nodo["propiedades"]["texto"]}</textarea>
+        <label class="block text-gray-500 mb-0.5">{if @nodo["propiedades"]["tipo"] == "metrica", do: "Valor", else: "Texto"}</label>
+        <textarea :if={@nodo["propiedades"]["tipo"] != "metrica"} name="texto" rows="2" class="w-full border border-gray-300 rounded px-2 py-1.5">{@nodo["propiedades"]["texto"]}</textarea>
+        <input :if={@nodo["propiedades"]["tipo"] == "metrica"} type="text" name="texto" value={@nodo["propiedades"]["texto"]}
+          placeholder="Ej. 2,350" class="w-full border border-gray-300 rounded px-2 py-1.5" />
+      </div>
+      <div :if={@nodo["propiedades"]["tipo"] == "estado"}>
+        <label class="block text-gray-500 mb-1">Color</label>
+        <.swatch_picker name="color" valor={@nodo["propiedades"]["color"] || "gris"} incluir_ninguno={false} />
       </div>
     </form>
     """
@@ -1166,6 +1306,10 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       <div>
         <label class="block text-gray-500 mb-0.5">Título de la pestaña</label>
         <input type="text" name="titulo" value={@nodo["propiedades"]["titulo"]} class="w-full border border-gray-300 rounded px-2 py-1.5" />
+      </div>
+      <div>
+        <label class="block text-gray-500 mb-0.5">Ícono (emoji, opcional)</label>
+        <input type="text" name="icono" value={@nodo["propiedades"]["icono"]} maxlength="4" class="w-20 border border-gray-300 rounded px-2 py-1.5" />
       </div>
     </form>
     <.boton_entrar id={@nodo["id"]} />
@@ -1179,6 +1323,22 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   defp panel_propiedades(%{nodo: %{"tipo" => "pestanas"}} = assigns) do
     ~H"""
     <div class="flex flex-col gap-1.5 text-xs">
+      <form phx-change="actualizar_propiedad" class="mb-1.5">
+        <label class="block text-gray-500 mb-0.5">Tipo</label>
+        <select name="tipo" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="pestanas" selected={(@nodo["propiedades"]["tipo"] || "pestanas") == "pestanas"}>Pestañas (barra horizontal)</option>
+          <option value="acordeon" selected={@nodo["propiedades"]["tipo"] == "acordeon"}>Acordeón (se despliegan una debajo de otra)</option>
+          <option value="paso_a_paso" selected={@nodo["propiedades"]["tipo"] == "paso_a_paso"}>Paso a paso (una a la vez, con Anterior/Siguiente)</option>
+          <option value="menu_lateral" selected={@nodo["propiedades"]["tipo"] == "menu_lateral"}>Menú lateral (lista vertical a la izquierda)</option>
+        </select>
+      </form>
+      <form phx-change="actualizar_propiedad" class="mb-1.5">
+        <label class="flex items-center gap-1.5">
+          <input type="hidden" name="contador_campos" value="false" />
+          <input type="checkbox" name="contador_campos" value="true" checked={@nodo["propiedades"]["contador_campos"] == true} class="accent-purple-600" />
+          Mostrar contador de campos junto al título de cada pestaña
+        </label>
+      </form>
       <p class="text-gray-500 mb-0.5">Entrá a cada pestaña para editar su contenido.</p>
       <div :for={p <- @nodo["hijos"]} class="flex items-center gap-1">
         <button type="button" phx-click="entrar_contenedor" phx-value-id={p["id"]}
@@ -1201,7 +1361,32 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
 
   defp panel_propiedades(%{nodo: %{"tipo" => "panel"}} = assigns) do
     ~H"""
-    <p class="text-gray-400 mb-2">Sin propiedades propias.</p>
+    <form phx-change="actualizar_propiedad" class="flex flex-col gap-2.5 text-xs">
+      <div>
+        <label class="block text-gray-500 mb-0.5">Distribución</label>
+        <select name="distribucion" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="grid" selected={(@nodo["propiedades"]["distribucion"] || "grid") == "grid"}>Grid (posición libre, como hoy)</option>
+          <option value="vertical" selected={@nodo["propiedades"]["distribucion"] == "vertical"}>Vertical (uno debajo del otro)</option>
+          <option value="horizontal" selected={@nodo["propiedades"]["distribucion"] == "horizontal"}>Horizontal (uno al lado del otro)</option>
+          <option value="automatica" selected={@nodo["propiedades"]["distribucion"] == "automatica"}>Automática (uno al lado del otro, pasa de línea si no entra)</option>
+        </select>
+      </div>
+      <div :if={@nodo["propiedades"]["distribucion"] not in [nil, "grid"]}>
+        <label class="block text-gray-500 mb-0.5">Separación</label>
+        <select name="separacion" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="compacto" selected={@nodo["propiedades"]["separacion"] == "compacto"}>Compacta</option>
+          <option value="normal" selected={(@nodo["propiedades"]["separacion"] || "normal") == "normal"}>Normal</option>
+          <option value="amplio" selected={@nodo["propiedades"]["separacion"] == "amplio"}>Amplia</option>
+        </select>
+      </div>
+    </form>
+    <p class="text-gray-400 mt-2 mb-2">
+      <%= if @nodo["propiedades"]["distribucion"] in [nil, "grid"] do %>
+        Con Grid, acomodá los componentes a mano (fila/columna) entrando al panel.
+      <% else %>
+        Con esta distribución el orden es el mismo en que agregaste los componentes — entrá al panel para agregar/quitar, no hace falta acomodarlos en celdas.
+      <% end %>
+    </p>
     <.boton_entrar id={@nodo["id"]} />
     """
   end
@@ -1255,10 +1440,26 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     vista_previa =
       vista_previa_calculado(assigns.nombre, assigns.registro_muestra_id, assigns.campos, assigns.definicion, assigns.nodo, assigns.current_scope)
 
+    # Asistente (2026-08-14): la primera vez que se abre un campo_calculado
+    # YA armado (formula no vacía), @herramienta_calculado todavía es nil
+    # (se resetea al seleccionar cualquier nodo, ver handle_event
+    # "seleccionar_nodo") -- sin esto, reabrir un cálculo existente
+    # mostraría el estado vacío "elegí una opción" en vez de la fórmula
+    # que ya tiene. Una vez que el usuario clickea una opción (real
+    # @herramienta_calculado, vía "seleccionar_herramienta_calculado"),
+    # esa elección manda siempre.
+    herramienta_efectiva =
+      cond do
+        assigns.herramienta_calculado not in [nil, ""] -> assigns.herramienta_calculado
+        assigns.nodo["propiedades"]["formula"] not in [nil, ""] -> "formula"
+        true -> nil
+      end
+
     assigns =
       assigns
       |> assign(:formula_tokens, formula_tokens)
       |> assign(:vista_previa, vista_previa)
+      |> assign(:herramienta_efectiva, herramienta_efectiva)
 
     ~H"""
     <div class="flex flex-col gap-2.5 text-xs">
@@ -1268,6 +1469,26 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       </form>
 
       <div>
+        <p class="text-gray-500 font-semibold mb-1.5">¿Cómo querés obtener este valor?</p>
+        <div class="grid grid-cols-2 gap-1.5">
+          <button :for={{herramienta, simbolo, etiqueta} <- herramientas_calculado(@catalogos_disponibles)}
+            type="button" phx-click="seleccionar_herramienta_calculado" phx-value-herramienta={herramienta}
+            class={[
+              "flex flex-col items-center gap-0.5 px-2 py-2.5 rounded-lg border text-center",
+              @herramienta_efectiva == herramienta && "border-purple-400 bg-purple-50 text-purple-700",
+              @herramienta_efectiva != herramienta && "border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50"
+            ]}>
+            <span class="text-base font-bold">{simbolo}</span>
+            <span class="text-[11px] font-semibold">{etiqueta}</span>
+          </button>
+        </div>
+      </div>
+
+      <p :if={@herramienta_efectiva in [nil, ""]} class="text-gray-400 text-center py-2">
+        Elegí una opción arriba para empezar.
+      </p>
+
+      <div :if={@herramienta_efectiva not in [nil, ""]}>
         <label class="block text-gray-500 mb-1">Fórmula</label>
 
         <div class="flex flex-wrap items-center gap-1.5 min-h-[38px] border border-gray-300 rounded-lg px-2 py-1.5 bg-gray-50">
@@ -1278,63 +1499,49 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           <span :if={@formula_tokens == []} class="text-gray-400">Vacío — agregá un campo o un operador abajo</span>
         </div>
 
-        <div class="flex flex-wrap gap-1 mt-2">
-          <button :for={c <- @campos} type="button" phx-click="formula_agregar_campo" phx-value-campo={c.schema_context_field}
-            class="px-2 py-1 rounded-md border border-purple-200 text-purple-700 bg-purple-50 hover:bg-purple-100 font-semibold">
-            {c.schema_context_properties["etiqueta"]}
-          </button>
-        </div>
+        <div :if={@herramienta_efectiva in ["formula", "condicion"]}>
+          <div class="flex flex-wrap gap-1 mt-2">
+            <button :for={c <- @campos} type="button" phx-click="formula_agregar_campo" phx-value-campo={c.schema_context_field}
+              class="px-2 py-1 rounded-md border border-purple-200 text-purple-700 bg-purple-50 hover:bg-purple-100 font-semibold">
+              {c.schema_context_properties["etiqueta"]}
+            </button>
+          </div>
 
-        <div class="flex flex-wrap gap-1 mt-1.5">
-          <button :for={{campo, etiqueta} <- [{"hoy", "Hoy"}, {"usuario_actual", "Usuario actual"}, {"empresa_activa", "Empresa activa"}]}
-            type="button" phx-click="formula_agregar_campo" phx-value-campo={campo}
-            class="px-2 py-1 rounded-md border border-teal-200 text-teal-700 bg-teal-50 hover:bg-teal-100 font-semibold">
-            {etiqueta}
-          </button>
-        </div>
+          <div class="flex flex-wrap gap-1 mt-1.5">
+            <button :for={{campo, etiqueta} <- [{"hoy", "Hoy"}, {"usuario_actual", "Usuario actual"}, {"empresa_activa", "Empresa activa"}]}
+              type="button" phx-click="formula_agregar_campo" phx-value-campo={campo}
+              class="px-2 py-1 rounded-md border border-teal-200 text-teal-700 bg-teal-50 hover:bg-teal-100 font-semibold">
+              {etiqueta}
+            </button>
+          </div>
 
-        <div :if={otros_campos_calculados(@definicion, @nodo["id"]) != []} class="flex flex-wrap gap-1 mt-1.5">
-          <button :for={etiqueta <- otros_campos_calculados(@definicion, @nodo["id"])}
-            type="button" phx-click="formula_agregar_campo" phx-value-campo={etiqueta}
-            class="px-2 py-1 rounded-md border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 font-semibold">
-            ∑ {etiqueta}
-          </button>
-        </div>
+          <div :if={otros_campos_calculados(@definicion, @nodo["id"]) != []} class="flex flex-wrap gap-1 mt-1.5">
+            <button :for={etiqueta <- otros_campos_calculados(@definicion, @nodo["id"])}
+              type="button" phx-click="formula_agregar_campo" phx-value-campo={etiqueta}
+              class="px-2 py-1 rounded-md border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 font-semibold">
+              ∑ {etiqueta}
+            </button>
+          </div>
 
-        <div class="flex flex-wrap items-center gap-1 mt-1.5">
-          <button :for={{simbolo, real} <- [{"+", "+"}, {"−", "-"}, {"×", "*"}, {"÷", "/"}, {"(", "("}, {")", ")"}]}
-            type="button" phx-click="formula_agregar_operador" phx-value-op={real}
-            class="w-7 h-7 flex items-center justify-center rounded-full border border-gray-300 text-gray-600 hover:border-purple-400 hover:text-purple-700 font-bold">
-            {simbolo}
-          </button>
+          <div class="flex flex-wrap items-center gap-1 mt-1.5">
+            <button :for={{simbolo, real} <- [{"+", "+"}, {"−", "-"}, {"×", "*"}, {"÷", "/"}, {"(", "("}, {")", ")"}]}
+              type="button" phx-click="formula_agregar_operador" phx-value-op={real}
+              class="w-7 h-7 flex items-center justify-center rounded-full border border-gray-300 text-gray-600 hover:border-purple-400 hover:text-purple-700 font-bold">
+              {simbolo}
+            </button>
 
-          <input type="number" step="any" placeholder="número + Enter" phx-keyup="formula_agregar_numero" phx-key="Enter"
-            id={"formula-num-" <> @nodo["id"] <> "-" <> Integer.to_string(length(@formula_tokens))}
-            class="w-24 border border-gray-300 rounded px-1.5 py-1" />
+            <input type="number" step="any" placeholder="número + Enter" phx-keyup="formula_agregar_numero" phx-key="Enter"
+              id={"formula-num-" <> @nodo["id"] <> "-" <> Integer.to_string(length(@formula_tokens))}
+              class="w-24 border border-gray-300 rounded px-1.5 py-1" />
 
-          <button :if={@formula_tokens != []} type="button" phx-click="formula_vaciar"
-            class="ml-auto px-2 py-1 rounded-md border border-red-200 text-red-500 hover:bg-red-50">
-            Vaciar
-          </button>
-        </div>
-
-        <div class="mt-2.5 pt-2.5 border-t border-gray-100">
-          <p class="text-gray-500 font-semibold mb-1.5">¿Qué querés agregar?</p>
-          <div class="grid grid-cols-3 gap-1.5">
-            <button :for={{herramienta, simbolo, etiqueta} <- herramientas_calculado(@catalogos_disponibles)}
-              type="button" phx-click="seleccionar_herramienta_calculado" phx-value-herramienta={herramienta}
-              class={[
-                "flex flex-col items-center gap-0.5 px-2 py-2.5 rounded-lg border text-center",
-                @herramienta_calculado == herramienta && "border-purple-400 bg-purple-50 text-purple-700",
-                @herramienta_calculado != herramienta && "border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50"
-              ]}>
-              <span class="text-base font-bold">{simbolo}</span>
-              <span class="text-[11px] font-semibold">{etiqueta}</span>
+            <button :if={@formula_tokens != []} type="button" phx-click="formula_vaciar"
+              class="ml-auto px-2 py-1 rounded-md border border-red-200 text-red-500 hover:bg-red-50">
+              Vaciar
             </button>
           </div>
         </div>
 
-        <div :if={@herramienta_calculado == "condicion"} class="mt-2.5 pt-2.5 border-t border-gray-100">
+        <div :if={@herramienta_efectiva == "condicion"} class="mt-2.5 pt-2.5 border-t border-gray-100">
           <p class="text-gray-500 font-semibold mb-1">Condición — SI / ENTONCES / SI NO</p>
           <div class="flex flex-wrap items-center gap-1 mb-1.5">
             <button :for={{simbolo, real} <- [{"SI", "IF"}, {"ENTONCES", "THEN"}, {"SI NO", "ELSE"}]}
@@ -1358,7 +1565,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           </p>
         </div>
 
-        <div :if={@herramienta_calculado == "resumen" and @catalogos_disponibles != []} class="mt-2.5 pt-2.5 border-t border-gray-100">
+        <div :if={@herramienta_efectiva == "resumen" and @catalogos_disponibles != []} class="mt-2.5 pt-2.5 border-t border-gray-100">
           <p class="text-gray-500 font-semibold mb-1">Resumen — agregado de otro catálogo</p>
           <div class="flex flex-col gap-1.5">
             <select phx-change="resumen_set_funcion" name="funcion" class="w-full border border-gray-300 rounded px-2 py-1.5">
@@ -1391,7 +1598,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           </div>
         </div>
 
-        <div :if={@herramienta_calculado == "lookup" and @catalogos_disponibles != []} class="mt-2.5 pt-2.5 border-t border-gray-100">
+        <div :if={@herramienta_efectiva == "lookup" and @catalogos_disponibles != []} class="mt-2.5 pt-2.5 border-t border-gray-100">
           <p class="text-gray-500 font-semibold mb-1">Registro puntual de otro catálogo</p>
           <div class="flex flex-col gap-1.5">
             <select phx-change="lookup_set_catalogo" name="catalogo" class="w-full border border-gray-300 rounded px-2 py-1.5">
@@ -1428,20 +1635,64 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         </details>
       </div>
 
-      <form phx-change="actualizar_propiedad" class="flex items-end gap-2">
-        <div>
-          <label class="block text-gray-500 mb-0.5">Formato</label>
-          <select name="formato" class="border border-gray-300 rounded px-2 py-1.5">
-            <option value="numero" selected={(@nodo["propiedades"]["formato"] || "numero") == "numero"}>Número</option>
-            <option value="moneda" selected={@nodo["propiedades"]["formato"] == "moneda"}>Moneda</option>
-            <option value="porcentaje" selected={@nodo["propiedades"]["formato"] == "porcentaje"}>Porcentaje</option>
+      <form phx-change="actualizar_propiedad" class="flex flex-col gap-2.5">
+        <div class="flex items-end gap-2">
+          <div>
+            <label class="block text-gray-500 mb-0.5">Mostrar como</label>
+            <select name="formato" class="border border-gray-300 rounded px-2 py-1.5">
+              <option value="numero" selected={(@nodo["propiedades"]["formato"] || "numero") == "numero"}>Número</option>
+              <option value="moneda" selected={@nodo["propiedades"]["formato"] == "moneda"}>Moneda</option>
+              <option value="porcentaje" selected={@nodo["propiedades"]["formato"] == "porcentaje"}>Porcentaje</option>
+              <option value="semaforo" selected={@nodo["propiedades"]["formato"] == "semaforo"}>Semáforo</option>
+              <option value="badge" selected={@nodo["propiedades"]["formato"] == "badge"}>Badge</option>
+              <option value="progreso" selected={@nodo["propiedades"]["formato"] == "progreso"}>Barra de progreso</option>
+              <option value="estrellas" selected={@nodo["propiedades"]["formato"] == "estrellas"}>Estrellas</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-gray-500 mb-0.5">Decimales</label>
+            <input type="number" name="decimales" min="0" max="10" value={@nodo["propiedades"]["decimales"]} class="w-24 border border-gray-300 rounded px-2 py-1.5" />
+          </div>
+        </div>
+
+        <div :if={@nodo["propiedades"]["formato"] == "semaforo"} class="flex items-end gap-2">
+          <div>
+            <label class="block text-gray-500 mb-0.5">Rojo hasta</label>
+            <input type="number" step="any" name="semaforo_bajo" value={@nodo["propiedades"]["semaforo_bajo"]} placeholder="30" class="w-24 border border-gray-300 rounded px-2 py-1.5" />
+          </div>
+          <div>
+            <label class="block text-gray-500 mb-0.5">Amarillo hasta</label>
+            <input type="number" step="any" name="semaforo_alto" value={@nodo["propiedades"]["semaforo_alto"]} placeholder="70" class="w-24 border border-gray-300 rounded px-2 py-1.5" />
+          </div>
+          <p class="text-gray-400 pb-1.5">Más alto que esto: verde.</p>
+        </div>
+
+        <div :if={@nodo["propiedades"]["formato"] == "badge"}>
+          <label class="block text-gray-500 mb-0.5">Color</label>
+          <select name="color" class="w-full border border-gray-300 rounded px-2 py-1.5">
+            <option value="gris" selected={(@nodo["propiedades"]["color"] || "gris") == "gris"}>Gris</option>
+            <option value="purpura" selected={@nodo["propiedades"]["color"] == "purpura"}>Púrpura</option>
+            <option value="azul" selected={@nodo["propiedades"]["color"] == "azul"}>Azul</option>
+            <option value="verde" selected={@nodo["propiedades"]["color"] == "verde"}>Verde</option>
+            <option value="amarillo" selected={@nodo["propiedades"]["color"] == "amarillo"}>Amarillo</option>
+            <option value="rojo" selected={@nodo["propiedades"]["color"] == "rojo"}>Rojo</option>
           </select>
         </div>
-        <div>
-          <label class="block text-gray-500 mb-0.5">Decimales</label>
-          <input type="number" name="decimales" min="0" max="10" value={@nodo["propiedades"]["decimales"]} class="w-24 border border-gray-300 rounded px-2 py-1.5" />
+
+        <div :if={@nodo["propiedades"]["formato"] == "progreso"}>
+          <label class="block text-gray-500 mb-0.5">Valor máximo (100%)</label>
+          <input type="number" step="any" name="progreso_maximo" value={@nodo["propiedades"]["progreso_maximo"]} placeholder="100" class="w-24 border border-gray-300 rounded px-2 py-1.5" />
+        </div>
+
+        <div :if={@nodo["propiedades"]["formato"] == "estrellas"}>
+          <label class="block text-gray-500 mb-0.5">Cantidad de estrellas</label>
+          <input type="number" min="1" max="10" name="estrellas_maximo" value={@nodo["propiedades"]["estrellas_maximo"]} placeholder="5" class="w-24 border border-gray-300 rounded px-2 py-1.5" />
         </div>
       </form>
+
+      <p :if={@nodo["propiedades"]["formato"] in ["semaforo", "badge", "progreso", "estrellas"]} class="text-gray-400">
+        La vista previa de acá abajo todavía muestra el número plano — el color/barra/estrellas reales se ven en la Ficha 360° publicada.
+      </p>
 
       <div class="mt-1 pt-2.5 border-t border-gray-100">
         <p class="text-gray-500 font-semibold mb-1">Vista previa — contra un registro real</p>
@@ -1532,6 +1783,14 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           </label>
           <label class="block text-gray-500 mt-2 mb-0.5">Título del bloque (opcional)</label>
           <input type="text" name="titulo" value={@nodo["propiedades"]["titulo"]} class="w-full border border-gray-300 rounded px-2 py-1.5" />
+
+          <label class="block text-gray-500 mt-2 mb-0.5">Mostrar</label>
+          <select name="mostrar" class="w-full border border-gray-300 rounded px-2 py-1.5">
+            <option value="lista" selected={(@nodo["propiedades"]["mostrar"] || "lista") == "lista"}>Lista (una fila por campo)</option>
+            <option value="tarjeta" selected={@nodo["propiedades"]["mostrar"] == "tarjeta"}>Tarjeta (grilla de 2 columnas, compacta)</option>
+            <option value="resumen" selected={@nodo["propiedades"]["mostrar"] == "resumen"}>Resumen (una sola línea)</option>
+            <option value="campos" selected={@nodo["propiedades"]["mostrar"] == "campos"}>Campos (como un formulario de solo lectura)</option>
+          </select>
         </form>
       </div>
 
@@ -1558,7 +1817,51 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
 
   defp panel_propiedades(%{nodo: %{"tipo" => "divisor"}} = assigns) do
     ~H"""
-    <p class="text-gray-400">Sin propiedades.</p>
+    <form phx-change="actualizar_propiedad" class="flex flex-col gap-2.5 text-xs">
+      <div>
+        <label class="block text-gray-500 mb-0.5">Título (opcional)</label>
+        <input type="text" name="titulo" value={@nodo["propiedades"]["titulo"]} placeholder="Ej. Datos fiscales"
+          class="w-full border border-gray-300 rounded px-2 py-1.5" />
+        <p class="text-gray-400 mt-1">Sin título es una línea simple. Con título, el texto queda en el medio de la línea.</p>
+      </div>
+    </form>
+    """
+  end
+
+  # Vista previa -- muestra un archivo (imagen/PDF) cuya URL YA vive en un
+  # campo de texto de ESTE catálogo (ej. lo trajo una integración externa,
+  # o alguien la pegó a mano) -- sin subida de archivos ni storage propio,
+  # a propósito (alcance confirmado 2026-08-14): eso es una pieza de
+  # infraestructura aparte, mucho más grande.
+  defp panel_propiedades(%{nodo: %{"tipo" => "vista_previa"}} = assigns) do
+    campos_url = Enum.filter(assigns.campos, &(&1.schema_context_properties["tipo"] == "string"))
+    assigns = assign(assigns, :campos_url, campos_url)
+
+    ~H"""
+    <form phx-change="actualizar_propiedad" class="flex flex-col gap-2.5 text-xs">
+      <div>
+        <label class="block text-gray-500 mb-0.5">Campo con la URL del archivo</label>
+        <select name="campo" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="" selected={is_nil(@nodo["propiedades"]["campo"])}>Elegir…</option>
+          <option :for={c <- @campos_url} value={c.schema_context_field} selected={@nodo["propiedades"]["campo"] == c.schema_context_field}>
+            {c.schema_context_properties["etiqueta"]}
+          </option>
+        </select>
+        <p :if={@campos_url == []} class="text-gray-400 mt-1">Este catálogo no tiene campos de texto — creá uno para guardar la URL primero.</p>
+      </div>
+      <div>
+        <label class="block text-gray-500 mb-0.5">Título (opcional)</label>
+        <input type="text" name="titulo" value={@nodo["propiedades"]["titulo"]} class="w-full border border-gray-300 rounded px-2 py-1.5" />
+      </div>
+      <div>
+        <label class="block text-gray-500 mb-0.5">Tipo</label>
+        <select name="tipo" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="auto" selected={(@nodo["propiedades"]["tipo"] || "auto") == "auto"}>Automático (según la extensión del archivo)</option>
+          <option value="imagen" selected={@nodo["propiedades"]["tipo"] == "imagen"}>Siempre imagen</option>
+          <option value="pdf" selected={@nodo["propiedades"]["tipo"] == "pdf"}>Siempre PDF</option>
+        </select>
+      </div>
+    </form>
     """
   end
 
@@ -1570,10 +1873,18 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         <input type="text" name="texto" value={@nodo["propiedades"]["texto"]} class="w-full border border-gray-300 rounded px-2 py-1.5" />
       </div>
       <div>
+        <label class="block text-gray-500 mb-0.5">Ícono (emoji, opcional)</label>
+        <input type="text" name="icono" value={@nodo["propiedades"]["icono"]} maxlength="4" class="w-20 border border-gray-300 rounded px-2 py-1.5" />
+      </div>
+      <div>
         <label class="block text-gray-500 mb-0.5">Estilo</label>
         <select name="estilo" class="w-full border border-gray-300 rounded px-2 py-1.5">
           <option value="parrafo" selected={@nodo["propiedades"]["estilo"] == "parrafo"}>Párrafo</option>
           <option value="titulo" selected={@nodo["propiedades"]["estilo"] == "titulo"}>Título</option>
+          <option value="subtitulo" selected={@nodo["propiedades"]["estilo"] == "subtitulo"}>Subtítulo</option>
+          <option value="ayuda" selected={@nodo["propiedades"]["estilo"] == "ayuda"}>Ayuda</option>
+          <option value="nota" selected={@nodo["propiedades"]["estilo"] == "nota"}>Nota</option>
+          <option value="advertencia" selected={@nodo["propiedades"]["estilo"] == "advertencia"}>Advertencia</option>
         </select>
       </div>
     </form>
@@ -1602,6 +1913,88 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   defp panel_propiedades(%{nodo: %{"tipo" => "tabla"}} = assigns) do
     campos_del_catalogo = campos_de_catalogo(assigns.catalogos_disponibles, assigns.nodo["propiedades"]["catalogo"])
     campos_actuales = assigns.nodo["propiedades"]["campos"] || []
+    campos_lista = Enum.filter(campos_del_catalogo, &(&1.schema_context_properties["tipo"] == "enum"))
+    campos_fecha = Enum.filter(campos_del_catalogo, &(&1.schema_context_properties["tipo"] == "date"))
+
+    assigns =
+      assigns
+      |> assign(:campos_del_catalogo, campos_del_catalogo)
+      |> assign(:campos_actuales, campos_actuales)
+      |> assign(:campos_lista, campos_lista)
+      |> assign(:campos_fecha, campos_fecha)
+
+    ~H"""
+    <div class="flex flex-col gap-2.5 text-xs">
+      <form phx-change="actualizar_propiedad">
+        <label class="block text-gray-500 mb-0.5">¿Qué registros relacionados querés mostrar?</label>
+        <select name="catalogo" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="" selected={is_nil(@nodo["propiedades"]["catalogo"])}>Elegir catálogo…</option>
+          <option :for={{c, etiqueta} <- @catalogos_relacionables} value={c} selected={@nodo["propiedades"]["catalogo"] == c}>
+            {etiqueta}
+          </option>
+        </select>
+        <p :if={@catalogos_relacionables == []} class="text-gray-400 mt-1">Ningún catálogo referencia a éste todavía.</p>
+      </form>
+
+      <p :if={@nodo["propiedades"]["catalogo"] in [nil, ""]} class="text-gray-400 text-center py-2">
+        Elegí un catálogo arriba para configurar el resto.
+      </p>
+
+      <form :if={@nodo["propiedades"]["catalogo"] not in [nil, ""]} phx-change="actualizar_propiedad" class="flex flex-col gap-2.5">
+        <div>
+          <label class="block text-gray-500 mb-0.5">Título</label>
+          <input type="text" name="titulo" value={@nodo["propiedades"]["titulo"]} class="w-full border border-gray-300 rounded px-2 py-1.5" />
+        </div>
+        <div>
+          <label class="block text-gray-500 mb-1">Campos a mostrar</label>
+          <input type="hidden" name="campos[]" value="" />
+          <label :for={c <- @campos_del_catalogo} class="flex items-center gap-1.5 mb-1">
+            <input type="checkbox" name="campos[]" value={c.schema_context_field} checked={c.schema_context_field in @campos_actuales} class="accent-purple-600" />
+            {c.schema_context_properties["etiqueta"]}
+          </label>
+          <p :if={@campos_actuales == []} class="text-gray-400 mt-1">Sin nada tildado, se muestra la descripción de siempre + el id.</p>
+        </div>
+        <div>
+          <label class="block text-gray-500 mb-0.5">Vista</label>
+          <select name="vista" class="w-full border border-gray-300 rounded px-2 py-1.5">
+            <option value="tabla" selected={(@nodo["propiedades"]["vista"] || "tabla") == "tabla"}>Tabla (filas y columnas)</option>
+            <option value="tarjetas" selected={@nodo["propiedades"]["vista"] == "tarjetas"}>Tarjetas (grilla de bloques)</option>
+            <option value="kanban" selected={@nodo["propiedades"]["vista"] == "kanban"}>Kanban (columnas por Estado/Lista)</option>
+            <option value="calendario" selected={@nodo["propiedades"]["vista"] == "calendario"}>Calendario (agenda por fecha)</option>
+          </select>
+        </div>
+        <div :if={@nodo["propiedades"]["vista"] == "kanban"}>
+          <label class="block text-gray-500 mb-0.5">Agrupar por</label>
+          <select name="kanban_campo" class="w-full border border-gray-300 rounded px-2 py-1.5">
+            <option value="__estado__" selected={(@nodo["propiedades"]["kanban_campo"] || "__estado__") == "__estado__"}>Estado del registro</option>
+            <option :for={c <- @campos_lista} value={c.schema_context_field} selected={@nodo["propiedades"]["kanban_campo"] == c.schema_context_field}>
+              {c.schema_context_properties["etiqueta"]}
+            </option>
+          </select>
+          <p :if={@campos_lista == []} class="text-gray-400 mt-1">Ese catálogo no tiene campos tipo Lista además del Estado.</p>
+        </div>
+        <div :if={@nodo["propiedades"]["vista"] == "calendario"}>
+          <label class="block text-gray-500 mb-0.5">Ubicar por (campo Fecha)</label>
+          <select name="calendario_campo" class="w-full border border-gray-300 rounded px-2 py-1.5">
+            <option value="" selected={is_nil(@nodo["propiedades"]["calendario_campo"])}>Elegir…</option>
+            <option :for={c <- @campos_fecha} value={c.schema_context_field} selected={@nodo["propiedades"]["calendario_campo"] == c.schema_context_field}>
+              {c.schema_context_properties["etiqueta"]}
+            </option>
+          </select>
+          <p :if={@campos_fecha == []} class="text-gray-400 mt-1">Ese catálogo no tiene campos tipo Fecha.</p>
+        </div>
+      </form>
+    </div>
+    """
+  end
+
+  # "Lista rápida" -- versión liviana de Tabla relacionada (como el feed
+  # de actividades de un CRM): mismos datos (@relaciones, misma
+  # columnas_tabla_relacion/2), pero acotada a los primeros N registros y
+  # sin encabezados de columna, un ítem clickeable por línea.
+  defp panel_propiedades(%{nodo: %{"tipo" => "lista_rapida"}} = assigns) do
+    campos_del_catalogo = campos_de_catalogo(assigns.catalogos_disponibles, assigns.nodo["propiedades"]["catalogo"])
+    campos_actuales = assigns.nodo["propiedades"]["campos"] || []
 
     assigns =
       assigns
@@ -1625,14 +2018,77 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         <input type="text" name="titulo" value={@nodo["propiedades"]["titulo"]} class="w-full border border-gray-300 rounded px-2 py-1.5" />
       </div>
       <div>
-        <label class="block text-gray-500 mb-1">Campos a mostrar</label>
+        <label class="block text-gray-500 mb-1">Campos a mostrar (línea chica debajo del título de cada ítem)</label>
         <p :if={@campos_del_catalogo == []} class="text-gray-400">Elegí un catálogo relacionado arriba primero.</p>
         <input type="hidden" name="campos[]" value="" />
         <label :for={c <- @campos_del_catalogo} class="flex items-center gap-1.5 mb-1">
           <input type="checkbox" name="campos[]" value={c.schema_context_field} checked={c.schema_context_field in @campos_actuales} class="accent-purple-600" />
           {c.schema_context_properties["etiqueta"]}
         </label>
-        <p :if={@campos_del_catalogo != [] and @campos_actuales == []} class="text-gray-400 mt-1">Sin nada tildado, se muestra la descripción de siempre + el id.</p>
+      </div>
+      <div>
+        <label class="block text-gray-500 mb-0.5">Cuántos mostrar</label>
+        <input type="number" name="limite" min="1" max="50" value={@nodo["propiedades"]["limite"]} placeholder="5" class="w-24 border border-gray-300 rounded px-2 py-1.5" />
+        <p class="text-gray-400 mt-1">Si hay más, se muestra "y N más…" al final (sin link a una lista completa todavía).</p>
+      </div>
+    </form>
+    """
+  end
+
+  # "Renglones de detalle" — distinto de "Tabla relacionada"/"Lista rápida"
+  # de arriba (esos son por campo "referencia"): acá el <select> es sobre
+  # @catalogos_detalle_disponibles, los catálogos detalle REALES de este
+  # maestro (Productos/Pagos/Notas, vía schema_encabezado_id) — ver
+  # nodo_plantilla_render/1 en FichaLive, cláusula "renglones".
+  defp panel_propiedades(%{nodo: %{"tipo" => "renglones"}} = assigns) do
+    detalle_elegido = Enum.find(assigns.catalogos_detalle_disponibles, &(&1.nombre == assigns.nodo["propiedades"]["catalogo"]))
+    columnas_del_detalle = (detalle_elegido && detalle_elegido.columnas) || []
+    columnas_numericas = Enum.filter(columnas_del_detalle, &(&1.schema_context_properties["tipo"] in ["integer", "decimal"]))
+    campos_actuales = assigns.nodo["propiedades"]["campos"] || []
+
+    assigns =
+      assigns
+      |> assign(:columnas_del_detalle, columnas_del_detalle)
+      |> assign(:columnas_numericas, columnas_numericas)
+      |> assign(:campos_actuales, campos_actuales)
+
+    ~H"""
+    <form phx-change="actualizar_propiedad" class="flex flex-col gap-2.5 text-xs">
+      <div>
+        <label class="block text-gray-500 mb-0.5">¿Cuál detalle?</label>
+        <select name="catalogo" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="" selected={is_nil(@nodo["propiedades"]["catalogo"])}>Elegir…</option>
+          <option :for={d <- @catalogos_detalle_disponibles} value={d.nombre} selected={@nodo["propiedades"]["catalogo"] == d.nombre}>
+            {d.etiqueta}
+          </option>
+        </select>
+        <p :if={@catalogos_detalle_disponibles == []} class="text-gray-400 mt-1">Este catálogo no tiene ningún detalle configurado.</p>
+      </div>
+      <div>
+        <label class="block text-gray-500 mb-0.5">Título</label>
+        <input type="text" name="titulo" value={@nodo["propiedades"]["titulo"]} placeholder={(@catalogos_detalle_disponibles |> Enum.find(&(&1.nombre == @nodo["propiedades"]["catalogo"])) || %{etiqueta: "Renglones"}).etiqueta}
+          class="w-full border border-gray-300 rounded px-2 py-1.5" />
+      </div>
+      <div>
+        <label class="block text-gray-500 mb-1">Columnas a mostrar</label>
+        <p :if={@columnas_del_detalle == []} class="text-gray-400">Elegí un detalle arriba primero.</p>
+        <input type="hidden" name="campos[]" value="" />
+        <label :for={c <- @columnas_del_detalle} class="flex items-center gap-1.5 mb-1">
+          <input type="checkbox" name="campos[]" value={c.schema_context_field} checked={c.schema_context_field in @campos_actuales} class="accent-purple-600" />
+          {c.schema_context_properties["etiqueta"]}
+        </label>
+        <p class="text-gray-400 mt-1">Sin nada marcado, se muestran las columnas que ese detalle ya usa en su propia tabla.</p>
+      </div>
+      <.toggle_switch name="mostrar_total" checked={@nodo["propiedades"]["mostrar_total"] == true} label="Mostrar total al pie" />
+      <div :if={@nodo["propiedades"]["mostrar_total"] == true}>
+        <label class="block text-gray-500 mb-0.5">Campo a sumar</label>
+        <select name="campo_total" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="" selected={is_nil(@nodo["propiedades"]["campo_total"])}>Elegir…</option>
+          <option :for={c <- @columnas_numericas} value={c.schema_context_field} selected={@nodo["propiedades"]["campo_total"] == c.schema_context_field}>
+            {c.schema_context_properties["etiqueta"]}
+          </option>
+        </select>
+        <p :if={@columnas_numericas == []} class="text-gray-400 mt-1">Ese detalle no tiene campos numéricos.</p>
       </div>
     </form>
     """
@@ -1677,7 +2133,167 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           <option value="secundario" selected={@nodo["propiedades"]["estilo"] == "secundario"}>Secundario (borde)</option>
         </select>
       </div>
+      <div>
+        <label class="block text-gray-500 mb-0.5">Dónde mostrarlo</label>
+        <select name="ubicacion" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="cuerpo" selected={(@nodo["propiedades"]["ubicacion"] || "cuerpo") == "cuerpo"}>Donde lo coloqué (dentro del cuerpo)</option>
+          <option value="pie" selected={@nodo["propiedades"]["ubicacion"] == "pie"}>Pie del formulario (fijo al final, siempre visible)</option>
+        </select>
+      </div>
+      <label class="flex items-center gap-1.5">
+        <input type="hidden" name="confirmar_antes" value="false" />
+        <input type="checkbox" name="confirmar_antes" value="true" checked={@nodo["propiedades"]["confirmar_antes"] == true} class="accent-purple-600" />
+        Confirmar antes de ejecutar
+      </label>
+      <div :if={@nodo["propiedades"]["confirmar_antes"] == true}>
+        <label class="block text-gray-500 mb-0.5">Mensaje de confirmación</label>
+        <input type="text" name="mensaje_confirmacion" value={@nodo["propiedades"]["mensaje_confirmacion"]}
+          placeholder="¿Deseas aprobar?" class="w-full border border-gray-300 rounded px-2 py-1.5" />
+      </div>
     </form>
+    """
+  end
+
+  # Resumen/KPI -- tarjeta grande conectada a un valor REAL, reusando
+  # Formula.evaluar/2 tal cual (mismo motor que Campo calculado). A
+  # diferencia de Campo calculado no ofrece el constructor de chips
+  # completo (SUM/condición/lookup a clic) -- se escribe la fórmula como
+  # texto directo, mismo mini-lenguaje ({campo}, SUM(catalogo.campo), IF,
+  # etc., ver moduledoc de Formula). Alcance reducido a propósito: es la
+  # variante "grande y directa" para un solo número destacado, no un
+  # reemplazo del editor completo.
+  defp panel_propiedades(%{nodo: %{"tipo" => "resumen"}} = assigns) do
+    ~H"""
+    <form phx-change="actualizar_propiedad" class="flex flex-col gap-2.5 text-xs">
+      <div>
+        <label class="block text-gray-500 mb-0.5">Etiqueta</label>
+        <input type="text" name="etiqueta" value={@nodo["propiedades"]["etiqueta"]} placeholder="Ej. Ventas" class="w-full border border-gray-300 rounded px-2 py-1.5" />
+      </div>
+      <div>
+        <label class="block text-gray-500 mb-0.5">Fórmula</label>
+        <input type="text" name="formula" value={@nodo["propiedades"]["formula"]} placeholder="SUM(pty_ventas.monto)"
+          class="w-full border border-gray-300 rounded px-2 py-1.5 font-mono" />
+        <p class="text-gray-400 mt-1">
+          Mismo lenguaje que Campo calculado: <span class="font-mono">{"{campo}"}</span>, <span class="font-mono">SUM(catalogo.campo)</span>,
+          <span class="font-mono">COUNT(catalogo)</span>, <span class="font-mono">AVG</span>/<span class="font-mono">MIN</span>/<span class="font-mono">MAX</span>,
+          operadores, <span class="font-mono">IF...THEN...ELSE</span>. Sin el armador de chips (ese solo está en Campo calculado).
+        </p>
+      </div>
+      <div class="flex items-end gap-2">
+        <div>
+          <label class="block text-gray-500 mb-0.5">Formato</label>
+          <select name="formato" class="border border-gray-300 rounded px-2 py-1.5">
+            <option value="numero" selected={(@nodo["propiedades"]["formato"] || "numero") == "numero"}>Número</option>
+            <option value="moneda" selected={@nodo["propiedades"]["formato"] == "moneda"}>Moneda</option>
+            <option value="porcentaje" selected={@nodo["propiedades"]["formato"] == "porcentaje"}>Porcentaje</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-gray-500 mb-0.5">Decimales</label>
+          <input type="number" name="decimales" min="0" max="10" value={@nodo["propiedades"]["decimales"]} class="w-24 border border-gray-300 rounded px-2 py-1.5" />
+        </div>
+      </div>
+      <div>
+        <label class="block text-gray-500 mb-0.5">Ícono (emoji, opcional)</label>
+        <input type="text" name="icono" value={@nodo["propiedades"]["icono"]} maxlength="4" class="w-20 border border-gray-300 rounded px-2 py-1.5" />
+      </div>
+      <div>
+        <label class="block text-gray-500 mb-0.5">Color</label>
+        <select name="color" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="gris" selected={@nodo["propiedades"]["color"] == "gris"}>Gris</option>
+          <option value="purpura" selected={(@nodo["propiedades"]["color"] || "purpura") == "purpura"}>Púrpura</option>
+          <option value="azul" selected={@nodo["propiedades"]["color"] == "azul"}>Azul</option>
+          <option value="verde" selected={@nodo["propiedades"]["color"] == "verde"}>Verde</option>
+          <option value="amarillo" selected={@nodo["propiedades"]["color"] == "amarillo"}>Amarillo</option>
+          <option value="rojo" selected={@nodo["propiedades"]["color"] == "rojo"}>Rojo</option>
+        </select>
+      </div>
+    </form>
+    """
+  end
+
+  # Timeline -- sin configuración de catálogo/campos: siempre muestra el
+  # recorrido de ESTADOS de ESTE MISMO registro (mismo dato que la
+  # pestaña "Historial", filtrado a transiciones), nunca de otro
+  # catálogo. Ver FichaLive.nodo_plantilla_render/1 "timeline" -- se
+  # resuelve solo, con @registro/@estados_por_id que ya viajan a
+  # cualquier nodo, sin threading nuevo.
+  defp panel_propiedades(%{nodo: %{"tipo" => "timeline"}} = assigns) do
+    ~H"""
+    <form phx-change="actualizar_propiedad" class="flex flex-col gap-2.5 text-xs">
+      <div>
+        <label class="block text-gray-500 mb-0.5">Título (opcional)</label>
+        <input type="text" name="titulo" value={@nodo["propiedades"]["titulo"]} class="w-full border border-gray-300 rounded px-2 py-1.5" />
+      </div>
+      <p class="text-gray-400">Muestra automáticamente el recorrido de estados de este registro (las mismas transiciones que ya ves en la pestaña "Historial") — no hace falta elegir catálogo ni campos.</p>
+    </form>
+    """
+  end
+
+  # --- Componentes visuales compartidos (Fase 1 rediseño) -------------------
+  # Reemplazan checkboxes/selects planos por toggles/swatches/botones de
+  # ícono — el <form phx-change> que los envuelve sigue siendo el mismo de
+  # siempre (mismo name/value por campo), esto solo cambia el widget.
+
+  attr :name, :string, required: true
+  attr :checked, :boolean, default: false
+  attr :label, :string, default: nil
+
+  defp toggle_switch(assigns) do
+    ~H"""
+    <label class="gc-toggle-row">
+      <input type="hidden" name={@name} value="false" />
+      <input type="checkbox" name={@name} value="true" checked={@checked} class="gc-toggle-input" />
+      <span class="gc-toggle-track"></span>
+      <span :if={@label} class="gc-toggle-label">{@label}</span>
+    </label>
+    """
+  end
+
+  attr :name, :string, required: true
+  attr :valor, :string, default: nil
+  attr :incluir_ninguno, :boolean, default: true
+
+  defp swatch_picker(assigns) do
+    ~H"""
+    <div class="gc-swatch-row">
+      <label :if={@incluir_ninguno} class={["gc-swatch gc-swatch-ninguno", @valor in [nil, ""] && "gc-swatch-on"]} title="Ninguno">
+        <input type="radio" name={@name} value="" checked={@valor in [nil, ""]} class="sr-only" />
+      </label>
+      <label :for={{v, e} <- swatches()} class={["gc-swatch", @valor == v && "gc-swatch-on"]} style={"background:#{swatch_hex(v)}"} title={e}>
+        <input type="radio" name={@name} value={v} checked={@valor == v} class="sr-only" />
+      </label>
+    </div>
+    """
+  end
+
+  attr :name, :string, required: true
+  attr :valor, :string, default: "izquierda"
+
+  defp botones_alineacion_h(assigns) do
+    ~H"""
+    <div class="gc-align-row">
+      <label :for={{v, d} <- [{"izquierda", "M4 6h16M4 12h10M4 18h13"}, {"centro", "M4 6h16M8 12h8M6 18h12"}, {"derecha", "M4 6h16M10 12h10M7 18h13"}, {"justificado", "M4 6h16M4 12h16M4 18h16"}]}
+        class={["gc-align-btn", (@valor || "izquierda") == v && "gc-align-on"]}>
+        <input type="radio" name={@name} value={v} checked={(@valor || "izquierda") == v} class="sr-only" />
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d={d} /></svg>
+      </label>
+    </div>
+    """
+  end
+
+  attr :name, :string, required: true
+  attr :valor, :string, default: "arriba"
+
+  defp botones_alineacion_v(assigns) do
+    ~H"""
+    <div class="gc-align-row">
+      <label :for={{v, titulo, d} <- [{"arriba", "Arriba", "M4 6h16M8 12h8M8 18h8"}, {"centro", "Centro", "M4 12h16M8 6h8M8 18h8"}, {"abajo", "Abajo", "M4 18h16M8 6h8M8 12h8"}, {"estirar", "Estirar", "M4 4h16v16H4z"}]}
+        class={["gc-align-btn", (@valor || "arriba") == v && "gc-align-on"]} title={titulo}>
+        <input type="radio" name={@name} value={v} checked={(@valor || "arriba") == v} class="sr-only" />
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d={d} /></svg>
+      </label>
+    </div>
     """
   end
 
@@ -1693,7 +2309,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     assigns = assigns |> assign(:celda, celda) |> assign(:estilo, celda["estilo"] || %{}) |> assign(:responsive, celda["responsive"] || %{})
 
     ~H"""
-    <form phx-change="actualizar_celda" class="flex flex-col gap-2.5 text-xs pb-3 mb-3 border-b border-gray-100">
+    <form phx-change="actualizar_celda" class="flex flex-col gap-3 text-xs pb-3 mb-3 border-b border-gray-100">
       <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400">Celda</div>
 
       <div class="grid grid-cols-2 gap-2">
@@ -1726,83 +2342,50 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       <div class="grid grid-cols-2 gap-2">
         <div>
           <label class="block text-gray-500 mb-0.5">Alineación horizontal</label>
-          <select name="alineacion_h" class="w-full border border-gray-300 rounded px-2 py-1.5">
-            <option value="izquierda" selected={(@celda["alineacion_h"] || "izquierda") == "izquierda"}>Izquierda</option>
-            <option value="centro" selected={@celda["alineacion_h"] == "centro"}>Centro</option>
-            <option value="derecha" selected={@celda["alineacion_h"] == "derecha"}>Derecha</option>
-            <option value="justificado" selected={@celda["alineacion_h"] == "justificado"}>Justificado</option>
-          </select>
-          <p class="text-gray-400 mt-1">Mueve el contenido DENTRO de la celda (que siempre llena su ancho) — para un ancho angosto de verdad, usá "Ancho" arriba.</p>
+          <.botones_alineacion_h name="alineacion_h" valor={@celda["alineacion_h"]} />
         </div>
         <div>
           <label class="block text-gray-500 mb-0.5">Alineación vertical</label>
-          <select name="alineacion_v" class="w-full border border-gray-300 rounded px-2 py-1.5">
-            <option value="arriba" selected={@celda["alineacion_v"] == "arriba"}>Arriba</option>
-            <option value="centro" selected={@celda["alineacion_v"] == "centro"}>Centro</option>
-            <option value="abajo" selected={@celda["alineacion_v"] == "abajo"}>Abajo</option>
-            <option value="estirar" selected={@celda["alineacion_v"] == "estirar"}>Estirar</option>
-          </select>
+          <.botones_alineacion_v name="alineacion_v" valor={@celda["alineacion_v"]} />
         </div>
       </div>
+      <p class="text-gray-400 -mt-2">Mueve el contenido DENTRO de la celda (que siempre llena su ancho) — para un ancho angosto de verdad, usá "Ancho" arriba.</p>
 
       <div>
-        <label class="block text-gray-500 mb-0.5">Padding</label>
-        <select name="padding" class="w-full border border-gray-300 rounded px-2 py-1.5">
-          <option value="ninguno" selected={@celda["padding"] == "ninguno"}>Ninguno</option>
-          <option value="compacto" selected={@celda["padding"] == "compacto"}>Compacto</option>
-          <option value="normal" selected={(@celda["padding"] || "normal") == "normal"}>Normal</option>
-          <option value="amplio" selected={@celda["padding"] == "amplio"}>Amplio</option>
-        </select>
-      </div>
-
-      <label class="flex items-center gap-1.5">
-        <input type="hidden" name="visible" value="false" />
-        <input type="checkbox" name="visible" value="true" checked={@celda["visible"] != false} class="accent-purple-600" />
-        Visible
-      </label>
-
-      <div class="pt-2 border-t border-gray-100">
-        <div class="text-gray-500 font-semibold mb-1">Estilo</div>
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label class="block text-gray-500 mb-0.5">Fondo</label>
-            <select name="estilo_fondo" class="w-full border border-gray-300 rounded px-2 py-1.5">
-              <option value="" selected={@estilo["fondo"] in [nil, ""]}>Ninguno</option>
-              <option :for={{v, e} <- swatches()} value={v} selected={@estilo["fondo"] == v}>{e}</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-gray-500 mb-0.5">Color de texto</label>
-            <select name="estilo_color_texto" class="w-full border border-gray-300 rounded px-2 py-1.5">
-              <option value="" selected={@estilo["color_texto"] in [nil, ""]}>Por defecto</option>
-              <option :for={{v, e} <- swatches()} value={v} selected={@estilo["color_texto"] == v}>{e}</option>
-            </select>
-          </div>
-        </div>
-        <div class="flex flex-wrap gap-3 mt-2">
-          <label class="flex items-center gap-1.5">
-            <input type="hidden" name="estilo_borde" value="false" />
-            <input type="checkbox" name="estilo_borde" value="true" checked={@estilo["borde"] == true} class="accent-purple-600" /> Borde
-          </label>
-          <label class="flex items-center gap-1.5">
-            <input type="hidden" name="estilo_redondeado" value="false" />
-            <input type="checkbox" name="estilo_redondeado" value="true" checked={@estilo["redondeado"] == true} class="accent-purple-600" /> Redondeado
-          </label>
-          <label class="flex items-center gap-1.5">
-            <input type="hidden" name="estilo_sombra" value="false" />
-            <input type="checkbox" name="estilo_sombra" value="true" checked={@estilo["sombra"] == true} class="accent-purple-600" /> Sombra
+        <label class="block text-gray-500 mb-1">Padding</label>
+        <div class="gc-seg-row">
+          <label :for={{v, e} <- [{"ninguno", "Ninguno"}, {"compacto", "Compacto"}, {"normal", "Normal"}, {"amplio", "Amplio"}]}
+            class={["gc-seg-btn", (@celda["padding"] || "normal") == v && "gc-seg-on"]}>
+            <input type="radio" name="padding" value={v} checked={(@celda["padding"] || "normal") == v} class="sr-only" />{e}
           </label>
         </div>
       </div>
 
+      <.toggle_switch name="visible" checked={@celda["visible"] != false} label="Visible" />
+
       <div class="pt-2 border-t border-gray-100">
-        <div class="text-gray-500 font-semibold mb-1">Responsive (móvil)</div>
-        <label class="flex items-center gap-1.5 mb-1.5">
-          <input type="hidden" name="responsive_ocultar_movil" value="false" />
-          <input type="checkbox" name="responsive_ocultar_movil" value="true" checked={@responsive["ocultar_movil"] == true} class="accent-purple-600" />
-          Ocultar en móvil
-        </label>
-        <div class="grid grid-cols-3 gap-2">
+        <div class="text-gray-500 font-semibold mb-1.5">Estilo</div>
+        <div class="grid grid-cols-1 gap-2.5">
+          <div>
+            <label class="block text-gray-500 mb-1">Fondo</label>
+            <.swatch_picker name="estilo_fondo" valor={@estilo["fondo"]} />
+          </div>
+          <div>
+            <label class="block text-gray-500 mb-1">Color de texto</label>
+            <.swatch_picker name="estilo_color_texto" valor={@estilo["color_texto"]} />
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-4 mt-2.5">
+          <.toggle_switch name="estilo_borde" checked={@estilo["borde"] == true} label="Borde" />
+          <.toggle_switch name="estilo_redondeado" checked={@estilo["redondeado"] == true} label="Redondeado" />
+          <.toggle_switch name="estilo_sombra" checked={@estilo["sombra"] == true} label="Sombra" />
+        </div>
+      </div>
+
+      <div class="pt-2 border-t border-gray-100">
+        <div class="text-gray-500 font-semibold mb-1.5">Responsive (móvil)</div>
+        <.toggle_switch name="responsive_ocultar_movil" checked={@responsive["ocultar_movil"] == true} label="Ocultar en móvil" />
+        <div class="grid grid-cols-3 gap-2 mt-2">
           <div>
             <label class="block text-gray-500 mb-0.5">Colspan móvil</label>
             <input type="number" min="1" name="responsive_colspan_movil" value={@responsive["colspan_movil"]} placeholder="—" class="w-full border border-gray-300 rounded px-2 py-1.5" />
@@ -1825,8 +2408,19 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   # alcance) ni solo On/Off, un término medio manejable. Los mismos
   # nombres se resuelven a clases Tailwind reales del lado de FichaLive
   # (ver celda_classes/1 en ficha_live.ex) — un solo lugar de verdad
-  # (esta lista) para no desincronizar el <select> de lo que existe.
+  # (esta lista) para no desincronizar los swatches de lo que existe.
   defp swatches, do: [{"gris", "Gris"}, {"purpura", "Púrpura"}, {"azul", "Azul"}, {"verde", "Verde"}, {"amarillo", "Amarillo"}, {"rojo", "Rojo"}]
+
+  # Hex SOLO para pintar el swatch en el Constructor — FichaLive sigue
+  # resolviendo el nombre a clases Tailwind por su cuenta (celda_classes/1),
+  # este mapa no es la fuente de verdad de nada, es puramente decorativo acá.
+  defp swatch_hex("gris"), do: "#9CA3AF"
+  defp swatch_hex("purpura"), do: "#7C3AED"
+  defp swatch_hex("azul"), do: "#3B82F6"
+  defp swatch_hex("verde"), do: "#22C55E"
+  defp swatch_hex("amarillo"), do: "#F5B92D"
+  defp swatch_hex("rojo"), do: "#EF4444"
+  defp swatch_hex(_), do: "#E5E7EB"
 
   # --- Lienzo del editor de grid (hoja de cálculo) --------------------------
   # Reemplaza al viejo botón fijo "‹ Volver al árbol" — ya no hay un único
@@ -1861,6 +2455,9 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   attr :celda_seleccionada, :map, default: nil
   attr :puede_deshacer, :boolean, default: false
   attr :puede_rehacer, :boolean, default: false
+  attr :campos, :list, default: []
+  attr :catalogos_disponibles, :list, default: []
+  attr :catalogos_detalle_disponibles, :list, default: []
 
   defp grid_editor(%{grid: nil} = assigns) do
     ~H"""
@@ -1914,12 +2511,26 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         <div class="w-px h-5 bg-gray-200 mx-1"></div>
         <button type="button" phx-click="grid_deshacer" disabled={!@puede_deshacer} title="Deshacer" class={@btn}>↶ Deshacer</button>
         <button type="button" phx-click="grid_rehacer" disabled={!@puede_rehacer} title="Rehacer" class={@btn}>↷ Rehacer</button>
+        <div class="w-px h-5 bg-gray-200 mx-1"></div>
+        <div id="gc-zoom-controles" phx-hook="ZoomLienzo" data-target="gc-zoom-wrap" class="flex items-center gap-1">
+          <button type="button" class="gc-zoom-btn" data-zoom-out title="Alejar">−</button>
+          <span class="gc-zoom-label" data-zoom-label>100%</span>
+          <button type="button" class="gc-zoom-btn" data-zoom-in title="Acercar">+</button>
+          <button type="button" class={@btn} data-zoom-fit>Ajustar</button>
+        </div>
+        <button type="button" class={["toggle-cuadricula", @btn]} onclick="document.getElementById('gc-grid').classList.toggle('gc-cuadricula-on')">
+          Cuadrícula
+        </button>
+        <button type="button" class={["toggle-reglas", @btn]} onclick="document.getElementById('gc-grid').classList.toggle('gc-reglas-on')">
+          Reglas
+        </button>
       </div>
 
       <div class="overflow-auto">
+        <div id="gc-zoom-wrap" style="transform-origin: top left;">
         <div id="gc-grid" phx-hook="GridConstructor"
           class="inline-grid gc-editor"
-          style={"grid-template-columns: 32px repeat(#{@columnas}, minmax(90px,1fr)); grid-template-rows: 24px repeat(#{@filas}, minmax(32px,auto));"}>
+          style={"grid-template-columns: 32px repeat(#{@columnas}, minmax(90px,1fr)); grid-template-rows: 24px repeat(#{@filas}, minmax(46px,auto));"}>
           <div class="gc-header" style="grid-column:1;grid-row:1"></div>
 
           <button :for={c <- 0..(@columnas - 1)} type="button" phx-click="seleccionar_celda" phx-value-fila="0" phx-value-columna={c}
@@ -1933,8 +2544,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
             data-fila={celda_de_nodo(hijo)["fila"]} data-columna={celda_de_nodo(hijo)["columna"]} data-ocupada="true"
             phx-click="seleccionar_nodo" phx-value-id={hijo["id"]}
             class={["gc-celda gc-ocupada", @nodo_seleccionado_id == hijo["id"] && "gc-celda-activa"]}>
-            <span class="text-gray-400 flex-shrink-0"><.icono tipo={icono_de_nodo(hijo)} /></span>
-            <span class="truncate">{etiqueta_nodo(hijo)}</span>
+            <.vista_documento_nodo nodo={hijo} campos={@campos} catalogos_disponibles={@catalogos_disponibles} catalogos_detalle_disponibles={@catalogos_detalle_disponibles} />
           </div>
 
           <div :for={{f, c} <- @celdas_vacias}
@@ -1944,9 +2554,146 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
             +
           </div>
         </div>
+        </div>
       </div>
     </div>
     """
+  end
+
+  # --- Vista "documento" de una celda ocupada (Fase 1 rediseño) --------------
+  # Reemplaza al chip esquemático "Ícono + Tipo — etiqueta" de antes: cada
+  # tipo se ve parecido a como va a salir realmente (tipografía/color), con
+  # los campos de datos mostrando `{{campo}}` en vez de una etiqueta técnica
+  # (no hay registro real en tiempo de diseño — el valor resuelto de verdad
+  # solo existe en "Vista previa", que abre la Ficha real). Los contenedores
+  # (sección/panel/pestañas/etc., sin contenido propio a este nivel — su
+  # contenido vive un nivel más adentro, ver "Editar contenido →") se quedan
+  # con el ícono + etiqueta de siempre, con mejor tipografía.
+  attr :nodo, :map, required: true
+  attr :campos, :list, default: []
+  attr :catalogos_disponibles, :list, default: []
+  attr :catalogos_detalle_disponibles, :list, default: []
+
+  defp vista_documento_nodo(%{nodo: %{"tipo" => "campo"}} = assigns) do
+    assigns = assign(assigns, :etiqueta, etiqueta_campo_por_nombre(assigns.campos, assigns.nodo["propiedades"]["campo"]))
+
+    ~H"""
+    <div class="gc-doc-campo">
+      <div class="gc-doc-label">{@etiqueta}</div>
+      <div class="gc-doc-var">{"{{#{@nodo["propiedades"]["campo"] || "campo"}}}"}</div>
+    </div>
+    """
+  end
+
+  defp vista_documento_nodo(%{nodo: %{"tipo" => "etiqueta"}} = assigns) do
+    ~H"""
+    <div class={"gc-doc-etiqueta gc-doc-estilo-#{@nodo["propiedades"]["estilo"] || "parrafo"}"}>
+      <span :if={@nodo["propiedades"]["icono"] not in [nil, ""]}>{@nodo["propiedades"]["icono"]}</span>
+      {@nodo["propiedades"]["texto"]}
+    </div>
+    """
+  end
+
+  defp vista_documento_nodo(%{nodo: %{"tipo" => "tarjeta"}} = assigns) do
+    ~H"""
+    <div class="gc-doc-tarjeta">
+      <div class="gc-doc-tarjeta-titulo">
+        <span :if={@nodo["propiedades"]["icono"] not in [nil, ""]}>{@nodo["propiedades"]["icono"]}</span>
+        {@nodo["propiedades"]["titulo"]}
+      </div>
+      <div class="gc-doc-tarjeta-texto">{@nodo["propiedades"]["texto"]}</div>
+    </div>
+    """
+  end
+
+  defp vista_documento_nodo(%{nodo: %{"tipo" => "alerta"}} = assigns) do
+    ~H"""
+    <div class={"gc-doc-alerta gc-doc-nivel-#{@nodo["propiedades"]["nivel"] || "info"}"}>{@nodo["propiedades"]["texto"]}</div>
+    """
+  end
+
+  defp vista_documento_nodo(%{nodo: %{"tipo" => "divisor"}} = assigns) do
+    ~H"""
+    <div class="gc-doc-divisor">
+      <span :if={@nodo["propiedades"]["titulo"] not in [nil, ""]}>{@nodo["propiedades"]["titulo"]}</span>
+    </div>
+    """
+  end
+
+  defp vista_documento_nodo(%{nodo: %{"tipo" => "tabla"}} = assigns) do
+    columnas =
+      assigns.catalogos_disponibles
+      |> campos_de_catalogo(assigns.nodo["propiedades"]["catalogo"])
+      |> Enum.take(3)
+      |> Enum.map(& &1.schema_context_properties["etiqueta"])
+
+    assigns = assign(assigns, :columnas, columnas)
+
+    ~H"""
+    <div class="gc-doc-tabla">
+      <div class="gc-doc-tabla-titulo">{@nodo["propiedades"]["titulo"]}</div>
+      <div :if={@columnas != []} class="gc-doc-tabla-head">
+        <span :for={c <- @columnas}>{c}</span>
+      </div>
+      <p :if={@columnas == []} class="gc-doc-hint">Elegí un catálogo relacionado →</p>
+    </div>
+    """
+  end
+
+  defp vista_documento_nodo(%{nodo: %{"tipo" => "renglones"}} = assigns) do
+    detalle = Enum.find(assigns.catalogos_detalle_disponibles, &(&1.nombre == assigns.nodo["propiedades"]["catalogo"]))
+    titulo = if assigns.nodo["propiedades"]["titulo"] not in [nil, ""], do: assigns.nodo["propiedades"]["titulo"], else: detalle && detalle.etiqueta
+    columnas = if detalle, do: detalle.columnas_tabla |> Enum.take(3) |> Enum.map(& &1.schema_context_properties["etiqueta"]), else: []
+
+    assigns = assigns |> assign(:titulo, titulo || "Renglones de detalle") |> assign(:columnas, columnas)
+
+    ~H"""
+    <div class="gc-doc-tabla">
+      <div class="gc-doc-tabla-titulo">{@titulo}</div>
+      <div :if={@columnas != []} class="gc-doc-tabla-head">
+        <span :for={c <- @columnas}>{c}</span>
+      </div>
+      <p :if={@columnas == []} class="gc-doc-hint">Elegí un detalle →</p>
+    </div>
+    """
+  end
+
+  defp vista_documento_nodo(%{nodo: %{"tipo" => "campo_calculado"}} = assigns) do
+    formula = (assigns.nodo["propiedades"]["formula"] || "") |> Formula.tokens_para_mostrar() |> Enum.map_join(" ", &texto_legible_token(&1, assigns.campos))
+    assigns = assign(assigns, :formula, formula)
+
+    ~H"""
+    <div class="gc-doc-calculado">
+      <div class="gc-doc-label">{@nodo["propiedades"]["etiqueta"]}</div>
+      <div class="gc-doc-formula"><span class="gc-doc-fx">ƒx</span> {@formula}</div>
+    </div>
+    """
+  end
+
+  defp vista_documento_nodo(%{nodo: %{"tipo" => "boton"}} = assigns) do
+    ~H"""
+    <button type="button" disabled class={"gc-doc-boton gc-doc-boton-#{@nodo["propiedades"]["estilo"] || "primario"}"}>
+      {@nodo["propiedades"]["etiqueta"]}
+    </button>
+    """
+  end
+
+  defp vista_documento_nodo(assigns) do
+    ~H"""
+    <div class="gc-doc-generico">
+      <span class="text-gray-400 flex-shrink-0"><.icono tipo={icono_de_nodo(@nodo)} /></span>
+      <span class="truncate">{etiqueta_nodo(@nodo)}</span>
+    </div>
+    """
+  end
+
+  defp etiqueta_campo_por_nombre(_campos, nil), do: "(sin elegir)"
+
+  defp etiqueta_campo_por_nombre(campos, campo_field) do
+    case Enum.find(campos, &(&1.schema_context_field == campo_field)) do
+      nil -> campo_field
+      c -> c.schema_context_properties["etiqueta"] || campo_field
+    end
   end
 
   defp celdas_ocupadas(grid) do
@@ -2074,10 +2821,19 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   # de que exista al menos un catálogo relacionado (@catalogos_disponibles);
   # sin eso sus paneles no muestran nada, así que ni se ofrecen como tarjeta.
   # "Condición" no depende de catálogos relacionados y siempre se muestra.
-  defp herramientas_calculado([]), do: [{"condicion", "?", "Condición"}]
+  # "formula" SIEMPRE primero -- es la opción "Asistente" por defecto
+  # (2026-08-14, pregunta inicial "¿Cómo querés obtener este valor?" en
+  # panel_propiedades/1 de campo_calculado), las demás son las
+  # herramientas que ya existían como "¿Qué querés agregar?".
+  defp herramientas_calculado([]), do: [{"formula", "ƒ", "Fórmula / cálculo"}, {"condicion", "?", "Condición"}]
 
   defp herramientas_calculado(_catalogos_disponibles) do
-    [{"condicion", "?", "Condición"}, {"resumen", "Σ", "Resumen"}, {"lookup", "🔗", "Otro registro"}]
+    [
+      {"formula", "ƒ", "Fórmula / cálculo"},
+      {"condicion", "?", "Condición"},
+      {"resumen", "Σ", "Resumen"},
+      {"lookup", "🔗", "Otro registro"}
+    ]
   end
 
   # Contra el registro de muestra de ESTE catálogo (el mismo que usa el
@@ -2238,6 +2994,12 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
             <option value="distinto" selected={@condicion["operador"] == "distinto"}>es distinto de</option>
             <option value="vacio" selected={@condicion["operador"] == "vacio"}>está vacío</option>
             <option value="no_vacio" selected={@condicion["operador"] == "no_vacio"}>no está vacío</option>
+            <%= if @condicion["campo"] != "__estado__" do %>
+              <option value="mayor" selected={@condicion["operador"] == "mayor"}>es mayor que</option>
+              <option value="menor" selected={@condicion["operador"] == "menor"}>es menor que</option>
+              <option value="mayor_igual" selected={@condicion["operador"] == "mayor_igual"}>es mayor o igual que</option>
+              <option value="menor_igual" selected={@condicion["operador"] == "menor_igual"}>es menor o igual que</option>
+            <% end %>
           </select>
 
           <%= if @condicion["operador"] in ["igual", "distinto"] do %>
@@ -2248,6 +3010,10 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
             <input :if={@condicion["campo"] != "__estado__"} type="text" name="valor" value={@condicion["valor"]}
               placeholder="Valor a comparar" class="w-full border border-gray-300 rounded px-2 py-1.5" />
           <% end %>
+
+          <input :if={@condicion["operador"] in ["mayor", "menor", "mayor_igual", "menor_igual"]}
+            type="number" step="any" name="valor" value={@condicion["valor"]}
+            placeholder="Número a comparar" class="w-full border border-gray-300 rounded px-2 py-1.5" />
         <% end %>
       </form>
     </div>
@@ -2330,6 +3096,23 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     ~H"""
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="3" y1="9" x2="21" y2="9" /><line x1="3" y1="15" x2="21" y2="15" /><line x1="12" y1="3" x2="12" y2="21" />
+    </svg>
+    """
+  end
+
+  defp icono(%{tipo: "lista_rapida"} = assigns) do
+    ~H"""
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" />
+      <line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" />
+    </svg>
+    """
+  end
+
+  defp icono(%{tipo: "renglones"} = assigns) do
+    ~H"""
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 10h18" /><path d="M3 15h18" />
     </svg>
     """
   end
@@ -2432,6 +3215,31 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
 
   # "campo" genérico (canvas, cuando no tiene tipo_filtro guardado — ej.
   # plantillas creadas antes de que existiera esa propiedad) + catch-all.
+  defp icono(%{tipo: "resumen"} = assigns) do
+    ~H"""
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="12" y1="20" x2="12" y2="10" /><line x1="18" y1="20" x2="18" y2="4" /><line x1="6" y1="20" x2="6" y2="16" />
+    </svg>
+    """
+  end
+
+  defp icono(%{tipo: "vista_previa"} = assigns) do
+    ~H"""
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" />
+    </svg>
+    """
+  end
+
+  defp icono(%{tipo: "timeline"} = assigns) do
+    ~H"""
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="4" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="20" cy="12" r="1.5" />
+      <line x1="5.5" y1="12" x2="10.5" y2="12" /><line x1="13.5" y1="12" x2="18.5" y2="12" />
+    </svg>
+    """
+  end
+
   defp icono(assigns) do
     ~H"""
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

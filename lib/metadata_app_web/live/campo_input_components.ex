@@ -125,10 +125,11 @@ defmodule MetadataAppWeb.CampoInputComponents do
   end
 
   # AbrirCalendario (mismo hook que ya usa "Filtros por default" en
-  # BcMotorLive): sin esto, un clic en cualquier parte del input que no
-  # sea el iconito diminuto del calendario nativo deja al usuario
-  # tipeando dígito por dígito sin ningún selector visual — showPicker()
-  # fuerza el calendario con cualquier clic/foco en el campo.
+  # BcMotorLive): el iconito nativo del calendario queda oculto (CSS) —
+  # `data-abrir-calendario` es la flechita real que lo reemplaza, ver
+  # app.js. Un clic en el resto del campo (donde vive el texto) no toca el
+  # picker, así se puede tipear la fecha a mano sin que el overlay se
+  # abra solo y se coma las teclas.
   def campo_input(%{columna: %{schema_context_properties: %{"tipo" => "date"}}} = assigns) do
     assigns = assign_name(assigns)
     assigns = assign(assigns, :dom_id, assigns.id || "campo-#{String.replace(assigns.name, ~r/[\[\]]/, "-")}")
@@ -136,9 +137,13 @@ defmodule MetadataAppWeb.CampoInputComponents do
     ~H"""
     <div>
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
-      <input type="date" name={@name} value={@valor} required={@required} disabled={@disabled}
-        id={@dom_id} phx-hook="AbrirCalendario"
-        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+      <div class="relative">
+        <input type="date" name={@name} value={@valor} required={@required} disabled={@disabled}
+          id={@dom_id} phx-hook="AbrirCalendario"
+          class="w-full border border-gray-300 rounded text-gray-900 pl-1.5 pr-6 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+        <button :if={!@disabled} type="button" tabindex="-1" data-abrir-calendario aria-label="Abrir calendario"
+          class="pc-abrir-calendario absolute right-1 top-1/2 -translate-y-1/2 material-symbols-outlined" style="font-size:16px">expand_more</button>
+      </div>
     </div>
     """
   end
@@ -153,9 +158,13 @@ defmodule MetadataAppWeb.CampoInputComponents do
     ~H"""
     <div>
       <label :if={@mostrar_etiqueta} class="block text-gray-500 mb-px text-[11px] leading-tight">{@columna.schema_context_properties["etiqueta"]} <span class="text-red-500">*</span></label>
-      <input type="time" name={@name} value={@valor} required={@required} disabled={@disabled}
-        id={@dom_id} phx-hook="AbrirCalendario"
-        class="w-full border border-gray-300 rounded text-gray-900 px-1.5 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+      <div class="relative">
+        <input type="time" name={@name} value={@valor} required={@required} disabled={@disabled}
+          id={@dom_id} phx-hook="AbrirCalendario"
+          class="w-full border border-gray-300 rounded text-gray-900 pl-1.5 pr-6 py-0.5 text-xs leading-tight disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed" />
+        <button :if={!@disabled} type="button" tabindex="-1" data-abrir-calendario aria-label="Abrir calendario"
+          class="pc-abrir-calendario absolute right-1 top-1/2 -translate-y-1/2 material-symbols-outlined" style="font-size:16px">expand_more</button>
+      </div>
     </div>
     """
   end

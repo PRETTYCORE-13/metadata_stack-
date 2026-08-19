@@ -321,24 +321,40 @@ const CopiarRuta = {
   },
 }
 
-// <input type="date"> de "Filtros por default" (bc_motor_live.ex,
-// panel_filtros_default/1) — sin esto, un clic en cualquier parte del
-// campo que no sea el iconito diminuto del calendario deja al usuario
-// tipeando dígito por dígito (día/mes/año sueltos, sin validar que la
-// combinación exista de verdad). showPicker() fuerza el selector visual
-// nativo con cualquier clic/foco en el input.
+// <input type="date">/"time" de "Filtros por default" (bc_motor_live.ex,
+// panel_filtros_default/1) y de campo_input_components.ex (tipo
+// "date"/"hora"): antes este hook forzaba showPicker() en CUALQUIER clic
+// o foco del campo, para que el iconito diminuto del calendario nativo no
+// pasara desapercibido. Problema real (reporte de usuaria, campo "Fecha
+// inicial"): con el overlay del picker abierto, Chromium le manda las
+// teclas a la navegación del propio calendario en vez de a los segmentos
+// dd/mm/aaaa del input — tipear la fecha a mano queda bloqueado del todo,
+// no sólo el primer clic. Sacar el auto-abrir del todo tampoco sirve: el
+// iconito nativo es tan chico (y a veces invisible del todo, ver CSS)
+// que en la práctica nadie lo encuentra para abrir el picker con el
+// mouse. Solución: el iconito nativo se oculta por completo (CSS) y en
+// su lugar cada campo trae un botón de flechita real y visible
+// (`[data-abrir-calendario]`, mismo div contenedor que el input) — sólo
+// ESE botón dispara showPicker(), nunca un clic en el campo de texto.
 const AbrirCalendario = {
   mounted() {
-    this.el.addEventListener("click", () => this.abrir())
-    this.el.addEventListener("focus", () => this.abrir())
-    // Modo "fecha" de "Formato de captura" (campo_input_components.ex):
-    // este <input type="date"> vive oculto (sr-only) al lado de un input
-    // de texto con máscara "99/99/9999" — `data-destino` es el id de ESE
-    // input. Elegir una fecha acá la escribe ya formateada ahí (en vez de
-    // reemplazarlo por un date input real, que perdería la posibilidad de
-    // seguir tipeando el patrón a mano) y dispara "input" para que el
-    // phx-change de siempre la vea.
-    if (this.el.dataset.destino) this.el.addEventListener("change", () => this.sincronizar())
+    if (this.el.dataset.destino) {
+      // Modo "fecha" de "Formato de captura" (campo_input_components.ex):
+      // este <input type="date"> vive oculto (sr-only) al lado de un
+      // input de texto con máscara "99/99/9999" — `data-destino` es el
+      // id de ESE input. Acá SÍ hace falta forzar el picker en cualquier
+      // clic (el input real nunca se ve ni se tipea directamente, sólo
+      // se llega a él por su <label> "calendar_month", nunca por un clic
+      // "de tipear"). Elegir una fecha ahí escribe el valor YA formateado
+      // en el input de texto (en vez de reemplazarlo por un date input
+      // real, que perdería la posibilidad de seguir tipeando el patrón a
+      // mano) y dispara "input" para que el phx-change de siempre la vea.
+      this.el.addEventListener("click", () => this.abrir())
+      this.el.addEventListener("change", () => this.sincronizar())
+    } else {
+      const boton = this.el.parentElement?.querySelector("[data-abrir-calendario]")
+      if (boton) boton.addEventListener("click", () => this.abrir())
+    }
   },
   abrir() {
     if (typeof this.el.showPicker === "function") this.el.showPicker()
@@ -350,6 +366,61 @@ const AbrirCalendario = {
     destino.value = `${dia}/${mes}/${anio}`
     destino.dispatchEvent(new Event("input", {bubbles: true}))
     destino.focus()
+  },
+}
+
+// "Recordar si el usuario la dejó abierta" de Sección (ficha_live.ex,
+// nodo_plantilla_render/1 "seccion" colapsable) — <details> nativo,
+// 100% del lado del cliente (localStorage, sin round-trip al servidor):
+// el navegador ya togglea open/close solo con el <summary>, esto solo
+// recuerda esa elección entre visitas. Clave por id de nodo (único
+// dentro de la plantilla) -- el evento "toggle" es nativo de <details>.
+const RecordarSeccion = {
+  mounted() {
+    const llave = `pc-seccion-${this.el.id}`
+    const guardado = localStorage.getItem(llave)
+    if (guardado !== null) this.el.open = guardado === "true"
+
+    this.el.addEventListener("toggle", () => localStorage.setItem(llave, this.el.open))
+  },
+}
+
+// Vista de impresión de la Ficha 360° (?imprimir=1, ver render/1 en
+// ficha_live.ex): esa pestaña nueva no tiene ningún botón "Imprimir" propio
+// (sería el mismo botón que la abrió) — dispara el diálogo de impresión del
+// navegador solo, al montar.
+const AutoImprimir = {
+  mounted() {
+    window.print()
+  },
+}
+
+// Zoom del lienzo del Constructor (PlantillaConstructorLive.grid_editor/1,
+// botones +/-/Ajustar) — 100% cliente, nunca pushEvent al servidor (no
+// cambia nada de la definición, solo cómo se ve mientras se edita).
+// this.el es el contenedor de los 3 botones + la etiqueta de porcentaje;
+// data-target apunta al id del elemento que se escala de verdad.
+const ZoomLienzo = {
+  mounted() {
+    this.zoom = 100
+    const objetivo = document.getElementById(this.el.dataset.target)
+    const label = this.el.querySelector("[data-zoom-label]")
+    const aplicar = () => {
+      objetivo.style.transform = `scale(${this.zoom / 100})`
+      label.textContent = `${this.zoom}%`
+    }
+    this.el.querySelector("[data-zoom-in]").addEventListener("click", () => {
+      this.zoom = Math.min(200, this.zoom + 10)
+      aplicar()
+    })
+    this.el.querySelector("[data-zoom-out]").addEventListener("click", () => {
+      this.zoom = Math.max(40, this.zoom - 10)
+      aplicar()
+    })
+    this.el.querySelector("[data-zoom-fit]").addEventListener("click", () => {
+      this.zoom = 100
+      aplicar()
+    })
   },
 }
 
@@ -788,7 +859,7 @@ const AbrirVistaPrevia = {
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField, UnidadOperativaWatcher},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField, UnidadOperativaWatcher, RecordarSeccion, AutoImprimir, ZoomLienzo},
 })
 
 // Show progress bar on live navigation and form submits
