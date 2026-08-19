@@ -818,8 +818,12 @@ defmodule MetadataAppWeb.FichaLive do
       # Mismo criterio que guardar_alta/2: el changeset puede ser del
       # encabezado (error normal de campo) o de un renglón nuevo/editado —
       # solo el primero tiene sentido campo por campo en @errores_campos.
+      # errores_campos solo se pinta dentro de tab_datos/1 (ver render/1) —
+      # si el usuario guardó desde otra pestaña (ej. Detalle, agregando un
+      # renglón nuevo), sin este cambio de tab el error queda invisible: el
+      # clic en "Guardar" parece no hacer nada (encontrado real, 2026-08-19).
       {:error, %Ecto.Changeset{data: %struct{}} = changeset} when struct == registro_actual.__struct__ ->
-        {:noreply, assign(socket, :errores_campos, MetadataApp.MetaErrores.traducir(changeset))}
+        {:noreply, socket |> assign(:tab, "datos") |> assign(:errores_campos, MetadataApp.MetaErrores.traducir(changeset))}
 
       {:error, razon} ->
         {:noreply, assign(socket, :error_guardado, formatear_error(razon))}
@@ -1196,6 +1200,14 @@ defmodule MetadataAppWeb.FichaLive do
         |> MetaSchemaContext.listar_detalles()
         |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
         |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
+        # "editable" => false (ej. fecha_registro, ver asegurar_detalle_fecha_registro/1
+        # en catalogo_generador.ex) es un campo de SISTEMA: el server lo pisa
+        # solo en cada insert/transición, nunca hay un camino real para que el
+        # usuario lo cambie. Afuera del grid de renglones a propósito — dejarlo
+        # entrar significaba una celda editable y "obligatoria" (grid_editable.js
+        # exige valor si no viene marcada "opcional") para un dato que el
+        # usuario no puede completar de verdad, bloqueando "Guardar".
+        |> Enum.reject(&(get_in(&1, [:schema_context_properties, "editable"]) == false))
         |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
         |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1)))
 

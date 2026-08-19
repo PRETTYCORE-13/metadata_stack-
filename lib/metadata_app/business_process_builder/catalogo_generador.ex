@@ -60,12 +60,15 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
             migrar()
             recompilar_schema(schema_context_name)
 
-            # Plantilla de Ficha 360° automática — solo acá (catálogo
-            # recién nacido), nunca en la rama "ya_existia" de arriba.
-            # Best-effort: si falla, el catálogo ya está creado igual, que
-            # es lo que de verdad importa.
-            MetaPlantillas.crear_plantilla_default(header)
+            # asegurar_detalle_fecha_registro/1 ANTES que crear_plantilla_default/1
+            # a propósito: la plantilla automática arma sus filas a partir de
+            # meta_schema_detail en ESE momento (ver definicion_automatica/1) — si
+            # "fecha_registro" todavía no existiera ahí, la plantilla arrancaría
+            # sin esa fila para siempre (el catálogo ya creado no vuelve a pasar
+            # por acá). Best-effort: si falla, el catálogo ya está creado igual,
+            # que es lo que de verdad importa.
             asegurar_detalle_fecha_registro(header)
+            MetaPlantillas.crear_plantilla_default(header)
 
             {:ok, %{tabla: schema_context_name, modulo: modulo, ya_existia: false}}
           end

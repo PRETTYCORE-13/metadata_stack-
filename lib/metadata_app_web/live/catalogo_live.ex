@@ -203,7 +203,12 @@ defmodule MetadataAppWeb.CatalogoLive do
         %{clave: c.schema_context_field, etiqueta: get_in(c.schema_context_properties, ["etiqueta"]), tipo_columna: :negocio, columna: c}
       end)
 
-    todas = control ++ negocio
+    # ID va antes de negocio, el resto de control después — mismo orden
+    # visual que la tabla ya mostraba antes de este Get View unificado
+    # (id | campos de negocio | estado/trn/empresa/... ), para no romper
+    # ningún catálogo ya publicado que nunca configuró orden_columnas_tabla.
+    {id_control, resto_control} = Enum.split_with(control, &(&1.clave == "id"))
+    todas = id_control ++ negocio ++ resto_control
 
     case header.orden_columnas_tabla do
       [] ->

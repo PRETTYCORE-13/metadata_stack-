@@ -2276,6 +2276,16 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   attr :longitudes_columnas, :map, default: %{}
 
   defp panel_campos(assigns) do
+    # "fecha_registro" es un campo de CONTROL del BC (como insert_guid,
+    # creado_por_id, branch_id...) — el server lo pisa solo en cada alta
+    # (ver catalogo_generico.ex:605), nunca hay nada que editarle/
+    # eliminarle acá. Tiene fila propia en meta_schema_detail solo para
+    # que Get View lo pueda mostrar/ordenar como columna (ver
+    # asegurar_detalle_fecha_registro/1 en catalogo_generador.ex) — no
+    # se toca @campos en sí (lo sigue necesitando filas_get_view/2 y el
+    # resto de la pestaña), solo se lo saca de ESTA tabla de gestión.
+    assigns = assign(assigns, :campos, Enum.reject(assigns.campos, &(&1.schema_context_field == "fecha_registro")))
+
     ~H"""
     <div class="border border-gray-200 rounded-lg">
       <div class="px-1.5 ml-2 -mb-2 relative">
@@ -2594,7 +2604,12 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         }
       end)
 
-    todas = control ++ negocio
+    # ID va antes de negocio, el resto de control después — mismo orden
+    # visual que CatalogoLive ya mostraba antes de este Get View unificado
+    # (id | campos de negocio | estado/trn/empresa/... ), ver
+    # construir_columnas_render/3 en catalogo_live.ex (misma lógica).
+    {id_control, resto_control} = Enum.split_with(control, &(&1.clave == "id"))
+    todas = id_control ++ negocio ++ resto_control
 
     case header.orden_columnas_tabla do
       [] ->
