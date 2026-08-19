@@ -15,11 +15,28 @@ defmodule MetadataAppWeb.CatalogoLive do
   alias MetadataApp.Autenticacion.InventoryLocation
   alias MetadataApp.Autenticacion.Empresa
   alias MetadataApp.Repo
+  alias MetadataApp.MetaAuditoria
   alias MetadataAppWeb.AdminNav
   alias MetadataAppWeb.CampoInputComponents
   import Ecto.Query
 
   @por_pagina 25
+
+  # Get View unificado (ver panel_get_view/1 en BcMotorLive) — mismas 8
+  # claves de control que allá, en el mismo orden de siempre (para
+  # catálogos que nunca configuraron Header.orden_columnas_tabla, ver
+  # construir_columnas_render/3).
+  @claves_control ~w(id estado trn empresa branch inventory_location sales_unit creado_por)
+  @etiquetas_control %{
+    "id" => "ID",
+    "estado" => "Estado",
+    "trn" => "TRN",
+    "empresa" => "Empresa",
+    "branch" => "Sucursal",
+    "inventory_location" => "Almacén",
+    "sales_unit" => "Unidad de venta",
+    "creado_por" => "Creado por"
+  }
 
   def mount(%{"ruta" => segmentos}, _session, socket) do
     nav = "/" <> Enum.join(segmentos, "/")
@@ -90,19 +107,46 @@ defmodule MetadataAppWeb.CatalogoLive do
     estados_por_id = MetaStateEngine.mapa_nombres_estados(header.schema_context_name)
     filtros = Map.merge(filtros_default_desde_columnas(columnas), filtros_por_default(header))
 
+    mostrar_id? = header.mostrar_id_en_tabla
+    mostrar_estado? = estados_por_id != %{} and header.mostrar_estado_en_tabla
+    mostrar_trn? = header.schema_es_transaccional and header.mostrar_trn_en_tabla
+    mostrar_empresa? = header.alcance_habilitado and header.mostrar_empresa_en_tabla
+    mostrar_branch? = header.alcance_habilitado and header.mostrar_branch_en_tabla
+    mostrar_inventory_location? = header.alcance_habilitado and header.mostrar_inventory_location_en_tabla
+    mostrar_sales_unit? = header.alcance_habilitado and header.mostrar_sales_unit_en_tabla
+    mostrar_creado_por? = header.mostrar_creado_por_en_tabla
+
+    {bc_creado_por, campo_id_creado_por} = origen_creado_por(header, es_detalle?)
+
+    columnas_render =
+      construir_columnas_render(header, columnas, %{
+        "id" => mostrar_id?,
+        "estado" => mostrar_estado?,
+        "trn" => mostrar_trn?,
+        "empresa" => mostrar_empresa?,
+        "branch" => mostrar_branch?,
+        "inventory_location" => mostrar_inventory_location?,
+        "sales_unit" => mostrar_sales_unit?,
+        "creado_por" => mostrar_creado_por?
+      })
+
     {:ok,
      socket
      |> assign(:current_page, header.schema_context_name)
      |> assign(:encontrado?, true)
      |> assign(:label, header.schema_context_label)
      |> assign(:columnas, columnas)
-     |> assign(:mostrar_id?, header.mostrar_id_en_tabla)
-     |> assign(:mostrar_estado?, estados_por_id != %{} and header.mostrar_estado_en_tabla)
-     |> assign(:mostrar_trn?, header.schema_es_transaccional and header.mostrar_trn_en_tabla)
-     |> assign(:mostrar_empresa?, header.alcance_habilitado and header.mostrar_empresa_en_tabla)
-     |> assign(:mostrar_branch?, header.alcance_habilitado and header.mostrar_branch_en_tabla)
-     |> assign(:mostrar_inventory_location?, header.alcance_habilitado and header.mostrar_inventory_location_en_tabla)
-     |> assign(:mostrar_sales_unit?, header.alcance_habilitado and header.mostrar_sales_unit_en_tabla)
+     |> assign(:columnas_render, columnas_render)
+     |> assign(:mostrar_id?, mostrar_id?)
+     |> assign(:mostrar_estado?, mostrar_estado?)
+     |> assign(:mostrar_trn?, mostrar_trn?)
+     |> assign(:mostrar_empresa?, mostrar_empresa?)
+     |> assign(:mostrar_branch?, mostrar_branch?)
+     |> assign(:mostrar_inventory_location?, mostrar_inventory_location?)
+     |> assign(:mostrar_sales_unit?, mostrar_sales_unit?)
+     |> assign(:mostrar_creado_por?, mostrar_creado_por?)
+     |> assign(:bc_creado_por, bc_creado_por)
+     |> assign(:campo_id_creado_por, campo_id_creado_por)
      |> assign(:modulo, modulo)
      |> assign(:es_detalle?, es_detalle?)
      |> assign(:campos_alta, campos_alta)
@@ -124,6 +168,51 @@ defmodule MetadataAppWeb.CatalogoLive do
        FiltrosDefault.descripcion(header.filtro_default_fecha_modo, header.filtro_default_fecha_valor, header.filtro_default_fecha_valor_hasta)
      )
      |> cargar_filas()}
+  end
+
+  # "Creado por" (Get View) se resuelve contra meta_schema_auditoria, nunca
+  # una columna física — para un catálogo detalle usa el `bc`/id del
+  # MAESTRO (quién creó el registro completo), no los del renglón mismo
+  # (quién cargó esa línea puntual), a pedido explícito.
+  defp origen_creado_por(header, false), do: {header.schema_context_name, :id}
+
+  defp origen_creado_por(header, true) do
+    maestro = MetaSchemaContext.obtener_header!(header.schema_encabezado_id)
+    {maestro.schema_context_name, :encabezado_id}
+  end
+
+  # Combina los campos de negocio (@columnas, ya filtrados por "visible" y
+  # ordenados por "orden") con los descriptores de control habilitados
+  # (según los flags calculados en montar_catalogo/2) en una sola lista,
+  # ordenada por Header.orden_columnas_tabla — mismo criterio que
+  # filas_get_view/2 en BcMotorLive (que arma la MISMA lista pero sin
+  # filtrar por visibilidad, para poder prenderla desde ahí). Lo que no
+  # esté en orden_columnas_tabla cae al final (Enum.sort_by/2 es estable),
+  # control primero y de negocio después — mismo orden visual que ya
+  # tenía la versión vieja separada.
+  defp construir_columnas_render(header, columnas, flags) do
+    control =
+      @claves_control
+      |> Enum.filter(&Map.fetch!(flags, &1))
+      |> Enum.map(fn clave ->
+        %{clave: clave, etiqueta: Map.fetch!(@etiquetas_control, clave), tipo_columna: String.to_existing_atom(clave), columna: nil}
+      end)
+
+    negocio =
+      Enum.map(columnas, fn c ->
+        %{clave: c.schema_context_field, etiqueta: get_in(c.schema_context_properties, ["etiqueta"]), tipo_columna: :negocio, columna: c}
+      end)
+
+    todas = control ++ negocio
+
+    case header.orden_columnas_tabla do
+      [] ->
+        todas
+
+      orden ->
+        indice = orden |> Enum.with_index() |> Map.new()
+        Enum.sort_by(todas, &Map.get(indice, &1.clave, map_size(indice)))
+    end
   end
 
   defp construir_columnas(schema_context_name) do
@@ -551,6 +640,7 @@ defmodule MetadataAppWeb.CatalogoLive do
         registros
         |> Enum.map(&CatalogoGenerico.serializar(&1, estados_por_id, acompanamiento))
         |> agregar_alcance_a_filas(socket.assigns)
+        |> agregar_creado_por_a_filas(socket.assigns)
 
       socket
       |> assign(:filas, filas)
@@ -617,6 +707,21 @@ defmodule MetadataAppWeb.CatalogoLive do
   end
 
   defp ids_unicos(filas, campo), do: filas |> Enum.map(&Map.get(&1, campo)) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+  # "Creado por" (Get View) — mismo criterio batch-por-página que
+  # agregar_alcance_a_filas/2 de arriba (una sola consulta a
+  # meta_schema_auditoria, nunca una por fila). `bc_creado_por`/
+  # `campo_id_creado_por` ya vienen resueltos desde montar_catalogo/2
+  # (origen_creado_por/2) — acá no hay que saber de nuevo si el catálogo
+  # es detalle o no.
+  defp agregar_creado_por_a_filas(filas, %{mostrar_creado_por?: false}), do: filas
+
+  defp agregar_creado_por_a_filas(filas, %{bc_creado_por: bc, campo_id_creado_por: campo}) do
+    ids = ids_unicos(filas, campo)
+    creadores = MetaAuditoria.creadores_de(bc, ids)
+
+    Enum.map(filas, &Map.put(&1, :creado_por, Map.get(creadores, Map.get(&1, campo))))
+  end
 
   # A partir de los valores crudos de la barra de filtros (todo strings,
   # como llega cualquier form) arma el mapa de filtros que entiende
@@ -1022,7 +1127,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 busqueda_campo_filtro={@busqueda_campo_filtro}
               />
             </div>
-            <.panel_campos campos={campos_selector(@columnas, @mostrar_id?, @mostrar_estado?, @mostrar_trn?, @mostrar_empresa?, @mostrar_branch?, @mostrar_inventory_location?, @mostrar_sales_unit?)} tabla_id="tabla-catalogo" />
+            <.panel_campos campos={campos_selector_render(@columnas_render)} tabla_id="tabla-catalogo" />
           </div>
         </div>
 
@@ -1037,51 +1142,11 @@ defmodule MetadataAppWeb.CatalogoLive do
           <table id="tabla-catalogo" class="min-w-full divide-y divide-gray-200 text-xs">
             <thead class="bg-gray-50">
               <tr>
-                <%= if @mostrar_id? do %>
-                  <th data-col="id" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">ID</th>
-                <% end %>
-                <%= for columna <- @columnas do %>
-                  <th data-col={col_key(columna)} class={[
-                    "px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide",
-                    alineacion_columna(columna)
-                  ]}>
-                    <span class="inline-flex items-center gap-1">
-                      {columna.schema_context_properties["etiqueta"]}
-                      <%= if columna.schema_context_properties["tipo"] == "referencia" do %>
-                        <span class="material-symbols-outlined text-blue-500" style="font-size: 13px" title={"Relación con #{columna.schema_context_properties["catalogo"]}"}>link</span>
-                      <% end %>
-                    </span>
-                  </th>
-                <% end %>
-                <%= if @mostrar_estado? do %>
-                  <th data-col="estado" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Estado</th>
-                <% end %>
-                <%= if @mostrar_trn? do %>
-                  <th data-col="trn" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">TRN</th>
-                <% end %>
-                <%= if @mostrar_empresa? do %>
-                  <th data-col="empresa" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Empresa</th>
-                <% end %>
-                <%= if @mostrar_branch? do %>
-                  <th data-col="branch" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Sucursal</th>
-                <% end %>
-                <%= if @mostrar_inventory_location? do %>
-                  <th data-col="inventory_location" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Almacén</th>
-                <% end %>
-                <%= if @mostrar_sales_unit? do %>
-                  <th data-col="sales_unit" class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Unidad de venta</th>
-                <% end %>
+                <.celda_encabezado :for={col <- @columnas_render} col={col} />
                 <th class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"></th>
               </tr>
               <tr class="bg-gray-50/60 border-t border-gray-100">
-                <th :if={@mostrar_id?} data-col="id" class="px-2 py-1.5 sm:px-4"></th>
-                <.fila_filtros_columnas columnas={@columnas} filtros={@filtros} />
-                <th :if={@mostrar_estado?} data-col="estado" class="px-2 py-1.5 sm:px-4"></th>
-                <th :if={@mostrar_trn?} data-col="trn" class="px-2 py-1.5 sm:px-4"></th>
-                <th :if={@mostrar_empresa?} data-col="empresa" class="px-2 py-1.5 sm:px-4"></th>
-                <th :if={@mostrar_branch?} data-col="branch" class="px-2 py-1.5 sm:px-4"></th>
-                <th :if={@mostrar_inventory_location?} data-col="inventory_location" class="px-2 py-1.5 sm:px-4"></th>
-                <th :if={@mostrar_sales_unit?} data-col="sales_unit" class="px-2 py-1.5 sm:px-4"></th>
+                <.celda_filtro :for={col <- @columnas_render} col={col} filtros={@filtros} />
                 <th class="px-2 py-1.5 sm:px-4"></th>
               </tr>
             </thead>
@@ -1090,39 +1155,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <tr class="hover:bg-purple-50/60 transition-colors cursor-pointer"
                   ondblclick={"window.location='/registro/#{@current_page}/#{fila.id}'"}
                   onclick={"if (window.matchMedia('(pointer: coarse)').matches && !event.target.closest('a')) { window.location='/registro/#{@current_page}/#{fila.id}' }"}>
-                  <%= if @mostrar_id? do %>
-                    <td data-col="id" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">
-                      {fila.id}
-                    </td>
-                  <% end %>
-                  <%= for columna <- @columnas do %>
-                    <% valor = Map.get(fila, String.to_existing_atom(columna.schema_context_field)) %>
-                    <td data-col={col_key(columna)} class={[
-                      "px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px]",
-                      alineacion_columna(columna),
-                      clase_valor_celda(valor, columna.schema_context_properties)
-                    ]}>
-                      {formatear_celda(valor, columna.schema_context_properties)}
-                    </td>
-                  <% end %>
-                  <%= if @mostrar_estado? do %>
-                    <td data-col="estado" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(fila, :estado_nombre)}</td>
-                  <% end %>
-                  <%= if @mostrar_trn? do %>
-                    <td data-col="trn" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700 font-mono" title={Map.get(fila, :ulid)}>{Map.get(fila, :trn)}</td>
-                  <% end %>
-                  <%= if @mostrar_empresa? do %>
-                    <td data-col="empresa" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(fila, :empresa_nombre)}</td>
-                  <% end %>
-                  <%= if @mostrar_branch? do %>
-                    <td data-col="branch" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(fila, :branch_nombre)}</td>
-                  <% end %>
-                  <%= if @mostrar_inventory_location? do %>
-                    <td data-col="inventory_location" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(fila, :inventory_nombre)}</td>
-                  <% end %>
-                  <%= if @mostrar_sales_unit? do %>
-                    <td data-col="sales_unit" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(fila, :sales_unit_nombre)}</td>
-                  <% end %>
+                  <.celda_body :for={col <- @columnas_render} col={col} fila={fila} />
                   <td class="px-4 py-1.5 text-xs text-right">
                     <.link navigate={"/registro/#{@current_page}/#{fila.id}"}
                       title="Ver ficha 360°"
@@ -1136,15 +1169,7 @@ defmodule MetadataAppWeb.CatalogoLive do
               <% end %>
               <%= if @filas == [] do %>
                 <tr>
-                  <td
-                    class="px-4 py-10 text-center text-gray-400 text-sm"
-                    colspan={
-                      1 + (if @mostrar_id?, do: 1, else: 0) + (if @mostrar_trn?, do: 1, else: 0) + length(@columnas) +
-                        (if @mostrar_estado?, do: 1, else: 0) + (if @mostrar_empresa?, do: 1, else: 0) +
-                        (if @mostrar_branch?, do: 1, else: 0) + (if @mostrar_inventory_location?, do: 1, else: 0) +
-                        if(@mostrar_sales_unit?, do: 1, else: 0)
-                    }
-                  >
+                  <td class="px-4 py-10 text-center text-gray-400 text-sm" colspan={length(@columnas_render) + 1}>
                     <%= if @sin_filtro? do %>
                       Seleccioná un filtro o buscá algo para ver los datos.
                     <% else %>
@@ -1156,21 +1181,15 @@ defmodule MetadataAppWeb.CatalogoLive do
             </tbody>
             <tfoot class="bg-gray-50 border-t-2 border-gray-300">
               <tr>
-                <td :if={@mostrar_id?} data-col="id" class="px-4 py-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 whitespace-nowrap">Resumen</td>
-                <.celdas_resumen
-                  columnas={@columnas}
+                <.celda_resumen_col
+                  :for={col <- @columnas_render}
+                  col={col}
                   agregaciones={@agregaciones}
                   valores={@agregaciones_valores}
                   minmax_valores={@minmax_valores}
                   totales_generales={@totales_generales}
                   filas={@filas}
                 />
-                <td :if={@mostrar_estado?} data-col="estado"></td>
-                <td :if={@mostrar_trn?} data-col="trn"></td>
-                <td :if={@mostrar_empresa?} data-col="empresa"></td>
-                <td :if={@mostrar_branch?} data-col="branch"></td>
-                <td :if={@mostrar_inventory_location?} data-col="inventory_location"></td>
-                <td :if={@mostrar_sales_unit?} data-col="sales_unit"></td>
                 <td></td>
               </tr>
             </tfoot>
@@ -1178,6 +1197,152 @@ defmodule MetadataAppWeb.CatalogoLive do
         </div>
       </div>
     </div>
+    """
+  end
+
+  # Las 4 piezas de abajo (celda_encabezado/celda_filtro/celda_body/
+  # celda_resumen_col) son el dispatch por tipo de columna del Get View
+  # unificado (ver construir_columnas_render/3) — una por cada fila de la
+  # tabla (título, filtro, dato, resumen), SIEMPRE en el mismo orden
+  # (@columnas_render), para que las 4 sigan alineadas verticalmente sin
+  # importar qué tan mezclados queden campos de control y de negocio.
+  # Reusan el markup exacto que ya tenía cada columna cuando la secuencia
+  # era fija — esto es reordenar código, no una funcionalidad nueva.
+  attr :col, :map, required: true
+
+  defp celda_encabezado(%{col: %{tipo_columna: :negocio}} = assigns) do
+    ~H"""
+    <th data-col={@col.clave} class={[
+      "px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide",
+      alineacion_columna(@col.columna)
+    ]}>
+      <span class="inline-flex items-center gap-1">
+        {@col.columna.schema_context_properties["etiqueta"]}
+        <%= if @col.columna.schema_context_properties["tipo"] == "referencia" do %>
+          <span class="material-symbols-outlined text-blue-500" style="font-size: 13px" title={"Relación con #{@col.columna.schema_context_properties["catalogo"]}"}>link</span>
+        <% end %>
+      </span>
+    </th>
+    """
+  end
+
+  defp celda_encabezado(assigns) do
+    ~H"""
+    <th data-col={@col.clave} class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{@col.etiqueta}</th>
+    """
+  end
+
+  attr :col, :map, required: true
+  attr :filtros, :map, required: true
+
+  defp celda_filtro(%{col: %{tipo_columna: :negocio}} = assigns) do
+    bloqueado? = assigns.col.columna.schema_context_properties["filtro_default_bloqueado"] == true
+    assigns = assign(assigns, :bloqueado?, bloqueado?)
+
+    ~H"""
+    <th data-col={@col.clave} class="px-2 py-1.5 sm:px-4 align-top">
+      <.fila_filtro_columna columna={@col.columna} valores={@filtros} bloqueado?={@bloqueado?} />
+    </th>
+    """
+  end
+
+  defp celda_filtro(assigns) do
+    ~H"""
+    <th data-col={@col.clave} class="px-2 py-1.5 sm:px-4"></th>
+    """
+  end
+
+  attr :col, :map, required: true
+  attr :fila, :map, required: true
+
+  defp celda_body(%{col: %{tipo_columna: :negocio}} = assigns) do
+    valor = Map.get(assigns.fila, String.to_existing_atom(assigns.col.columna.schema_context_field))
+    assigns = assign(assigns, :valor, valor)
+
+    ~H"""
+    <td data-col={@col.clave} class={[
+      "px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px]",
+      alineacion_columna(@col.columna),
+      clase_valor_celda(@valor, @col.columna.schema_context_properties)
+    ]}>
+      {formatear_celda(@valor, @col.columna.schema_context_properties)}
+    </td>
+    """
+  end
+
+  defp celda_body(%{col: %{tipo_columna: :id}} = assigns) do
+    ~H"""
+    <td data-col="id" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{@fila.id}</td>
+    """
+  end
+
+  defp celda_body(%{col: %{tipo_columna: :estado}} = assigns) do
+    ~H"""
+    <td data-col="estado" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(@fila, :estado_nombre)}</td>
+    """
+  end
+
+  defp celda_body(%{col: %{tipo_columna: :trn}} = assigns) do
+    ~H"""
+    <td data-col="trn" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700 font-mono" title={Map.get(@fila, :ulid)}>{Map.get(@fila, :trn)}</td>
+    """
+  end
+
+  defp celda_body(%{col: %{tipo_columna: :empresa}} = assigns) do
+    ~H"""
+    <td data-col="empresa" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(@fila, :empresa_nombre)}</td>
+    """
+  end
+
+  defp celda_body(%{col: %{tipo_columna: :branch}} = assigns) do
+    ~H"""
+    <td data-col="branch" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(@fila, :branch_nombre)}</td>
+    """
+  end
+
+  defp celda_body(%{col: %{tipo_columna: :inventory_location}} = assigns) do
+    ~H"""
+    <td data-col="inventory_location" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(@fila, :inventory_nombre)}</td>
+    """
+  end
+
+  defp celda_body(%{col: %{tipo_columna: :sales_unit}} = assigns) do
+    ~H"""
+    <td data-col="sales_unit" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(@fila, :sales_unit_nombre)}</td>
+    """
+  end
+
+  defp celda_body(%{col: %{tipo_columna: :creado_por}} = assigns) do
+    ~H"""
+    <td data-col="creado_por" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700">{Map.get(@fila, :creado_por)}</td>
+    """
+  end
+
+  attr :col, :map, required: true
+  attr :agregaciones, :map, required: true
+  attr :valores, :map, required: true
+  attr :minmax_valores, :map, required: true
+  attr :totales_generales, :map, required: true
+  attr :filas, :list, required: true
+
+  defp celda_resumen_col(%{col: %{tipo_columna: :negocio}} = assigns) do
+    ~H"""
+    <.celda_resumen columna={@col.columna} agregaciones={@agregaciones} valores={@valores} minmax_valores={@minmax_valores} totales_generales={@totales_generales} filas={@filas} />
+    """
+  end
+
+  # "Resumen" viajaba pegado a la celda de ID en la versión vieja (que
+  # siempre iba primera) — se mantiene el mismo criterio: solo aparece si
+  # la columna ID está visible, sea cual sea su posición ahora.
+  defp celda_resumen_col(%{col: %{tipo_columna: :id}} = assigns) do
+    ~H"""
+    <td data-col="id" class="px-4 py-2 text-[9px] font-bold uppercase tracking-wide text-gray-400 whitespace-nowrap">Resumen</td>
+    """
+  end
+
+  defp celda_resumen_col(assigns) do
+    ~H"""
+    <td data-col={@col.clave}></td>
     """
   end
 
@@ -1228,15 +1393,12 @@ defmodule MetadataAppWeb.CatalogoLive do
     Enum.map(columnas, &%{clave: col_key(&1), etiqueta: &1.schema_context_properties["etiqueta"]})
   end
 
-  defp campos_selector(columnas, mostrar_id?, mostrar_estado?, mostrar_trn?, mostrar_empresa?, mostrar_branch?, mostrar_inventory_location?, mostrar_sales_unit?) do
-    (if mostrar_id?, do: [%{clave: "id", etiqueta: "ID"}], else: []) ++
-      campos_selector(columnas) ++
-      (if mostrar_estado?, do: [%{clave: "estado", etiqueta: "Estado"}], else: []) ++
-      (if mostrar_trn?, do: [%{clave: "trn", etiqueta: "TRN"}], else: []) ++
-      (if mostrar_empresa?, do: [%{clave: "empresa", etiqueta: "Empresa"}], else: []) ++
-      (if mostrar_branch?, do: [%{clave: "branch", etiqueta: "Sucursal"}], else: []) ++
-      (if mostrar_inventory_location?, do: [%{clave: "inventory_location", etiqueta: "Almacén"}], else: []) ++
-      (if mostrar_sales_unit?, do: [%{clave: "sales_unit", etiqueta: "Unidad de venta"}], else: [])
+  # Get View unificado (CatalogoLive) — @columnas_render ya viene en el
+  # orden final (control + negocio mezclados, ver construir_columnas_render/3),
+  # así que el popover de "Campos" lista todo en el mismo orden que las
+  # columnas reales de la tabla.
+  defp campos_selector_render(columnas_render) do
+    Enum.map(columnas_render, &%{clave: &1.clave, etiqueta: &1.etiqueta})
   end
 
   # "Total 25" (Get View → Filtros → "Total 25", bc_motor_live.ex) — a
@@ -1467,53 +1629,77 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   defp celdas_resumen(assigns) do
     ~H"""
-    <%= for columna <- @columnas do %>
-      <% clave = col_key(columna) %>
-      <% activo? = Map.has_key?(@agregaciones, clave) %>
-      <% props = columna.schema_context_properties %>
-      <% numerico? = props["tipo"] in ["integer", "decimal"] %>
-      <% agregable? = props["tipo"] != "referencia" %>
-      <% agregacion_activa? = agregable? and props["agregacion_activa"] == true %>
-      <% minmax_recomendado? = numerico? and props["minmax_recomendado"] == true %>
-      <% total_pagina_activo? = numerico? and props["total_pagina_activo"] == true %>
-      <% total_general_activo? = numerico? and props["total_general_activo"] == true %>
-      <td data-col={clave} class={["px-4 py-2 align-top", alineacion_columna(columna)]}>
-        <%= if agregable? do %>
-          <div class={["flex items-center gap-1.5 flex-wrap", if(alineacion_columna(columna) == "text-right", do: "flex-row-reverse", else: "")]}>
-            <%= if agregacion_activa? do %>
-              <form phx-change="cambiar_agregacion">
-                <input type="hidden" name="campo" value={clave} />
-                <select
-                  name="funcion"
-                  class="text-[10px] font-semibold text-purple-700 bg-transparent border-0 p-0 pr-4 focus:outline-none focus:ring-0 cursor-pointer"
-                >
-                  <option value="" selected={!activo?}>—</option>
-                  <option :if={numerico?} value="suma" selected={@agregaciones[clave] == "suma"}>Suma</option>
-                  <option :if={numerico?} value="promedio" selected={@agregaciones[clave] == "promedio"}>Promedio</option>
-                  <option value="conteo" selected={@agregaciones[clave] == "conteo"}>Conteo</option>
-                </select>
-              </form>
-              <span :if={activo?} class="text-sm font-bold text-gray-900 tabular-nums whitespace-nowrap">
-                {formatear_agregacion(@valores[clave], props)}
-              </span>
-            <% end %>
+    <.celda_resumen :for={columna <- @columnas} columna={columna} agregaciones={@agregaciones} valores={@valores} minmax_valores={@minmax_valores} totales_generales={@totales_generales} filas={@filas} />
+    """
+  end
 
-            <% {minimo, maximo} = @minmax_valores[clave] || {nil, nil} %>
-            <span :if={minmax_recomendado?} class="text-[11px] font-bold text-gray-700 tabular-nums whitespace-nowrap">
-              Mín. {formatear_agregacion(minimo, props)} / Máx. {formatear_agregacion(maximo, props)}
-            </span>
+  # Extraído de celdas_resumen/1 de arriba — el cuerpo por columna, para
+  # poder reusarlo desde celda_resumen_col/1 (Get View unificado de
+  # CatalogoLive) sin duplicar todo este bloque. celdas_resumen/1 lo sigue
+  # llamando en loop tal cual, así que la tabla de Consultas (que la usa
+  # directo) no cambió en nada.
+  attr :columna, :map, required: true
+  attr :agregaciones, :map, required: true
+  attr :valores, :map, required: true
+  attr :minmax_valores, :map, required: true
+  attr :totales_generales, :map, required: true
+  attr :filas, :list, required: true
 
-            <span :if={total_pagina_activo?} class="text-[11px] font-bold text-gray-700 tabular-nums whitespace-nowrap">
-              Total 25: {formatear_agregacion(total_columna_pagina(@filas, columna), props)}
-            </span>
+  defp celda_resumen(assigns) do
+    clave = col_key(assigns.columna)
+    props = assigns.columna.schema_context_properties
+    numerico? = props["tipo"] in ["integer", "decimal"]
+    agregable? = props["tipo"] != "referencia"
 
-            <span :if={total_general_activo?} class="text-[11px] font-bold text-gray-700 tabular-nums whitespace-nowrap">
-              Totalizado: {formatear_agregacion(@totales_generales[clave], props)}
+    assigns =
+      assigns
+      |> assign(:clave, clave)
+      |> assign(:props, props)
+      |> assign(:activo?, Map.has_key?(assigns.agregaciones, clave))
+      |> assign(:numerico?, numerico?)
+      |> assign(:agregable?, agregable?)
+      |> assign(:agregacion_activa?, agregable? and props["agregacion_activa"] == true)
+      |> assign(:minmax_recomendado?, numerico? and props["minmax_recomendado"] == true)
+      |> assign(:total_pagina_activo?, numerico? and props["total_pagina_activo"] == true)
+      |> assign(:total_general_activo?, numerico? and props["total_general_activo"] == true)
+
+    ~H"""
+    <td data-col={@clave} class={["px-4 py-2 align-top", alineacion_columna(@columna)]}>
+      <%= if @agregable? do %>
+        <div class={["flex items-center gap-1.5 flex-wrap", if(alineacion_columna(@columna) == "text-right", do: "flex-row-reverse", else: "")]}>
+          <%= if @agregacion_activa? do %>
+            <form phx-change="cambiar_agregacion">
+              <input type="hidden" name="campo" value={@clave} />
+              <select
+                name="funcion"
+                class="text-[10px] font-semibold text-purple-700 bg-transparent border-0 p-0 pr-4 focus:outline-none focus:ring-0 cursor-pointer"
+              >
+                <option value="" selected={!@activo?}>—</option>
+                <option :if={@numerico?} value="suma" selected={@agregaciones[@clave] == "suma"}>Suma</option>
+                <option :if={@numerico?} value="promedio" selected={@agregaciones[@clave] == "promedio"}>Promedio</option>
+                <option value="conteo" selected={@agregaciones[@clave] == "conteo"}>Conteo</option>
+              </select>
+            </form>
+            <span :if={@activo?} class="text-sm font-bold text-gray-900 tabular-nums whitespace-nowrap">
+              {formatear_agregacion(@valores[@clave], @props)}
             </span>
-          </div>
-        <% end %>
-      </td>
-    <% end %>
+          <% end %>
+
+          <% {minimo, maximo} = @minmax_valores[@clave] || {nil, nil} %>
+          <span :if={@minmax_recomendado?} class="text-[11px] font-bold text-gray-700 tabular-nums whitespace-nowrap">
+            Mín. {formatear_agregacion(minimo, @props)} / Máx. {formatear_agregacion(maximo, @props)}
+          </span>
+
+          <span :if={@total_pagina_activo?} class="text-[11px] font-bold text-gray-700 tabular-nums whitespace-nowrap">
+            Total 25: {formatear_agregacion(total_columna_pagina(@filas, @columna), @props)}
+          </span>
+
+          <span :if={@total_general_activo?} class="text-[11px] font-bold text-gray-700 tabular-nums whitespace-nowrap">
+            Totalizado: {formatear_agregacion(@totales_generales[@clave], @props)}
+          </span>
+        </div>
+      <% end %>
+    </td>
     """
   end
 

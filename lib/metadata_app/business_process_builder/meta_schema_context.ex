@@ -1554,6 +1554,18 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     :ok
   end
 
+  @doc """
+  Orden combinado de columnas del Get View unificado (Campos de Control +
+  Campos de negocio, ver panel_get_view/1 en BcMotorLive) — a diferencia de
+  reordenar_campos/2 de arriba, esto NO toca schema_context_properties de
+  ningún campo (el orden de la pestaña Campos/Ficha/contrato de API sigue
+  intacto); vive aparte, en Header.orden_columnas_tabla, exclusivo de esta
+  grilla.
+  """
+  def reordenar_columnas_tabla(%Header{} = header, orden) do
+    actualizar_header(header, %{"orden_columnas_tabla" => orden})
+  end
+
   # Borrado total (no soft-delete): al ser el Header dueño de la definición
   # del catálogo, borrarlo se lleva en cascada (on_delete: :delete_all) sus
   # Detalles y, si el catálogo adoptó el motor de estados, también Estados/
