@@ -20,7 +20,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
 
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaEstadosAdmin
-  alias MetadataApp.BorradoresMotor
   alias MetadataAppWeb.AdminNav
   alias Phoenix.LiveView.JS
 
@@ -54,7 +53,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     archive star favorite flag settings tune
   )
 
-  def mount(params, _session, socket) do
+  def mount(_params, _session, socket) do
     {:ok,
      socket
      |> assign(:current_page, "bc_list")
@@ -69,37 +68,11 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
      |> assign(:campo_form, nil)
      |> assign(:estado_form, nil)
      |> assign(:transicion_form, nil)
-     |> cargar_estado_inicial(params)}
+     |> nuevo_formulario()}
   end
-
-  # Sin "?borrador=<id>": wizard vacío de siempre. Con ese param, se
-  # recarga en memoria el JSON completo que había guardado "Guardar
-  # borrador" — mismo shape (contexto/campos/estados/transiciones) que ya
-  # usan los assigns, así que no hace falta transformar nada al leerlo.
-  defp cargar_estado_inicial(socket, %{"borrador" => id}) do
-    case BorradoresMotor.obtener_borrador(id) do
-      nil ->
-        socket
-        |> nuevo_formulario()
-        |> put_flash(:error, "Ese borrador ya no existe (puede que alguien más lo haya borrado).")
-
-      borrador ->
-        contenido = borrador.contenido_json
-
-        socket
-        |> assign(:borrador_id, borrador.id)
-        |> assign(:contexto, contenido["contexto"] || %{})
-        |> assign(:campos, contenido["campos"] || [])
-        |> assign(:estados, contenido["estados"] || [])
-        |> assign(:transiciones, contenido["transiciones"] || [])
-    end
-  end
-
-  defp cargar_estado_inicial(socket, _params), do: nuevo_formulario(socket)
 
   defp nuevo_formulario(socket) do
     socket
-    |> assign(:borrador_id, nil)
     |> assign(:contexto, %{
       "nombre" => "",
       "etiqueta" => "Catálogo de ",
@@ -466,47 +439,9 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   end
 
   # Página completa navegada normalmente — "Cancelar" navega de vuelta a la
-  # lista sin guardar nada (si quería conservar lo que llevaba armado,
-  # tenía que darle a "Guardar borrador" antes).
+  # lista sin guardar nada.
   def handle_event("cancelar", _params, socket) do
     {:noreply, push_navigate(socket, to: ~p"/sysadmin/bc-list")}
-  end
-
-  # --- Guardar borrador ---------------------------------------------------
-
-  # Reusa el campo "nombre" de Contexto como nombre del borrador — ya es
-  # obligatorio conceptualmente para poder crear el BC de verdad, así que no
-  # hace falta pedir uno aparte solo para guardar el borrador. La primera vez
-  # inserta una fila nueva; de ahí en más (borrador_id ya asignado) actualiza
-  # la misma, así "Guardar borrador" repetido no genera duplicados.
-  def handle_event("guardar_borrador", _params, socket) do
-    %{contexto: contexto, campos: campos, estados: estados, transiciones: transiciones} = socket.assigns
-    nombre = String.trim(contexto["nombre"] || "")
-
-    if nombre == "" do
-      {:noreply, put_flash(socket, :error, "Ponle un nombre en Contexto antes de guardar el borrador.")}
-    else
-      contenido = %{"contexto" => contexto, "campos" => campos, "estados" => estados, "transiciones" => transiciones}
-
-      resultado =
-        case socket.assigns.borrador_id do
-          nil -> BorradoresMotor.crear_borrador(nombre, contenido)
-          id -> BorradoresMotor.actualizar_borrador(BorradoresMotor.obtener_borrador(id), nombre, contenido)
-        end
-
-      case resultado do
-        {:ok, borrador} ->
-          Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:borrador_guardado, borrador})
-
-          {:noreply,
-           socket
-           |> assign(:borrador_id, borrador.id)
-           |> put_flash(:info, "Borrador '#{borrador.nombre}' guardado.")}
-
-        {:error, changeset} ->
-          {:noreply, put_flash(socket, :error, "No se pudo guardar el borrador: #{resumen_errores(changeset)}")}
-      end
-    end
   end
 
   # --- Crear: todo o nada -------------------------------------------------------
@@ -547,7 +482,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
             # ya incluye el CatalogoGenerador.generar/1 que antes iba acá suelto).
             MetaSchemaContext.activar_alcance_con_default_sucursal(header)
             Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:bc_creado, header})
-            eliminar_borrador_si_existe(socket.assigns.borrador_id)
 
             {:noreply, push_navigate(socket, to: ~p"/sysadmin/bc-list/#{header.schema_context_name}/motor")}
 
@@ -557,20 +491,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
 
       {:error, motivo} ->
         {:noreply, assign(socket, :mensaje, {:error, motivo})}
-    end
-  end
-
-  # El borrador ya cumplió su función una vez el BC quedó creado de verdad
-  # — se borra (soft-delete) para que no quede colgando en la lista de
-  # "Borradores" de BC List como si todavía hiciera falta retomarlo.
-  defp eliminar_borrador_si_existe(nil), do: :ok
-
-  defp eliminar_borrador_si_existe(id) do
-    case BorradoresMotor.obtener_borrador(id) do
-      nil -> :ok
-      borrador ->
-        {:ok, borrador} = BorradoresMotor.eliminar_borrador(borrador)
-        Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:borrador_eliminado, borrador})
     end
   end
 
@@ -770,11 +690,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
         <div class="flex gap-2 shrink-0">
           <button type="button" phx-click="cancelar" class="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
             Cancelar
-          </button>
-          <button type="button" phx-click="guardar_borrador"
-            title="Guarda lo que llevás armado para retomarlo después, sin crear nada todavía."
-            class="px-4 py-2 rounded-lg border border-purple-600 text-purple-700 font-semibold hover:bg-purple-50">
-            {if @borrador_id, do: "Actualizar borrador", else: "Guardar borrador"}
           </button>
           <button type="button" phx-click="crear" disabled={!@completo? or !!@contexto_nav_error}
             class="px-4 py-2 rounded-lg bg-purple-600 text-white font-bold hover:bg-purple-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
