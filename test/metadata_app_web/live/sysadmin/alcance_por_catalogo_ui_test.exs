@@ -70,6 +70,11 @@ defmodule MetadataAppWeb.Sysadmin.AlcanceDatosPorCatalogoUiTest do
     otro_usuario = usuario_fixture()
     {:ok, _} = Permissions.asignar_rol(otro_usuario.id, rol.id, empresa.id)
 
+    # "Alcance de datos por rol" solo lista roles con al menos un permiso
+    # concedido sobre el catálogo (o "administrador") -- sin esto la fila
+    # #alcance-rol-<id> no existe y el form de más abajo no encuentra nada.
+    {:ok, _} = Permissions.conceder_permiso_catalogo(rol.id, "meta_fixture_cliente", "leer")
+
     {:ok, view, html} = live(conn, ~p"/sysadmin/catalogos/meta_fixture_cliente/permisos")
     assert html =~ "Alcance de datos por rol"
     assert html =~ rol.nombre
