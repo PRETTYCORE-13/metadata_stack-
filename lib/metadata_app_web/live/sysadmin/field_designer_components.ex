@@ -191,6 +191,7 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
   def construir_propiedades(%{"tipo" => "referencia"} = form, campos_existentes, catalogo_nombre) do
     catalogo = form["catalogo"] || ""
     destino = catalogo != "" && MetaSchemaContext.obtener_header_por_nombre(catalogo)
+    dependencias_check = validar_dependencias_form(form, campos_existentes)
 
     cond do
       catalogo == "" ->
@@ -198,6 +199,9 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
 
       is_nil(destino) or destino == false ->
         {:error, "Ese catálogo destino ya no existe."}
+
+      match?({:error, _}, dependencias_check) ->
+        dependencias_check
 
       true ->
         nombre = "#{catalogo_nombre}_#{String.replace_prefix(catalogo, "pty_", "")}"
@@ -445,6 +449,18 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
   end
 
   defp agregar_dependencias(propiedades, _form, _cap), do: propiedades
+
+  # Ver MetaSchemaContext.validar_tipos_dependencia/3 — acá solo se arma
+  # la lista de dependencias "completas" (con ambos lados elegidos) y se
+  # resuelven los campos destino para pasárselo, mismo criterio que
+  # agregar_dependencias/3 de arriba.
+  defp validar_dependencias_form(%{"capacidades" => %{"cascada" => true}} = form, campos_existentes) do
+    deps = (form["dependencias"] || []) |> Enum.filter(&(&1["campo_padre"] not in [nil, ""] and &1["campo_remoto"] not in [nil, ""]))
+    campos_destino = campos_destino_referencia(form["catalogo"])
+    MetaSchemaContext.validar_tipos_dependencia(deps, campos_existentes, campos_destino)
+  end
+
+  defp validar_dependencias_form(_form, _campos_existentes), do: :ok
 
   # =========================================================================
   # Tipos (Paso 1) y capacidades por tipo (Paso 2)
@@ -958,6 +974,12 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
     """
   end
 
+  # "Filtrar por" (campo_remoto) solo ofrece campos del catálogo destino
+  # que sean tipo referencia AL MISMO catálogo al que apunta "Depende de"
+  # (campo_padre) — ver MetaSchemaContext.campos_remoto_validos/2. Antes
+  # el select mostraba TODOS los campos del destino sin filtrar (incluido
+  # "Nombre", texto libre) y dejaba armar una cascada que nunca podía
+  # coincidir con nada — bug real, reportado en vivo.
   defp config_capacidad("cascada", assigns) do
     ~H"""
     <div :if={@otros_referencia == []} class="text-gray-400">
@@ -965,16 +987,21 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
     </div>
     <div :if={@otros_referencia != []} class="flex flex-col gap-2">
       <div :for={{dep, i} <- Enum.with_index(@form["dependencias"])} class="border border-gray-200 rounded-lg p-2">
+        <% campo_padre = Enum.find(@otros_referencia, &(&1.schema_context_field == dep["campo_padre"])) %>
+        <% remotos_validos = campo_padre && MetaSchemaContext.campos_remoto_validos(@campos_destino, campo_padre.schema_context_properties["catalogo"]) %>
         <div class="grid grid-cols-2 gap-1.5">
           <select name={"dependencias[#{i}][campo_padre]"} class="w-full border border-gray-300 rounded-lg px-1.5 py-1">
             <option value="">— Depende de —</option>
             <option :for={c <- @otros_referencia} value={c.schema_context_field} selected={dep["campo_padre"] == c.schema_context_field}>{c.schema_context_properties["etiqueta"] || c.schema_context_field}</option>
           </select>
-          <select name={"dependencias[#{i}][campo_remoto]"} class="w-full border border-gray-300 rounded-lg px-1.5 py-1">
+          <select name={"dependencias[#{i}][campo_remoto]"} class="w-full border border-gray-300 rounded-lg px-1.5 py-1" disabled={is_nil(campo_padre)}>
             <option value="">— Filtrar por —</option>
-            <option :for={c <- @campos_destino} value={c.schema_context_field} selected={dep["campo_remoto"] == c.schema_context_field}>{c.schema_context_properties["etiqueta"] || c.schema_context_field}</option>
+            <option :for={c <- remotos_validos || []} value={c.schema_context_field} selected={dep["campo_remoto"] == c.schema_context_field}>{c.schema_context_properties["etiqueta"] || c.schema_context_field}</option>
           </select>
         </div>
+        <p :if={campo_padre && remotos_validos == []} class="text-amber-600 mt-1">
+          El catálogo destino no tiene ningún campo referencia al mismo catálogo que {dep["campo_padre"]} — no se puede armar esta cascada.
+        </p>
         <button type="button" phx-click="asistente_dependencia_quitar" phx-value-indice={i} class="text-red-600 hover:text-red-800 font-semibold mt-1">Quitar</button>
       </div>
       <button type="button" phx-click="asistente_dependencia_agregar" class="text-purple-700 hover:text-purple-900 font-semibold text-left">+ Agregar dependencia</button>
