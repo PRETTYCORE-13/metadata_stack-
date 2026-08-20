@@ -711,6 +711,61 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   end
 
   @doc """
+  De `campos_destino` (Detail del catálogo al que apunta ESTE campo
+  referencia), cuáles sirven como "campo_remoto" válido para depender de
+  un padre que a su vez apunta a `catalogo_padre` — tienen que ser tipo
+  "referencia" Y apuntar al MISMO catálogo, si no la comparación nunca
+  puede coincidir: el valor de un campo referencia siempre es el id de su
+  catálogo destino, compararlo contra cualquier otra cosa (un nombre, un
+  texto libre) jamás matchea un id real. Se usa tanto para filtrar las
+  opciones del <select> "Filtrar por" en la UI (que la elección inválida
+  ni siquiera se pueda tipear) como en `validar_tipos_dependencia/3` al
+  guardar.
+  """
+  def campos_remoto_validos(campos_destino, catalogo_padre) do
+    Enum.filter(campos_destino, fn c ->
+      props = c.schema_context_properties
+      props["tipo"] == "referencia" and props["catalogo"] == catalogo_padre
+    end)
+  end
+
+  @doc """
+  Válida contra `campos_locales`/`campos_destino` (Detail de ambos
+  catálogos — el local para resolver a qué apunta cada "campo_padre", el
+  destino para resolver el tipo de cada "campo_remoto") que cada
+  dependencia sea de verdad comparable: ver `campos_remoto_validos/2`.
+  Complementa a `validar_sin_ciclo/3` (ese cuida la FORMA del grafo, este
+  cuida que cada eslabón individual tenga sentido) — se llama ANTES de
+  persistir, en los dos lugares donde se guarda una dependencia (crear
+  campo nuevo y editar uno existente). Bug real (reporte de usuaria): el
+  asistente dejaba elegir "Nombre" como campo_remoto de una dependencia
+  cuyo padre apuntaba a otro catálogo, y el filtro no filtraba nada — sin
+  aviso de que la combinación no tenía sentido.
+  """
+  def validar_tipos_dependencia(dependencias, campos_locales, campos_destino) do
+    invalida =
+      Enum.find(dependencias, fn dep ->
+        case Enum.find(campos_locales, &(&1.schema_context_field == dep["campo_padre"])) do
+          nil ->
+            true
+
+          padre ->
+            validos = campos_remoto_validos(campos_destino, padre.schema_context_properties["catalogo"])
+            not Enum.any?(validos, &(&1.schema_context_field == dep["campo_remoto"]))
+        end
+      end)
+
+    case invalida do
+      nil ->
+        :ok
+
+      dep ->
+        {:error,
+         "El campo elegido en \"Filtrar por\" tiene que ser una referencia al mismo catálogo al que apunta \"#{dep["campo_padre"]}\" — si no, el filtro nunca puede coincidir con nada."}
+    end
+  end
+
+  @doc """
   Dado un campo referencia con `"dependencias"` (`props`, su
   `schema_context_properties`) y el mapa de valores actuales de sus
   campos hermanos (`valores_hermanos`, del registro/renglón en edición —

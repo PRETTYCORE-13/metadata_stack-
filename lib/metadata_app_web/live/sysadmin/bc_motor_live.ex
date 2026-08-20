@@ -617,28 +617,29 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
   def handle_event("guardar_dependencia", _params, socket) do
-    %{"campo" => campo, "catalogo" => catalogo, "dependencias" => dependencias} = socket.assigns.dependencia_form
+    %{"campo" => campo, "catalogo" => catalogo, "dependencias" => dependencias, "campos_destino" => campos_destino} =
+      socket.assigns.dependencia_form
 
     dependencias_validas =
       Enum.filter(dependencias, &(&1["campo_padre"] not in [nil, ""] and &1["campo_remoto"] not in [nil, ""]))
 
-    case MetaSchemaContext.validar_sin_ciclo(catalogo, campo, dependencias_validas) do
-      :ok ->
-        detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
-        props = Map.put(detalle.schema_context_properties, "dependencias", dependencias_validas)
+    with :ok <- MetaSchemaContext.validar_sin_ciclo(catalogo, campo, dependencias_validas),
+         :ok <- MetaSchemaContext.validar_tipos_dependencia(dependencias_validas, socket.assigns.campos, campos_destino) do
+      detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+      props = Map.put(detalle.schema_context_properties, "dependencias", dependencias_validas)
 
-        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
-          {:ok, _detalle} ->
-            {:noreply,
-             socket
-             |> assign(:dependencia_form, nil)
-             |> put_flash(:info, "Dependencia de \"#{campo}\" actualizada.")
-             |> cargar_motor()}
+      case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+        {:ok, _detalle} ->
+          {:noreply,
+           socket
+           |> assign(:dependencia_form, nil)
+           |> put_flash(:info, "Dependencia de \"#{campo}\" actualizada.")
+           |> cargar_motor()}
 
-          {:error, changeset} ->
-            {:noreply, update(socket, :dependencia_form, &Map.put(&1, "error", resumen_errores(changeset)))}
-        end
-
+        {:error, changeset} ->
+          {:noreply, update(socket, :dependencia_form, &Map.put(&1, "error", resumen_errores(changeset)))}
+      end
+    else
       {:error, motivo} ->
         {:noreply, update(socket, :dependencia_form, &Map.put(&1, "error", motivo))}
     end
@@ -2396,6 +2397,19 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                           class="text-purple-600 hover:text-purple-800 text-[11px] font-semibold">
                           <%= if Map.get(props, "formato_fecha") not in [nil, ""], do: "Configurado", else: "Configurar" %>
                         </button>
+                      <% Map.get(props, "tipo") == "referencia" -> %>
+                        <div class="whitespace-nowrap">
+                          <button type="button" phx-click="abrir_form_relacion" phx-value-campo={c.schema_context_field}
+                            title="Catálogo destino, qué campos trae y qué campos muestra"
+                            class="text-purple-600 hover:text-purple-800 text-[11px] font-semibold mr-2">
+                            <%= if Map.get(props, "campos_acompanamiento", []) != [], do: "Configurado", else: "Configurar" %>
+                          </button>
+                          <button type="button" phx-click="abrir_form_dependencia" phx-value-campo={c.schema_context_field}
+                            title="Combo en cascada: qué otro campo referencia hay que elegir primero"
+                            class="text-blue-600 hover:text-blue-800 text-[11px] font-semibold">
+                            <%= if Map.get(props, "dependencias", []) != [], do: "Cascada ✓", else: "Cascada" %>
+                          </button>
+                        </div>
                       <% true -> %>
                         <span class="text-gray-300">—</span>
                     <% end %>
@@ -3979,6 +3993,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
               <% else %>
                 <div class="flex flex-col gap-2 mb-3">
                   <%= for {dep, i} <- Enum.with_index(@form["dependencias"]) do %>
+                    <% campo_padre = Enum.find(@form["otros_referencia"], &(&1.schema_context_field == dep["campo_padre"])) %>
+                    <% remotos_validos = campo_padre && MetaSchemaContext.campos_remoto_validos(@form["campos_destino"], campo_padre.schema_context_properties["catalogo"]) %>
                     <div class="border border-gray-200 rounded-lg p-2.5">
                       <div class="flex items-center justify-between mb-1.5">
                         <span class="text-gray-500 font-semibold">Depende de</span>
@@ -3998,14 +4014,17 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                         </div>
                         <div>
                           <label class="block text-gray-500 mb-0.5">Filtrar {@form["catalogo_destino_label"]} por</label>
-                          <select name={"dependencias[#{i}][campo_remoto]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                          <select name={"dependencias[#{i}][campo_remoto]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5" disabled={is_nil(campo_padre)}>
                             <option value="">— Elegir —</option>
-                            <option :for={c <- @form["campos_destino"]} value={c.schema_context_field} selected={dep["campo_remoto"] == c.schema_context_field}>
+                            <option :for={c <- remotos_validos || []} value={c.schema_context_field} selected={dep["campo_remoto"] == c.schema_context_field}>
                               {c.schema_context_properties["etiqueta"] || c.schema_context_field}
                             </option>
                           </select>
                         </div>
                       </div>
+                      <p :if={campo_padre && remotos_validos == []} class="text-amber-600 mt-1">
+                        {@form["catalogo_destino_label"]} no tiene ningún campo referencia al mismo catálogo que {dep["campo_padre"]} — no se puede armar esta cascada.
+                      </p>
                       <label class="flex items-center gap-1.5 mt-1.5">
                         <input type="hidden" name={"dependencias[#{i}][obligatorio]"} value="false" />
                         <input type="checkbox" name={"dependencias[#{i}][obligatorio]"} value="true" checked={dep["obligatorio"] != false} class="accent-purple-600" />

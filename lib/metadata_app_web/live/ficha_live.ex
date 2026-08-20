@@ -145,6 +145,7 @@ defmodule MetadataAppWeb.FichaLive do
         # incluido) en vez de la publicada real.
         socket = assign(socket, :plantilla_preview_id, Map.get(params, "plantilla_id"))
         plantilla = plantilla_a_mostrar(socket, header.id)
+        catalogos_detalle_mount = if es_detalle?, do: [], else: cargar_catalogos_detalle(header.id)
 
         {:ok,
          socket
@@ -189,7 +190,8 @@ defmodule MetadataAppWeb.FichaLive do
          # acumulan en memoria en :detalle_renglones_nuevos y viajan como
          # `opciones[:renglones]` de CatalogoGenerico.crear/2 recién en
          # guardar_alta/2, nunca antes (no hay encabezado_id al que atarlos).
-         |> assign(:catalogos_detalle, if(es_detalle?, do: [], else: cargar_catalogos_detalle(header.id)))
+         |> assign(:catalogos_detalle, catalogos_detalle_mount)
+         |> assign(:detalle_catalogo_activo, catalogo_detalle_activo_default(catalogos_detalle_mount))
          |> assign(:detalle_renglones, %{})
          |> assign(:detalle_renglones_nuevos, %{})
          |> assign(:detalle_renglones_editados, %{})
@@ -198,6 +200,13 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:detalle_form_error, nil)}
     end
   end
+
+  # Cuál catálogo detalle se ve por default al entrar a la pestaña
+  # "Detalle" — el primero (mismo orden que ya trae cargar_catalogos_detalle/1,
+  # el de la config del catálogo). nil si no hay ninguno (tab "Detalle" ni
+  # siquiera se muestra, ver botón condicionado a @catalogos_detalle != []).
+  defp catalogo_detalle_activo_default([]), do: nil
+  defp catalogo_detalle_activo_default([primero | _]), do: primero.nombre
 
   # "Duplicar": precarga @form_values (lo que de verdad viaja a
   # CatalogoGenerico.crear/4 en guardar_alta/1, NO @registro, que sigue en
@@ -227,6 +236,14 @@ defmodule MetadataAppWeb.FichaLive do
 
   def handle_event("cambiar_tab", %{"tab" => tab}, socket) do
     {:noreply, assign(socket, :tab, tab)}
+  end
+
+  # Sub-pestañas dentro de "Detalle" cuando el catálogo tiene más de un
+  # detalle configurado (ej. pty_pedido_prueba: Productos/Pagos/Notas) —
+  # ver tab_detalle/1. `catalogo` siempre sale de un botón armado con los
+  # nombres reales de @catalogos_detalle, nunca de un id crudo del cliente.
+  def handle_event("cambiar_detalle_catalogo", %{"catalogo" => catalogo}, socket) do
+    {:noreply, assign(socket, :detalle_catalogo_activo, catalogo)}
   end
 
   # Selector "Vista" (Multi vista) — nunca confía en el id crudo del
@@ -1212,6 +1229,7 @@ defmodule MetadataAppWeb.FichaLive do
     |> assign(:relaciones_total, Enum.sum(Enum.map(relaciones, & &1.total)))
     |> assign(:historial, cargar_historial(header.id, registro.id, catalogos_detalle, detalle_renglones))
     |> assign(:catalogos_detalle, catalogos_detalle)
+    |> assign(:detalle_catalogo_activo, catalogo_detalle_activo_default(catalogos_detalle))
     |> assign(:detalle_renglones, detalle_renglones)
     |> assign(:detalle_renglones_nuevos, %{})
     |> assign(:detalle_renglones_editados, %{})
@@ -1652,26 +1670,7 @@ defmodule MetadataAppWeb.FichaLive do
               </div>
               <h1 :if={@modo == :ver} class="text-base font-bold text-gray-900">{@header.schema_context_label} #{@registro.id}</h1>
               <div :if={@modo == :ver} class="flex items-center flex-wrap gap-2 text-xs text-gray-500">
-                <span :if={@mostrar_estado?} class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 font-semibold">
-                  {Map.get(@estados_por_id, @registro.estado_id) || "—"}
-                </span>
                 <span>{@relaciones_total} relaciones</span>
-                <span :if={@header.schema_es_transaccional and @trn_registro} class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-mono">
-                  TRN: {@trn_registro}
-                  <button type="button" id={"copiar-trn-#{@registro.id}"} phx-hook="CopiarTexto" data-texto={@trn_registro}
-                    title="Copiar TRN — para compartir o buscar este registro después" class="pc-breadcrumb-copiar">
-                    <svg class="pc-breadcrumb-copiar-icono-copiar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <rect x="9" y="9" width="12" height="12" rx="2" />
-                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                    </svg>
-                    <svg class="pc-breadcrumb-copiar-icono-listo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                  </button>
-                </span>
-                <span :if={@header.schema_es_transaccional and !@trn_registro} class="text-gray-400 italic">
-                  Sin TRN (registro anterior a activar TRN en este catálogo)
-                </span>
                 <span :for={{etiqueta, valor} <- @contexto_alcance}
                   class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-500"
                   title={etiqueta}>
@@ -1840,7 +1839,7 @@ defmodule MetadataAppWeb.FichaLive do
       <.tab_historial :if={@tab == "historial"} historial={@historial} estados_por_id={@estados_por_id} />
       <.tab_detalle :if={@tab == "detalle"} modo={@modo} catalogos_detalle={@catalogos_detalle} detalle_renglones={@detalle_renglones}
         otras_transiciones={@otras_transiciones} detalle_form_error={@detalle_form_error} estados_por_id={@estados_por_id}
-        detalle_seleccion={@detalle_seleccion} detalle_campos_editables={@detalle_campos_editables} />
+        detalle_seleccion={@detalle_seleccion} detalle_campos_editables={@detalle_campos_editables} detalle_catalogo_activo={@detalle_catalogo_activo} />
       </div>
 
       <aside :if={@modo == :ver} class="pc-ficha-aside w-60 flex-none hidden lg:flex flex-col gap-3">
@@ -3780,21 +3779,42 @@ defmodule MetadataAppWeb.FichaLive do
   attr :estados_por_id, :map, required: true
   attr :detalle_seleccion, :map, required: true
   attr :detalle_campos_editables, :list, default: []
+  attr :detalle_catalogo_activo, :string, default: nil
 
   # Layout tipo IDE (editor fijo + área de trabajo amplia): un catálogo
-  # detalle = un par formulario (1/3, izquierda) + tabla (2/3, derecha),
-  # apilados verticalmente si hay más de un catálogo detalle. El
+  # detalle = un par formulario (1/3, izquierda) + tabla (2/3, derecha).
+  # Con UN solo catálogo detalle se muestra directo, sin nada más — con
+  # MÁS de uno (ej. pty_pedido_prueba: Productos/Pagos/Notas) antes
+  # quedaban todos apilados verticalmente en la misma pestaña, cada vez
+  # más largo cuantos más detalles tuviera el catálogo; ahora se arman
+  # sub-pestañas (mismo patrón visual que las pestañas de arriba,
+  # Datos/Detalle/Relaciones) y se muestra solo la del catálogo activo
+  # (@detalle_catalogo_activo, ver cambiar_detalle_catalogo/3). El
   # formulario nunca es un modal ni una fila expandida — siempre muestra
   # el renglón "seleccionado" en la tabla de al lado (ver
   # panel_detalle_catalogo/1).
   defp tab_detalle(assigns) do
+    assigns =
+      assign(assigns, :cat_activo, Enum.find(assigns.catalogos_detalle, &(&1.nombre == assigns.detalle_catalogo_activo)))
+
     ~H"""
     <div class="space-y-4">
       <div :if={@detalle_form_error} class="bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2">{@detalle_form_error}</div>
 
-      <.panel_detalle_catalogo :for={cat <- @catalogos_detalle} cat={cat}
-        filas={Map.get(@detalle_renglones, cat.nombre, [])} otras_transiciones={@otras_transiciones}
-        estados_por_id={@estados_por_id} seleccion={Map.get(@detalle_seleccion, cat.nombre)}
+      <div :if={length(@catalogos_detalle) > 1} class="flex items-center gap-1 border-b border-gray-200">
+        <button :for={cat <- @catalogos_detalle} type="button" phx-click="cambiar_detalle_catalogo" phx-value-catalogo={cat.nombre}
+          class={[
+            "px-3 py-1.5 -mb-px font-semibold text-xs border-b-2",
+            cat.nombre == @detalle_catalogo_activo && "text-purple-700 border-purple-600",
+            cat.nombre != @detalle_catalogo_activo && "text-gray-400 border-transparent hover:text-gray-600"
+          ]}>
+          {cat.etiqueta} ({length(Map.get(@detalle_renglones, cat.nombre, []))})
+        </button>
+      </div>
+
+      <.panel_detalle_catalogo :if={@cat_activo} cat={@cat_activo}
+        filas={Map.get(@detalle_renglones, @cat_activo.nombre, [])} otras_transiciones={@otras_transiciones}
+        estados_por_id={@estados_por_id} seleccion={Map.get(@detalle_seleccion, @cat_activo.nombre)}
         campos_editables={@detalle_campos_editables} />
     </div>
     """
