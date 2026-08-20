@@ -206,7 +206,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # "grupo" del selector de campos editables: "header" o el
   # schema_context_name de un catálogo detalle — mismo valor que la key
   # del tab (ver tabs_motor en modal_transicion/1).
-  defp campos_del_grupo(assigns, "header"), do: assigns.campos
+  # "fecha_registro" es de CONTROL -- mismo criterio que grupo_campos_editables/1
+  # (que ya lo saca de la lista visible); acá cubre "Todos"/"Ninguno", que
+  # de otro modo lo agregaría a campos_editables sin que nunca haya sido
+  # visible/toggleable en el checklist.
+  defp campos_del_grupo(assigns, "header"), do: Enum.reject(assigns.campos, &(&1.schema_context_field == "fecha_registro"))
 
   defp campos_del_grupo(assigns, grupo) do
     case Enum.find(assigns.catalogos_detalle, &(&1.nombre == grupo)) do
@@ -4519,7 +4523,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
   # Un grupo (header o un catálogo detalle) del selector de campos
-  # editables — buscador propio + "Todos/Ninguno" + grilla de 2 columnas
+  # editables — buscador propio + "Todos/Ninguno" + tabla de 2 columnas
   # (menos alto que una fila por checkbox, mismo criterio que el selector
   # de íconos). `campos_editables[]` es el mismo input en todos los
   # grupos — la selección real vive en @form, no en qué tab está visible.

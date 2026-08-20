@@ -418,9 +418,13 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   otro fallo real de Postgres al correr la migración sí se propaga como
   excepción, igual que el resto del generador.
 
-  No toca campos tipo "referencia" — una FK sigue el criterio propio de
-  columna_migracion_agregar/3 (siempre nullable al agregarse a una tabla
-  existente), nunca el de acá.
+  Un campo tipo "referencia" SÍ se sincroniza acá igual que cualquier
+  otro (bug real encontrado 2026-08-20, misma familia que el de
+  pty_dsd_empleados_fecha_baja de arriba): `columna_migracion/3` (CREATE
+  TABLE) marcaba toda FK como `null: false` sin mirar "opcional" —
+  `tipo_ecto("referencia")` es `:integer`, así que
+  `modificar_columna_migracion/4` ya sabe alterarla igual que cualquier
+  entero.
   """
   def sincronizar_nulabilidad_campo(schema_context_name, campo) do
     with {:ok, detalle} <- buscar_detalle(schema_context_name, campo) do
@@ -429,9 +433,6 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
       opcional? = Map.get(propiedades, "opcional", false)
 
       case {tipo_str, nulable_fisica(schema_context_name, campo)} do
-        {"referencia", _} ->
-          :ok
-
         {_tipo, nil} ->
           :ok
 
@@ -811,7 +812,10 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     if Enum.any?(catalogos_referencia, &(&1 in [nil, ""])) do
       {:error, "hay un campo tipo 'referencia' sin catálogo destino configurado"}
     else
-      case Enum.reject(catalogos_referencia, &MetaSchemaContext.obtener_header_por_nombre/1) do
+      # Empresa/Branch/InventoryLocation/SalesUnit (MetaSchemaContext.catalogo_sistema/1)
+      # nunca van a tener meta_schema_header -- no son catálogos BPB, pero
+      # son destinos válidos igual (2026-08-20).
+      case Enum.reject(catalogos_referencia, &(MetaSchemaContext.obtener_header_por_nombre(&1) || MetaSchemaContext.catalogo_sistema(&1))) do
         [] -> :ok
         faltantes -> {:error, "catálogo(s) referenciados inexistentes: #{Enum.join(faltantes, ", ")}"}
       end
@@ -895,10 +899,18 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
   defp construir_opciones("referencia", propiedades) do
     catalogo_ref = Map.fetch!(propiedades, "catalogo")
-    header_ref = MetaSchemaContext.obtener_header_por_nombre(catalogo_ref)
+
+    # Tabla de sistema (Empresa/Branch/InventoryLocation/SalesUnit, ver
+    # MetaSchemaContext.catalogo_sistema/1): "catalogo_ref" YA es el
+    # nombre real de la tabla física, no hay header que buscar.
+    tabla_referenciada =
+      case MetaSchemaContext.catalogo_sistema(catalogo_ref) do
+        nil -> MetaSchemaContext.obtener_header_por_nombre(catalogo_ref).schema_context_name
+        _sistema -> catalogo_ref
+      end
 
     base_opciones(propiedades)
-    |> Map.put(:tabla_referenciada, header_ref.schema_context_name)
+    |> Map.put(:tabla_referenciada, tabla_referenciada)
   end
 
   defp construir_opciones(_tipo, propiedades), do: base_opciones(propiedades)
@@ -920,8 +932,8 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     end
   end
 
-  defp columna_migracion(campo, _tipo, %{tabla_referenciada: tabla_ref}),
-    do: "      add :#{campo}, references(:#{tabla_ref}), null: false"
+  defp columna_migracion(campo, _tipo, %{tabla_referenciada: tabla_ref} = opciones),
+    do: "      add :#{campo}, references(:#{tabla_ref}), null: #{nulo?(opciones)}"
 
   defp columna_migracion(campo, :string, %{texto_largo: true} = opciones),
     do: "      add :#{campo}, :text, null: #{nulo?(opciones)}"
