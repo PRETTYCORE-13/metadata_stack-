@@ -174,7 +174,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       header.id
       |> MetaSchemaContext.listar_catalogos_detalle()
       |> Enum.map(fn h ->
-        %{id: h.id, nombre: h.schema_context_name, etiqueta: h.schema_context_label, campos: MetaSchemaContext.listar_detalles(h.schema_context_name)}
+        # "fecha_registro" es de CONTROL (mismo criterio que panel_campos/1)
+        # — no se ofrece como campo editable de una transición ni en
+        # ningún otro picker de configuración que use este assign.
+        campos = h.schema_context_name |> MetaSchemaContext.listar_detalles() |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
+        %{id: h.id, nombre: h.schema_context_name, etiqueta: h.schema_context_label, campos: campos}
       end)
 
     # Catálogo Maestro-Detalle (R3): acá, no en completitud/1, es donde se
@@ -454,8 +458,12 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       props["catalogo"]
       |> MetaSchemaContext.listar_detalles()
       |> Enum.filter(& &1.schema_context_properties["visible"])
+      |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
 
-    campos_propios = Enum.filter(socket.assigns.campos, & &1.schema_context_properties["visible"])
+    campos_propios =
+      socket.assigns.campos
+      |> Enum.filter(& &1.schema_context_properties["visible"])
+      |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
 
     {:noreply,
      assign(socket, :relacion_form, %{
@@ -2560,7 +2568,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                     <td class="px-1.5 py-1 text-gray-600">{fila.tipo_dato || "—"}</td>
                     <td class="px-1.5 py-1 text-center">
                       <input type="checkbox"
-                        name={if fila.tipo_columna == :control, do: "visibles_control[]", else: "visibles[]"}
+                        name={if fila.flag_header?, do: "visibles_control[]", else: "visibles[]"}
                         value={fila.clave}
                         checked={fila.visible?} class="accent-purple-600" />
                     </td>
@@ -2588,7 +2596,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       @campos_control
       |> Enum.reject(&(&1.requiere_alcance? and not header.alcance_habilitado))
       |> Enum.map(fn %{clave: clave, etiqueta: etiqueta, visible_key: visible_key} ->
-        %{clave: clave, etiqueta: etiqueta, tipo_dato: nil, tipo_columna: :control, visible?: Map.fetch!(header, visible_key)}
+        %{clave: clave, etiqueta: etiqueta, tipo_dato: nil, tipo_columna: :control, flag_header?: true, visible?: Map.fetch!(header, visible_key)}
       end)
 
     negocio =
@@ -2599,7 +2607,17 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           clave: c.schema_context_field,
           etiqueta: Map.get(props, "etiqueta"),
           tipo_dato: Map.get(props, "tipo"),
-          tipo_columna: :negocio,
+          # "fecha_registro" tiene fila en meta_schema_detail como
+          # cualquier campo de negocio (para poder mostrarse/ordenarse
+          # acá), pero es de CONTROL (el server la pisa sola, ver
+          # asegurar_detalle_fecha_registro/1) — el badge "Tipo" tiene
+          # que decir "Control", no "Negocio". flag_header?: false igual
+          # (su "visible" sigue guardándose en schema_context_properties,
+          # NO en un booleano de Header como el resto de campos_control —
+          # ver guardar_get_view/2, que por eso decide el name="visibles[]"
+          # del checkbox por flag_header?, no por tipo_columna).
+          tipo_columna: if(c.schema_context_field == "fecha_registro", do: :control, else: :negocio),
+          flag_header?: false,
           visible?: Map.get(props, "visible") == true
         }
       end)
@@ -2636,7 +2654,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   attr :campos, :list, required: true
 
   defp panel_filtros_resumen(assigns) do
-    agregables = Enum.filter(assigns.campos, &(get_in(&1.schema_context_properties, ["tipo"]) != "referencia"))
+    agregables =
+      assigns.campos
+      |> Enum.filter(&(get_in(&1.schema_context_properties, ["tipo"]) != "referencia"))
+      |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
     activos = Enum.filter(agregables, &(get_in(&1.schema_context_properties, ["agregacion_activa"]) == true))
     disponibles = agregables -- activos
 

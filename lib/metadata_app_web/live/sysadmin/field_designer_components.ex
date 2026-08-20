@@ -990,7 +990,10 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
   defp campos_destino_referencia(""), do: []
 
   defp campos_destino_referencia(catalogo) do
-    catalogo |> MetaSchemaContext.listar_detalles() |> Enum.filter(& &1.schema_context_properties["visible"])
+    catalogo
+    |> MetaSchemaContext.listar_detalles()
+    |> Enum.filter(& &1.schema_context_properties["visible"])
+    |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
   end
 
   # --- vista previa en vivo ----------------------------------------------------

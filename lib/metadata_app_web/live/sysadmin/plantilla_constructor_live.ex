@@ -122,6 +122,10 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           nombre
           |> MetaSchemaContext.listar_detalles()
           |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
+          # "fecha_registro" es de CONTROL (ver definicion_automatica/1 en
+          # meta_plantillas.ex) — no se ofrece como "Campo" para arrastrar
+          # ni como opción en los selects de referencia/condición/fórmula.
+          |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
 
         catalogos_relacionables =
           nombre

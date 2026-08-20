@@ -373,6 +373,9 @@ defmodule MetadataApp.MetaPlantillas do
       |> MetaSchemaContext.listar_detalles()
       |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
       |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
+      # Mismo criterio que definicion_automatica/1 — "fecha_registro" es de
+      # CONTROL, "+ Campos faltantes" no debe ofrecerlo solo.
+      |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
       |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
       |> Enum.reject(&MapSet.member?(ya_usados, &1.schema_context_field))
 
@@ -427,6 +430,11 @@ defmodule MetadataApp.MetaPlantillas do
       |> MetaSchemaContext.listar_detalles()
       |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
       |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
+      # "fecha_registro" es un campo de CONTROL (ver asegurar_detalle_fecha_registro/1
+      # en catalogo_generador.ex) — no corresponde en la vista/plantilla
+      # DEFAULT, a pedido explícito (2026-08-19); un admin que la quiera
+      # mostrar la sigue pudiendo agregar a mano desde el Constructor.
+      |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
       |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
 
     hijos_campo = nodos_columna_de_campos(campos)
