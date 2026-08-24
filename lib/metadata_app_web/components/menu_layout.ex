@@ -101,7 +101,7 @@ defmodule MetadataAppWeb.MenuLayout do
                content: space-between en pc-sidebar-header, ver menu.css) —
                antes vivía en la topbar, a pedido explícito se movió acá. -->
           <div class="pc-sidebar-logo">
-            <img src="https://prettycore.xyz/IMAGENES/Logo%20Prettycore%20(8).png" alt="Prettycore" />
+            <img src="https://ennovacore.com.mx/IMAGENES/IMAGENES_pret/gota.png" alt="Prettycore" />
           </div>
           <!-- Tema claro/oscuro — reusa "phx:set-theme" (ya escuchado en
                root.html.heex desde que existe la app, generado por
