@@ -9,6 +9,35 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   alias MetadataApp.Permissions
   import Ecto.Query
 
+  # Tablas de sistema (jerarquía organizacional) que un campo "referencia"
+  # puede apuntar además de un catálogo BPB normal (2026-08-20, a pedido
+  # explícito) — NO son catálogos generados por el Motor (sin
+  # meta_schema_header, sin estado_id/delete_guid en el mismo formato que
+  # CatalogoGenerador asume), así que el nombre acá es literal el de la
+  # tabla física real (necesario para `references(:...)` en la migración,
+  # ver construir_opciones/2 en catalogo_generador.ex) y cada punto de
+  # integración de "referencia" (listar_catalogos_referenciables/0 acá,
+  # opciones_referencia/2 en CatalogoGenerico, construir_propiedades/3 en
+  # FieldDesignerComponents) mira `catalogo_sistema/1` ANTES de asumir que
+  # es un catálogo BPB con header. `campo_nombre` es el campo que se usa
+  # como etiqueta legible por default en el combo (ver
+  # agregar_visualizacion_por_defecto/1 en FieldDesignerComponents) — no
+  # hay meta_schema_detail para estas tablas, así que no hay forma de que
+  # el admin elija "campos_acompanamiento" como en un catálogo normal.
+  @catalogos_sistema %{
+    "meta_schema_empresa" => %{etiqueta: "Empresa", modulo: MetadataApp.Autenticacion.Empresa, campo_nombre: "nombre"},
+    "meta_schema_branch" => %{etiqueta: "Sucursal", modulo: MetadataApp.Autenticacion.Branch, campo_nombre: "branch_name"},
+    "meta_schema_inventory_location" => %{
+      etiqueta: "Almacén",
+      modulo: MetadataApp.Autenticacion.InventoryLocation,
+      campo_nombre: "inventory_name"
+    },
+    "meta_schema_sales_unit" => %{etiqueta: "Unidad de venta", modulo: MetadataApp.Autenticacion.SalesUnit, campo_nombre: "sales_unit_name"}
+  }
+
+  @doc "`%{etiqueta:, modulo:, campo_nombre:}` si `nombre` es una de las tablas de sistema referenciables, `nil` si es un catálogo BPB normal (o no existe)."
+  def catalogo_sistema(nombre), do: Map.get(@catalogos_sistema, nombre)
+
   # order_by explícito a propósito: sin esto Postgres no garantiza el orden
   # de las filas devueltas, y mix meta.export terminaba produciendo diffs
   # sin sentido (el archivo entero "cambiaba" de orden) sin ningún cambio
@@ -321,9 +350,17 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   # CatalogoGenerador.generar/1 fallaba en silencio al no encontrar esa
   # propiedad (ver construir_opciones/2 en catalogo_generador.ex).
   def listar_catalogos_referenciables do
-    from(h in Header, where: is_nil(h.delete_guid) and h.schema_context_type == 1, order_by: h.schema_context_label)
-    |> Repo.all()
-    |> Enum.map(&%{nombre: &1.schema_context_name, etiqueta: &1.schema_context_label})
+    catalogos =
+      from(h in Header, where: is_nil(h.delete_guid) and h.schema_context_type == 1, order_by: h.schema_context_label)
+      |> Repo.all()
+      |> Enum.map(&%{nombre: &1.schema_context_name, etiqueta: &1.schema_context_label})
+
+    sistema =
+      @catalogos_sistema
+      |> Enum.map(fn {nombre, %{etiqueta: etiqueta}} -> %{nombre: nombre, etiqueta: "#{etiqueta} (sistema)"} end)
+      |> Enum.sort_by(& &1.etiqueta)
+
+    catalogos ++ sistema
   end
 
   def obtener_header!(id), do: Repo.get!(Header, id)
@@ -670,6 +707,61 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
           {:ciclo, cadena} -> {:halt, {:ciclo, [nombre | cadena]}}
         end
       end)
+    end
+  end
+
+  @doc """
+  De `campos_destino` (Detail del catálogo al que apunta ESTE campo
+  referencia), cuáles sirven como "campo_remoto" válido para depender de
+  un padre que a su vez apunta a `catalogo_padre` — tienen que ser tipo
+  "referencia" Y apuntar al MISMO catálogo, si no la comparación nunca
+  puede coincidir: el valor de un campo referencia siempre es el id de su
+  catálogo destino, compararlo contra cualquier otra cosa (un nombre, un
+  texto libre) jamás matchea un id real. Se usa tanto para filtrar las
+  opciones del <select> "Filtrar por" en la UI (que la elección inválida
+  ni siquiera se pueda tipear) como en `validar_tipos_dependencia/3` al
+  guardar.
+  """
+  def campos_remoto_validos(campos_destino, catalogo_padre) do
+    Enum.filter(campos_destino, fn c ->
+      props = c.schema_context_properties
+      props["tipo"] == "referencia" and props["catalogo"] == catalogo_padre
+    end)
+  end
+
+  @doc """
+  Válida contra `campos_locales`/`campos_destino` (Detail de ambos
+  catálogos — el local para resolver a qué apunta cada "campo_padre", el
+  destino para resolver el tipo de cada "campo_remoto") que cada
+  dependencia sea de verdad comparable: ver `campos_remoto_validos/2`.
+  Complementa a `validar_sin_ciclo/3` (ese cuida la FORMA del grafo, este
+  cuida que cada eslabón individual tenga sentido) — se llama ANTES de
+  persistir, en los dos lugares donde se guarda una dependencia (crear
+  campo nuevo y editar uno existente). Bug real (reporte de usuaria): el
+  asistente dejaba elegir "Nombre" como campo_remoto de una dependencia
+  cuyo padre apuntaba a otro catálogo, y el filtro no filtraba nada — sin
+  aviso de que la combinación no tenía sentido.
+  """
+  def validar_tipos_dependencia(dependencias, campos_locales, campos_destino) do
+    invalida =
+      Enum.find(dependencias, fn dep ->
+        case Enum.find(campos_locales, &(&1.schema_context_field == dep["campo_padre"])) do
+          nil ->
+            true
+
+          padre ->
+            validos = campos_remoto_validos(campos_destino, padre.schema_context_properties["catalogo"])
+            not Enum.any?(validos, &(&1.schema_context_field == dep["campo_remoto"]))
+        end
+      end)
+
+    case invalida do
+      nil ->
+        :ok
+
+      dep ->
+        {:error,
+         "El campo elegido en \"Filtrar por\" tiene que ser una referencia al mismo catálogo al que apunta \"#{dep["campo_padre"]}\" — si no, el filtro nunca puede coincidir con nada."}
     end
   end
 
@@ -1288,7 +1380,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   defp validar_campo_visualizacion(changeset) do
     case Ecto.Changeset.get_field(changeset, :schema_context_properties) do
       %{"tipo" => "referencia", "catalogo" => catalogo, "campo_visualizacion" => %{} = config} ->
-        campos_reales = catalogo |> listar_detalles() |> Enum.map(& &1.schema_context_field)
+        campos_reales = campos_reales_de(catalogo)
 
         case validar_config_visualizacion(config, campos_reales) do
           :ok -> changeset
@@ -1297,6 +1389,16 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
 
       _ ->
         changeset
+    end
+  end
+
+  # Empresa/Branch/InventoryLocation/SalesUnit (ver catalogo_sistema/1) no
+  # tienen meta_schema_detail -- su único "campo real" válido para
+  # campo_visualizacion es el campo de nombre que cada una define.
+  defp campos_reales_de(catalogo) do
+    case catalogo_sistema(catalogo) do
+      %{campo_nombre: campo} -> [campo]
+      nil -> catalogo |> listar_detalles() |> Enum.map(& &1.schema_context_field)
     end
   end
 
@@ -1552,6 +1654,18 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     )
 
     :ok
+  end
+
+  @doc """
+  Orden combinado de columnas del Get View unificado (Campos de Control +
+  Campos de negocio, ver panel_get_view/1 en BcMotorLive) — a diferencia de
+  reordenar_campos/2 de arriba, esto NO toca schema_context_properties de
+  ningún campo (el orden de la pestaña Campos/Ficha/contrato de API sigue
+  intacto); vive aparte, en Header.orden_columnas_tabla, exclusivo de esta
+  grilla.
+  """
+  def reordenar_columnas_tabla(%Header{} = header, orden) do
+    actualizar_header(header, %{"orden_columnas_tabla" => orden})
   end
 
   # Borrado total (no soft-delete): al ser el Header dueño de la definición

@@ -54,26 +54,34 @@ defmodule MetadataAppWeb.FiltrosDefaultComponents do
             <form phx-change="cambiar_filtro_fecha_valor">
               <input type="hidden" name="campo" value="desde" />
               <label class="text-[10px] text-gray-500 block mb-0.5">Desde</label>
-              <input
-                id="filtro-default-fecha-desde"
-                phx-hook="AbrirCalendario"
-                type="date"
-                name="valor"
-                value={@header.filtro_default_fecha_valor}
-                class="border border-gray-300 rounded-lg px-2 py-1 text-[11px]"
-              />
+              <div class="relative">
+                <input
+                  id="filtro-default-fecha-desde"
+                  phx-hook="AbrirCalendario"
+                  type="date"
+                  name="valor"
+                  value={@header.filtro_default_fecha_valor}
+                  class="border border-gray-300 rounded-lg pl-2 pr-6 py-1 text-[11px]"
+                />
+                <button type="button" tabindex="-1" data-abrir-calendario aria-label="Abrir calendario"
+                  class="pc-abrir-calendario absolute right-1 top-1/2 -translate-y-1/2 material-symbols-outlined" style="font-size:16px">expand_more</button>
+              </div>
             </form>
             <form phx-change="cambiar_filtro_fecha_valor">
               <input type="hidden" name="campo" value="hasta" />
               <label class="text-[10px] text-gray-500 block mb-0.5">Hasta</label>
-              <input
-                id="filtro-default-fecha-hasta"
-                phx-hook="AbrirCalendario"
-                type="date"
-                name="valor"
-                value={@header.filtro_default_fecha_valor_hasta}
-                class="border border-gray-300 rounded-lg px-2 py-1 text-[11px]"
-              />
+              <div class="relative">
+                <input
+                  id="filtro-default-fecha-hasta"
+                  phx-hook="AbrirCalendario"
+                  type="date"
+                  name="valor"
+                  value={@header.filtro_default_fecha_valor_hasta}
+                  class="border border-gray-300 rounded-lg pl-2 pr-6 py-1 text-[11px]"
+                />
+                <button type="button" tabindex="-1" data-abrir-calendario aria-label="Abrir calendario"
+                  class="pc-abrir-calendario absolute right-1 top-1/2 -translate-y-1/2 material-symbols-outlined" style="font-size:16px">expand_more</button>
+              </div>
             </form>
           </div>
         <% end %>
@@ -83,16 +91,20 @@ defmodule MetadataAppWeb.FiltrosDefaultComponents do
             <form phx-change="cambiar_filtro_fecha_valor">
               <input type="hidden" name="campo" value="desde" />
               <label class="text-[10px] text-gray-500 block mb-0.5">{FiltrosDefault.etiqueta_calendario_unico(@header.filtro_default_fecha_modo)}</label>
-              <input
-                id="filtro-default-fecha-unica"
-                phx-hook="AbrirCalendario"
-                type="date"
-                name="valor"
-                value={@header.filtro_default_fecha_valor}
-                min={FiltrosDefault.min_calendario_unico(@header.filtro_default_fecha_modo)}
-                max={FiltrosDefault.max_calendario_unico(@header.filtro_default_fecha_modo)}
-                class="border border-gray-300 rounded-lg px-2 py-1 text-[11px]"
-              />
+              <div class="relative">
+                <input
+                  id="filtro-default-fecha-unica"
+                  phx-hook="AbrirCalendario"
+                  type="date"
+                  name="valor"
+                  value={@header.filtro_default_fecha_valor}
+                  min={FiltrosDefault.min_calendario_unico(@header.filtro_default_fecha_modo)}
+                  max={FiltrosDefault.max_calendario_unico(@header.filtro_default_fecha_modo)}
+                  class="border border-gray-300 rounded-lg pl-2 pr-6 py-1 text-[11px]"
+                />
+                <button type="button" tabindex="-1" data-abrir-calendario aria-label="Abrir calendario"
+                  class="pc-abrir-calendario absolute right-1 top-1/2 -translate-y-1/2 material-symbols-outlined" style="font-size:16px">expand_more</button>
+              </div>
             </form>
           </div>
         <% end %>

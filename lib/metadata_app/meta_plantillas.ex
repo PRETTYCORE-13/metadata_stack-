@@ -98,7 +98,9 @@ defmodule MetadataApp.MetaPlantillas do
   def publicar_plantilla(%Plantilla{} = plantilla) do
     Repo.transaction(fn ->
       from(p in Plantilla,
-        where: p.meta_schema_header_id == ^plantilla.meta_schema_header_id and p.estado == "publicada" and p.id != ^plantilla.id
+        where:
+          p.meta_schema_header_id == ^plantilla.meta_schema_header_id and p.estado == "publicada" and
+            p.proposito == ^plantilla.proposito and p.id != ^plantilla.id
       )
       |> Repo.update_all(set: [estado: "borrador"])
 
@@ -113,10 +115,12 @@ defmodule MetadataApp.MetaPlantillas do
     end)
   end
 
-  def obtener_plantilla_publicada(header_id) do
+  def obtener_plantilla_publicada(header_id, proposito \\ "vista") do
     Repo.one(
       from p in Plantilla,
-        where: p.meta_schema_header_id == ^header_id and p.estado == "publicada" and is_nil(p.delete_guid)
+        where:
+          p.meta_schema_header_id == ^header_id and p.estado == "publicada" and p.proposito == ^proposito and
+            is_nil(p.delete_guid)
     )
   end
 
@@ -132,7 +136,9 @@ defmodule MetadataApp.MetaPlantillas do
   """
   def listar_disponibles_multi_vista(header_id) do
     from(p in Plantilla,
-      where: p.meta_schema_header_id == ^header_id and p.disponible_multi_vista == true and is_nil(p.delete_guid),
+      where:
+        p.meta_schema_header_id == ^header_id and p.disponible_multi_vista == true and p.proposito == "vista" and
+          is_nil(p.delete_guid),
       order_by: p.nombre
     )
     |> Repo.all()
@@ -159,14 +165,19 @@ defmodule MetadataApp.MetaPlantillas do
     },
     "campo" => %{"campo" => nil, "tipo_filtro" => nil},
     "campo_calculado" => %{"etiqueta" => "Campo calculado", "formula" => "", "decimales" => 2},
+    "resumen" => %{"etiqueta" => "Resumen", "formula" => "", "formato" => "numero", "decimales" => 0, "icono" => "", "color" => "purpura"},
+    "timeline" => %{"titulo" => "Línea de tiempo"},
     "autocompletar" => %{
       "titulo" => "",
       "campo_referencia" => nil,
       "catalogo_destino" => nil,
       "campos_destino" => []
     },
+    "vista_previa" => %{"campo" => nil, "titulo" => "", "tipo" => "auto"},
     "divisor" => %{},
     "tabla" => %{"catalogo" => nil, "titulo" => "Registros relacionados"},
+    "lista_rapida" => %{"catalogo" => nil, "titulo" => "Actividad reciente", "campos" => [], "limite" => 5},
+    "renglones" => %{"catalogo" => nil, "titulo" => "", "campos" => [], "mostrar_total" => false, "campo_total" => nil},
     "etiqueta" => %{"texto" => "Texto", "estilo" => "parrafo"},
     "alerta" => %{"texto" => "Mensaje", "nivel" => "info"},
     "tarjeta" => %{"titulo" => "Tarjeta", "texto" => "", "icono" => ""},
@@ -362,6 +373,9 @@ defmodule MetadataApp.MetaPlantillas do
       |> MetaSchemaContext.listar_detalles()
       |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
       |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
+      # Mismo criterio que definicion_automatica/1 — "fecha_registro" es de
+      # CONTROL, "+ Campos faltantes" no debe ofrecerlo solo.
+      |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
       |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
       |> Enum.reject(&MapSet.member?(ya_usados, &1.schema_context_field))
 
@@ -416,6 +430,11 @@ defmodule MetadataApp.MetaPlantillas do
       |> MetaSchemaContext.listar_detalles()
       |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
       |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
+      # "fecha_registro" es un campo de CONTROL (ver asegurar_detalle_fecha_registro/1
+      # en catalogo_generador.ex) — no corresponde en la vista/plantilla
+      # DEFAULT, a pedido explícito (2026-08-19); un admin que la quiera
+      # mostrar la sigue pudiendo agregar a mano desde el Constructor.
+      |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
       |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
 
     hijos_campo = nodos_columna_de_campos(campos)

@@ -37,6 +37,23 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
   ]
 
+  # Get View unificado (panel_get_view/1) — descriptores fijos de los
+  # campos de control, mezclados con @campos (de negocio) en una sola
+  # grilla arrastrable. `visible_key` es el campo booleano real en Header
+  # (Header.mostrar_id_en_tabla, etc.) — "empresa"/"branch"/
+  # "inventory_location"/"sales_unit" solo se ofrecen cuando el catálogo
+  # tiene Alcance de Datos activado (esas columnas ni existen físicamente
+  # si no, ver alcance_field_asts/1 en MetaCatalogoGenerico).
+  @campos_control [
+    %{clave: "id", etiqueta: "ID", visible_key: :mostrar_id_en_tabla, requiere_alcance?: false},
+    %{clave: "estado", etiqueta: "Estado", visible_key: :mostrar_estado_en_tabla, requiere_alcance?: false},
+    %{clave: "trn", etiqueta: "TRN", visible_key: :mostrar_trn_en_tabla, requiere_alcance?: false},
+    %{clave: "empresa", etiqueta: "Empresa", visible_key: :mostrar_empresa_en_tabla, requiere_alcance?: true},
+    %{clave: "branch", etiqueta: "Sucursal", visible_key: :mostrar_branch_en_tabla, requiere_alcance?: true},
+    %{clave: "inventory_location", etiqueta: "Almacén", visible_key: :mostrar_inventory_location_en_tabla, requiere_alcance?: true},
+    %{clave: "sales_unit", etiqueta: "Unidad de venta", visible_key: :mostrar_sales_unit_en_tabla, requiere_alcance?: true},
+    %{clave: "creado_por", etiqueta: "Creado por", visible_key: :mostrar_creado_por_en_tabla, requiere_alcance?: false}
+  ]
 
   # Mismo set curado que BcListLive (modales de carpeta) — el ícono del
   # header se edita con el mismo selector en ambas pantallas.
@@ -157,7 +174,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       header.id
       |> MetaSchemaContext.listar_catalogos_detalle()
       |> Enum.map(fn h ->
-        %{id: h.id, nombre: h.schema_context_name, etiqueta: h.schema_context_label, campos: MetaSchemaContext.listar_detalles(h.schema_context_name)}
+        # "fecha_registro" es de CONTROL (mismo criterio que panel_campos/1)
+        # — no se ofrece como campo editable de una transición ni en
+        # ningún otro picker de configuración que use este assign.
+        campos = h.schema_context_name |> MetaSchemaContext.listar_detalles() |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
+        %{id: h.id, nombre: h.schema_context_name, etiqueta: h.schema_context_label, campos: campos}
       end)
 
     # Catálogo Maestro-Detalle (R3): acá, no en completitud/1, es donde se
@@ -185,7 +206,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # "grupo" del selector de campos editables: "header" o el
   # schema_context_name de un catálogo detalle — mismo valor que la key
   # del tab (ver tabs_motor en modal_transicion/1).
-  defp campos_del_grupo(assigns, "header"), do: assigns.campos
+  # "fecha_registro" es de CONTROL -- mismo criterio que grupo_campos_editables/1
+  # (que ya lo saca de la lista visible); acá cubre "Todos"/"Ninguno", que
+  # de otro modo lo agregaría a campos_editables sin que nunca haya sido
+  # visible/toggleable en el checklist.
+  defp campos_del_grupo(assigns, "header"), do: Enum.reject(assigns.campos, &(&1.schema_context_field == "fecha_registro"))
 
   defp campos_del_grupo(assigns, grupo) do
     case Enum.find(assigns.catalogos_detalle, &(&1.nombre == grupo)) do
@@ -437,8 +462,12 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       props["catalogo"]
       |> MetaSchemaContext.listar_detalles()
       |> Enum.filter(& &1.schema_context_properties["visible"])
+      |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
 
-    campos_propios = Enum.filter(socket.assigns.campos, & &1.schema_context_properties["visible"])
+    campos_propios =
+      socket.assigns.campos
+      |> Enum.filter(& &1.schema_context_properties["visible"])
+      |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
 
     {:noreply,
      assign(socket, :relacion_form, %{
@@ -588,28 +617,29 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
   def handle_event("guardar_dependencia", _params, socket) do
-    %{"campo" => campo, "catalogo" => catalogo, "dependencias" => dependencias} = socket.assigns.dependencia_form
+    %{"campo" => campo, "catalogo" => catalogo, "dependencias" => dependencias, "campos_destino" => campos_destino} =
+      socket.assigns.dependencia_form
 
     dependencias_validas =
       Enum.filter(dependencias, &(&1["campo_padre"] not in [nil, ""] and &1["campo_remoto"] not in [nil, ""]))
 
-    case MetaSchemaContext.validar_sin_ciclo(catalogo, campo, dependencias_validas) do
-      :ok ->
-        detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
-        props = Map.put(detalle.schema_context_properties, "dependencias", dependencias_validas)
+    with :ok <- MetaSchemaContext.validar_sin_ciclo(catalogo, campo, dependencias_validas),
+         :ok <- MetaSchemaContext.validar_tipos_dependencia(dependencias_validas, socket.assigns.campos, campos_destino) do
+      detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+      props = Map.put(detalle.schema_context_properties, "dependencias", dependencias_validas)
 
-        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
-          {:ok, _detalle} ->
-            {:noreply,
-             socket
-             |> assign(:dependencia_form, nil)
-             |> put_flash(:info, "Dependencia de \"#{campo}\" actualizada.")
-             |> cargar_motor()}
+      case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+        {:ok, _detalle} ->
+          {:noreply,
+           socket
+           |> assign(:dependencia_form, nil)
+           |> put_flash(:info, "Dependencia de \"#{campo}\" actualizada.")
+           |> cargar_motor()}
 
-          {:error, changeset} ->
-            {:noreply, update(socket, :dependencia_form, &Map.put(&1, "error", resumen_errores(changeset)))}
-        end
-
+        {:error, changeset} ->
+          {:noreply, update(socket, :dependencia_form, &Map.put(&1, "error", resumen_errores(changeset)))}
+      end
+    else
       {:error, motivo} ->
         {:noreply, update(socket, :dependencia_form, &Map.put(&1, "error", motivo))}
     end
@@ -862,6 +892,26 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     actualizar_campo_y_regenerar(socket, detalle, props, "el valor default")
   end
 
+  # Grilla unificada de Get View (panel_get_view/1) — mismo hook
+  # ListaOrdenable que el de la pestaña Campos, pero con un
+  # `data-contenedor-id` propio ("columnas-get-view") para no confundirse
+  # con esa: acá se mezclan claves de control ("id"/"estado"/...) con
+  # schema_context_field reales, así que reordenar_campos/2 (que solo
+  # entiende campos reales) no sirve — el resultado se guarda aparte, en
+  # Header.orden_columnas_tabla (ver reordenar_columnas_tabla/2), sin
+  # tocar el "orden" propio de cada campo. Esta cláusula tiene que ir
+  # ANTES que la genérica de abajo: el pattern de esa (sin contenedor_id)
+  # matchearía igual aunque venga el "contenedor_id" de acá, por eso el
+  # orden de las cláusulas importa.
+  def handle_event("mover_a", %{"id" => id, "index" => index, "contenedor_id" => "columnas-get-view"}, socket) do
+    orden_actual = filas_get_view(socket.assigns.campos, socket.assigns.header) |> Enum.map(& &1.clave)
+    nuevo_orden = orden_actual |> List.delete(id) |> List.insert_at(index, id)
+
+    {:ok, header_actualizado} = MetaSchemaContext.reordenar_columnas_tabla(socket.assigns.header, nuevo_orden)
+
+    {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
+  end
+
   # Reordenar la tabla de Campos (drag-and-drop, hook ListaOrdenable) —
   # 2026-08-06, a pedido explícito: antes "orden" solo se fijaba una vez
   # al crear el campo (length(@campos) + 1), corregirlo después era
@@ -995,31 +1045,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # CatalogoPermisosLive/pestaña Permisos, ver ese módulo — "revuelve
   # mucho" tenerlo separado de la config por rol en otra pestaña).
 
-  def handle_event("toggle_mostrar_id_en_tabla", _params, socket),
-    do: toggle_columna_estructural(socket, :mostrar_id_en_tabla, "\"Mostrar ID\"")
-
-  def handle_event("toggle_mostrar_estado_en_tabla", _params, socket),
-    do: toggle_columna_estructural(socket, :mostrar_estado_en_tabla, "\"Mostrar Estado\"")
-
-  def handle_event("toggle_mostrar_trn_en_tabla", _params, socket),
-    do: toggle_columna_estructural(socket, :mostrar_trn_en_tabla, "\"Mostrar TRN\"")
-
-  # Columnas de Alcance de Datos (2026-08-12) — mismos 4 botones/criterio
-  # que ID/Estado/TRN de arriba, solo que panel_get_view/1 los oculta del
-  # todo si el catálogo no tiene alcance_habilitado (sin eso, las columnas
-  # ni existen físicamente, ver Header.mostrar_branch_en_tabla etc.).
-  def handle_event("toggle_mostrar_empresa_en_tabla", _params, socket),
-    do: toggle_columna_estructural(socket, :mostrar_empresa_en_tabla, "\"Mostrar Empresa\"")
-
-  def handle_event("toggle_mostrar_branch_en_tabla", _params, socket),
-    do: toggle_columna_estructural(socket, :mostrar_branch_en_tabla, "\"Mostrar Sucursal\"")
-
-  def handle_event("toggle_mostrar_inventory_location_en_tabla", _params, socket),
-    do: toggle_columna_estructural(socket, :mostrar_inventory_location_en_tabla, "\"Mostrar Almacén\"")
-
-  def handle_event("toggle_mostrar_sales_unit_en_tabla", _params, socket),
-    do: toggle_columna_estructural(socket, :mostrar_sales_unit_en_tabla, "\"Mostrar Unidad de venta\"")
-
   # Sub-filtro de fecha de "Filtros por default" — "primer_dia_anio"/
   # "ultimo_dia_anio"/"actual" (una sola fecha por calendario, precargada
   # con el valor obvio de cada modo — el usuario la puede cambiar
@@ -1131,10 +1156,19 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   # --- Get View: qué campos ve el usuario final en la tabla del catálogo ------
 
+  # Grilla unificada (2026-08-18): un solo submit guarda la visibilidad de
+  # campos de negocio (schema_context_properties.visible, como siempre) Y
+  # de campos de control (Header.mostrar_*_en_tabla, antes cada uno se
+  # guardaba solo/inmediato con su propio botón toggle_mostrar_*_en_tabla
+  # — unificado en un solo "Guardar Get View" junto con los de negocio,
+  # sin mecanismo nuevo de guardado). "visibles_control[]" (nombre de
+  # campo aparte de "visibles[]") evita cualquier choque si alguna vez un
+  # campo de negocio se llamara igual que una clave de control.
   def handle_event("guardar_get_view", params, socket) do
     visibles = params |> Map.get("visibles", []) |> List.wrap() |> MapSet.new()
+    visibles_control = params |> Map.get("visibles_control", []) |> List.wrap() |> MapSet.new()
 
-    resultado =
+    resultado_campos =
       Enum.reduce_while(socket.assigns.campos, :ok, fn detalle, :ok ->
         props = Map.put(detalle.schema_context_properties, "visible", detalle.schema_context_field in visibles)
 
@@ -1144,15 +1178,20 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         end
       end)
 
-    case resultado do
-      :ok ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "Get View actualizado.")
-         |> cargar_motor()}
-
-      {:error, campo, changeset} ->
+    with :ok <- resultado_campos,
+         attrs_control = Map.new(@campos_control, fn %{clave: clave, visible_key: chave} -> {Atom.to_string(chave), clave in visibles_control} end),
+         {:ok, header_actualizado} <- MetaSchemaContext.actualizar_header(socket.assigns.header, attrs_control) do
+      {:noreply,
+       socket
+       |> assign(:header, header_actualizado)
+       |> put_flash(:info, "Get View actualizado.")
+       |> cargar_motor()}
+    else
+      {:error, campo, changeset} when is_binary(campo) ->
         {:noreply, put_flash(socket, :error, "No se pudo actualizar \"#{campo}\": #{resumen_errores(changeset)}")}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:noreply, put_flash(socket, :error, "No se pudo actualizar los campos de control: #{resumen_errores(changeset)}")}
     end
   end
 
@@ -1584,17 +1623,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
        "permitir_incompleto" => form["permitir_incompleto"],
        "mensaje_invalido" => form["mensaje_invalido"]
      }}
-  end
-
-  # Compartido por los 3 toggle_mostrar_*_en_tabla/3 de arriba.
-  defp toggle_columna_estructural(socket, campo, etiqueta) do
-    header = socket.assigns.header
-    valor = !Map.fetch!(header, campo)
-
-    case MetaSchemaContext.actualizar_header(header, %{Atom.to_string(campo) => valor}) do
-      {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
-      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar #{etiqueta}.")}
-    end
   end
 
   # Compartido por cambiar_obligatorio_campo/2 y cambiar_valor_default_campo/2
@@ -2261,6 +2289,16 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   attr :longitudes_columnas, :map, default: %{}
 
   defp panel_campos(assigns) do
+    # "fecha_registro" es un campo de CONTROL del BC (como insert_guid,
+    # creado_por_id, branch_id...) — el server lo pisa solo en cada alta
+    # (ver catalogo_generico.ex:605), nunca hay nada que editarle/
+    # eliminarle acá. Tiene fila propia en meta_schema_detail solo para
+    # que Get View lo pueda mostrar/ordenar como columna (ver
+    # asegurar_detalle_fecha_registro/1 en catalogo_generador.ex) — no
+    # se toca @campos en sí (lo sigue necesitando filas_get_view/2 y el
+    # resto de la pestaña), solo se lo saca de ESTA tabla de gestión.
+    assigns = assign(assigns, :campos, Enum.reject(assigns.campos, &(&1.schema_context_field == "fecha_registro")))
+
     ~H"""
     <div class="border border-gray-200 rounded-lg">
       <div class="px-1.5 ml-2 -mb-2 relative">
@@ -2359,6 +2397,19 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                           class="text-purple-600 hover:text-purple-800 text-[11px] font-semibold">
                           <%= if Map.get(props, "formato_fecha") not in [nil, ""], do: "Configurado", else: "Configurar" %>
                         </button>
+                      <% Map.get(props, "tipo") == "referencia" -> %>
+                        <div class="whitespace-nowrap">
+                          <button type="button" phx-click="abrir_form_relacion" phx-value-campo={c.schema_context_field}
+                            title="Catálogo destino, qué campos trae y qué campos muestra"
+                            class="text-purple-600 hover:text-purple-800 text-[11px] font-semibold mr-2">
+                            <%= if Map.get(props, "campos_acompanamiento", []) != [], do: "Configurado", else: "Configurar" %>
+                          </button>
+                          <button type="button" phx-click="abrir_form_dependencia" phx-value-campo={c.schema_context_field}
+                            title="Combo en cascada: qué otro campo referencia hay que elegir primero"
+                            class="text-blue-600 hover:text-blue-800 text-[11px] font-semibold">
+                            <%= if Map.get(props, "dependencias", []) != [], do: "Cascada ✓", else: "Cascada" %>
+                          </button>
+                        </div>
                       <% true -> %>
                         <span class="text-gray-300">—</span>
                     <% end %>
@@ -2463,79 +2514,30 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   attr :campos, :list, required: true
   attr :header, :any, required: true
 
-  # "Get View": qué campos ve el usuario final al consultar este catálogo
-  # (tabla de CatalogoLive) — expone TODOS los campos reales, marcados
-  # según su propiedad "visible" actual en el contrato, para que se puedan
-  # prender/apagar de un vistazo sin tener que editar campo por campo.
+  # "Get View": qué columnas ve el usuario final en la tabla de
+  # CatalogoLive — grilla ÚNICA (2026-08-18, a pedido explícito: antes
+  # Campos de Control eran 7 botones sueltos sin orden, en una secuencia
+  # fija en CatalogoLive, separados de la tabla de Campos de negocio; "no
+  # tiene caso tenerlo separado") con Campos de Control + Campos de
+  # negocio mezclados, columna "Tipo" para distinguirlos, mismo
+  # mostrar/ocultar y mismo drag-and-drop para cualquiera de los dos. El
+  # orden combinado vive en Header.orden_columnas_tabla (ver
+  # filas_get_view/2) — aparte del "orden" propio de cada campo de
+  # negocio (schema_context_properties), que sigue intacto para la
+  # pestaña Campos/Ficha/contrato de API.
   defp panel_get_view(assigns) do
+    assigns = assign(assigns, :filas, filas_get_view(assigns.campos, assigns.header))
+
     ~H"""
     <div class="border border-gray-200 rounded-lg">
       <div class="px-1.5 ml-2 -mb-2 relative">
         <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-900">VISUALIZACIÓN DE CAMPOS</span>
       </div>
       <div class="p-3 pt-4 overflow-x-auto">
-        <p class="text-gray-500 mb-2">
-          Campos de Control
-        </p>
-
-        <div class="flex flex-wrap gap-2 mb-3">
-          <button type="button" phx-click="toggle_mostrar_id_en_tabla"
-            class={[
-              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
-              if(@header.mostrar_id_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
-            ]}>
-            {if @header.mostrar_id_en_tabla, do: "✓ ID", else: "ID (oculto)"}
-          </button>
-          <button type="button" phx-click="toggle_mostrar_estado_en_tabla"
-            class={[
-              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
-              if(@header.mostrar_estado_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
-            ]}>
-            {if @header.mostrar_estado_en_tabla, do: "✓ Estado", else: "Estado (oculto)"}
-          </button>
-          <button type="button" phx-click="toggle_mostrar_trn_en_tabla"
-            class={[
-              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
-              if(@header.mostrar_trn_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
-            ]}>
-            {if @header.mostrar_trn_en_tabla, do: "✓ TRN", else: "TRN (oculto)"}
-          </button>
-          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_empresa_en_tabla"
-            class={[
-              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
-              if(@header.mostrar_empresa_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
-            ]}>
-            {if @header.mostrar_empresa_en_tabla, do: "✓ Empresa", else: "Empresa (oculto)"}
-          </button>
-          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_branch_en_tabla"
-            class={[
-              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
-              if(@header.mostrar_branch_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
-            ]}>
-            {if @header.mostrar_branch_en_tabla, do: "✓ Sucursal", else: "Sucursal (oculto)"}
-          </button>
-          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_inventory_location_en_tabla"
-            class={[
-              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
-              if(@header.mostrar_inventory_location_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
-            ]}>
-            {if @header.mostrar_inventory_location_en_tabla, do: "✓ Almacén", else: "Almacén (oculto)"}
-          </button>
-          <button :if={@header.alcance_habilitado} type="button" phx-click="toggle_mostrar_sales_unit_en_tabla"
-            class={[
-              "text-[11px] font-semibold rounded-lg px-3 py-1.5 transition-colors whitespace-nowrap",
-              if(@header.mostrar_sales_unit_en_tabla, do: "bg-purple-600 text-white", else: "bg-purple-100 text-purple-700 hover:bg-purple-200")
-            ]}>
-            {if @header.mostrar_sales_unit_en_tabla, do: "✓ Unidad de venta", else: "Unidad de venta (oculto)"}
-          </button>
-        </div>
-        <%= if @campos == [] do %>
+        <%= if @filas == [] do %>
           <p class="text-gray-400">Este catálogo todavía no tiene campos.</p>
         <% else %>
           <form id="get-view-form" phx-submit="guardar_get_view">
-            <p class="text-gray-500 mb-2">
-              Campos de negocio
-            </p>
             <div class="flex items-center justify-between gap-2 mb-2">
               <div class="flex gap-2">
                 <button type="button"
@@ -2558,25 +2560,35 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
               <thead class="bg-gray-50">
                 <tr>
                   <th class="px-1.5 py-1 border-b border-gray-200"></th>
+                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
                   <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Nombre</th>
                   <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Etiqueta</th>
-                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
+                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo de dato</th>
                   <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Visible al usuario</th>
                 </tr>
               </thead>
-              <tbody id="tabla-get-view-ordenable" phx-hook="ListaOrdenable" data-grupo="campos-catalogo-getview">
-                <%= for c <- @campos do %>
-                  <% props = c.schema_context_properties || %{} %>
-                  <tr id={"getview-row-#{c.schema_context_field}"} class="border-b border-gray-100 hover:bg-gray-50" data-id={c.schema_context_field}>
+              <tbody id="tabla-get-view-ordenable" phx-hook="ListaOrdenable" data-grupo="campos-catalogo-getview-unificado" data-contenedor-id="columnas-get-view">
+                <%= for fila <- @filas do %>
+                  <tr id={"getview-row-#{fila.clave}"} class="border-b border-gray-100 hover:bg-gray-50" data-id={fila.clave}>
                     <td class="px-1.5 py-1 text-gray-300 jal-manija cursor-grab" title="Arrastrar para reordenar">
                       <span class="material-symbols-outlined" style="font-size: 16px">drag_indicator</span>
                     </td>
-                    <td class="px-1.5 py-1 text-gray-900 font-mono">{c.schema_context_field}</td>
-                    <td class="px-1.5 py-1 text-gray-700">{Map.get(props, "etiqueta")}</td>
-                    <td class="px-1.5 py-1 text-gray-600">{Map.get(props, "tipo")}</td>
+                    <td class="px-1.5 py-1">
+                      <span class={[
+                        "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide",
+                        if(fila.tipo_columna == :control, do: "bg-gray-100 text-gray-600", else: "bg-purple-50 text-purple-700")
+                      ]}>
+                        {if fila.tipo_columna == :control, do: "Control", else: "Negocio"}
+                      </span>
+                    </td>
+                    <td class="px-1.5 py-1 text-gray-900 font-mono">{fila.clave}</td>
+                    <td class="px-1.5 py-1 text-gray-700">{fila.etiqueta}</td>
+                    <td class="px-1.5 py-1 text-gray-600">{fila.tipo_dato || "—"}</td>
                     <td class="px-1.5 py-1 text-center">
-                      <input type="checkbox" name="visibles[]" value={c.schema_context_field}
-                        checked={Map.get(props, "visible") == true} class="accent-purple-600" />
+                      <input type="checkbox"
+                        name={if fila.flag_header?, do: "visibles_control[]", else: "visibles[]"}
+                        value={fila.clave}
+                        checked={fila.visible?} class="accent-purple-600" />
                     </td>
                   </tr>
                 <% end %>
@@ -2587,6 +2599,62 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       </div>
     </div>
     """
+  end
+
+  # Combina los campos de negocio (@campos) con los descriptores fijos de
+  # control (@campos_control, filtrados por alcance_habilitado) en una
+  # sola lista, ordenada por Header.orden_columnas_tabla — lo que no esté
+  # listado ahí (catálogo que nunca tocó esta grilla) cae al final,
+  # control primero y de negocio después, mismo orden visual que tenía la
+  # versión vieja separada (compatibilidad con todo lo ya publicado).
+  # Enum.sort_by/2 es estable: los empates (todo lo no listado) no
+  # cambian de posición relativa entre sí.
+  defp filas_get_view(campos, header) do
+    control =
+      @campos_control
+      |> Enum.reject(&(&1.requiere_alcance? and not header.alcance_habilitado))
+      |> Enum.map(fn %{clave: clave, etiqueta: etiqueta, visible_key: visible_key} ->
+        %{clave: clave, etiqueta: etiqueta, tipo_dato: nil, tipo_columna: :control, flag_header?: true, visible?: Map.fetch!(header, visible_key)}
+      end)
+
+    negocio =
+      Enum.map(campos, fn c ->
+        props = c.schema_context_properties || %{}
+
+        %{
+          clave: c.schema_context_field,
+          etiqueta: Map.get(props, "etiqueta"),
+          tipo_dato: Map.get(props, "tipo"),
+          # "fecha_registro" tiene fila en meta_schema_detail como
+          # cualquier campo de negocio (para poder mostrarse/ordenarse
+          # acá), pero es de CONTROL (el server la pisa sola, ver
+          # asegurar_detalle_fecha_registro/1) — el badge "Tipo" tiene
+          # que decir "Control", no "Negocio". flag_header?: false igual
+          # (su "visible" sigue guardándose en schema_context_properties,
+          # NO en un booleano de Header como el resto de campos_control —
+          # ver guardar_get_view/2, que por eso decide el name="visibles[]"
+          # del checkbox por flag_header?, no por tipo_columna).
+          tipo_columna: if(c.schema_context_field == "fecha_registro", do: :control, else: :negocio),
+          flag_header?: false,
+          visible?: Map.get(props, "visible") == true
+        }
+      end)
+
+    # ID va antes de negocio, el resto de control después — mismo orden
+    # visual que CatalogoLive ya mostraba antes de este Get View unificado
+    # (id | campos de negocio | estado/trn/empresa/... ), ver
+    # construir_columnas_render/3 en catalogo_live.ex (misma lógica).
+    {id_control, resto_control} = Enum.split_with(control, &(&1.clave == "id"))
+    todas = id_control ++ negocio ++ resto_control
+
+    case header.orden_columnas_tabla do
+      [] ->
+        todas
+
+      orden ->
+        indice = orden |> Enum.with_index() |> Map.new()
+        Enum.sort_by(todas, &Map.get(indice, &1.clave, map_size(indice)))
+    end
   end
 
   # "Filtros": qué campos participan de la fila de Resumen de CatalogoLive
@@ -2604,7 +2672,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   attr :campos, :list, required: true
 
   defp panel_filtros_resumen(assigns) do
-    agregables = Enum.filter(assigns.campos, &(get_in(&1.schema_context_properties, ["tipo"]) != "referencia"))
+    agregables =
+      assigns.campos
+      |> Enum.filter(&(get_in(&1.schema_context_properties, ["tipo"]) != "referencia"))
+      |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
     activos = Enum.filter(agregables, &(get_in(&1.schema_context_properties, ["agregacion_activa"]) == true))
     disponibles = agregables -- activos
 
@@ -3922,6 +3993,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
               <% else %>
                 <div class="flex flex-col gap-2 mb-3">
                   <%= for {dep, i} <- Enum.with_index(@form["dependencias"]) do %>
+                    <% campo_padre = Enum.find(@form["otros_referencia"], &(&1.schema_context_field == dep["campo_padre"])) %>
+                    <% remotos_validos = campo_padre && MetaSchemaContext.campos_remoto_validos(@form["campos_destino"], campo_padre.schema_context_properties["catalogo"]) %>
                     <div class="border border-gray-200 rounded-lg p-2.5">
                       <div class="flex items-center justify-between mb-1.5">
                         <span class="text-gray-500 font-semibold">Depende de</span>
@@ -3941,14 +4014,17 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                         </div>
                         <div>
                           <label class="block text-gray-500 mb-0.5">Filtrar {@form["catalogo_destino_label"]} por</label>
-                          <select name={"dependencias[#{i}][campo_remoto]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                          <select name={"dependencias[#{i}][campo_remoto]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5" disabled={is_nil(campo_padre)}>
                             <option value="">— Elegir —</option>
-                            <option :for={c <- @form["campos_destino"]} value={c.schema_context_field} selected={dep["campo_remoto"] == c.schema_context_field}>
+                            <option :for={c <- remotos_validos || []} value={c.schema_context_field} selected={dep["campo_remoto"] == c.schema_context_field}>
                               {c.schema_context_properties["etiqueta"] || c.schema_context_field}
                             </option>
                           </select>
                         </div>
                       </div>
+                      <p :if={campo_padre && remotos_validos == []} class="text-amber-600 mt-1">
+                        {@form["catalogo_destino_label"]} no tiene ningún campo referencia al mismo catálogo que {dep["campo_padre"]} — no se puede armar esta cascada.
+                      </p>
                       <label class="flex items-center gap-1.5 mt-1.5">
                         <input type="hidden" name={"dependencias[#{i}][obligatorio]"} value="false" />
                         <input type="checkbox" name={"dependencias[#{i}][obligatorio]"} value="true" checked={dep["obligatorio"] != false} class="accent-purple-600" />
@@ -4466,7 +4542,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
   # Un grupo (header o un catálogo detalle) del selector de campos
-  # editables — buscador propio + "Todos/Ninguno" + grilla de 2 columnas
+  # editables — buscador propio + "Todos/Ninguno" + tabla de 2 columnas
   # (menos alto que una fila por checkbox, mismo criterio que el selector
   # de íconos). `campos_editables[]` es el mismo input en todos los
   # grupos — la selección real vive en @form, no en qué tab está visible.

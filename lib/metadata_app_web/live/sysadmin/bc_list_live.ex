@@ -9,7 +9,6 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.MetaConsultas
   alias MetadataApp.MetaPublicador
-  alias MetadataApp.BorradoresMotor
   alias MetadataAppWeb.AdminNav
   alias MetadataAppWeb.AuditoriaContexto
   alias Phoenix.LiveView.JS
@@ -90,7 +89,6 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:selector_tabla_relacionada_abierto, false)
      |> assign(:catalogos_relacionables_disponibles, [])
      |> assign(:union_manual, nil)
-     |> cargar_borradores()
      |> cargar_headers()}
   end
 
@@ -821,26 +819,6 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     end
   end
 
-  # "Continuar" un borrador solo navega — la carga real pasa en el mount de
-  # BcNuevoCompletoLive (ver cargar_estado_inicial/2 ahí). Acá solo hace
-  # falta poder borrar uno directamente desde la lista, sin tener que abrir
-  # el wizard primero.
-  def handle_event("eliminar_borrador", %{"id" => id}, socket) do
-    case BorradoresMotor.obtener_borrador(id) do
-      nil ->
-        {:noreply, put_flash(socket, :error, "Ese borrador ya no existe.")}
-
-      borrador ->
-        {:ok, _} = BorradoresMotor.eliminar_borrador(borrador)
-        Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:borrador_eliminado, borrador})
-
-        {:noreply,
-         socket
-         |> put_flash(:info, "Borrador '#{borrador.nombre}' eliminado.")
-         |> cargar_borradores()}
-    end
-  end
-
   # "Nueva carpeta"/"Editar carpeta" ya se resuelven solos, arriba, sin
   # depender de este PubSub — sigue transmitiéndose igual por si algo más
   # llega a escucharlo más adelante.
@@ -850,25 +828,6 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   def handle_info({:bc_actualizado, _header}, socket) do
     {:noreply, cargar_headers(socket)}
-  end
-
-  # El wizard (BcNuevoCompletoLive) avisa por acá cuando guarda/borra un
-  # borrador, así esta lista se refresca sola aunque el cambio haya pasado
-  # en otra pestaña.
-  def handle_info({:borrador_guardado, _borrador}, socket) do
-    {:noreply, cargar_borradores(socket)}
-  end
-
-  def handle_info({:borrador_eliminado, _borrador}, socket) do
-    {:noreply, cargar_borradores(socket)}
-  end
-
-  defp cargar_borradores(socket) do
-    assign(socket, :borradores, BorradoresMotor.listar_borradores())
-  end
-
-  defp formatear_fecha_borrador(fecha) do
-    Calendar.strftime(fecha, "%d/%m/%Y %H:%M")
   end
 
   # Pagina por CARPETA RAÍZ, no por fila plana — construir_arbol/1 siempre
@@ -1412,8 +1371,6 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         </div>
       </div>
 
-      <.seccion_borradores :if={@borradores != []} borradores={@borradores} />
-
       <.panel_editar_orden :if={@editando_orden} arbol={@arbol} carpeta_editando_orden={@carpeta_editando_orden} />
 
       <div :if={!@editando_orden}>
@@ -1481,11 +1438,6 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     """
   end
 
-  # Catálogos que alguien empezó a diseñar en el wizard (BcNuevoCompletoLive)
-  # y guardó como borrador antes de terminar — "Continuar" navega para allá
-  # con ?borrador=<id> (ver cargar_estado_inicial/2 ahí), que recarga todo
-  # en memoria tal cual quedó. Solo se muestra si hay al menos uno (ver
-  # :if en render/1) para no sumar ruido cuando no hace falta.
   # "Editar vista": arrastrar carpetas Y archivos para cambiar su orden, a
   # cualquier profundidad — no solo las carpetas raíz. Cada nivel del
   # árbol (la raíz de esta página, y adentro de cada carpeta) es su
@@ -1582,48 +1534,6 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         <div :if={nodo.tipo == :carpeta and nodo.hijos != []} class="pl-6 mt-1.5">
           <.arbol_editable nodos={nodo.hijos} contenedor_id={clave_de_carpeta(nodo, @ruta_padre)} ruta_padre={ruta_con(@ruta_padre, nodo.segmento)} />
         </div>
-      </div>
-    </div>
-    """
-  end
-
-  attr :borradores, :list, required: true
-
-  defp seccion_borradores(assigns) do
-    ~H"""
-    <div class="mb-4 rounded-xl border border-purple-200 overflow-hidden">
-      <div class="bg-purple-50 px-4 py-2 border-b border-purple-200">
-        <h2 class="text-sm font-bold text-purple-900">Borradores</h2>
-        <p class="text-xs text-purple-600">Catálogos que empezaste a diseñar pero todavía no creaste.</p>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-100 text-sm">
-          <tbody class="divide-y divide-gray-100">
-            <%= for b <- @borradores do %>
-              <tr>
-                <td class="px-4 py-2 text-gray-800">{b.nombre}</td>
-                <td class="px-4 py-2 text-gray-500">Editado {formatear_fecha_borrador(b.updated_at)}</td>
-                <td class="px-4 py-2">
-                  <div class="flex gap-2 justify-end">
-                    <.link navigate={~p"/sysadmin/bc-list/nuevo-completo?borrador=#{b.id}"}
-                      class="text-blue-600 hover:text-blue-800 text-xs font-semibold">
-                      Continuar
-                    </.link>
-                    <button
-                      type="button"
-                      phx-click="eliminar_borrador"
-                      phx-value-id={b.id}
-                      data-confirm={"¿Eliminar el borrador \"#{b.nombre}\"?"}
-                      class="text-red-600 hover:text-red-800 text-xs font-semibold"
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            <% end %>
-          </tbody>
-        </table>
       </div>
     </div>
     """

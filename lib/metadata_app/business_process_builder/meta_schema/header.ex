@@ -74,6 +74,22 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :mostrar_inventory_location_en_tabla, :boolean, default: true
     field :mostrar_sales_unit_en_tabla, :boolean, default: true
 
+    # "Creado por" (Get View → Campos de Control) — no es columna física
+    # propia, se resuelve contra meta_schema_auditoria (bc + entidad_id,
+    # operacion "alta"; el maestro cuando el catálogo es detalle), mismo
+    # criterio que "Empresa" arriba (tampoco es columna propia).
+    field :mostrar_creado_por_en_tabla, :boolean, default: false
+
+    # Get View unificado (Campos de Control + Campos de negocio en una
+    # sola grilla arrastrable) — orden combinado de claves: nombres de
+    # campo real (schema_context_field) y claves fijas de control ("id",
+    # "estado", "trn", "empresa", "branch", "inventory_location",
+    # "sales_unit", "creado_por"). [] = nunca configurado, CatalogoLive
+    # cae al orden de siempre. No reemplaza el "orden" propio de cada
+    # campo (schema_context_properties, usado por la pestaña Campos/Ficha/
+    # contrato de API) — es aparte, específico de esta grilla.
+    field :orden_columnas_tabla, {:array, :string}, default: []
+
     # Catálogo Maestro-Detalle (ver docs/catalogo-maestro-detalle-requerimientos.md,
     # R1/R16) — no nulo implica "este catálogo es detalle de otro". No se
     # reusó schema_context_type (ya usa 2 para "carpeta", otra dimensión)
@@ -128,7 +144,9 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
           :mostrar_empresa_en_tabla,
           :mostrar_branch_en_tabla,
           :mostrar_inventory_location_en_tabla,
-          :mostrar_sales_unit_en_tabla
+          :mostrar_sales_unit_en_tabla,
+          :mostrar_creado_por_en_tabla,
+          :orden_columnas_tabla
         ]
     )
     |> validate_required(@requeridos)

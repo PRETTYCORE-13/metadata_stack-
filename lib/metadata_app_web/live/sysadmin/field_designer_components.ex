@@ -190,7 +190,8 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
 
   def construir_propiedades(%{"tipo" => "referencia"} = form, campos_existentes, catalogo_nombre) do
     catalogo = form["catalogo"] || ""
-    destino = catalogo != "" && MetaSchemaContext.obtener_header_por_nombre(catalogo)
+    destino = catalogo != "" && resolver_destino_referencia(catalogo)
+    dependencias_check = validar_dependencias_form(form, campos_existentes)
 
     cond do
       catalogo == "" ->
@@ -199,16 +200,20 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
       is_nil(destino) or destino == false ->
         {:error, "Ese catálogo destino ya no existe."}
 
+      match?({:error, _}, dependencias_check) ->
+        dependencias_check
+
       true ->
-        nombre = "#{catalogo_nombre}_#{String.replace_prefix(catalogo, "pty_", "")}"
+        sufijo = catalogo |> String.replace_prefix("pty_", "") |> String.replace_prefix("meta_schema_", "")
+        nombre = "#{catalogo_nombre}_#{sufijo}"
         cap = form["capacidades"] || %{}
 
         if Enum.any?(campos_existentes, &(&1.schema_context_field == nombre)) do
-          {:error, "Ya existe un campo que referencia a #{destino.schema_context_label} en este catálogo."}
+          {:error, "Ya existe un campo que referencia a #{destino.etiqueta} en este catálogo."}
         else
           propiedades =
             %{
-              "etiqueta" => destino.schema_context_label,
+              "etiqueta" => destino.etiqueta,
               "tipo" => "referencia",
               "orden" => length(campos_existentes) + 1,
               "visible" => cap["oculto"] != true,
@@ -216,10 +221,46 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
               "opcional" => false,
               "catalogo" => catalogo
             }
+            |> agregar_visualizacion_por_defecto(catalogo)
             |> agregar_relaciones(form, cap)
 
           {:ok, nombre, propiedades}
         end
+    end
+  end
+
+  # Empresa/Branch/InventoryLocation/SalesUnit (tablas de sistema, ver
+  # MetaSchemaContext.catalogo_sistema/1) no tienen meta_schema_header --
+  # se arma un "destino" equivalente ahí mismo en vez de buscarlo en la
+  # tabla de headers, único punto de donde sale la etiqueta/duplicado más
+  # abajo (mismo dato, sin importar el origen).
+  defp resolver_destino_referencia(catalogo) do
+    case MetaSchemaContext.catalogo_sistema(catalogo) do
+      %{etiqueta: etiqueta} ->
+        %{etiqueta: etiqueta}
+
+      nil ->
+        case MetaSchemaContext.obtener_header_por_nombre(catalogo) do
+          nil -> nil
+          header -> %{etiqueta: header.schema_context_label}
+        end
+    end
+  end
+
+  # Sin esto el combo de una tabla de sistema mostraría "#3" en vez de
+  # "Temoaya": no hay meta_schema_detail para Empresa/Branch/etc., así
+  # que el admin no tiene forma de elegir "campos_acompanamiento" como en
+  # un catálogo normal -- se precarga el único campo de nombre que cada
+  # una tiene, mismo mecanismo ("campo_visualizacion" modo "descripcion")
+  # que ya usa cualquier referencia configurada a mano. Pública -- también
+  # la usa BcNuevoCompletoLive.detalle_attrs/1 (wizard de creación,
+  # lógica de campo "referencia" duplicada acá a propósito por el
+  # principio "nada toca la base hasta Crear", pero esto puntual no vale
+  # la pena repetirlo dos veces).
+  def agregar_visualizacion_por_defecto(propiedades, catalogo) do
+    case MetaSchemaContext.catalogo_sistema(catalogo) do
+      %{campo_nombre: campo} -> Map.put(propiedades, "campo_visualizacion", %{"modo" => "descripcion", "campo_descripcion" => campo})
+      nil -> propiedades
     end
   end
 
@@ -445,6 +486,18 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
   end
 
   defp agregar_dependencias(propiedades, _form, _cap), do: propiedades
+
+  # Ver MetaSchemaContext.validar_tipos_dependencia/3 — acá solo se arma
+  # la lista de dependencias "completas" (con ambos lados elegidos) y se
+  # resuelven los campos destino para pasárselo, mismo criterio que
+  # agregar_dependencias/3 de arriba.
+  defp validar_dependencias_form(%{"capacidades" => %{"cascada" => true}} = form, campos_existentes) do
+    deps = (form["dependencias"] || []) |> Enum.filter(&(&1["campo_padre"] not in [nil, ""] and &1["campo_remoto"] not in [nil, ""]))
+    campos_destino = campos_destino_referencia(form["catalogo"])
+    MetaSchemaContext.validar_tipos_dependencia(deps, campos_existentes, campos_destino)
+  end
+
+  defp validar_dependencias_form(_form, _campos_existentes), do: :ok
 
   # =========================================================================
   # Tipos (Paso 1) y capacidades por tipo (Paso 2)
@@ -958,6 +1011,12 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
     """
   end
 
+  # "Filtrar por" (campo_remoto) solo ofrece campos del catálogo destino
+  # que sean tipo referencia AL MISMO catálogo al que apunta "Depende de"
+  # (campo_padre) — ver MetaSchemaContext.campos_remoto_validos/2. Antes
+  # el select mostraba TODOS los campos del destino sin filtrar (incluido
+  # "Nombre", texto libre) y dejaba armar una cascada que nunca podía
+  # coincidir con nada — bug real, reportado en vivo.
   defp config_capacidad("cascada", assigns) do
     ~H"""
     <div :if={@otros_referencia == []} class="text-gray-400">
@@ -965,16 +1024,21 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
     </div>
     <div :if={@otros_referencia != []} class="flex flex-col gap-2">
       <div :for={{dep, i} <- Enum.with_index(@form["dependencias"])} class="border border-gray-200 rounded-lg p-2">
+        <% campo_padre = Enum.find(@otros_referencia, &(&1.schema_context_field == dep["campo_padre"])) %>
+        <% remotos_validos = campo_padre && MetaSchemaContext.campos_remoto_validos(@campos_destino, campo_padre.schema_context_properties["catalogo"]) %>
         <div class="grid grid-cols-2 gap-1.5">
           <select name={"dependencias[#{i}][campo_padre]"} class="w-full border border-gray-300 rounded-lg px-1.5 py-1">
             <option value="">— Depende de —</option>
             <option :for={c <- @otros_referencia} value={c.schema_context_field} selected={dep["campo_padre"] == c.schema_context_field}>{c.schema_context_properties["etiqueta"] || c.schema_context_field}</option>
           </select>
-          <select name={"dependencias[#{i}][campo_remoto]"} class="w-full border border-gray-300 rounded-lg px-1.5 py-1">
+          <select name={"dependencias[#{i}][campo_remoto]"} class="w-full border border-gray-300 rounded-lg px-1.5 py-1" disabled={is_nil(campo_padre)}>
             <option value="">— Filtrar por —</option>
-            <option :for={c <- @campos_destino} value={c.schema_context_field} selected={dep["campo_remoto"] == c.schema_context_field}>{c.schema_context_properties["etiqueta"] || c.schema_context_field}</option>
+            <option :for={c <- remotos_validos || []} value={c.schema_context_field} selected={dep["campo_remoto"] == c.schema_context_field}>{c.schema_context_properties["etiqueta"] || c.schema_context_field}</option>
           </select>
         </div>
+        <p :if={campo_padre && remotos_validos == []} class="text-amber-600 mt-1">
+          El catálogo destino no tiene ningún campo referencia al mismo catálogo que {dep["campo_padre"]} — no se puede armar esta cascada.
+        </p>
         <button type="button" phx-click="asistente_dependencia_quitar" phx-value-indice={i} class="text-red-600 hover:text-red-800 font-semibold mt-1">Quitar</button>
       </div>
       <button type="button" phx-click="asistente_dependencia_agregar" class="text-purple-700 hover:text-purple-900 font-semibold text-left">+ Agregar dependencia</button>
@@ -990,7 +1054,10 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
   defp campos_destino_referencia(""), do: []
 
   defp campos_destino_referencia(catalogo) do
-    catalogo |> MetaSchemaContext.listar_detalles() |> Enum.filter(& &1.schema_context_properties["visible"])
+    catalogo
+    |> MetaSchemaContext.listar_detalles()
+    |> Enum.filter(& &1.schema_context_properties["visible"])
+    |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
   end
 
   # --- vista previa en vivo ----------------------------------------------------

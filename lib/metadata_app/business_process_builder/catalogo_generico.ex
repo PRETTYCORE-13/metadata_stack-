@@ -941,19 +941,33 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   del catálogo destino entero.
   """
   def opciones_referencia(props, filtros) do
-    case MetadataApp.BusinessProcessBuilder.MetaSchemaContext.modulo_por_nombre(props["catalogo"]) do
-      nil ->
-        []
+    case MetadataApp.BusinessProcessBuilder.MetaSchemaContext.catalogo_sistema(props["catalogo"]) do
+      %{modulo: modulo} ->
+        # Empresa/Branch/InventoryLocation/SalesUnit: no son un catálogo
+        # BPB (sin estado_id/alcance en el mismo formato), así que no
+        # pasan por listar/4 -- mismo filtrado base (solo vivas,
+        # "dependencias" en cascada vía aplicar_filtros/2 igual que
+        # cualquier otro "referencia") pero armado a mano acá.
+        from(r in modulo, where: is_nil(r.delete_guid), order_by: [asc: r.id], limit: 500)
+        |> aplicar_filtros(filtros)
+        |> Repo.all()
+        |> Enum.map(&{&1.id, etiqueta_para_referencia(&1, props)})
 
-      modulo ->
-        # :sistema (Fase 4a del modelo de Alcance de Datos) -- llamado
-        # desde componentes de función (campo_input/1 y afines) sin acceso
-        # directo al Scope del socket. Filtrar las opciones de un picker
-        # "referencia" por el alcance del usuario es una mejora real
-        # pendiente (hoy siempre ve el catálogo destino entero), marcada a
-        # propósito para no threadear Scope por todo el árbol de
-        # componentes en esta fase.
-        modulo |> listar(:sistema, filtros, limit: 500) |> Enum.map(&{&1.id, etiqueta_para_referencia(&1, props)})
+      nil ->
+        case MetadataApp.BusinessProcessBuilder.MetaSchemaContext.modulo_por_nombre(props["catalogo"]) do
+          nil ->
+            []
+
+          modulo ->
+            # :sistema (Fase 4a del modelo de Alcance de Datos) -- llamado
+            # desde componentes de función (campo_input/1 y afines) sin acceso
+            # directo al Scope del socket. Filtrar las opciones de un picker
+            # "referencia" por el alcance del usuario es una mejora real
+            # pendiente (hoy siempre ve el catálogo destino entero), marcada a
+            # propósito para no threadear Scope por todo el árbol de
+            # componentes en esta fase.
+            modulo |> listar(:sistema, filtros, limit: 500) |> Enum.map(&{&1.id, etiqueta_para_referencia(&1, props)})
+        end
     end
   end
 
