@@ -364,7 +364,8 @@ defmodule MetadataAppWeb.CatalogoLive do
   # Cualquier cambio en la barra de filtros vuelve a la página 1 — si no,
   # podrías quedar parado en una página que ya ni existe con el resultado
   # filtrado.
-  def handle_event("filtrar", %{"filtros" => filtros}, socket) do
+  def handle_event("filtrar", params, socket) do
+    filtros = merge_filtros_por_target(params)
     {:noreply, socket |> assign(:filtros, filtros) |> assign(:pagina, 1) |> cargar_filas()}
   end
 
@@ -726,6 +727,32 @@ defmodule MetadataAppWeb.CatalogoLive do
     creadores = MetaAuditoria.creadores_de(bc, ids)
 
     Enum.map(filas, &Map.put(&1, :creado_por, Map.get(creadores, Map.get(&1, campo))))
+  end
+
+  # El popover ("filtros_popover[campo]", ver filtro_columna/1) y la fila
+  # fija del thead ("filtros[campo]", ver fila_filtro_columna/1) pueden
+  # mostrar el MISMO campo a la vez si el usuario lo agregó también al
+  # popover — dos controles distintos para un solo campo lógico, ambos
+  # asociados al mismo <form> (form="form-filtros"). Si tuvieran el mismo
+  # `name`, el submit los pisaría entre sí (Plug.Conn.Query se queda con
+  # el último del body, no con "el que realmente cambió" — bug real
+  # encontrado probando el filtro de un campo "referencia" agregado a
+  # las dos UIs a la vez: elegir algo en el popover no hacía nada, el
+  # valor vacío de la fila fija lo pisaba). Por eso van con nombres
+  # separados: "filtros[...]" ya trae el estado completo y correcto de
+  # TODOS los campos (la fila fija cubre TODAS las columnas siempre), así
+  # que alcanza como base — excepto para el campo puntual que disparó el
+  # cambio, si ese campo vino del popover (`_target`, que LiveView ya
+  # manda solo), en cuyo caso ESE valor hay que tomarlo de
+  # "filtros_popover[...]" en vez de la copia vieja que trajo "filtros".
+  defp merge_filtros_por_target(params) do
+    base = Map.get(params, "filtros", %{})
+    popover = Map.get(params, "filtros_popover", %{})
+
+    case Map.get(params, "_target") do
+      ["filtros_popover", campo] -> Map.put(base, campo, Map.get(popover, campo))
+      _ -> base
+    end
   end
 
   # A partir de los valores crudos de la barra de filtros (todo strings,
@@ -1873,9 +1900,7 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   # Un widget de filtro distinto según el tipo de la columna (guardado en
   # meta_schema_detail) — así un catálogo nuevo sale con filtros
-  # funcionando sin escribir nada a mano por catálogo. Los nombres de los
-  # inputs (filtros[campo] / filtros[campo_desde] / filtros[campo_hasta])
-  # tienen que calzar con lo que lee construir_filtros_ecto/2.
+  # funcionando sin escribir nada a mano por catálogo.
   #
   # `bloqueado?` (bc_motor_live.ex, "Bloqueado" en panel_filtros_resumen/1):
   # el usuario final ve el valor pero no lo puede tocar — en vez del
@@ -1890,6 +1915,13 @@ defmodule MetadataAppWeb.CatalogoLive do
   # esté cerrado, para que la fila fija del thead (fila_filtro_columna/1)
   # tenga algo a que asociarse por `form=""` incluso sin abrir "Filtros".
   # Los inputs de acá se asocian al mismo form por el mismo mecanismo.
+  #
+  # Nombres "filtros_popover[campo]" (NO "filtros[campo]", a propósito):
+  # un campo puede estar activo acá Y en la fila fija del thead al mismo
+  # tiempo — si compartieran `name`, el submit los pisaría entre sí (bug
+  # real: elegir un valor acá no hacía nada, el valor viejo de la fila
+  # fija lo pisaba). merge_filtros_por_target/1 en el handle_event
+  # "filtrar" es quien reconcilia los dos namespaces usando `_target`.
   attr :columna, :map, required: true
   attr :valores, :map, required: true
   attr :bloqueado?, :boolean, default: false
@@ -1902,12 +1934,12 @@ defmodule MetadataAppWeb.CatalogoLive do
     <div class="flex flex-col gap-1">
       <label class="text-[11px] font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
       <%= if @bloqueado? do %>
-        <input type="hidden" form="form-filtros" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
+        <input type="hidden" form="form-filtros" name={"filtros_popover[#{@campo}]"} value={@valores[@campo]} />
         <div class="w-full border border-gray-200 rounded bg-gray-50 text-gray-500 text-xs px-2 py-1.5">
           {texto_filtro_boolean(@valores[@campo])}
         </div>
       <% else %>
-        <select form="form-filtros" name={"filtros[#{@campo}]"} class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5">
+        <select form="form-filtros" name={"filtros_popover[#{@campo}]"} class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5">
           <option value="" selected={@valores[@campo] in [nil, ""]}>Todos</option>
           <option value="true" selected={@valores[@campo] == "true"}>Sí</option>
           <option value="false" selected={@valores[@campo] == "false"}>No</option>
@@ -1927,8 +1959,8 @@ defmodule MetadataAppWeb.CatalogoLive do
     <div class="flex flex-col gap-1">
       <label class="text-[11px] font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
       <%= if @bloqueado? do %>
-        <input type="hidden" form="form-filtros" name={"filtros[#{@campo}_desde]"} value={@valores["#{@campo}_desde"]} />
-        <input type="hidden" form="form-filtros" name={"filtros[#{@campo}_hasta]"} value={@valores["#{@campo}_hasta"]} />
+        <input type="hidden" form="form-filtros" name={"filtros_popover[#{@campo}_desde]"} value={@valores["#{@campo}_desde"]} />
+        <input type="hidden" form="form-filtros" name={"filtros_popover[#{@campo}_hasta]"} value={@valores["#{@campo}_hasta"]} />
         <div class="w-full border border-gray-200 rounded bg-gray-50 text-gray-500 text-xs px-2 py-1.5">
           {@valores["#{@campo}_desde"] || "…"} – {@valores["#{@campo}_hasta"] || "…"}
         </div>
@@ -1937,7 +1969,7 @@ defmodule MetadataAppWeb.CatalogoLive do
           <input
             type={@tipo_input}
             form="form-filtros"
-            name={"filtros[#{@campo}_desde]"}
+            name={"filtros_popover[#{@campo}_desde]"}
             value={@valores["#{@campo}_desde"]}
             placeholder="Desde"
             phx-debounce="400"
@@ -1947,7 +1979,7 @@ defmodule MetadataAppWeb.CatalogoLive do
           <input
             type={@tipo_input}
             form="form-filtros"
-            name={"filtros[#{@campo}_hasta]"}
+            name={"filtros_popover[#{@campo}_hasta]"}
             value={@valores["#{@campo}_hasta"]}
             placeholder="Hasta"
             phx-debounce="400"
@@ -1969,12 +2001,12 @@ defmodule MetadataAppWeb.CatalogoLive do
     <div class="flex flex-col gap-1">
       <label class="text-[11px] font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
       <%= if @bloqueado? do %>
-        <input type="hidden" form="form-filtros" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
+        <input type="hidden" form="form-filtros" name={"filtros_popover[#{@campo}]"} value={@valores[@campo]} />
         <div class="w-full border border-gray-200 rounded bg-gray-50 text-gray-500 text-xs px-2 py-1.5">
           {etiqueta_seleccionada(@opciones, @valores[@campo])}
         </div>
       <% else %>
-        <select form="form-filtros" name={"filtros[#{@campo}]"} class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5">
+        <select form="form-filtros" name={"filtros_popover[#{@campo}]"} class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5">
           <option value="" selected={@valores[@campo] in [nil, ""]}>Todos</option>
           <option :for={{valor, etiqueta} <- @opciones} value={valor} selected={to_string(@valores[@campo]) == to_string(valor)}>
             {etiqueta}
@@ -1993,7 +2025,7 @@ defmodule MetadataAppWeb.CatalogoLive do
     <div class="flex flex-col gap-1">
       <label class="text-[11px] font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
       <%= if @bloqueado? do %>
-        <input type="hidden" form="form-filtros" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
+        <input type="hidden" form="form-filtros" name={"filtros_popover[#{@campo}]"} value={@valores[@campo]} />
         <div class="w-full border border-gray-200 rounded bg-gray-50 text-gray-500 text-xs px-2 py-1.5">
           {@valores[@campo]}
         </div>
@@ -2001,7 +2033,7 @@ defmodule MetadataAppWeb.CatalogoLive do
         <input
           type="text"
           form="form-filtros"
-          name={"filtros[#{@campo}]"}
+          name={"filtros_popover[#{@campo}]"}
           value={@valores[@campo]}
           placeholder="Buscar..."
           phx-debounce="400"
