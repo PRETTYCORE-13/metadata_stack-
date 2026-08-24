@@ -1046,13 +1046,14 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # mucho" tenerlo separado de la config por rol en otra pestaña).
 
   # Sub-filtro de fecha de "Filtros por default" — "primer_dia_anio"/
-  # "ultimo_dia_anio"/"actual" (una sola fecha por calendario, precargada
-  # con el valor obvio de cada modo — el usuario la puede cambiar
-  # después) / "rango" (necesita desde Y hasta, dos calendarios, sin
-  # precargar porque no hay un valor obvio para ninguno de los dos) o ""
-  # para apagarlo — al cambiar de modo se limpian las fechas viejas para
-  # no dejar pegado un valor de un modo distinto (ver
-  # cambiar_filtro_fecha_valor/2 abajo).
+  # "ultimo_dia_anio" (una sola fecha por calendario, precargada con el
+  # valor obvio de cada modo — el usuario la puede cambiar después) /
+  # "rango" (necesita desde Y hasta, dos calendarios, sin precargar porque
+  # no hay un valor obvio para ninguno de los dos) / "actual" (sin
+  # calendario — es SIEMPRE hoy, calculado en el momento, ver
+  # FiltrosDefault.rango_fecha/3) o "" para apagarlo — al cambiar de modo
+  # se limpian las fechas viejas para no dejar pegado un valor de un modo
+  # distinto (ver cambiar_filtro_fecha_valor/2 abajo).
   def handle_event("cambiar_filtro_fecha_modo", %{"modo" => modo}, socket) do
     header = socket.assigns.header
     valor_default = FiltrosDefault.valor_default_para_modo(modo)

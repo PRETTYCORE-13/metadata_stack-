@@ -86,7 +86,7 @@ defmodule MetadataAppWeb.FiltrosDefaultComponents do
           </div>
         <% end %>
 
-        <%= if @header.filtro_default_fecha_modo in ["actual", "primer_dia_anio", "ultimo_dia_anio"] do %>
+        <%= if @header.filtro_default_fecha_modo in ["primer_dia_anio", "ultimo_dia_anio"] do %>
           <div class="flex items-center gap-2 mt-2">
             <form phx-change="cambiar_filtro_fecha_valor">
               <input type="hidden" name="campo" value="desde" />

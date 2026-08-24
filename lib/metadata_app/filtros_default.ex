@@ -26,16 +26,20 @@ defmodule MetadataApp.FiltrosDefault do
   Traduce modo ("primer_dia_anio"/"ultimo_dia_anio"/"actual"/"rango") +
   valor/valor_hasta (Date, elegidos por calendario) a un {desde, hasta} en
   UTC — filtro directo contra la columna real "fecha_registro" (ver
-  CatalogoLive.filtros_por_default/1). "actual" usa el día completo de
-  `valor`; "primer_dia_anio" y "ultimo_dia_anio" usan el AÑO de `valor`
-  para calcular el 1/1 o 31/12 correspondiente. nil si el modo no matchea
-  ninguno de los cuatro (filtro de fecha apagado) o si todavía falta
-  alguna fecha que ese modo necesita.
+  CatalogoLive.filtros_por_default/1). "actual" ignora `valor` a propósito
+  y usa SIEMPRE `Date.utc_today()` del momento en que se llama — es un
+  filtro dinámico ("hoy" de verdad, se corre solo cada día), no una fecha
+  fija elegida una vez (a diferencia de los otros 3 modos, que sí dependen
+  de una fecha guardada). "primer_dia_anio" y "ultimo_dia_anio" usan el AÑO
+  de `valor` para calcular el 1/1 o 31/12 correspondiente. nil si el modo
+  no matchea ninguno de los cuatro (filtro de fecha apagado) o si todavía
+  falta alguna fecha que ese modo necesita.
   """
   def rango_fecha(modo, valor, valor_hasta \\ nil)
 
-  def rango_fecha("actual", %Date{} = valor, _valor_hasta) do
-    {DateTime.new!(valor, ~T[00:00:00], "Etc/UTC"), DateTime.new!(valor, ~T[23:59:59], "Etc/UTC")}
+  def rango_fecha("actual", _valor, _valor_hasta) do
+    hoy = Date.utc_today()
+    {DateTime.new!(hoy, ~T[00:00:00], "Etc/UTC"), DateTime.new!(hoy, ~T[23:59:59], "Etc/UTC")}
   end
 
   def rango_fecha("primer_dia_anio", %Date{} = valor, _valor_hasta) do
@@ -56,23 +60,22 @@ defmodule MetadataApp.FiltrosDefault do
 
   @doc """
   Valor con el que se precarga el calendario apenas se elige un modo de una
-  sola fecha ("actual"/"primer_dia_anio"/"ultimo_dia_anio") — el usuario lo
-  puede cambiar después. "rango" no tiene un valor obvio para ninguno de
-  sus dos extremos, así que no precarga nada (nil).
+  sola fecha ("primer_dia_anio"/"ultimo_dia_anio") — el usuario lo puede
+  cambiar después. "actual" no tiene calendario (es dinámico, ver
+  rango_fecha/3) y "rango" no tiene un valor obvio para ninguno de sus dos
+  extremos, así que ninguno de los dos precarga nada (nil).
   """
   def valor_default_para_modo(modo) do
     hoy = Date.utc_today()
 
     case modo do
-      "actual" -> hoy
       "primer_dia_anio" -> Date.new!(hoy.year, 1, 1)
       "ultimo_dia_anio" -> Date.new!(hoy.year, 12, 31)
       _ -> nil
     end
   end
 
-  @doc "Etiqueta arriba del calendario único (modos de una sola fecha)."
-  def etiqueta_calendario_unico("actual"), do: "Elegí el día"
+  @doc "Etiqueta arriba del calendario único (\"primer_dia_anio\"/\"ultimo_dia_anio\" — \"actual\" no tiene calendario, ver moduledoc de rango_fecha/3)."
   def etiqueta_calendario_unico(_modo), do: "Elegí cualquier día de este año"
 
   @doc """
@@ -116,8 +119,8 @@ defmodule MetadataApp.FiltrosDefault do
   """
   def descripcion(modo, valor, valor_hasta \\ nil)
 
-  def descripcion("actual", %Date{} = valor, _valor_hasta) do
-    "Fecha actual — #{formatear(valor)}"
+  def descripcion("actual", _valor, _valor_hasta) do
+    "Fecha actual — hoy (#{formatear(Date.utc_today())})"
   end
 
   def descripcion("primer_dia_anio", %Date{} = valor, _valor_hasta) do

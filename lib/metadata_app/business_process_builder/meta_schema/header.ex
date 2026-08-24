@@ -26,11 +26,13 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # "fecha_registro" (ver MetaCatalogoGenerico, en TODA tabla de
     # catálogo desde 2026-08-06). Modos: "primer_dia_anio" (desde el 1/1 del AÑO de
     # filtro_default_fecha_valor, elegido por calendario), "ultimo_dia_anio"
-    # (hasta el 31/12 del año de filtro_default_fecha_valor), "actual" (el
-    # día exacto de filtro_default_fecha_valor, elegido por calendario —
-    # ya no siempre "hoy"), "rango" (usa filtro_default_fecha_valor como
-    # desde y filtro_default_fecha_valor_hasta como hasta, ambos
-    # obligatorios). nil = sin acotar por fecha.
+    # (hasta el 31/12 del año de filtro_default_fecha_valor), "actual"
+    # (SIEMPRE el día de hoy, calculado en el momento — dinámico de
+    # verdad, no depende de filtro_default_fecha_valor ni de calendario,
+    # ver FiltrosDefault.rango_fecha/3), "rango" (usa
+    # filtro_default_fecha_valor como desde y
+    # filtro_default_fecha_valor_hasta como hasta, ambos obligatorios).
+    # nil = sin acotar por fecha.
     field :filtro_default_fecha_modo, :string
     field :filtro_default_fecha_valor, :date
     field :filtro_default_fecha_valor_hasta, :date
