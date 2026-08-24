@@ -940,7 +940,23 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   SOLO las opciones válidas para el valor actual de su campo padre, en vez
   del catálogo destino entero.
   """
-  def opciones_referencia(props, filtros) do
+  def opciones_referencia(props, filtros), do: opciones_referencia(props, filtros, nil)
+
+  @doc """
+  Igual que `opciones_referencia/2`, además acotando SalesUnit/
+  InventoryLocation (hijos de una sucursal) a `branch_activo_id` cuando no
+  es `nil` -- resuelve la mejora marcada más abajo: hasta 2026-08-24 este
+  picker siempre traía el catálogo destino ENTERO sin importar la
+  sucursal activa de la sesión (ver captura real: "Unidad de venta" en
+  Renglones de detalle mostraba unidades de TODAS las sucursales). Mismo
+  criterio para cualquier usuario, no solo no-administradores (decisión
+  explícita 2026-08-24) -- si alguien necesita otra sucursal, cambia su
+  unidad operativa activa primero (`cambiar_unidad_operativa_modal.ex`).
+  "meta_schema_branch" en sí NO se acota acá a propósito: elegir UNA
+  sucursal es una operación a nivel empresa, no tiene sentido acotarla a
+  "la sucursal ya activa".
+  """
+  def opciones_referencia(props, filtros, branch_activo_id) do
     case MetadataApp.BusinessProcessBuilder.MetaSchemaContext.catalogo_sistema(props["catalogo"]) do
       %{modulo: modulo} ->
         # Empresa/Branch/InventoryLocation/SalesUnit: no son un catálogo
@@ -949,6 +965,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
         # "dependencias" en cascada vía aplicar_filtros/2 igual que
         # cualquier otro "referencia") pero armado a mano acá.
         from(r in modulo, where: is_nil(r.delete_guid), order_by: [asc: r.id], limit: 500)
+        |> acotar_a_branch_activo(props["catalogo"], branch_activo_id)
         |> aplicar_filtros(filtros)
         |> Repo.all()
         |> Enum.map(&{&1.id, etiqueta_para_referencia(&1, props)})
@@ -961,15 +978,22 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
           modulo ->
             # :sistema (Fase 4a del modelo de Alcance de Datos) -- llamado
             # desde componentes de función (campo_input/1 y afines) sin acceso
-            # directo al Scope del socket. Filtrar las opciones de un picker
-            # "referencia" por el alcance del usuario es una mejora real
-            # pendiente (hoy siempre ve el catálogo destino entero), marcada a
-            # propósito para no threadear Scope por todo el árbol de
-            # componentes en esta fase.
+            # directo al Scope del socket. Un catálogo BPB de NEGOCIO
+            # (distinto de los de sistema que sí se acotan arriba con
+            # branch_activo_id) sigue trayendo el catálogo destino entero
+            # sin filtrar por alcance -- queda fuera de esta mejora
+            # (2026-08-24), que se limitó al pedido concreto (picker de
+            # "Unidad de venta"/"Almacén" en Renglones de detalle).
             modulo |> listar(:sistema, filtros, limit: 500) |> Enum.map(&{&1.id, etiqueta_para_referencia(&1, props)})
         end
     end
   end
+
+  defp acotar_a_branch_activo(query, catalogo, branch_activo_id)
+       when catalogo in ["meta_schema_sales_unit", "meta_schema_inventory_location"] and not is_nil(branch_activo_id),
+       do: where(query, [r], r.branch_id == ^branch_activo_id)
+
+  defp acotar_a_branch_activo(query, _catalogo, _branch_activo_id), do: query
 
   @doc "Pública para la vista previa en vivo del panel de Relaciones (BcMotorLive)."
   def etiqueta_para_referencia(registro, %{"campo_visualizacion" => %{} = config}), do: etiqueta_con_visualizacion(registro, config)
