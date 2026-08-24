@@ -136,15 +136,13 @@ defmodule MetadataAppWeb.FichaLive do
         header = MetaSchemaContext.obtener_header_por_nombre(tabla)
         es_detalle? = not is_nil(header.schema_encabezado_id)
 
-        branch_activo_id = branch_activo_id(socket.assigns[:current_scope])
-
         columnas =
           tabla
           |> MetaSchemaContext.listar_detalles()
           |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
           |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
           |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
-          |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1, branch_activo_id)))
+          |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1, socket.assigns[:current_scope])))
 
         transicion_alta = if es_detalle?, do: nil, else: MetaStateEngine.transicion_alta(tabla)
 
@@ -166,7 +164,7 @@ defmodule MetadataAppWeb.FichaLive do
         socket = assign(socket, :plantilla_preview_id, Map.get(params, "plantilla_id"))
         plantilla = plantilla_a_mostrar(socket, header.id)
         catalogos_detalle_mount =
-          if es_detalle?, do: [], else: cargar_catalogos_detalle(header.id, branch_activo_id(socket.assigns[:current_scope]))
+          if es_detalle?, do: [], else: cargar_catalogos_detalle(header.id, socket.assigns[:current_scope])
 
         {:ok,
          socket
@@ -1214,15 +1212,13 @@ defmodule MetadataAppWeb.FichaLive do
 
   defp cargar_registro(socket, registro) do
     %{tabla: tabla, header: header, es_detalle?: es_detalle?} = socket.assigns
-    branch_activo_id = branch_activo_id(socket.assigns[:current_scope])
-
     columnas =
       tabla
       |> MetaSchemaContext.listar_detalles()
       |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
       |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
       |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
-      |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1, branch_activo_id)))
+      |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1, socket.assigns[:current_scope])))
 
     estados_por_id = MetaStateEngine.mapa_nombres_estados(tabla)
 
@@ -1266,7 +1262,7 @@ defmodule MetadataAppWeb.FichaLive do
     # agregar un renglón volviendo a la tabla y abriendo el modal viejo;
     # acá la Ficha 360° ya tiene el id real del maestro, así que se
     # resuelve en el lugar, sin ese viaje de ida y vuelta.
-    catalogos_detalle = cargar_catalogos_detalle(header.id, branch_activo_id)
+    catalogos_detalle = cargar_catalogos_detalle(header.id, socket.assigns[:current_scope])
     detalle_renglones = cargar_detalle_renglones(socket.assigns[:current_scope], catalogos_detalle, registro.id, estados_por_id)
 
     socket
@@ -1310,7 +1306,7 @@ defmodule MetadataAppWeb.FichaLive do
     |> Enum.filter(&Permissions.can?(socket.assigns.current_scope, "ejecutar_#{&1.nombre}", header.schema_context_name))
   end
 
-  defp cargar_catalogos_detalle(header_id, branch_activo_id) do
+  defp cargar_catalogos_detalle(header_id, scope) do
     header_id
     |> MetaSchemaContext.listar_catalogos_detalle()
     |> Enum.map(fn h ->
@@ -1328,7 +1324,7 @@ defmodule MetadataAppWeb.FichaLive do
         # usuario no puede completar de verdad, bloqueando "Guardar".
         |> Enum.reject(&(get_in(&1, [:schema_context_properties, "editable"]) == false))
         |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
-        |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1, branch_activo_id)))
+        |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1, scope)))
 
       # :columnas_tabla — subconjunto curado (BcMotorLive → Campos → "En
       # tabla") para catálogos con muchos campos, donde mostrar TODOS como
@@ -1342,7 +1338,7 @@ defmodule MetadataAppWeb.FichaLive do
         etiqueta: h.schema_context_label,
         columnas: columnas_detalle,
         columnas_tabla: columnas_tabla,
-        branch_activo_id: branch_activo_id
+        scope: scope
       }
     end)
   end
@@ -1677,7 +1673,7 @@ defmodule MetadataAppWeb.FichaLive do
         plantilla={@plantilla_impresion} relaciones={@relaciones} detalle={%{catalogos: @catalogos_detalle, renglones: @detalle_renglones}}
         estados_por_id={@estados_por_id}
         otras_transiciones={@otras_transiciones}
-        edicion={%{valores: %{}, errores: %{}, contexto: @contexto_formula, calculados: @valores_calculados, opciones_alcance: %{}, branch_activo_id: nil}} />
+        edicion={%{valores: %{}, errores: %{}, contexto: @contexto_formula, calculados: @valores_calculados, opciones_alcance: %{}, scope: nil}} />
     </div>
     """
   end
@@ -1705,7 +1701,6 @@ defmodule MetadataAppWeb.FichaLive do
         valores_con_calculados(assigns.columnas, assigns.registro, assigns.form_values, contexto_formula, assigns.plantilla)
       )
       |> assign(:opciones_alcance, opciones_alcance(assigns.header, assigns[:current_scope]))
-      |> assign(:branch_activo_id, branch_activo_id(assigns[:current_scope]))
 
     ~H"""
     <div class="p-6 max-w-6xl">
@@ -1902,7 +1897,7 @@ defmodule MetadataAppWeb.FichaLive do
       <.tab_datos :if={@tab == "datos"} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
         plantilla={@plantilla} relaciones={@relaciones} detalle={%{catalogos: @catalogos_detalle, renglones: @detalle_renglones}}
         estados_por_id={@estados_por_id} otras_transiciones={@otras_transiciones}
-        edicion={%{valores: @form_values, errores: @errores_campos, contexto: @contexto_formula, calculados: @valores_calculados, opciones_alcance: @opciones_alcance, branch_activo_id: @branch_activo_id}} />
+        edicion={%{valores: @form_values, errores: @errores_campos, contexto: @contexto_formula, calculados: @valores_calculados, opciones_alcance: @opciones_alcance, scope: @current_scope}} />
       <.tab_relaciones :if={@tab == "relaciones"} relaciones={@relaciones} />
       <.tab_historial :if={@tab == "historial"} historial={@historial} estados_por_id={@estados_por_id} />
       <.tab_detalle :if={@tab == "detalle"} modo={@modo} catalogos_detalle={@catalogos_detalle} detalle_renglones={@detalle_renglones}
@@ -3536,7 +3531,7 @@ defmodule MetadataAppWeb.FichaLive do
         props,
         Map.get(assigns.col, :opciones, []),
         fn campo -> Map.get(assigns.edicion.valores, campo) || valor_registro_seguro(assigns.registro, campo) end,
-        Map.get(assigns.edicion, :branch_activo_id)
+        Map.get(assigns.edicion, :scope)
       )
 
     # "Campo calculado" (Diseñador de campos): se recalcula en cada render
@@ -4062,7 +4057,7 @@ defmodule MetadataAppWeb.FichaLive do
           <div class="px-3 py-2 flex flex-wrap items-end gap-2">
             <div :for={campo <- @cat.columnas} class="flex-1 min-w-[120px]">
               <% {opciones_campo, deshabilitado_dep?, mensaje_dep} =
-                resolver_info_dependencia(campo.schema_context_properties, opciones_para_campo(campo), &Map.get(@seleccion.valores, &1), @cat.branch_activo_id) %>
+                resolver_info_dependencia(campo.schema_context_properties, opciones_para_campo(campo), &Map.get(@seleccion.valores, &1), @cat.scope) %>
               <% {valor_campo, calculado?} = valor_renglon_con_calculado(campo, @seleccion.valores) %>
               <.campo_input columna={campo} mostrar_etiqueta={true}
                 valor={valor_campo}
@@ -4103,13 +4098,10 @@ defmodule MetadataAppWeb.FichaLive do
   # antes esto corría en cada render de la Ficha 360° (cualquier evento:
   # click en fila, guardar, transición), trayendo hasta 500 filas del
   # catálogo referenciado cada vez.
-  defp opciones_para_columna(%{schema_context_properties: %{"tipo" => "referencia"}} = campo, branch_activo_id),
-    do: CatalogoGenerico.opciones_referencia(campo.schema_context_properties, %{}, branch_activo_id)
+  defp opciones_para_columna(%{schema_context_properties: %{"tipo" => "referencia"}} = campo, scope),
+    do: CatalogoGenerico.opciones_referencia(campo.schema_context_properties, %{}, scope)
 
-  defp opciones_para_columna(_campo, _branch_activo_id), do: []
-
-  defp branch_activo_id(%Scope{branch_activo: %{id: id}}), do: id
-  defp branch_activo_id(_scope), do: nil
+  defp opciones_para_columna(_campo, _scope), do: []
 
   defp opciones_para_campo(campo), do: Map.get(campo, :opciones, [])
 
@@ -4127,12 +4119,12 @@ defmodule MetadataAppWeb.FichaLive do
   # caller arma distinto: campo_row/1 (encabezado) mezcla @edicion.valores
   # (sin guardar) con el registro persistido; formulario_renglon/1 lee
   # directo de @seleccion.valores (ya es el mapa completo del renglón).
-  defp resolver_info_dependencia(props, opciones_cacheadas, buscar_valor, branch_activo_id) do
+  defp resolver_info_dependencia(props, opciones_cacheadas, buscar_valor, scope) do
     if props["tipo"] == "referencia" and is_list(props["dependencias"]) and props["dependencias"] != [] do
       hermanos = valores_hermanos(props, buscar_valor)
 
       case MetaSchemaContext.resolver_filtros(props, hermanos) do
-        {:ok, filtros} -> {CatalogoGenerico.opciones_referencia(props, filtros, branch_activo_id), false, nil}
+        {:ok, filtros} -> {CatalogoGenerico.opciones_referencia(props, filtros, scope), false, nil}
         {:disabled, mensaje} -> {[], true, mensaje}
       end
     else
