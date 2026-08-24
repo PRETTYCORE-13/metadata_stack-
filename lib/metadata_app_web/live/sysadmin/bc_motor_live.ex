@@ -12,7 +12,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "editar"}}
 
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador, CatalogoGenerico}
-  alias MetadataApp.FiltrosDefault
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaReglasCodigo
@@ -1045,22 +1044,20 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # CatalogoPermisosLive/pestaña Permisos, ver ese módulo — "revuelve
   # mucho" tenerlo separado de la config por rol en otra pestaña).
 
-  # Sub-filtro de fecha de "Filtros por default" — "primer_dia_anio"/
-  # "ultimo_dia_anio" (una sola fecha por calendario, precargada con el
-  # valor obvio de cada modo — el usuario la puede cambiar después) /
-  # "rango" (necesita desde Y hasta, dos calendarios, sin precargar porque
-  # no hay un valor obvio para ninguno de los dos) / "actual" (sin
-  # calendario — es SIEMPRE hoy, calculado en el momento, ver
-  # FiltrosDefault.rango_fecha/3) o "" para apagarlo — al cambiar de modo
-  # se limpian las fechas viejas para no dejar pegado un valor de un modo
-  # distinto (ver cambiar_filtro_fecha_valor/2 abajo).
+  # Sub-filtro de fecha de "Filtros por default" — "rango" (necesita desde
+  # Y hasta, dos calendarios, sin precargar porque no hay un valor obvio
+  # para ninguno de los dos) / "actual", "primer_dia_anio", "ultimo_dia_anio"
+  # (sin calendario — son dinámicos, se recalculan solos contra la fecha de
+  # hoy en cada consulta, ver FiltrosDefault.rango_fecha/3) o "" para
+  # apagarlo — al cambiar de modo se limpian las fechas viejas para no
+  # dejar pegado un valor de "rango" si se cambia a otro modo (ver
+  # cambiar_filtro_fecha_valor/2 abajo).
   def handle_event("cambiar_filtro_fecha_modo", %{"modo" => modo}, socket) do
     header = socket.assigns.header
-    valor_default = FiltrosDefault.valor_default_para_modo(modo)
 
     attrs = %{
       "filtro_default_fecha_modo" => if(modo == "", do: nil, else: modo),
-      "filtro_default_fecha_valor" => valor_default,
+      "filtro_default_fecha_valor" => nil,
       "filtro_default_fecha_valor_hasta" => nil
     }
 
@@ -1070,24 +1067,16 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # "campo" es "desde"/"hasta" (modo "rango", dos inputs) o siempre
-  # "desde" para los modos de una sola fecha ("actual"/"primer_dia_anio"/
-  # "ultimo_dia_anio"). Para estos dos últimos el <input> ya trae min/max
-  # acotando al año en curso (ver FiltrosDefault.min_calendario_unico/1),
-  # pero se re-valida acá server-side porque el min/max de un <input
-  # type="date"> se puede saltear escribiendo el valor a mano.
+  # "campo" es "desde"/"hasta" — solo el modo "rango" tiene calendario hoy
+  # (ver panel_filtros_default/1), los otros 3 modos de fecha son dinámicos
+  # y no disparan este evento.
   def handle_event("cambiar_filtro_fecha_valor", %{"campo" => campo, "valor" => valor}, socket) do
     header = socket.assigns.header
     clave = if campo == "desde", do: "filtro_default_fecha_valor", else: "filtro_default_fecha_valor_hasta"
 
-    if FiltrosDefault.fecha_fuera_de_anio_actual?(header.filtro_default_fecha_modo, valor) do
-      {:noreply,
-       put_flash(socket, :error, "La fecha tiene que ser del año en curso (#{Date.utc_today().year}).")}
-    else
-      case MetaSchemaContext.actualizar_header(header, %{clave => valor}) do
-        {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
-        {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la fecha.")}
-      end
+    case MetaSchemaContext.actualizar_header(header, %{clave => valor}) do
+      {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la fecha.")}
     end
   end
 

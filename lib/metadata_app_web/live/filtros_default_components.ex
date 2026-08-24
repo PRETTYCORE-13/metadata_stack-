@@ -85,29 +85,6 @@ defmodule MetadataAppWeb.FiltrosDefaultComponents do
             </form>
           </div>
         <% end %>
-
-        <%= if @header.filtro_default_fecha_modo in ["primer_dia_anio", "ultimo_dia_anio"] do %>
-          <div class="flex items-center gap-2 mt-2">
-            <form phx-change="cambiar_filtro_fecha_valor">
-              <input type="hidden" name="campo" value="desde" />
-              <label class="text-[10px] text-gray-500 block mb-0.5">{FiltrosDefault.etiqueta_calendario_unico(@header.filtro_default_fecha_modo)}</label>
-              <div class="relative">
-                <input
-                  id="filtro-default-fecha-unica"
-                  phx-hook="AbrirCalendario"
-                  type="date"
-                  name="valor"
-                  value={@header.filtro_default_fecha_valor}
-                  min={FiltrosDefault.min_calendario_unico(@header.filtro_default_fecha_modo)}
-                  max={FiltrosDefault.max_calendario_unico(@header.filtro_default_fecha_modo)}
-                  class="border border-gray-300 rounded-lg pl-2 pr-6 py-1 text-[11px]"
-                />
-                <button type="button" tabindex="-1" data-abrir-calendario aria-label="Abrir calendario"
-                  class="pc-abrir-calendario absolute right-1 top-1/2 -translate-y-1/2 material-symbols-outlined" style="font-size:16px">expand_more</button>
-              </div>
-            </form>
-          </div>
-        <% end %>
       </div>
     </div>
     """
