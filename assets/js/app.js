@@ -428,16 +428,33 @@ const ZoomLienzo = {
 // catalogo_live.ex) — 100% del lado del cliente, sin un solo evento al
 // servidor: tildar/destildar/arrastrar un campo solo oculta/reordena
 // <th>/<td> por CSS/DOM (display:none, appendChild), nunca toca @columnas
-// ni la query real. El estado vive acá, a nivel de MÓDULO — no en
-// localStorage a propósito — indexado por la ruta actual:
-//   - Sobrevive una navegación LiveView (push_navigate/<.link navigate>)
-//     porque esas NO recargan la página de verdad; el módulo de JS sigue
-//     vivo en memoria, solo se re-monta el hook con el mismo estado.
-//   - Se borra solo con un refresh real del navegador (F5/Ctrl+R), que
-//     reinicia todo el runtime de JS — exactamente el comportamiento
-//     pedido: "momentáneo", nunca localStorage.
-const memoriaColumnasOcultas = {}
-const memoriaOrdenColumnas = {}
+// ni la query real. Se guarda en localStorage, indexado por la ruta
+// actual dentro de un único objeto JSON por preferencia (mismo criterio
+// que el resto de preferencias de UI de este archivo — ancho del
+// sidebar, sidebar abierto/cerrado: por NAVEGADOR, nunca por servidor,
+// nunca compartido entre usuarios ni pisa el orden fijo que un admin
+// haya configurado desde BC Motor — Header.orden_columnas_tabla sigue
+// siendo el punto de partida, esto solo se aplica ENCIMA en el cliente).
+// Pedido explícito (2026-08-19): que sobreviva un refresh real del
+// navegador, no solo una navegación LiveView — antes vivía en memoria
+// del módulo y se perdía con cualquier F5/Ctrl+R.
+function leerMapaPreferenciaColumnas(llave) {
+  try {
+    return JSON.parse(localStorage.getItem(llave)) || {}
+  } catch {
+    return {}
+  }
+}
+
+function escribirPreferenciaColumnas(llave, ruta, valor) {
+  const mapa = leerMapaPreferenciaColumnas(llave)
+  if (valor === null) delete mapa[ruta]
+  else mapa[ruta] = valor
+  localStorage.setItem(llave, JSON.stringify(mapa))
+}
+
+const LLAVE_COLUMNAS_OCULTAS = "camposOcultosPorRuta"
+const LLAVE_COLUMNAS_ORDEN = "campoOrdenPorRuta"
 
 const SelectorCampos = {
   mounted() {
@@ -451,10 +468,10 @@ const SelectorCampos = {
     // usa para decidir si hay override que guardar o no.
     this.ordenOriginal = this.ordenActual()
 
-    const ordenGuardado = memoriaOrdenColumnas[this.clave]
+    const ordenGuardado = leerMapaPreferenciaColumnas(LLAVE_COLUMNAS_ORDEN)[this.clave]
     if (ordenGuardado) this.reordenarLista(ordenGuardado)
 
-    const ocultos = memoriaColumnasOcultas[this.clave] || this.ocultosPorDefecto()
+    const ocultos = leerMapaPreferenciaColumnas(LLAVE_COLUMNAS_OCULTAS)[this.clave] || this.ocultosPorDefecto()
     this.casillas().forEach((cb) => { cb.checked = !ocultos.includes(cb.dataset.campo) })
 
     this.aplicar()
@@ -509,8 +526,8 @@ const SelectorCampos = {
     return this.el.querySelectorAll("input[type=checkbox][data-campo]")
   },
 
-  // En celular, sin que el usuario haya tocado "Campos" todavía en esta
-  // sesión (ver memoriaColumnasOcultas arriba), arranca ocultando las
+  // En celular, sin que el usuario haya tocado "Campos" todavía en este
+  // navegador (ver LLAVE_COLUMNAS_OCULTAS arriba), arranca ocultando las
   // columnas "estructurales" (Estado/TRN/Empresa/Sucursal/Almacén/Unidad
   // de venta) — son las que más empujan la tabla a scroll horizontal en
   // una pantalla angosta, y casi nunca son el dato que alguien busca de
@@ -587,8 +604,7 @@ const SelectorCampos = {
       .filter((cb) => !cb.checked)
       .map((cb) => cb.dataset.campo)
 
-    if (ocultos.length === 0) delete memoriaColumnasOcultas[this.clave]
-    else memoriaColumnasOcultas[this.clave] = ocultos
+    escribirPreferenciaColumnas(LLAVE_COLUMNAS_OCULTAS, this.clave, ocultos.length === 0 ? null : ocultos)
   },
 
   guardarOrden() {
@@ -596,8 +612,7 @@ const SelectorCampos = {
     const esOriginal =
       actual.length === this.ordenOriginal.length && actual.every((clave, i) => clave === this.ordenOriginal[i])
 
-    if (esOriginal) delete memoriaOrdenColumnas[this.clave]
-    else memoriaOrdenColumnas[this.clave] = actual
+    escribirPreferenciaColumnas(LLAVE_COLUMNAS_ORDEN, this.clave, esOriginal ? null : actual)
   },
 }
 
