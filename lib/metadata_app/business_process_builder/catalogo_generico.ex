@@ -940,7 +940,30 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   SOLO las opciones válidas para el valor actual de su campo padre, en vez
   del catálogo destino entero.
   """
-  def opciones_referencia(props, filtros) do
+  def opciones_referencia(props, filtros), do: opciones_referencia(props, filtros, nil)
+
+  @doc """
+  Igual que `opciones_referencia/2`, además acotando los catálogos de
+  sistema hijos de Alcance de Datos con `scope` (un `%Scope{}` o `nil`)
+  cuando aplica -- resuelve la mejora marcada más abajo: hasta 2026-08-24
+  estos pickers siempre traían el catálogo destino ENTERO sin importar
+  nada de la sesión (ver capturas reales: "Unidad de venta" en Renglones
+  de detalle mostraba unidades de TODAS las sucursales; "Sucursal" en el
+  formulario de Clientes mostraba TODAS las del sistema, sin importar el
+  permiso del usuario).
+
+  - SalesUnit/InventoryLocation (hijos de UNA sucursal): se acotan a la
+    sucursal ACTIVA de la sesión (`scope.branch_activo`) -- mismo criterio
+    para cualquier usuario, no solo no-administradores; si alguien
+    necesita otra sucursal, cambia su unidad operativa activa primero
+    (`cambiar_unidad_operativa_modal.ex`).
+  - Branch (elegir UNA sucursal, no depende de cuál esté activa): se
+    acota a las sucursales OPERABLES del usuario (`Autenticacion.
+    branches_operables/3` -- mismo mecanismo que ya usa ese modal), no a
+    "la sucursal activa" (no tendría sentido, sería siempre una sola
+    opción). Administradores siguen viendo todas las de la empresa.
+  """
+  def opciones_referencia(props, filtros, scope) do
     case MetadataApp.BusinessProcessBuilder.MetaSchemaContext.catalogo_sistema(props["catalogo"]) do
       %{modulo: modulo} ->
         # Empresa/Branch/InventoryLocation/SalesUnit: no son un catálogo
@@ -949,6 +972,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
         # "dependencias" en cascada vía aplicar_filtros/2 igual que
         # cualquier otro "referencia") pero armado a mano acá.
         from(r in modulo, where: is_nil(r.delete_guid), order_by: [asc: r.id], limit: 500)
+        |> acotar_alcance(props["catalogo"], scope)
         |> aplicar_filtros(filtros)
         |> Repo.all()
         |> Enum.map(&{&1.id, etiqueta_para_referencia(&1, props)})
@@ -961,15 +985,29 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
           modulo ->
             # :sistema (Fase 4a del modelo de Alcance de Datos) -- llamado
             # desde componentes de función (campo_input/1 y afines) sin acceso
-            # directo al Scope del socket. Filtrar las opciones de un picker
-            # "referencia" por el alcance del usuario es una mejora real
-            # pendiente (hoy siempre ve el catálogo destino entero), marcada a
-            # propósito para no threadear Scope por todo el árbol de
-            # componentes en esta fase.
+            # directo al Scope del socket. Un catálogo BPB de NEGOCIO
+            # (distinto de los de sistema que sí se acotan arriba con
+            # scope) sigue trayendo el catálogo destino entero sin filtrar
+            # por alcance -- queda fuera de esta mejora (2026-08-24), que
+            # se limitó al pedido concreto (pickers de sucursal/almacén/
+            # unidad de venta).
             modulo |> listar(:sistema, filtros, limit: 500) |> Enum.map(&{&1.id, etiqueta_para_referencia(&1, props)})
         end
     end
   end
+
+  defp acotar_alcance(query, catalogo, %Scope{branch_activo: %{id: branch_activo_id}})
+       when catalogo in ["meta_schema_sales_unit", "meta_schema_inventory_location"],
+       do: where(query, [r], r.branch_id == ^branch_activo_id)
+
+  defp acotar_alcance(query, "meta_schema_branch", %Scope{usuario: usuario, empresa_activa: %{id: empresa_id}}) do
+    administrador? = Permissions.administrador?(usuario.id, empresa_id)
+    ids = MetadataApp.Autenticacion.branches_operables(usuario.id, empresa_id, administrador?) |> Enum.map(& &1.id)
+
+    where(query, [r], r.id in ^ids)
+  end
+
+  defp acotar_alcance(query, _catalogo, _scope), do: query
 
   @doc "Pública para la vista previa en vivo del panel de Relaciones (BcMotorLive)."
   def etiqueta_para_referencia(registro, %{"campo_visualizacion" => %{} = config}), do: etiqueta_con_visualizacion(registro, config)

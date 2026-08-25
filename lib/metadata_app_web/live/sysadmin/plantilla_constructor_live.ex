@@ -89,6 +89,26 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     {"referencia", "Catálogo"}
   ]
 
+  # Mismas 8 claves/etiquetas que @campos_control de BcMotorLive (Get
+  # View) y @claves_control/@etiquetas_control de CatalogoLive -- acá para
+  # ofrecerlas como opción de "Campo del catálogo" en un nodo tipo
+  # "campo", además de los campos de negocio. "empresa"/"branch"/
+  # "inventory_location"/"sales_unit" solo se ofrecen con Alcance de
+  # Datos activado (esas columnas ni existen si no, ver
+  # alcance_field_asts/1 en MetaCatalogoGenerico). El render real
+  # (resolución de valor + picker editable de branch/inventory/sales_unit)
+  # vive en FichaLive.nodo_plantilla_render/1 para tipo "campo".
+  @campos_control [
+    %{clave: "id", etiqueta: "ID", requiere_alcance?: false},
+    %{clave: "estado", etiqueta: "Estado", requiere_alcance?: false},
+    %{clave: "trn", etiqueta: "TRN", requiere_alcance?: false},
+    %{clave: "empresa", etiqueta: "Empresa", requiere_alcance?: true},
+    %{clave: "branch", etiqueta: "Sucursal", requiere_alcance?: true},
+    %{clave: "inventory_location", etiqueta: "Almacén", requiere_alcance?: true},
+    %{clave: "sales_unit", etiqueta: "Unidad de venta", requiere_alcance?: true},
+    %{clave: "creado_por", etiqueta: "Creado por", requiere_alcance?: false}
+  ]
+
   # Ruta propia (/sysadmin/bc-list/:nombre/plantilla) — sigue existiendo
   # además del tab embebido de BcMotorLive (ver clausula de abajo), por si
   # algo todavía enlaza directo para acá.
@@ -1146,7 +1166,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
             resumen_catalogo={@resumen_catalogo} resumen_funcion={@resumen_funcion} resumen_campo={@resumen_campo}
             lookup_catalogo={@lookup_catalogo} lookup_id={@lookup_id} lookup_campo={@lookup_campo} definicion={@definicion}
             herramienta_calculado={@herramienta_calculado}
-            nombre={@nombre} registro_muestra_id={@registro_muestra_id} current_scope={@current_scope} />
+            nombre={@nombre} registro_muestra_id={@registro_muestra_id} current_scope={@current_scope} header={@header} />
           <p :if={!@nodo_seleccionado_id} class="text-xs text-gray-400">Elegí una celda ocupada del grid.</p>
           <.panel_condicion :if={@nodo_seleccionado_id} nodo={MetaPlantillas.buscar_nodo(@definicion, @nodo_seleccionado_id)} campos={@campos} estados={@estados} />
         </div>
@@ -1233,6 +1253,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   attr :nombre, :string, default: nil
   attr :registro_muestra_id, :any, default: nil
   attr :current_scope, :any, default: nil
+  attr :header, :map, required: true
 
   defp panel_propiedades(%{nodo: %{"tipo" => "seccion"}} = assigns) do
     ~H"""
@@ -1415,7 +1436,20 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         Enum.filter(assigns.campos, &(&1.schema_context_properties["tipo"] in tipos_permitidos))
       end
 
-    assigns = assign(assigns, :campos_filtrados, campos_filtrados)
+    # Los campos de control solo tienen sentido en el selector "general"
+    # (sin tipo_filtro) -- no tienen un schema_context_properties["tipo"]
+    # real contra el que filtrar (ver moduledoc de @campos_control).
+    campos_control_filtrados =
+      if tipos_permitidos == [] do
+        Enum.reject(@campos_control, &(&1.requiere_alcance? and not assigns.header.alcance_habilitado))
+      else
+        []
+      end
+
+    assigns =
+      assigns
+      |> assign(:campos_filtrados, campos_filtrados)
+      |> assign(:campos_control_filtrados, campos_control_filtrados)
 
     ~H"""
     <form phx-change="actualizar_propiedad" class="flex flex-col gap-2.5 text-xs">
@@ -1423,11 +1457,18 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         <label class="block text-gray-500 mb-0.5">Campo del catálogo</label>
         <select name="campo" class="w-full border border-gray-300 rounded px-2 py-1.5">
           <option value="" selected={is_nil(@nodo["propiedades"]["campo"])}>Elegir…</option>
-          <option :for={c <- @campos_filtrados} value={c.schema_context_field} selected={@nodo["propiedades"]["campo"] == c.schema_context_field}>
-            {c.schema_context_properties["etiqueta"]}
-          </option>
+          <optgroup label="Campos de negocio">
+            <option :for={c <- @campos_filtrados} value={c.schema_context_field} selected={@nodo["propiedades"]["campo"] == c.schema_context_field}>
+              {c.schema_context_properties["etiqueta"]}
+            </option>
+          </optgroup>
+          <optgroup :if={@campos_control_filtrados != []} label="Campos de control">
+            <option :for={c <- @campos_control_filtrados} value={c.clave} selected={@nodo["propiedades"]["campo"] == c.clave}>
+              {c.etiqueta}
+            </option>
+          </optgroup>
         </select>
-        <p :if={@campos_filtrados == []} class="text-gray-400 mt-1">Este catálogo no tiene campos de este tipo.</p>
+        <p :if={@campos_filtrados == [] and @campos_control_filtrados == []} class="text-gray-400 mt-1">Este catálogo no tiene campos de este tipo.</p>
       </div>
     </form>
     """

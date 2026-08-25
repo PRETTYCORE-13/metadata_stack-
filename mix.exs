@@ -87,7 +87,8 @@ defmodule MetadataApp.MixProject do
       # fuera de CatalogoGenerico) + Dialyzer (typespecs de Scope/scope
       # obligatorio ya agregados en CatalogoGenerico).
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:stream_data, "~> 1.1", only: :test}
     ]
   end
 
