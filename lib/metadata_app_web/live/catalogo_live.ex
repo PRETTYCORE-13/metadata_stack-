@@ -1281,11 +1281,11 @@ defmodule MetadataAppWeb.CatalogoLive do
   # que agarrar — la columna entera es arrastrable, el ícono solo avisa.
   defp icono_arrastrar_columna(assigns) do
     ~H"""
-    <span class="flex-shrink-0 flex items-center justify-center w-3.5 h-3.5 text-gray-300 cursor-grab" title="Arrastrar para reordenar">
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
-        <circle cx="8" cy="6" r="1.6" /><circle cx="16" cy="6" r="1.6" />
-        <circle cx="8" cy="12" r="1.6" /><circle cx="16" cy="12" r="1.6" />
-        <circle cx="8" cy="18" r="1.6" /><circle cx="16" cy="18" r="1.6" />
+    <span class="flex-shrink-0 flex items-center justify-center w-4 h-4 text-gray-400 hover:text-purple-600 cursor-grab" title="Arrastrar para reordenar">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+        <circle cx="8" cy="6" r="2" /><circle cx="16" cy="6" r="2" />
+        <circle cx="8" cy="12" r="2" /><circle cx="16" cy="12" r="2" />
+        <circle cx="8" cy="18" r="2" /><circle cx="16" cy="18" r="2" />
       </svg>
     </span>
     """
