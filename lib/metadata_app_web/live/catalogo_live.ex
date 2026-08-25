@@ -1723,9 +1723,9 @@ defmodule MetadataAppWeb.CatalogoLive do
       |> assign(:total_general_activo?, numerico? and props["total_general_activo"] == true)
 
     ~H"""
-    <td data-col={@clave} class={["px-4 py-2 align-top", alineacion_columna(@columna)]}>
+    <td data-col={@clave} class="px-4 py-2 align-top text-center">
       <%= if @agregable? do %>
-        <div class={["flex items-center gap-1.5 flex-wrap", if(alineacion_columna(@columna) == "text-right", do: "flex-row-reverse", else: "")]}>
+        <div class="flex items-center justify-center gap-1.5 flex-wrap">
           <%= if @agregacion_activa? do %>
             <form phx-change="cambiar_agregacion">
               <input type="hidden" name="campo" value={@clave} />
