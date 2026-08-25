@@ -988,7 +988,10 @@ defmodule MetadataAppWeb.CatalogoLive do
                     title={if @consulta.joins != [], do: "De: #{columna.catalogo}"}
                     class={["px-2 py-3 sm:px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap", alineacion_columna(columna)]}
                   >
-                    {columna.schema_context_properties["etiqueta"]}
+                    <span class="inline-flex items-center gap-1">
+                      {columna.schema_context_properties["etiqueta"]}
+                      <.icono_arrastrar_columna />
+                    </span>
                   </th>
                 <% end %>
               </tr>
@@ -1253,6 +1256,7 @@ defmodule MetadataAppWeb.CatalogoLive do
         <%= if @col.columna.schema_context_properties["tipo"] == "referencia" do %>
           <span class="material-symbols-outlined text-blue-500" style="font-size: 13px" title={"Relación con #{@col.columna.schema_context_properties["catalogo"]}"}>link</span>
         <% end %>
+        <.icono_arrastrar_columna />
       </span>
     </th>
     """
@@ -1260,7 +1264,30 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   defp celda_encabezado(assigns) do
     ~H"""
-    <th data-col={@col.clave} class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{@col.etiqueta}</th>
+    <th data-col={@col.clave} class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
+      <span class="inline-flex items-center gap-1">
+        {@col.etiqueta}
+        <.icono_arrastrar_columna />
+      </span>
+    </th>
+    """
+  end
+
+  # Mismo ícono (y mismo criterio de color/cursor) que ".jal-manija" en la
+  # lista de "Campos" — sin esto, arrastrar un <th> directo en la tabla
+  # (ver el segundo Sortable en app.js) no tenía ninguna pista visual de
+  # que fuera posible. `cursor-grab` solo (sin :active, eso ya lo pone
+  # SortableJS mientras arrastra) porque acá no hay una "manija" aparte
+  # que agarrar — la columna entera es arrastrable, el ícono solo avisa.
+  defp icono_arrastrar_columna(assigns) do
+    ~H"""
+    <span class="flex-shrink-0 flex items-center justify-center w-3.5 h-3.5 text-gray-300 cursor-grab" title="Arrastrar para reordenar">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+        <circle cx="8" cy="6" r="1.6" /><circle cx="16" cy="6" r="1.6" />
+        <circle cx="8" cy="12" r="1.6" /><circle cx="16" cy="12" r="1.6" />
+        <circle cx="8" cy="18" r="1.6" /><circle cx="16" cy="18" r="1.6" />
+      </svg>
+    </span>
     """
   end
 
