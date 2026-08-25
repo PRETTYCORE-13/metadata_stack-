@@ -516,10 +516,37 @@ const SelectorCampos = {
         },
       })
     }
+
+    // Arrastrar directo en los <th> de la tabla (pedido explícito: no
+    // solo desde la lista de "Campos") — mismo <thead>/<tbody>/<tfoot> que
+    // ya reordena aplicarOrden/reordenarFila, así que reusa exactamente
+    // ese motor. `draggable: "[data-col]"` deja afuera la columna de
+    // Acciones al final (sin data-col a propósito, ver reordenarFila) sin
+    // necesidad de un `filter` aparte. La fuente de verdad acá es el DOM
+    // de la fila de encabezado (ordenDesdeTabla), no las casillas del
+    // popover — al revés que el Sortable de arriba — por eso el onEnd
+    // sincroniza la LISTA de "Campos" con lo que quedó en la tabla, en
+    // vez de aplicar la tabla según la lista.
+    const filaEncabezado = this.tabla?.querySelector("thead tr:first-child")
+
+    if (filaEncabezado) {
+      this.sortableEncabezado = new Sortable(filaEncabezado, {
+        animation: 150,
+        draggable: "[data-col]",
+        ghostClass: "jal-fantasma",
+        onEnd: () => {
+          const orden = this.ordenDesdeTabla()
+          this.reordenarLista(orden)
+          this.aplicarOrden(orden)
+          this.guardarOrden(orden)
+        },
+      })
+    }
   },
 
   destroyed() {
     this.sortable?.destroy()
+    this.sortableEncabezado?.destroy()
   },
 
   casillas() {
@@ -544,6 +571,19 @@ const SelectorCampos = {
 
   ordenActual() {
     return Array.from(this.casillas()).map((cb) => cb.dataset.campo)
+  },
+
+  // Mismo concepto que ordenActual/0, pero leyendo la fuente de verdad
+  // DESDE la tabla (fila de encabezado real) en vez de las casillas del
+  // popover — para cuando el usuario arrastró un <th> directo, que nunca
+  // tocó la lista de "Campos".
+  ordenDesdeTabla() {
+    const filaEncabezado = this.tabla?.querySelector("thead tr:first-child")
+    if (!filaEncabezado) return this.ordenActual()
+
+    return Array.from(filaEncabezado.children)
+      .map((th) => th.dataset.col)
+      .filter(Boolean)
   },
 
   // Reordena las filas [data-fila-campo] del popover (no la tabla) según
@@ -579,12 +619,13 @@ const SelectorCampos = {
   },
 
   // Reordena las celdas [data-col] de CADA fila de la tabla (thead/tbody/
-  // tfoot por igual, misma consulta genérica) según el orden actual del
-  // popover — las celdas SIN data-col (la columna de Acciones al final)
-  // se dejan tal cual, al final, en su lugar de siempre.
-  aplicarOrden() {
+  // tfoot por igual, misma consulta genérica) según `orden` — las celdas
+  // SIN data-col (la columna de Acciones al final) se dejan tal cual, al
+  // final, en su lugar de siempre. `orden` es opcional (default: el de
+  // las casillas del popover) para que el Sortable del encabezado pueda
+  // pasarle el suyo propio (ordenDesdeTabla/0) sin que se pisen entre sí.
+  aplicarOrden(orden = this.ordenActual()) {
     if (!this.tabla) return
-    const orden = this.ordenActual()
     this.tabla.querySelectorAll("tr").forEach((fila) => this.reordenarFila(fila, orden))
   },
 
@@ -607,8 +648,7 @@ const SelectorCampos = {
     escribirPreferenciaColumnas(LLAVE_COLUMNAS_OCULTAS, this.clave, ocultos.length === 0 ? null : ocultos)
   },
 
-  guardarOrden() {
-    const actual = this.ordenActual()
+  guardarOrden(actual = this.ordenActual()) {
     const esOriginal =
       actual.length === this.ordenOriginal.length && actual.every((clave, i) => clave === this.ordenOriginal[i])
 
