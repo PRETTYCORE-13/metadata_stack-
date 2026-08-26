@@ -225,9 +225,11 @@ defmodule MetadataApp.MetaStateEngine do
     registro_actual = Repo.get!(modulo, registro.id)
     header = obtener_header!(modulo)
 
+    recurso = registro_actual.__struct__.__schema__(:source)
+
     header.id
     |> transiciones_desde(registro_actual.estado_id)
-    |> Enum.map(&{&1, evaluar_precondiciones_lista(&1, registro_actual, contexto)})
+    |> Enum.map(&{&1, evaluar_precondiciones_lista(&1, registro_actual, recurso, contexto)})
     |> Enum.reject(fn {_transicion, razones} -> Enum.any?(razones, &Map.get(&1, :sin_permiso)) end)
     |> Enum.map(fn {transicion, razones} ->
       %{
@@ -469,7 +471,9 @@ defmodule MetadataApp.MetaStateEngine do
   # aparte si hace falta.
 
   defp evaluar_precondiciones(transicion, registro, contexto) do
-    case evaluar_precondiciones_lista(transicion, registro, contexto) do
+    recurso = registro.__struct__.__schema__(:source)
+
+    case evaluar_precondiciones_lista(transicion, registro, recurso, contexto) do
       [] -> :ok
       fallas -> {:error, {:precondiciones, fallas}}
     end
@@ -483,7 +487,20 @@ defmodule MetadataApp.MetaStateEngine do
   # falló. Cada catálogo (header y cada detalle) resuelve sus PROPIAS
   # reglas (Reglas.evaluar_pre/3 despacha por el struct del registro).
   defp evaluar_precondiciones_todos(transicion, registro_header, renglones, contexto) do
-    fallas_header = evaluar_precondiciones_lista(transicion, registro_header, contexto)
+    # `recurso` SIEMPRE es el catálogo MAESTRO, incluso para las
+    # precondiciones de un renglón -- hallazgo real 2026-08-25: un
+    # renglón no tiene permisos RBAC propios ("un detalle nunca tiene
+    # permisos aparte, los de la fila los da su maestro", ver
+    # verificar_permiso_detalle/3 más abajo), pero
+    # verificar_permiso_transicion/4 antes derivaba el recurso del
+    # STRUCT de `registro` -- para un renglón, eso da el catálogo
+    # DETALLE, que nunca tiene su propio permiso "guardar" definido, así
+    # que cualquier guardado con renglones fallaba con "requiere el
+    # permiso: guardar sobre <detalle>" para CUALQUIER usuario, admin
+    # incluido (no existe esa fila en meta_schema_permiso, no es un tema
+    # de qué rol la tenga otorgada).
+    recurso = registro_header.__struct__.__schema__(:source)
+    fallas_header = evaluar_precondiciones_lista(transicion, registro_header, recurso, contexto)
 
     # apply_changes (no el struct crudo): mismo criterio que el header —
     # las PRE de un renglón ven los valores YA PROPUESTOS (Fase 3, si esa
@@ -492,7 +509,7 @@ defmodule MetadataApp.MetaStateEngine do
       Enum.flat_map(renglones, fn %{changeset: changeset} ->
         registro = Ecto.Changeset.apply_changes(changeset)
 
-        case evaluar_precondiciones_lista(transicion, registro, contexto) do
+        case evaluar_precondiciones_lista(transicion, registro, recurso, contexto) do
           [] ->
             []
 
@@ -508,8 +525,8 @@ defmodule MetadataApp.MetaStateEngine do
     end
   end
 
-  defp evaluar_precondiciones_lista(transicion, registro, contexto) do
-    case verificar_permiso_transicion(transicion, registro, contexto) do
+  defp evaluar_precondiciones_lista(transicion, registro, recurso, contexto) do
+    case verificar_permiso_transicion(transicion, recurso, contexto) do
       :ok ->
         case Reglas.evaluar_pre(transicion.accion, registro, contexto) do
           :ok -> []
@@ -535,11 +552,10 @@ defmodule MetadataApp.MetaStateEngine do
   # otro catálogo vía `MetaBcApi`) que nunca pasó por ese límite, no un
   # usuario anónimo tratando de colarse. Un contexto que SÍ trae la llave
   # pero en `nil` (usuario no autenticado) se deniega igual.
-  defp verificar_permiso_transicion(transicion, registro, contexto) do
+  defp verificar_permiso_transicion(transicion, recurso, contexto) do
     if Map.has_key?(contexto, "usuario_id") do
       usuario_id = Map.get(contexto, "usuario_id")
       empresa_id = Map.get(contexto, "empresa_id")
-      recurso = registro.__struct__.__schema__(:source)
 
       autorizado? =
         not is_nil(usuario_id) and not is_nil(empresa_id) and
