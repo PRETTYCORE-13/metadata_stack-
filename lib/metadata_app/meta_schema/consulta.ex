@@ -20,6 +20,68 @@ defmodule MetadataApp.MetaSchema.Consulta do
   #     "totalizar" => boolean (banda de totales al final de la tabla,
   #       solo aplica a columnas numéricas)}
   #
+  # Rediseño de "Parámetros" (2026-08-27) -- un campo es parámetro del
+  # reporte solo si el admin lo marca a propósito en Get Config, NUNCA
+  # automático (corregido el mismo día: la primera versión lo hacía
+  # automático para todo campo visible de tipo elegible, revertido a
+  # pedido explícito -- "no todas las columnas llevan parámetro, solo
+  # las que indico que llevan"). Un campo "boolean"/"enum" o no visible
+  # nunca es elegible ni con el flag prendido.
+  #
+  #   "es_parametro" => boolean -- SOLO para tipo "date"/"string"/
+  #     "referencia"/"integer"/"decimal" (los únicos elegibles); el admin
+  #     lo prende explícito por columna en Get Config. false/ausente en
+  #     cualquier otro caso -- MetaConsultas.campos_elegibles_fecha/1,
+  #     campos_elegibles_string/1 y campos_elegibles_numerico/1 filtran
+  #     por "visible" + tipo + este flag juntos.
+  #
+  #   "acotado" => boolean -- date/integer/decimal: elegible por el admin.
+  #     string/referencia: SIEMPRE false (nunca tiene sentido "entre" para
+  #     texto).
+  #
+  #   "tipo_filtro" => string -- date: no aplica (el widget lo decide
+  #     "acotado" solo). string/referencia: "like" | "igual" | "multi".
+  #     integer/decimal sin acotar: "mayor" | "menor" | "igual" |
+  #     "diferente". integer/decimal acotado: siempre "entre" (fijo, no
+  #     elegible).
+  #
+  #   "origen" => "libre" | "referenciado" -- SOLO string/referencia.
+  #     "like"/"multi" fuerzan el origen ("like" -> libre, "multi" ->
+  #     referenciado); "igual" es el único tipo_filtro donde el admin
+  #     elige. Un campo YA tipo "referencia" (FK real) siempre es
+  #     "referenciado" -- "libre" no tiene sentido ahí (no hay forma de
+  #     buscar un id a mano).
+  #
+  #   "catalogo_referenciado" => string | nil -- SOLO cuando origen ==
+  #     "referenciado". Si el campo es tipo "referencia" de verdad, se
+  #     resuelve solo del destino real del FK (ver
+  #     MetaSchemaContext.catalogo_sistema/1 y meta_schema_detail), este
+  #     valor queda nil. Si el campo es tipo "string" genuino, el admin
+  #     elige acá cualquier catálogo de MetaSchemaContext.
+  #     listar_catalogos_referenciables/0 -- el filtro sigue comparando el
+  #     STRING elegido contra la columna real (nunca un id/join), el
+  #     catálogo solo alimenta de dónde salen las opciones.
+  #
+  #   "defaults" => %{} -- shape según tipo, siempre con "valor"/
+  #     "valor_hasta" (rango) o "valor"/"valores" (multi), nunca un
+  #     escalar suelto (uniforme para simplificar el merge de overrides
+  #     de sesión, ver MetaConsultas.aplicar_filtros_*_estandar/4):
+  #       date acotado:     %{"modo" =>, "valor" =>, "valor_hasta" =>}
+  #                         modo: "mes_actual"|"mes_a_fecha"|"anio_actual"|"formula"
+  #       date sin acotar:  %{"modo" =>, "valor" =>}
+  #                         modo: "actual"|"primer_dia_mes"|"primer_dia_anio"|"formula"
+  #       string libre:     %{"valor" => "texto fijo"} (puede venir vacío)
+  #       string/ref igual: %{"valor" => valor elegido/tipeado}
+  #       string/ref multi: %{"valores" => [lista de valores]}
+  #       numérico simple:  %{"valor" => numero} (puede venir vacío)
+  #       numérico entre:   %{"valor" =>, "valor_hasta" =>}
+  #
+  #   Nunca se filtran vía el mapa `filtros` genérico (que resuelve por
+  #   nombre crudo, ambiguo si dos tablas unidas repiten nombre de campo
+  #   -- ej. dos "fecha_registro") -- cada uno se resuelve directo contra
+  #   SU catalogo+campo, ver MetaConsultas.aplicar_filtros_fecha_estandar/4,
+  #   aplicar_filtros_string_estandar/4, aplicar_filtros_numerico_estandar/4.
+  #
   # `joins` reservado para Fase 2 (todavía sin usar) — Fase 1 es una sola
   # tabla (`catalogo_base`).
   schema "meta_schema_consulta" do
