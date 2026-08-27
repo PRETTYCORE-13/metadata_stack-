@@ -1932,23 +1932,25 @@ defmodule MetadataAppWeb.CatalogoLive do
     ~H"""
     <td data-col={@clave} class="px-4 py-2 align-top text-center">
       <%= if @agregable? do %>
-        <div class="flex items-center justify-center gap-1.5 flex-wrap">
+        <div class="flex flex-col items-center gap-1">
           <%= if @agregacion_activa? do %>
-            <form phx-change="cambiar_agregacion">
-              <input type="hidden" name="campo" value={@clave} />
-              <select
-                name="funcion"
-                class="text-[10px] font-semibold text-purple-700 bg-transparent border-0 p-0 pr-4 focus:outline-none focus:ring-0 cursor-pointer"
-              >
-                <option value="" selected={!@activo?}>—</option>
-                <option :if={@numerico?} value="suma" selected={@agregaciones[@clave] == "suma"}>Suma</option>
-                <option :if={@numerico?} value="promedio" selected={@agregaciones[@clave] == "promedio"}>Promedio</option>
-                <option value="conteo" selected={@agregaciones[@clave] == "conteo"}>Conteo</option>
-              </select>
-            </form>
-            <span :if={@activo?} class="text-sm font-bold text-gray-900 tabular-nums whitespace-nowrap">
-              {formatear_agregacion(@valores[@clave], @props)}
-            </span>
+            <div class="flex items-center gap-1.5">
+              <form phx-change="cambiar_agregacion">
+                <input type="hidden" name="campo" value={@clave} />
+                <select
+                  name="funcion"
+                  class="text-[10px] font-semibold text-purple-700 bg-transparent border-0 p-0 pr-4 focus:outline-none focus:ring-0 cursor-pointer"
+                >
+                  <option value="" selected={!@activo?}>—</option>
+                  <option :if={@numerico?} value="suma" selected={@agregaciones[@clave] == "suma"}>Suma</option>
+                  <option :if={@numerico?} value="promedio" selected={@agregaciones[@clave] == "promedio"}>Promedio</option>
+                  <option value="conteo" selected={@agregaciones[@clave] == "conteo"}>Conteo</option>
+                </select>
+              </form>
+              <span :if={@activo?} class="text-sm font-bold text-gray-900 tabular-nums whitespace-nowrap">
+                {formatear_agregacion(@valores[@clave], @props)}
+              </span>
+            </div>
           <% end %>
 
           <% {minimo, maximo} = @minmax_valores[@clave] || {nil, nil} %>
