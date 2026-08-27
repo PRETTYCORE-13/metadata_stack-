@@ -341,6 +341,8 @@ defmodule MetadataApp.MetaConsultas do
   qué unión se va a usar ANTES de confirmar nada.
   """
   def detectar_union(catalogos_actuales, catalogo_nuevo) do
+    via_maestro_detalle = detectar_union_maestro_detalle(catalogos_actuales, catalogo_nuevo)
+
     via_nuevo =
       catalogo_nuevo
       |> MetaSchemaContext.listar_detalles()
@@ -352,10 +354,47 @@ defmodule MetadataApp.MetaConsultas do
         end
       end)
 
-    case via_nuevo || detectar_union_desde_existentes(catalogos_actuales, catalogo_nuevo) do
+    case via_maestro_detalle || via_nuevo || detectar_union_desde_existentes(catalogos_actuales, catalogo_nuevo) do
       nil -> :sin_union
       union -> {:ok, union}
     end
+  end
+
+  # Maestro-detalle (R3) se detecta APARTE de "referencia" (arriba/abajo)
+  # porque no es un campo "referencia" configurado en meta_schema_detail:
+  # "encabezado_id" es una columna de framework que CatalogoGenerador
+  # agrega sola a todo catálogo detalle (ver moduledoc de
+  # CatalogoGenerador) — listar_detalles/1 nunca la ve, así que
+  # detectar_union_desde_existentes/2 (que solo escanea "referencia") no
+  # puede encontrarla. A diferencia de una "referencia" (varias
+  # combinaciones legítimas de campo), acá la clave SIEMPRE es
+  # encabezado_id → id: se puede autodetectar sin ambigüedad, con
+  # prioridad sobre "referencia" (más específico, más confiable). Bug real
+  # 2026-08-26/27 que motiva esto: un admin unió a mano un maestro con su
+  # detalle por "id"="id" (la opción que ofrecía el editor manual antes de
+  # este cambio) — traía 1 fila por maestro en vez del fan-out real (ver
+  # corregir_union/4, que se usó para arreglarlo a mano en su momento).
+  defp detectar_union_maestro_detalle(catalogos_actuales, catalogo_nuevo) do
+    header_nuevo = MetaSchemaContext.obtener_header_por_nombre(catalogo_nuevo)
+
+    via_nuevo_es_detalle =
+      with %{schema_encabezado_id: id} when not is_nil(id) <- header_nuevo,
+           maestro <- MetaSchemaContext.obtener_header!(id),
+           true <- maestro.schema_context_name in catalogos_actuales do
+        %{"catalogo_destino" => maestro.schema_context_name, "campo_en_destino" => "id", "campo_en_nuevo" => "encabezado_id"}
+      else
+        _ -> nil
+      end
+
+    via_nuevo_es_detalle ||
+      (header_nuevo &&
+         Enum.find_value(catalogos_actuales, fn tabla ->
+           header_tabla = MetaSchemaContext.obtener_header_por_nombre(tabla)
+
+           if header_tabla && header_tabla.schema_encabezado_id == header_nuevo.id do
+             %{"catalogo_destino" => tabla, "campo_en_destino" => "encabezado_id", "campo_en_nuevo" => "id"}
+           end
+         end))
   end
 
   defp detectar_union_desde_existentes(catalogos_actuales, catalogo_nuevo) do
@@ -370,6 +409,25 @@ defmodule MetadataApp.MetaConsultas do
         end
       end)
     end)
+  end
+
+  @doc """
+  Etiqueta del maestro si `catalogo` es detalle de alguno, `nil` si no.
+  Pensado para que la UI (BcListLive) avise el fan-out de una tabla
+  detalle ANTES/mientras se configura su unión, sin importar qué campo
+  termine eligiéndose — la advertencia depende de la naturaleza
+  estructural del catálogo, no de la unión ya armada (ver
+  detectar_union_maestro_detalle/2 arriba). Bug real 2026-08-26 que
+  motiva esto: agregar una tabla detalle sin ningún aviso sorprendió con
+  "ahora salen 2 filas por cliente" recién al ver el reporte.
+  """
+  def maestro_de_detalle(catalogo) do
+    with %{schema_encabezado_id: id} when not is_nil(id) <- MetaSchemaContext.obtener_header_por_nombre(catalogo),
+         %{schema_context_label: etiqueta} <- MetaSchemaContext.obtener_header!(id) do
+      etiqueta
+    else
+      _ -> nil
+    end
   end
 
   @doc """
@@ -407,12 +465,18 @@ defmodule MetadataApp.MetaConsultas do
   Nombres de campo utilizables como llave de unión para un catálogo: sus
   campos configurados en `meta_schema_detail` más `"id"` (que siempre
   existe pero nunca es un detail configurable, así que no aparece solo
-  con `MetaSchemaContext.listar_detalles/1`). Usado por el editor manual
-  de uniones cuando `detectar_union/2` no encuentra nada.
+  con `MetaSchemaContext.listar_detalles/1`) más `"encabezado_id"` cuando
+  el catálogo es detalle de un maestro (columna de framework, tampoco
+  aparece en `meta_schema_detail` — ver `detectar_union_maestro_detalle/2`
+  arriba). Usado por el editor manual de uniones cuando `detectar_union/2`
+  no encuentra nada — red de seguridad para que, si el admin tiene que
+  elegir a mano, al menos tenga la opción correcta disponible.
   """
   def campos_disponibles_para_union(catalogo) do
     nombres = catalogo |> MetaSchemaContext.listar_detalles() |> Enum.map(& &1.schema_context_field)
-    Enum.uniq(["id" | nombres])
+    header = MetaSchemaContext.obtener_header_por_nombre(catalogo)
+    extra_detalle = if header && header.schema_encabezado_id, do: ["encabezado_id"], else: []
+    Enum.uniq(["id" | extra_detalle] ++ nombres)
   end
 
   @doc """
@@ -827,12 +891,15 @@ defmodule MetadataApp.MetaConsultas do
     total_filas = Repo.aggregate(query, :count)
     select_filas = select_dinamico(visibles, alias_por_catalogo)
 
+    detalles_por_catalogo = MetaSchemaContext.listar_detalles_de_varios(catalogos_presentes(consulta))
+
     filas =
       query
       |> select(^select_filas)
       |> CatalogoGenerico.aplicar_paginacion(opciones)
       |> Repo.all()
       |> resolver_campos_control(visibles, consulta.catalogo_base)
+      |> resolver_campos_referencia(visibles, detalles_por_catalogo)
 
     %{filas: filas, total_filas: total_filas, totales: totales(query, consulta, alias_por_catalogo)}
   end
@@ -888,6 +955,41 @@ defmodule MetadataApp.MetaConsultas do
 
   defp resolver_control("sales_unit", _catalogo_base) do
     fn id -> id && with(%{sales_unit_name: nombre} <- Autenticacion.obtener_sales_unit(id), do: nombre) end
+  end
+
+  # Un campo "tipo" => "referencia" normal (no de control -- esos ya
+  # quedaron resueltos arriba) mostraba el id crudo de la FK en vez de su
+  # etiqueta -- bug real 2026-08-27 (reporte "Clientes Core": columna
+  # "U.Venta" mostraba "4"/"5" en vez de "Prev-Uriel"/"Prev-Jazmin", pese a
+  # tener "campo_visualizacion" modo "descripcion" configurado -- la
+  # misma etiqueta que CatalogoGenerico.etiqueta_para_referencia/2 ya usa
+  # para un catálogo normal, acá nunca se llamaba). Batch por columna
+  # (una query por relación por página, nunca una por fila) -- mismo
+  # criterio que CatalogoGenerico.mapa_acompanamiento/2, reusando su
+  # etiqueta_para_referencia/2 y modulo_destino_de/1 para no tener un
+  # segundo mecanismo que se desincronice del primero.
+  defp resolver_campos_referencia(filas, campos_visibles, detalles_por_catalogo) do
+    campos_visibles
+    |> Enum.filter(&(&1["control"] != true and &1["tipo"] == "referencia"))
+    |> Enum.reduce(filas, fn campo, filas_acc ->
+      clave = clave_campo(campo)
+      props = props_referenciado(campo, detalles_por_catalogo)
+      modulo = props && CatalogoGenerico.modulo_destino_de(props["catalogo"])
+
+      ids = filas_acc |> Enum.map(&Map.get(&1, clave)) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+      etiquetas = resolver_etiquetas_referencia(modulo, ids, props)
+
+      Enum.map(filas_acc, &Map.update!(&1, clave, fn id -> id && Map.get(etiquetas, id) end))
+    end)
+  end
+
+  defp resolver_etiquetas_referencia(nil, _ids, _props), do: %{}
+  defp resolver_etiquetas_referencia(_modulo, [], _props), do: %{}
+
+  defp resolver_etiquetas_referencia(modulo, ids, props) do
+    from(t in modulo, where: t.id in ^ids)
+    |> Repo.all()
+    |> Map.new(&{&1.id, CatalogoGenerico.etiqueta_para_referencia(&1, props)})
   end
 
   # `filtros`/`busqueda` siguen llegando con el nombre de campo CRUDO

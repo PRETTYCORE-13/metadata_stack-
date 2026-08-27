@@ -5,6 +5,7 @@ defmodule MetadataApp.MetaConsultasTest do
   alias MetadataApp.MetaConsultas
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaBusinessProcess.Catalogos.{MetaFixtureCliente, MetaFixtureEquipo}
+  alias MetadataApp.Autenticacion.{Branch, Empresa}
 
   defp guid, do: Ecto.UUID.generate() |> String.replace("-", "")
   defp unique, do: System.unique_integer([:positive])
@@ -41,6 +42,21 @@ defmodule MetadataApp.MetaConsultasTest do
     header = header_vacio("consulta_test_#{unique()}", 3)
     {:ok, consulta} = MetaConsultas.crear(header, catalogo_base)
     consulta
+  end
+
+  defp header_detalle_de(nombre, maestro_id, detalles \\ []) do
+    {:ok, {header, _}} =
+      MetaSchemaContext.crear_header_con_detalles(%{
+        "schema_context_name" => nombre,
+        "schema_context_label" => nombre,
+        "schema_context_nav" => "/#{nombre}",
+        "schema_visible" => true,
+        "schema_context_type" => 1,
+        "schema_encabezado_id" => maestro_id,
+        "detalles" => detalles
+      })
+
+    header
   end
 
   # Bug real (2026-08-27): "inventory_location y sales_unit no permiten
@@ -117,6 +133,72 @@ defmodule MetadataApp.MetaConsultasTest do
 
     test "devuelve :sin_union cuando no hay ninguna relación configurada" do
       assert :sin_union = MetaConsultas.detectar_union(["meta_fixture_cliente"], "meta_fixture_equipo")
+    end
+  end
+
+  # Maestro-detalle (R3) se autodetecta APARTE de "referencia" -- ver
+  # detectar_union_maestro_detalle/2 en MetaConsultas. Bug real 2026-08-26
+  # que motiva esto: un admin unió a mano un maestro con su detalle por
+  # "id"="id" (única opción que ofrecía el editor manual antes de este
+  # cambio) -- traía 1 fila por maestro en vez del fan-out real.
+  describe "detectar_union/2 — maestro-detalle (R3)" do
+    test "dirección A: la tabla que se agrega es detalle de una ya presente" do
+      maestro = header_vacio("md_maestro_a_#{unique()}")
+      detalle_nombre = "md_detalle_a_#{unique()}"
+      header_detalle_de(detalle_nombre, maestro.id)
+
+      assert {:ok, union} = MetaConsultas.detectar_union([maestro.schema_context_name], detalle_nombre)
+      assert union["catalogo_destino"] == maestro.schema_context_name
+      assert union["campo_en_destino"] == "id"
+      assert union["campo_en_nuevo"] == "encabezado_id"
+    end
+
+    test "dirección B: una tabla ya presente es detalle de la que se agrega" do
+      maestro_nombre = "md_maestro_b_#{unique()}"
+      maestro = header_vacio(maestro_nombre)
+      detalle_nombre = "md_detalle_b_#{unique()}"
+      header_detalle_de(detalle_nombre, maestro.id)
+
+      assert {:ok, union} = MetaConsultas.detectar_union([detalle_nombre], maestro_nombre)
+      assert union["catalogo_destino"] == detalle_nombre
+      assert union["campo_en_destino"] == "encabezado_id"
+      assert union["campo_en_nuevo"] == "id"
+    end
+
+    test "tiene prioridad sobre una relación \"referencia\" configurada entre las mismas dos tablas" do
+      maestro_nombre = "md_maestro_c_#{unique()}"
+      maestro = header_vacio(maestro_nombre)
+      detalle_nombre = "md_detalle_c_#{unique()}"
+      header_detalle_de(detalle_nombre, maestro.id, [campo_referencia("maestro_id", maestro_nombre)])
+
+      assert {:ok, union} = MetaConsultas.detectar_union([maestro_nombre], detalle_nombre)
+      assert union["campo_en_nuevo"] == "encabezado_id"
+    end
+
+    test "devuelve :sin_union cuando ninguna de las dos es detalle de la otra" do
+      maestro_nombre = "md_maestro_d_#{unique()}"
+      header_vacio(maestro_nombre)
+      otro_nombre = "md_otro_d_#{unique()}"
+      header_vacio(otro_nombre)
+
+      assert :sin_union = MetaConsultas.detectar_union([maestro_nombre], otro_nombre)
+    end
+  end
+
+  describe "campos_disponibles_para_union/1" do
+    test "incluye \"encabezado_id\" cuando el catálogo es detalle de un maestro" do
+      maestro = header_vacio("cdu_maestro_#{unique()}")
+      detalle_nombre = "cdu_detalle_#{unique()}"
+      header_detalle_de(detalle_nombre, maestro.id)
+
+      assert "encabezado_id" in MetaConsultas.campos_disponibles_para_union(detalle_nombre)
+    end
+
+    test "no incluye \"encabezado_id\" para un catálogo que no es detalle de nada" do
+      nombre = "cdu_normal_#{unique()}"
+      header_vacio(nombre)
+
+      refute "encabezado_id" in MetaConsultas.campos_disponibles_para_union(nombre)
     end
   end
 
@@ -257,6 +339,38 @@ defmodule MetadataApp.MetaConsultasTest do
       assert resultado.total_filas == 0
 
       {:ok, _} = MetaSchemaContext.actualizar_header(header, %{"alcance_habilitado" => false})
+    end
+  end
+
+  # Bug real 2026-08-27 (reporte "Clientes Core": columna "U.Venta" mostraba
+  # el id crudo de la FK en vez de "Prev-Uriel"/"Prev-Jazmin") -- ejecutar/6
+  # solo resolvía a nombre los 3 campos de CONTROL (branch/inventory_location/
+  # sales_unit), nunca un campo "tipo" => "referencia" de negocio cualquiera.
+  # meta_fixture_cliente_sucursal_id (agregado 2026-08-26, referencia hacia
+  # meta_schema_branch, sistema) es el fixture real para probarlo.
+  describe "ejecutar/6 resuelve un campo \"referencia\" a su etiqueta (bug real 2026-08-27)" do
+    test "columna referencia hacia un catálogo de sistema muestra el nombre, no el id crudo" do
+      {:ok, empresa} = %Empresa{} |> Empresa.changeset(%{nombre: "Empresa consulta test #{unique()}"}) |> Repo.insert()
+      {:ok, branch} = %Branch{} |> Branch.changeset(%{empresa_id: empresa.id, branch_name: "Sucursal #{unique()}"}) |> Repo.insert()
+
+      nombre_cliente = "referencia_test_#{unique()}"
+
+      %MetaFixtureCliente{}
+      |> MetaFixtureCliente.changeset(%{
+        meta_fixture_cliente_nombre: nombre_cliente,
+        meta_fixture_cliente_edad: 30,
+        meta_fixture_cliente_venta: Decimal.new("100.00"),
+        meta_fixture_cliente_sucursal_id: branch.id
+      })
+      |> Ecto.Changeset.put_change(:insert_guid, guid())
+      |> Repo.insert!()
+
+      consulta = crear_consulta("meta_fixture_cliente")
+      resultado = MetaConsultas.ejecutar(consulta, :sistema)
+
+      fila = Enum.find(resultado.filas, &(&1[:meta_fixture_cliente__meta_fixture_cliente_nombre] == nombre_cliente))
+      refute is_nil(fila)
+      assert fila[:meta_fixture_cliente__meta_fixture_cliente_sucursal_id] == branch.branch_name
     end
   end
 end
