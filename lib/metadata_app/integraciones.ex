@@ -30,6 +30,12 @@ defmodule MetadataApp.Integraciones do
     |> Repo.one!()
   end
 
+  @doc "Resuelve por `sistema_externo` (ej. \"hostinger\") -- para integraciones que llaman una sola API externa fija, sin pasar por el picker de AccionExterna."
+  def obtener_credencial_por_sistema(sistema_externo) do
+    from(c in Credencial, where: c.sistema_externo == ^sistema_externo and is_nil(c.delete_guid))
+    |> Repo.one()
+  end
+
   def crear_credencial(attrs) do
     %Credencial{}
     |> Credencial.changeset_creacion(attrs)

@@ -290,6 +290,9 @@ defmodule MetadataAppWeb.MenuLayout do
                 <.link :if={"sysadmin_ambientes" in @capacidades_sysadmin_visibles} navigate="/sysadmin/ambientes" class="pc-user-menu-item pc-user-menu-subitem">
                   Ambientes de Deploy
                 </.link>
+                <.link :if={"sysadmin_panel_control" in @capacidades_sysadmin_visibles} navigate="/sysadmin/panel-control" class="pc-user-menu-item pc-user-menu-subitem">
+                  Panel Control
+                </.link>
                 <.link :if={"sysadmin_acciones_externas" in @capacidades_sysadmin_visibles} navigate="/sysadmin/acciones-externas" class="pc-user-menu-item pc-user-menu-subitem">
                   Acciones externas
                 </.link>
