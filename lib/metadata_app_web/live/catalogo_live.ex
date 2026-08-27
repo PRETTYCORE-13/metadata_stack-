@@ -1170,7 +1170,6 @@ defmodule MetadataAppWeb.CatalogoLive do
                   >
                     <span class="inline-flex items-center gap-1">
                       {columna.schema_context_properties["etiqueta"]}
-                      <.icono_arrastrar_columna />
                       <button type="button" phx-click={JS.toggle(to: "#filtro-popover-#{col_key(columna)}")}
                         class={[
                           "flex items-center justify-center rounded p-0.5 hover:bg-gray-200",
