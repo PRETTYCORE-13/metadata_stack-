@@ -79,9 +79,17 @@ defmodule MetadataApp.Ssh do
   # contenedor final (Dockerfile), sin $HOME real para escribir
   # known_hosts; como ya no verificamos el host key (StrictHostKeyChecking
   # =no), no tiene sentido que ssh intente persistirlo en ningún lado.
+  # "LogLevel=ERROR" -- sin esto, ssh imprime "Warning: Permanently added
+  # ... to the list of known hosts" en la PRIMERA conexión desde un pod
+  # nuevo (aunque el destino sea /dev/null, ese aviso sale igual) --
+  # encontrado real: Desplegador.agregar_a_caddy/3 hace un "leer archivo
+  # remoto por ssh" y ese warning se colaba adentro del contenido leído,
+  # corrompiendo el Caddyfile reescrito ("unrecognized directive:
+  # Warning"). motor.desplegar no lo necesitaba (nadie mezcla el output
+  # con nada), pero acá exige salida limpia.
   defp correr(opts_extra, env, destino, comando) do
     args =
-      ["-n", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"] ++
+      ["-n", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"] ++
         opts_extra ++ [destino, comando]
     {salida, codigo} = System.cmd("ssh", args, env: env, stderr_to_stdout: true)
     {:ok, codigo, salida}
