@@ -4,6 +4,7 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
   import Phoenix.LiveViewTest
 
   alias MetadataApp.Repo
+  alias MetadataApp.Autenticacion
   alias MetadataApp.Autenticacion.{Empresa, Rol, UsuarioEmpresa}
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaBusinessProcess.Catalogos.MetaFixtureCliente
@@ -35,7 +36,7 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
       |> log_in_usuario(usuario)
       |> Plug.Conn.put_session(:empresa_activa_id, empresa.id)
 
-    %{conn: conn}
+    %{conn: conn, empresa: empresa}
   end
 
   defp guid, do: Ecto.UUID.generate() |> String.replace("-", "")
@@ -98,6 +99,26 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
     refute html_filtrado =~ "Cliente Uno"
   end
 
+  # Bug real (2026-08-26): una Consulta con una columna tipo "referencia"
+  # visible reventaba con ArgumentError al montar la página --
+  # columna_desde_campo_consulta/1 solo copiaba "etiqueta"/"tipo" a
+  # schema_context_properties, sin "catalogo" (el destino real de la
+  # referencia). fila_filtro_columna/1 (la fila fija de filtros, SIEMPRE
+  # se computa al montar, no solo cuando se abre el panel) llama
+  # CatalogoGenerico.opciones_referencia/1, que terminaba comparando
+  # "schema_context_name == nil" en Ecto -- prohibido, ArgumentError.
+  # meta_fixture_cliente_sucursal_id (referencia a meta_schema_branch,
+  # catálogo de sistema) es el campo agregado a propósito para poder
+  # reproducir esto con un fixture real.
+  test "una columna tipo referencia no revienta al montar (resuelve el catálogo destino real)", %{conn: conn} do
+    {_header, _consulta, nav} = criar_consulta_sobre_fixture()
+
+    {:ok, _view, html} = live(conn, nav)
+
+    assert html =~ "Sucursal"
+    refute html =~ "ArgumentError"
+  end
+
   test "la banda de totales suma solo la columna marcada totalizar, una vez que hay búsqueda activa", %{conn: conn} do
     fixture_cliente(%{meta_fixture_cliente_nombre: "A #{unique()}", meta_fixture_cliente_edad: 10, meta_fixture_cliente_venta: Decimal.new("1")})
     fixture_cliente(%{meta_fixture_cliente_nombre: "B #{unique()}", meta_fixture_cliente_edad: 20, meta_fixture_cliente_venta: Decimal.new("1")})
@@ -116,5 +137,163 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
     html = view |> render_change("buscar_general", %{"value" => "A"})
 
     assert html =~ ~r/<tfoot.*?>.*?10.*?<\/tfoot>/s
+  end
+
+  # Barra de "Parámetros" (rediseño 2026-08-27, corregido el mismo día --
+  # ver moduledoc de MetaSchema.Consulta) -- opt-in: el admin tiene que
+  # marcar "es_parametro" => true a propósito por columna en Get Config,
+  # ninguna aparece sola por ser de tipo elegible. Aparte del popover de
+  # Filtros genérico de siempre. meta_fixture_cliente_sucursal_id
+  # (referencia a meta_schema_branch) es el mismo campo agregado antes
+  # para el bug de referencia -- sirve igual acá para probar el
+  # multi-select nativo de verdad.
+  test "la barra de Parámetros no aparece si ninguna columna tiene \"es_parametro\" marcado", %{conn: conn} do
+    {_header, _consulta, nav} = criar_consulta_sobre_fixture()
+
+    {:ok, _view, html} = live(conn, nav)
+
+    refute html =~ "Parámetros"
+  end
+
+  test "el multi-select de un campo referencia en la barra de Parámetros filtra por igualdad múltiple", %{conn: conn, empresa: empresa} do
+    {:ok, branch_a} = Autenticacion.crear_branch(%{empresa_id: empresa.id, branch_name: "Sucursal A #{unique()}"})
+    {:ok, branch_b} = Autenticacion.crear_branch(%{empresa_id: empresa.id, branch_name: "Sucursal B #{unique()}"})
+
+    cliente_a =
+      fixture_cliente(%{
+        meta_fixture_cliente_nombre: "Cliente A #{unique()}",
+        meta_fixture_cliente_edad: 30,
+        meta_fixture_cliente_venta: Decimal.new("1"),
+        meta_fixture_cliente_sucursal_id: branch_a.id
+      })
+
+    cliente_b =
+      fixture_cliente(%{
+        meta_fixture_cliente_nombre: "Cliente B #{unique()}",
+        meta_fixture_cliente_edad: 30,
+        meta_fixture_cliente_venta: Decimal.new("1"),
+        meta_fixture_cliente_sucursal_id: branch_b.id
+      })
+
+    {_header, consulta, nav} = criar_consulta_sobre_fixture()
+
+    campos =
+      Enum.map(consulta.campos, fn c ->
+        if c["campo"] == "meta_fixture_cliente_sucursal_id", do: Map.merge(c, %{"es_parametro" => true, "tipo_filtro" => "multi"}), else: c
+      end)
+
+    {:ok, consulta} = MetaConsultas.actualizar_campos(consulta, campos)
+    campo_sucursal = Enum.find(consulta.campos, &(&1["campo"] == "meta_fixture_cliente_sucursal_id"))
+    clave = to_string(MetaConsultas.clave_campo(campo_sucursal))
+
+    {:ok, view, html} = live(conn, nav)
+    assert html =~ "Parámetros"
+    assert html =~ branch_a.branch_name
+    assert html =~ branch_b.branch_name
+
+    # DOM real (element/2 + render_change/2), no dispatch crudo -- el
+    # checkbox tiene su propio phx-change (form="form-parametros-reporte"),
+    # así que el payload real solo trae ESE name (onlyNames en pushInput);
+    # todos los checkboxes de este lookup comparten el mismo name, así
+    # que en un navegador real vendrían TODOS los tildados juntos -- acá
+    # se simula pasando la lista completa a mano (mismo criterio que ya
+    # usan los demás tests DOM-realistas de esta sesión).
+    html_filtrado =
+      view
+      |> element("input[type=\"checkbox\"][name=\"valores[#{clave}][]\"][value=\"#{branch_a.id}\"]")
+      |> render_change(%{"valores" => %{clave => [to_string(branch_a.id)]}})
+
+    assert html_filtrado =~ cliente_a.meta_fixture_cliente_nombre
+    refute html_filtrado =~ cliente_b.meta_fixture_cliente_nombre
+
+    # Botón "Ninguno" -- limpia la selección (click, sin form/phx-value
+    # raros: mismo patrón ya probado que "cambiar_defaults_modo").
+    html_limpio = render_click(view, "limpiar_override_valores", %{"campo" => clave})
+    assert html_limpio =~ cliente_a.meta_fixture_cliente_nombre
+    assert html_limpio =~ cliente_b.meta_fixture_cliente_nombre
+  end
+
+  test "un parámetro string \"contiene\" (like) filtra por coincidencia parcial desde la barra de Parámetros", %{conn: conn} do
+    cliente_uno = fixture_cliente(%{meta_fixture_cliente_nombre: "Panadería Central #{unique()}", meta_fixture_cliente_edad: 1, meta_fixture_cliente_venta: Decimal.new("1")})
+    cliente_dos = fixture_cliente(%{meta_fixture_cliente_nombre: "Ferretería Norte #{unique()}", meta_fixture_cliente_edad: 1, meta_fixture_cliente_venta: Decimal.new("1")})
+
+    {_header, consulta, nav} = criar_consulta_sobre_fixture()
+
+    campos =
+      Enum.map(consulta.campos, fn c ->
+        if c["campo"] == "meta_fixture_cliente_nombre", do: Map.put(c, "es_parametro", true), else: c
+      end)
+
+    {:ok, consulta} = MetaConsultas.actualizar_campos(consulta, campos)
+    campo_nombre = Enum.find(consulta.campos, &(&1["campo"] == "meta_fixture_cliente_nombre"))
+    clave = to_string(MetaConsultas.clave_campo(campo_nombre))
+
+    {:ok, view, _html} = live(conn, nav)
+
+    html_filtrado =
+      view
+      |> element("input[name=\"valor[#{clave}]\"]")
+      |> render_change(%{"valor" => %{clave => "Panader"}})
+
+    assert html_filtrado =~ cliente_uno.meta_fixture_cliente_nombre
+    refute html_filtrado =~ cliente_dos.meta_fixture_cliente_nombre
+  end
+
+  # El default de fecha vive en Get Config (Consulta.campos, admin) --
+  # cambiarlo desde acá (usuario final) es SOLO de esta sesión, nunca
+  # pisa ese default guardado. "fecha_registro" YA es un campo real de
+  # meta_fixture_cliente (meta_schema_detail, ver priv/repo/catalogos/
+  # meta_fixture_cliente.meta.json) -- criar_consulta_sobre_fixture/0 ya
+  # lo trae solo en consulta.campos, así que acá se actualiza ESE campo
+  # (Enum.map, mismo patrón que el resto de los tests de este archivo)
+  # en vez de agregar uno nuevo -- bug real 2026-08-27: agregarlo de
+  # nuevo duplicaba el campo (mismo catalogo+campo, mismo id de columna)
+  # y LiveView reventaba en el test con "Duplicate id found" apenas se
+  # armó el ícono de filtro por columna (cada uno con un id propio
+  # derivado de catalogo+campo).
+  test "cambiar el modo de un parámetro Fecha desde el reporte no persiste el default de Get Config", %{conn: conn} do
+    cliente =
+      fixture_cliente(%{meta_fixture_cliente_nombre: "Con fecha #{unique()}", meta_fixture_cliente_edad: 1, meta_fixture_cliente_venta: Decimal.new("1")})
+      |> Ecto.Changeset.change(fecha_registro: DateTime.new!(~D[2026-01-15], ~T[12:00:00], "Etc/UTC"))
+      |> Repo.update!()
+
+    {_header, consulta, nav} = criar_consulta_sobre_fixture()
+
+    campos =
+      Enum.map(consulta.campos, fn c ->
+        if c["campo"] == "fecha_registro" do
+          Map.merge(c, %{
+            "visible" => true,
+            "es_parametro" => true,
+            "acotado" => true,
+            "defaults" => %{"modo" => "formula", "valor" => "2000-01-01", "valor_hasta" => "2000-01-02"}
+          })
+        else
+          c
+        end
+      end)
+
+    {:ok, consulta} = MetaConsultas.actualizar_campos(consulta, campos)
+    campo_fecha = Enum.find(consulta.campos, &(&1["campo"] == "fecha_registro"))
+
+    {:ok, view, html} = live(conn, nav)
+    assert html =~ "Parámetros"
+    refute html =~ cliente.meta_fixture_cliente_nombre
+
+    clave = to_string(MetaConsultas.clave_campo(campo_fecha))
+
+    view |> element("input[name=\"valor[#{clave}]\"]") |> render_change(%{"valor" => %{clave => "2026-01-01"}})
+
+    html_filtrado =
+      view
+      |> element("input[name=\"valor_hasta[#{clave}]\"]")
+      |> render_change(%{"valor_hasta" => %{clave => "2026-02-01"}})
+
+    assert html_filtrado =~ cliente.meta_fixture_cliente_nombre
+
+    consulta_sin_tocar = MetaConsultas.obtener_por_header_id(consulta.meta_schema_header_id)
+    campo_persistido = Enum.find(consulta_sin_tocar.campos, &(&1["campo"] == "fecha_registro"))
+    assert campo_persistido["defaults"]["valor"] == "2000-01-01"
+    assert campo_persistido["defaults"]["valor_hasta"] == "2000-01-02"
   end
 end

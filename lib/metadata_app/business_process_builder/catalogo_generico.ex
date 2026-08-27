@@ -900,7 +900,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     |> Map.new(fn detalle ->
       campo = String.to_existing_atom(detalle.schema_context_field)
       props = detalle.schema_context_properties
-      modulo_destino = MetadataApp.BusinessProcessBuilder.MetaSchemaContext.modulo_por_nombre(props["catalogo"])
+      modulo_destino = modulo_destino_de(props["catalogo"])
 
       ids =
         filas
@@ -910,6 +910,24 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
 
       {campo, resolver_acompanamiento(modulo_destino, ids, props)}
     end)
+  end
+
+  # Un campo "referencia" puede apuntar a un catálogo de sistema
+  # (Empresa/Branch/InventoryLocation/SalesUnit, sin Header propio) o a
+  # uno BPB normal -- hallazgo real 2026-08-25: acá solo se chequeaba
+  # modulo_por_nombre/1 (BPB), así que CUALQUIER campo "referencia" hacia
+  # un catálogo de sistema (ej. "Sucursal" en Clientes, apuntando a
+  # meta_schema_branch) quedaba SIEMPRE en blanco en las tablas de
+  # listado -- el id real seguía guardado bien, y el picker del
+  # formulario (opciones_referencia/3, que sí chequea catalogo_sistema/1
+  # primero) lo mostraba y editaba bien, así que el bug era invisible
+  # hasta mirar la columna de la tabla. Mismo orden de chequeo que
+  # opciones_referencia/3 para no desincronizarse de nuevo.
+  defp modulo_destino_de(catalogo) do
+    case MetadataApp.BusinessProcessBuilder.MetaSchemaContext.catalogo_sistema(catalogo) do
+      %{modulo: modulo} -> modulo
+      nil -> MetadataApp.BusinessProcessBuilder.MetaSchemaContext.modulo_por_nombre(catalogo)
+    end
   end
 
   defp campo_con_acompanamiento?(detalle) do

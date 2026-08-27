@@ -23,6 +23,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
 
   alias MetadataApp.Permissions
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
+  alias MetadataApp.MetaConsultas
   alias MetadataAppWeb.AdminNav
 
   @acciones_crud ~w(leer crear editar eliminar)
@@ -123,6 +124,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   defp montar_base(socket) do
     socket
     |> assign(:acciones_crud, @acciones_crud)
+    |> assign(:catalogo_base_de_consulta, nil)
     |> assign(:busqueda_catalogo_picker, "")
     |> assign(:resultados_catalogo_picker, [])
     |> assign(:modo, :todos)
@@ -146,10 +148,24 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
       catalogo ->
         socket
         |> assign(:catalogo, catalogo)
+        |> assign(:catalogo_base_de_consulta, catalogo_base_de_consulta(catalogo))
         |> assign(:transiciones, Permissions.transiciones_de_catalogos([recurso]) |> Map.get(recurso, []))
         |> cargar_matriz()
     end
   end
+
+  # Una Consulta Ecto no tiene Alcance de Datos propio -- no tiene
+  # branch_id/sales_unit_id/etc. de sí misma, hereda el de catalogo_base
+  # (ver MetaConsultas.aplicar_alcance_de_datos/4). Esta pantalla, para
+  # una Consulta, muestra ese estado en modo solo-lectura en vez de la
+  # sección de toggle+config por rol (ver :if en render/1 de más abajo).
+  defp catalogo_base_de_consulta(%{es_consulta: true, id: header_id}) do
+    consulta = MetaConsultas.obtener_por_header_id(header_id)
+    header_base = MetaSchemaContext.obtener_header_por_nombre(consulta.catalogo_base)
+    %{nombre: consulta.catalogo_base, label: header_base.schema_context_label, alcance_habilitado: header_base.alcance_habilitado}
+  end
+
+  defp catalogo_base_de_consulta(_catalogo), do: nil
 
   def handle_event("change_page", %{"id" => id}, socket) do
     AdminNav.handle_nav(id, socket, "roles")
@@ -250,6 +266,13 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   # vacío no debería pasar (el <select> siempre manda un valor), pero por
   # las dudas: nunca revoca la fila si tipo viene vacío, mejor dejarla
   # como estaba que perder la concesión por un evento raro.
+  # Defensa en profundidad: el UI ya oculta el form de alcance por rol
+  # para una Consulta (ver catalogo_base_de_consulta/1 y render/1), esto
+  # cubre un evento manual/directo igual.
+  def handle_event("cambiar_alcance_tipo", _params, %{assigns: %{catalogo: %{es_consulta: true}}} = socket) do
+    {:noreply, put_flash(socket, :error, "Una Consulta no tiene Alcance de Datos propio -- se configura en el catálogo base.")}
+  end
+
   def handle_event("cambiar_alcance_tipo", %{"rol_id" => rol_id, "tipo" => tipo}, socket) when tipo != "" do
     rol_id = String.to_integer(rol_id)
     Permissions.definir_alcance_de_rol(rol_id, socket.assigns.catalogo.id, tipo)
@@ -267,6 +290,10 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   # `activar_alcance_con_default_sucursal/1` (esa es solo para cuando un
   # BC nace, ver MetaSchemaContext) -- togglear acá nunca pisa el
   # alcance_tipo que un admin ya haya configurado por rol.
+  def handle_event("toggle_alcance_habilitado", _params, %{assigns: %{catalogo: %{es_consulta: true}}} = socket) do
+    {:noreply, put_flash(socket, :error, "Una Consulta no tiene Alcance de Datos propio -- se configura en el catálogo base.")}
+  end
+
   def handle_event("toggle_alcance_habilitado", _params, socket) do
     catalogo = socket.assigns.catalogo
     header = MetaSchemaContext.obtener_header_por_nombre(catalogo.recurso)
@@ -542,7 +569,24 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
         </div>
       </div>
 
-      <div :if={@catalogo} class="mt-6 rounded-xl border border-gray-200 p-4">
+      <div :if={@catalogo && @catalogo.es_consulta} class="mt-6 rounded-xl border border-gray-200 p-4 bg-gray-50">
+        <h2 class="text-xs font-bold text-gray-700 uppercase tracking-wide">Alcance de datos</h2>
+        <p class="text-[11px] text-gray-500 mt-0.5 max-w-2xl">
+          Una Consulta no tiene Alcance de Datos propio — sigue el de su catálogo base,
+          <span class="font-semibold">{@catalogo_base_de_consulta.label}</span>
+          (<code class="font-mono">{@catalogo_base_de_consulta.nombre}</code>).
+        </p>
+        <p class="text-[11px] mt-2">
+          <%= if @catalogo_base_de_consulta.alcance_habilitado do %>
+            <span class="text-purple-700 font-semibold">✓ Activado</span> en el catálogo base — esta Consulta ya queda acotada igual.
+          <% else %>
+            <span class="text-gray-500">Sin activar</span> en el catálogo base — esta Consulta no filtra filas por alcance.
+          <% end %>
+          Para cambiarlo, ir a Permisos del catálogo base.
+        </p>
+      </div>
+
+      <div :if={@catalogo && not @catalogo.es_consulta} class="mt-6 rounded-xl border border-gray-200 p-4">
         <div class="flex items-start justify-between gap-4">
           <div>
             <h2 class="text-xs font-bold text-gray-700 uppercase tracking-wide">Alcance de datos</h2>
@@ -567,7 +611,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
         <p :if={@alcance_error} class="text-[11px] text-red-600 mt-2">{@alcance_error}</p>
       </div>
 
-      <.panel_alcance_de_rol :if={@catalogo && @catalogo.alcance_habilitado}
+      <.panel_alcance_de_rol :if={@catalogo && not @catalogo.es_consulta && @catalogo.alcance_habilitado}
         roles={@roles_con_permiso} alcance_por_rol={@alcance_por_rol} tipos_alcance={@tipos_alcance} />
     </div>
     """

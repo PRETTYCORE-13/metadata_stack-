@@ -1,8 +1,6 @@
-defmodule MetadataApp.Repo.Migrations.RestaurarTablaMetaFixtureCliente do
+defmodule MetadataApp.Repo.Migrations.CrearMetaFixtureCliente do
   use Ecto.Migration
 
-  # Réplica exacta de priv/repo/migrations/20260723222643951_crear_meta_fixture_cliente_20260723222643951.exs
-  # (tabla borrada sin querer desde BC List, ver 20260727193414_restaurar_metadata_fixtures_de_test.exs).
   def change do
     create table(:meta_fixture_cliente) do
       add :meta_fixture_cliente_nombre, :string, size: 100, null: false
@@ -14,8 +12,10 @@ defmodule MetadataApp.Repo.Migrations.RestaurarTablaMetaFixtureCliente do
       add :delete_guid, :string, size: 32, null: true
 
       add :estado_id, references(:meta_schema_estados), null: true
+
     end
 
     create unique_index(:meta_fixture_cliente, [:meta_fixture_cliente_nombre, :meta_fixture_cliente_edad, :meta_fixture_cliente_venta], name: :meta_fixture_cliente_unico_index)
+
   end
 end

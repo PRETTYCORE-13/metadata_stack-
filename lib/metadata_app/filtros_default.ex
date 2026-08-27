@@ -1,73 +1,129 @@
 defmodule MetadataApp.FiltrosDefault do
   @moduledoc """
   Toda la lógica de "Filtros por default" (Header.filtro_default_fecha_modo/
-  filtro_default_fecha_valor/filtro_default_fecha_valor_hasta) — separado
-  de `BcMotorLive`/`FiltrosDefaultComponents` (que solo dibujan) para que
-  cualquier otra pantalla que sume su propio tipo de "filtro por default"
-  más adelante reuse este módulo en vez de duplicar los `case modo do`.
-
-  Hoy solo hay un tipo (fecha de alta), pero está separado a propósito para
-  no atar el nombre del módulo a "fecha" — un filtro por default futuro
-  (ej. por otro campo) puede sumar sus propias funciones acá.
+  filtro_default_fecha_valor/filtro_default_fecha_valor_hasta, y el
+  "parametro" => "fecha" de MetaSchema.Consulta.campos) — separado de
+  `BcMotorLive`/`FiltrosDefaultComponents` (que solo dibujan) para que
+  cualquier otra pantalla de "filtro por default" reuse este módulo en vez
+  de duplicar los `case modo do`.
   """
 
-  @doc "Los 5 modos del botonera, en el orden que se muestran."
+  alias MetadataApp.FormulaFecha
+
+  @doc "Los modos del botonera del filtro genérico del BC (Header.filtro_default_fecha_modo), en el orden que se muestran."
   def modos_fecha do
     [
       {"", "Sin acotar"},
-      {"primer_dia_anio", "Primer día del año"},
-      {"ultimo_dia_anio", "Último día del año"},
       {"actual", "Fecha actual"},
-      {"rango", "Fecha inicial y final"}
+      {"mes_actual", "Mes actual completo"},
+      {"mes_a_fecha", "Mes actual a la fecha"},
+      {"anio_actual", "Año actual completo"},
+      {"formula", "Fórmula"}
+    ]
+  end
+
+  @doc "Defaults de un campo Fecha ACOTADO (Consulta.campos, ver moduledoc de MetaSchema.Consulta) -- siempre un rango de dos extremos."
+  def modos_fecha_rango do
+    [
+      {"mes_actual", "Mes actual completo"},
+      {"mes_a_fecha", "Mes actual a la fecha"},
+      {"anio_actual", "Año actual completo"},
+      {"formula", "Fórmula"}
+    ]
+  end
+
+  @doc "Defaults de un campo Fecha SIN acotar (Consulta.campos) -- un solo valor, sin rango."
+  def modos_fecha_simple do
+    [
+      {"actual", "Fecha actual"},
+      {"primer_dia_mes", "Inicio de mes"},
+      {"primer_dia_anio", "Inicio de año"},
+      {"formula", "Fórmula"}
     ]
   end
 
   @doc """
-  Traduce modo ("primer_dia_anio"/"ultimo_dia_anio"/"actual"/"rango") +
-  valor/valor_hasta (Date, solo relevantes para "rango") a un {desde, hasta}
-  en UTC — filtro directo contra la columna real "fecha_registro" (ver
-  CatalogoLive.filtros_por_default/1).
+  Traduce modo + `valor`/`valor_hasta` a un {desde, hasta} en UTC — filtro
+  directo contra una columna de fecha real.
 
-  "actual", "primer_dia_anio" y "ultimo_dia_anio" son dinámicos: ignoran
-  `valor`/`valor_hasta` a propósito y calculan siempre contra
-  `Date.utc_today()` del momento en que se llama — un filtro configurado
-  hoy sigue siendo correcto mañana, el año que viene, siempre, sin que
-  nadie tenga que volver a tocarlo. Solo "rango" depende de una fecha
-  guardada (dos, de hecho) — por diseño: un rango es un par de fechas
-  puntuales elegidas a propósito, no un período relativo a "hoy".
+  Todos los modos salvo "formula" son dinámicos: ignoran `valor`/
+  `valor_hasta` y calculan siempre contra `Date.utc_today()` del momento
+  en que se llama — un filtro configurado hoy sigue siendo correcto
+  mañana, el año que viene, siempre, sin que nadie tenga que volver a
+  tocarlo.
 
-  nil si el modo no matchea ninguno de los cuatro (filtro de fecha
-  apagado) o si "rango" todavía no tiene las dos fechas que necesita.
+  "formula" es el único que depende de texto guardado: `valor` es la
+  fórmula de "desde" (ver `MetadataApp.FormulaFecha`, default
+  "primer_dia_mes" si viene vacío) y `valor_hasta` la de "hasta" (default
+  "actual" si viene vacío) — a propósito NUNCA fechas ya resueltas, así
+  que un filtro guardado como "actual - 3 meses" sigue moviéndose con el
+  calendario en vez de quedar pegado al día en que se configuró.
+
+  nil si el modo no matchea ninguno (filtro apagado) o si alguna fórmula
+  de "formula" no parsea.
   """
   def rango_fecha(modo, valor, valor_hasta \\ nil)
 
   def rango_fecha("actual", _valor, _valor_hasta) do
     hoy = Date.utc_today()
-    {DateTime.new!(hoy, ~T[00:00:00], "Etc/UTC"), DateTime.new!(hoy, ~T[23:59:59], "Etc/UTC")}
+    {inicio_dia(hoy), fin_dia(hoy)}
+  end
+
+  def rango_fecha("mes_actual", _valor, _valor_hasta) do
+    hoy = Date.utc_today()
+    desde = Date.new!(hoy.year, hoy.month, 1)
+    hasta = Date.new!(hoy.year, hoy.month, Date.days_in_month(hoy))
+    {inicio_dia(desde), fin_dia(hasta)}
+  end
+
+  def rango_fecha("mes_a_fecha", _valor, _valor_hasta) do
+    hoy = Date.utc_today()
+    desde = Date.new!(hoy.year, hoy.month, 1)
+    {inicio_dia(desde), fin_dia(hoy)}
+  end
+
+  def rango_fecha("anio_actual", _valor, _valor_hasta) do
+    hoy = Date.utc_today()
+    {inicio_dia(Date.new!(hoy.year, 1, 1)), fin_dia(Date.new!(hoy.year, 12, 31))}
+  end
+
+  def rango_fecha("primer_dia_mes", _valor, _valor_hasta) do
+    hoy = Date.utc_today()
+    dia = Date.new!(hoy.year, hoy.month, 1)
+    {inicio_dia(dia), fin_dia(dia)}
   end
 
   def rango_fecha("primer_dia_anio", _valor, _valor_hasta) do
-    desde = Date.new!(Date.utc_today().year, 1, 1)
-    {DateTime.new!(desde, ~T[00:00:00], "Etc/UTC"), DateTime.new!(~D[9999-12-31], ~T[23:59:59], "Etc/UTC")}
+    dia = Date.new!(Date.utc_today().year, 1, 1)
+    {inicio_dia(dia), fin_dia(dia)}
   end
 
-  def rango_fecha("ultimo_dia_anio", _valor, _valor_hasta) do
-    hasta = Date.new!(Date.utc_today().year, 12, 31)
-    {DateTime.new!(~D[1900-01-01], ~T[00:00:00], "Etc/UTC"), DateTime.new!(hasta, ~T[23:59:59], "Etc/UTC")}
-  end
+  def rango_fecha("formula", valor, valor_hasta) do
+    desde_formula = texto_o_default(valor, "primer_dia_mes")
+    hasta_formula = texto_o_default(valor_hasta, "actual")
 
-  def rango_fecha("rango", %Date{} = desde, %Date{} = hasta) do
-    {DateTime.new!(desde, ~T[00:00:00], "Etc/UTC"), DateTime.new!(hasta, ~T[23:59:59], "Etc/UTC")}
+    with {:ok, desde} <- FormulaFecha.parsear(desde_formula),
+         {:ok, hasta} <- FormulaFecha.parsear(hasta_formula) do
+      {inicio_dia(desde), fin_dia(hasta)}
+    else
+      _ -> nil
+    end
   end
 
   def rango_fecha(_modo, _valor, _valor_hasta), do: nil
 
+  defp texto_o_default(texto, _default) when is_binary(texto) and texto != "", do: texto
+  defp texto_o_default(_texto, default), do: default
+
+  defp inicio_dia(%Date{} = data), do: DateTime.new!(data, ~T[00:00:00], "Etc/UTC")
+  defp fin_dia(%Date{} = data), do: DateTime.new!(data, ~T[23:59:59], "Etc/UTC")
+
   @doc """
   Texto legible del filtro activo, para mostrarle al usuario FINAL en la
-  tabla del catálogo (CatalogoLive) — no solo al que lo configura en
-  BcMotorLive — así entiende por qué está viendo menos registros de los
-  que hay en total. nil si el filtro está apagado o si el modo necesita
-  una fecha que todavía no se eligió (ej. "rango" con un solo extremo).
+  tabla del catálogo (CatalogoLive) — no solo al que lo configura — así
+  entiende por qué está viendo menos registros de los que hay en total.
+  nil si el filtro está apagado o si "formula" tiene alguna fórmula que no
+  parsea.
   """
   def descripcion(modo, valor, valor_hasta \\ nil)
 
@@ -75,16 +131,43 @@ defmodule MetadataApp.FiltrosDefault do
     "Fecha actual — hoy (#{formatear(Date.utc_today())})"
   end
 
+  def descripcion("mes_actual", _valor, _valor_hasta) do
+    hoy = Date.utc_today()
+    desde = Date.new!(hoy.year, hoy.month, 1)
+    hasta = Date.new!(hoy.year, hoy.month, Date.days_in_month(hoy))
+    "Mes actual completo — del #{formatear(desde)} al #{formatear(hasta)}"
+  end
+
+  def descripcion("mes_a_fecha", _valor, _valor_hasta) do
+    hoy = Date.utc_today()
+    desde = Date.new!(hoy.year, hoy.month, 1)
+    "Mes actual a la fecha — del #{formatear(desde)} al #{formatear(hoy)}"
+  end
+
+  def descripcion("anio_actual", _valor, _valor_hasta) do
+    hoy = Date.utc_today()
+    "Año actual completo — del 1/1/#{hoy.year} al 31/12/#{hoy.year}"
+  end
+
+  def descripcion("primer_dia_mes", _valor, _valor_hasta) do
+    hoy = Date.utc_today()
+    "Inicio de mes — #{formatear(Date.new!(hoy.year, hoy.month, 1))}"
+  end
+
   def descripcion("primer_dia_anio", _valor, _valor_hasta) do
-    "Primer día del año — desde 1/1/#{Date.utc_today().year}"
+    "Inicio de año — 1/1/#{Date.utc_today().year}"
   end
 
-  def descripcion("ultimo_dia_anio", _valor, _valor_hasta) do
-    "Último día del año — hasta 31/12/#{Date.utc_today().year}"
-  end
+  def descripcion("formula", valor, valor_hasta) do
+    desde_formula = texto_o_default(valor, "primer_dia_mes")
+    hasta_formula = texto_o_default(valor_hasta, "actual")
 
-  def descripcion("rango", %Date{} = desde, %Date{} = hasta) do
-    "Fecha inicial y final — del #{formatear(desde)} al #{formatear(hasta)}"
+    with {:ok, desde} <- FormulaFecha.parsear(desde_formula),
+         {:ok, hasta} <- FormulaFecha.parsear(hasta_formula) do
+      "Fórmula — del #{formatear(desde)} al #{formatear(hasta)}"
+    else
+      _ -> nil
+    end
   end
 
   def descripcion(_modo, _valor, _valor_hasta), do: nil

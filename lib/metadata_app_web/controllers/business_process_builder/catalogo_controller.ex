@@ -12,6 +12,18 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
   @por_pagina_default 25
   @por_pagina_maximo 100
 
+  # Una Consulta Ecto (schema_context_type: 3) no tiene módulo Ecto propio
+  # (resolver/1 le daría 404 sin este guard) -- mismo path "/api/:tabla"
+  # que un catálogo normal, así que se delega acá en vez de sumar una
+  # ruta nueva al router. Ver ConsultaController para el motor real
+  # (MetaConsultas, no CatalogoGenerico).
+  def index(conn, %{"tabla" => tabla} = params) do
+    case MetaSchemaContext.obtener_header_por_nombre(tabla) do
+      %{schema_context_type: 3} -> MetadataAppWeb.BusinessProcessBuilder.ConsultaController.index(conn, params)
+      _otro -> index_catalogo(conn, tabla, params)
+    end
+  end
+
   # Filtros por query string (ej. GET /api/pty_pedido_det?encabezado_id=123
   # para "todos los renglones de un pedido puntual") — antes no existían en
   # la API pública: index/2 siempre mandaba filtros: %{} a CatalogoGenerico,
@@ -19,7 +31,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
   # igualdad exacta (nada de rangos/ilike acá, eso queda para la UI admin)
   # — alcanza para el caso real (encabezado_id, estado_id, o cualquier
   # campo de negocio puntual).
-  def index(conn, %{"tabla" => tabla} = params) do
+  defp index_catalogo(conn, tabla, params) do
     with {:ok, schema_mod} <- resolver(tabla) do
       {pagina, por_pagina} = resolver_paginacion(params)
       offset = (pagina - 1) * por_pagina

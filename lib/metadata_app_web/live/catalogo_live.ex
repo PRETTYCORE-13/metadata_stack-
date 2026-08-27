@@ -18,6 +18,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   alias MetadataApp.MetaAuditoria
   alias MetadataAppWeb.AdminNav
   alias MetadataAppWeb.CampoInputComponents
+  import MetadataAppWeb.SelectorMultipleComponents, only: [selector_multiple: 1]
   import Ecto.Query
 
   @por_pagina 25
@@ -295,12 +296,17 @@ defmodule MetadataAppWeb.CatalogoLive do
   # filtro_columna/1 y construir_filtros_ecto/2, sin duplicar nada de eso).
   defp montar_consulta(socket, header) do
     consulta = MetaConsultas.obtener_por_header_id(header.id)
+    detalles_por_catalogo = MetaSchemaContext.listar_detalles_de_varios(MetaConsultas.catalogos_presentes(consulta))
+    scope = socket.assigns[:current_scope]
 
     columnas =
       consulta.campos
       |> Enum.filter(&(Map.get(&1, "visible") == true))
       |> Enum.sort_by(&Map.get(&1, "orden", 0))
-      |> Enum.map(&columna_desde_campo_consulta/1)
+      |> Enum.map(&columna_desde_campo_consulta(&1, detalles_por_catalogo))
+
+    {parametros_string, parametros_numerico, parametros_fecha} = parametros_de_consulta(consulta, detalles_por_catalogo, scope)
+    overrides_parametro = overrides_parametro_default(parametros_string, scope, detalles_por_catalogo)
 
     {:ok,
      socket
@@ -310,6 +316,13 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:label, header.schema_context_label)
      |> assign(:consulta, consulta)
      |> assign(:columnas, columnas)
+     |> assign(:detalles_por_catalogo, detalles_por_catalogo)
+     |> assign(:parametros_string, parametros_string)
+     |> assign(:parametros_numerico, parametros_numerico)
+     |> assign(:parametros_fecha, parametros_fecha)
+     |> assign(:overrides_parametro, overrides_parametro)
+     |> assign(:modos_fecha_rango, FiltrosDefault.modos_fecha_rango())
+     |> assign(:modos_fecha_simple, FiltrosDefault.modos_fecha_simple())
      |> assign(:pagina, 1)
      |> assign(:filtros, %{})
      |> assign(:filtros_activos, [])
@@ -326,10 +339,84 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> cargar_filas()}
   end
 
-  defp columna_desde_campo_consulta(campo) do
+  # "Parámetros" (rediseño 2026-08-27, ver moduledoc de MetaSchema.Consulta):
+  # TODO campo visible de tipo date/string/referencia/integer/decimal es
+  # automáticamente un parámetro del reporte -- ya no hay un flag
+  # "parametro" que el admin prenda/apague por columna, la elegibilidad
+  # se deriva sola de tipo+visible (MetaConsultas.campos_elegibles_*/1).
+  # Fecha puede ser VARIAS columnas (cada una con su propio acotado/modo/
+  # rango) -- van aparte del resto.
+  defp parametros_de_consulta(consulta, detalles_por_catalogo, scope) do
+    parametros_string = consulta |> MetaConsultas.campos_elegibles_string() |> Enum.map(&descriptor_parametro_string(&1, detalles_por_catalogo, scope))
+    parametros_numerico = MetaConsultas.campos_elegibles_numerico(consulta)
+    parametros_fecha = MetaConsultas.campos_elegibles_fecha(consulta)
+
+    {parametros_string, parametros_numerico, parametros_fecha}
+  end
+
+  defp descriptor_parametro_string(campo, detalles_por_catalogo, scope) do
+    tipo_filtro = campo["tipo_filtro"] || "like"
+    origen = if MetaConsultas.tipo_efectivo(campo) == "referencia", do: "referenciado", else: campo["origen"] || "libre"
+
+    opciones =
+      if origen == "referenciado" do
+        case MetaConsultas.props_referenciado(campo, detalles_por_catalogo) do
+          nil -> []
+          props -> CatalogoGenerico.opciones_referencia(props, %{}, scope)
+        end
+      else
+        []
+      end
+
+    %{campo: campo, etiqueta: campo["etiqueta"], tipo_filtro: tipo_filtro, origen: origen, multiple?: tipo_filtro == "multi", opciones: opciones}
+  end
+
+  # Caso 1 del pedido original: Sucursal/Almacén/Unidad de venta
+  # arrancan pre-elegidas con la Unidad Operativa ACTIVA del usuario
+  # (misma que ya usa el pie de página) -- ni una línea de config nueva,
+  # ya vive en el Scope de la sesión. Solo tiene sentido para un
+  # parámetro "referenciado" apuntando a uno de esos 3 catálogos de
+  # sistema (antes eran tipos fijos "sucursal"/"almacen"/"unidad_venta";
+  # ahora se reconoce por el catálogo real, sea "referencia" de verdad o
+  # "string" con catalogo_referenciado elegido a mano). Cualquier otro
+  # catálogo no tiene forma de adivinar un default razonable, queda vacío.
+  defp overrides_parametro_default(parametros_string, scope, detalles_por_catalogo) do
+    Enum.reduce(parametros_string, %{}, fn %{campo: campo, origen: origen}, acc ->
+      with "referenciado" <- origen,
+           catalogo when is_binary(catalogo) <- catalogo_real_referenciado(campo, detalles_por_catalogo),
+           id when not is_nil(id) <- valor_default_catalogo_sistema(catalogo, scope) do
+        Map.put(acc, to_string(MetaConsultas.clave_campo(campo)), %{"defaults" => %{"valores" => [id]}})
+      else
+        _ -> acc
+      end
+    end)
+  end
+
+  defp catalogo_real_referenciado(%{"control" => true, "campo" => clave}, _detalles_por_catalogo) do
+    MetaConsultas.catalogo_control_sistema(clave)
+  end
+
+  defp catalogo_real_referenciado(%{"tipo" => "referencia"} = campo, detalles_por_catalogo) do
+    detalles_por_catalogo
+    |> Map.get(campo["catalogo"], [])
+    |> Enum.find(&(&1.schema_context_field == campo["campo"]))
+    |> case do
+      nil -> nil
+      detalle -> get_in(detalle.schema_context_properties, ["catalogo"])
+    end
+  end
+
+  defp catalogo_real_referenciado(campo, _detalles_por_catalogo), do: campo["catalogo_referenciado"]
+
+  defp valor_default_catalogo_sistema("meta_schema_branch", %Scope{branch_activo: %{id: id}}), do: id
+  defp valor_default_catalogo_sistema("meta_schema_inventory_location", %Scope{inventory_location_activo: %{id: id}}), do: id
+  defp valor_default_catalogo_sistema("meta_schema_sales_unit", %Scope{sales_unit_activo: %{id: id}}), do: id
+  defp valor_default_catalogo_sistema(_catalogo, _scope), do: nil
+
+  defp columna_desde_campo_consulta(campo, detalles_por_catalogo) do
     %{
       schema_context_field: campo["campo"],
-      schema_context_properties: %{"etiqueta" => campo["etiqueta"], "tipo" => campo["tipo"] || "string"},
+      schema_context_properties: Map.merge(propiedades_reales_consulta(campo, detalles_por_catalogo), %{"etiqueta" => campo["etiqueta"], "tipo" => campo["tipo"] || "string"}),
       totalizar: campo["totalizar"] == true,
       catalogo: campo["catalogo"],
       # `schema_context_field` (crudo) sigue siendo lo que arman los
@@ -340,6 +427,30 @@ defmodule MetadataAppWeb.CatalogoLive do
       # nombre en tablas distintas no pueden compartir la misma clave).
       clave: MetaConsultas.clave_campo(campo)
     }
+  end
+
+  # Bug real (2026-08-26): un campo tipo "referencia"/"enum" de una
+  # Consulta solo traía "etiqueta"/"tipo" acá -- sin "catalogo" (el
+  # destino real de la referencia) opciones_para_columna/1 terminaba
+  # llamando MetaSchemaContext.obtener_header_por_nombre(nil), que
+  # revienta con ArgumentError (Ecto no deja comparar contra nil con
+  # `==`). Se resuelve leyendo fresco el detalle REAL del catálogo dueño
+  # del campo (nunca cacheado en Consulta.campos, que solo guarda
+  # etiqueta/tipo/orden/visible propios de la Consulta) -- así "catalogo"/
+  # "valores"/"dependencias" siempre reflejan la definición actual del
+  # campo, sin backfill para consultas ya creadas. Un campo de CONTROL
+  # (id/estado/trn/...) no tiene detalle real en meta_schema_detail --
+  # cae al mismo filtro de texto simple que ya tenía antes.
+  defp propiedades_reales_consulta(%{"control" => true}, _detalles_por_catalogo), do: %{}
+
+  defp propiedades_reales_consulta(campo, detalles_por_catalogo) do
+    detalles_por_catalogo
+    |> Map.get(campo["catalogo"], [])
+    |> Enum.find(&(&1.schema_context_field == campo["campo"]))
+    |> case do
+      nil -> %{}
+      detalle -> detalle.schema_context_properties || %{}
+    end
   end
 
   def handle_event("change_page", %{"id" => id}, socket) do
@@ -375,6 +486,37 @@ defmodule MetadataAppWeb.CatalogoLive do
   def handle_event("limpiar_filtros", _params, socket) do
     filtros = preservar_filtros_bloqueados(socket.assigns.filtros, socket.assigns.columnas)
     {:noreply, socket |> assign(:filtros, filtros) |> assign(:pagina, 1) |> cargar_filas()}
+  end
+
+  # --- Barra de Parámetros (Consulta Ecto, rediseño 2026-08-27) ---------
+  # Todo guardado inmediato y SOLO en el socket de esta sesión (@overrides_parametro,
+  # ver moduledoc de MetaSchema.Consulta) -- nunca pisa el default que
+  # configuró el admin en Get Config (Consulta.campos), eso es de lectura
+  # acá. `name="clave[<clave_campo>]"` + `form="form-parametros-reporte"`
+  # en vez de phx-value-campo en los <select>/<input> con phx-change
+  # propio -- mismo motivo que en ConsultaEditorLive (phx-value-* nunca
+  # llega en un evento de change, solo el name).
+
+  def handle_event("cambiar_override_valor", %{"valor" => mapa}, socket), do: aplicar_override_defaults(socket, mapa, "valor")
+  def handle_event("cambiar_override_valor_hasta", %{"valor_hasta" => mapa}, socket), do: aplicar_override_defaults(socket, mapa, "valor_hasta")
+
+  def handle_event("cambiar_override_valores", %{"valores" => mapa}, socket) do
+    {clave, valores} = mapa |> Map.to_list() |> List.first()
+    valores = valores |> List.wrap() |> Enum.reject(&(&1 in [nil, ""]))
+    aplicar_override_defaults_completo(socket, clave, %{"valores" => valores})
+  end
+
+  def handle_event("marcar_override_todos", %{"campo" => clave, "valores" => csv}, socket) do
+    valores = csv |> String.split(",") |> Enum.reject(&(&1 == ""))
+    aplicar_override_defaults_completo(socket, clave, %{"valores" => valores})
+  end
+
+  def handle_event("limpiar_override_valores", %{"campo" => clave}, socket) do
+    aplicar_override_defaults_completo(socket, clave, %{"valores" => []})
+  end
+
+  def handle_event("cambiar_override_fecha_modo", %{"campo" => clave, "modo" => modo}, socket) do
+    aplicar_override_defaults_completo(socket, clave, %{"modo" => valor_no_vacio(modo)})
   end
 
   def handle_event("abrir_filtros", _params, socket) do
@@ -471,7 +613,19 @@ defmodule MetadataAppWeb.CatalogoLive do
     socket.assigns.cargar_todos_por_default? or
       Map.has_key?(socket.assigns.filtros, "__fecha_registro__") or
       contar_filtros_activos(socket.assigns.filtros) > 0 or
-      String.trim(socket.assigns.busqueda_general) != ""
+      String.trim(socket.assigns.busqueda_general) != "" or
+      (socket.assigns[:es_consulta?] == true and parametros_activos?(socket))
+  end
+
+  # Mismo espíritu que "__fecha_registro__" arriba, pero para la barra de
+  # Parámetros de una Consulta (ver montar_consulta/2) -- una columna
+  # Fecha SIEMPRE acota (rediseño 2026-08-27: ya no existe "sin acotar"
+  # para Fecha, ver moduledoc de MetaSchema.Consulta), así que con solo
+  # que exista una ya hay "datos solicitados" sin que el usuario toque
+  # nada más. Si no hay ninguna Fecha, alcanza con que haya tocado algún
+  # override de sesión (string/numérico/fecha).
+  defp parametros_activos?(socket) do
+    socket.assigns.parametros_fecha != [] or map_size(socket.assigns.overrides_parametro) > 0
   end
 
   defp cargar_filas_real(%{assigns: %{es_consulta?: true}} = socket), do: cargar_filas_consulta(socket)
@@ -587,26 +741,33 @@ defmodule MetadataAppWeb.CatalogoLive do
   defp funcion_agregada("maximo"), do: :max
   defp funcion_agregada("conteo"), do: :count
 
-  # Mismo criterio de 2 pasos que un catálogo normal: primero contar/3 (sin
+  # Mismo criterio de 2 pasos que un catálogo normal: primero contar/4 (sin
   # paginar) para saber @total_paginas y calcular el offset correcto, recién
-  # después pedir la página con ese offset — MetaConsultas.ejecutar/4 también
+  # después pedir la página con ese offset — MetaConsultas.ejecutar/5 también
   # devuelve un total_filas propio (para @totales, calculado sobre TODAS las
   # filas filtradas, no solo la página), pero ese no sirve para el offset
   # porque en ese punto todavía no lo conocemos.
   defp cargar_filas_consulta(socket) do
-    %{consulta: consulta, columnas: columnas, filtros: filtros, busqueda_general: busqueda_general} = socket.assigns
+    %{
+      consulta: consulta,
+      columnas: columnas,
+      filtros: filtros,
+      busqueda_general: busqueda_general,
+      overrides_parametro: overrides_parametro
+    } = socket.assigns
 
     filtros_ecto = construir_filtros_ecto(filtros, columnas)
     campos_busqueda = Enum.map(columnas, & &1.schema_context_field)
     busqueda = {busqueda_general, campos_busqueda}
 
-    total_filas = MetaConsultas.contar(consulta, filtros_ecto, busqueda)
+    scope = socket.assigns[:current_scope]
+    total_filas = MetaConsultas.contar(consulta, scope, filtros_ecto, busqueda, overrides_parametro)
     total_paginas = max(ceil(total_filas / @por_pagina), 1)
     pagina = socket.assigns.pagina |> max(1) |> min(total_paginas)
     offset = (pagina - 1) * @por_pagina
 
     %{filas: filas, totales: totales} =
-      MetaConsultas.ejecutar(consulta, filtros_ecto, [limit: @por_pagina, offset: offset], busqueda)
+      MetaConsultas.ejecutar(consulta, scope, filtros_ecto, [limit: @por_pagina, offset: offset], busqueda, overrides_parametro)
 
     socket
     |> assign(:filas, filas)
@@ -828,6 +989,18 @@ defmodule MetadataAppWeb.CatalogoLive do
   defp valor_no_vacio(""), do: nil
   defp valor_no_vacio(v), do: v
 
+  defp aplicar_override_defaults(socket, mapa, clave_interna) do
+    {clave, valor} = mapa |> Map.to_list() |> List.first()
+    actual = Map.get(socket.assigns.overrides_parametro, clave, %{})
+    defaults_actual = Map.get(actual, "defaults", %{})
+    aplicar_override_defaults_completo(socket, clave, Map.put(defaults_actual, clave_interna, valor_no_vacio(valor)))
+  end
+
+  defp aplicar_override_defaults_completo(socket, clave, defaults_nuevo) do
+    override = Map.put(socket.assigns.overrides_parametro, clave, %{"defaults" => defaults_nuevo})
+    {:noreply, socket |> assign(:overrides_parametro, override) |> assign(:pagina, 1) |> cargar_filas()}
+  end
+
   # Borra tanto la forma simple (filtros["campo"]) como la de rango
   # (filtros["campo_desde"] / filtros["campo_hasta"]) — un campo removido del
   # panel no sabe de antemano cuál de las dos formas tenía.
@@ -914,40 +1087,30 @@ defmodule MetadataAppWeb.CatalogoLive do
     ~H"""
     <div class="p-6">
       <div class="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
-        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+        <%!-- Título + contador + Filtros/Campos, todo en una sola fila
+        (2026-08-27, a pedido explícito -- "ajusta botón filtro y botón
+        campos más arriba... la banda más angosta para tener más
+        espacio"): antes eran 2 filas separadas (la de abajo vivía sola
+        para dejarle lugar a la caja de búsqueda general, que ya se quitó
+        acá -- ver el otro render/1 más abajo para el catálogo normal,
+        que sigue con las 2 filas). --%>
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
           <div class="flex items-center gap-2">
             <span class="material-symbols-outlined text-purple-600" title="Consulta Ecto (solo lectura)">search</span>
             <h1 class="text-xl font-bold text-gray-900">{@label}</h1>
           </div>
 
-          <span class="text-xs font-medium text-gray-500 bg-gray-100 rounded-full px-3 py-1 self-start sm:self-auto">
-            {@inicio}-{@fin} de {@total_filas}
-          </span>
-        </div>
-
-        <form id="form-filtros" phx-change="filtrar" class="hidden" aria-hidden="true"></form>
-
-        <div class="flex flex-col gap-2 mb-4 sm:flex-row sm:items-center">
-          <div class="relative sm:flex-1">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-              <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              type="text"
-              value={@busqueda_general}
-              phx-keyup="buscar_general"
-              phx-debounce="300"
-              placeholder="Buscar en cualquier columna..."
-              class="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500"
-            />
-          </div>
           <div class="flex items-center gap-2">
-            <div class="relative flex-1 sm:flex-none">
+            <span class="text-xs font-medium text-gray-500 bg-gray-100 rounded-full px-3 py-1 whitespace-nowrap">
+              {@inicio}-{@fin} de {@total_filas}
+            </span>
+
+            <div class="relative">
               <button
                 type="button"
                 phx-click="abrir_filtros"
                 class={[
-                  "flex items-center justify-center gap-1.5 border rounded-lg px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors w-full sm:w-auto",
+                  "flex items-center justify-center gap-1.5 border rounded-lg px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors",
                   if(contar_filtros_activos(@filtros) > 0,
                     do: "border-purple-600 bg-purple-50 text-purple-700",
                     else: "border-gray-300 text-gray-600 hover:bg-gray-50"
@@ -972,31 +1135,61 @@ defmodule MetadataAppWeb.CatalogoLive do
                 filtros_activos={@filtros_activos}
                 selector_campo_abierto={@selector_campo_abierto}
                 busqueda_campo_filtro={@busqueda_campo_filtro}
+                scope={@current_scope}
               />
             </div>
             <.panel_campos campos={campos_selector(@columnas)} tabla_id="tabla-catalogo" />
           </div>
         </div>
 
+        <form id="form-filtros" phx-change="filtrar" class="hidden" aria-hidden="true"></form>
+
+        <.panel_parametros :if={@parametros_string != [] or @parametros_numerico != [] or @parametros_fecha != []}
+          id_seccion={"panel-parametros-#{@current_page}"}
+          parametros_string={@parametros_string} parametros_numerico={@parametros_numerico} parametros_fecha={@parametros_fecha}
+          overrides_parametro={@overrides_parametro} modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple} />
+
         <div class="overflow-x-auto rounded-xl border border-gray-200">
           <table id="tabla-catalogo" class="min-w-full divide-y divide-gray-200 text-xs">
             <thead class="bg-gray-50">
               <tr>
+                <%!-- Filtro por columna: ícono + popover (2026-08-27, a
+                pedido explícito -- "aprovechamos más espacio y da
+                usabilidad UIX") reemplaza la fila fija que vivía SIEMPRE
+                visible debajo del encabezado (una fila entera de altura,
+                aunque nadie estuviera filtrando). Reusa fila_filtro_columna/1
+                tal cual (ya devuelve solo el widget, sin <td>/<th> propio)
+                -- ahora vive DENTRO del popover en vez de en una celda
+                fija de una fila aparte. --%>
                 <%= for columna <- @columnas do %>
+                  <% bloqueado? = columna.schema_context_properties["filtro_default_bloqueado"] == true %>
                   <th
                     data-col={col_key(columna)}
                     title={if @consulta.joins != [], do: "De: #{columna.catalogo}"}
-                    class={["px-2 py-3 sm:px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap", alineacion_columna(columna)]}
+                    class={["relative px-2 py-3 sm:px-4 text-[10px] font-semibold text-black uppercase tracking-wide whitespace-nowrap", alineacion_columna(columna)]}
                   >
                     <span class="inline-flex items-center gap-1">
                       {columna.schema_context_properties["etiqueta"]}
                       <.icono_arrastrar_columna />
+                      <button type="button" phx-click={JS.toggle(to: "#filtro-popover-#{col_key(columna)}")}
+                        class={[
+                          "flex items-center justify-center rounded p-0.5 hover:bg-gray-200",
+                          filtro_columna_activo?(columna, @filtros) && "text-purple-600",
+                          !filtro_columna_activo?(columna, @filtros) && "text-gray-400"
+                        ]}
+                        aria-label={"Filtrar por #{columna.schema_context_properties["etiqueta"]}"}
+                      >
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+                        </svg>
+                      </button>
                     </span>
+
+                    <div id={"filtro-popover-#{col_key(columna)}"} class="hidden absolute z-50 top-full left-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-xl p-2 normal-case" phx-click-away={JS.hide()}>
+                      <.fila_filtro_columna columna={columna} valores={@filtros} bloqueado?={bloqueado?} scope={@current_scope} />
+                    </div>
                   </th>
                 <% end %>
-              </tr>
-              <tr class="bg-gray-50/60 border-t border-gray-100">
-                <.fila_filtros_columnas columnas={@columnas} filtros={@filtros} />
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
@@ -1160,6 +1353,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 filtros_activos={@filtros_activos}
                 selector_campo_abierto={@selector_campo_abierto}
                 busqueda_campo_filtro={@busqueda_campo_filtro}
+                scope={@current_scope}
               />
             </div>
             <.panel_campos campos={campos_selector_render(@columnas_render)} tabla_id="tabla-catalogo" />
@@ -1181,7 +1375,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <th class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"></th>
               </tr>
               <tr class="bg-gray-50/60 border-t border-gray-100">
-                <.celda_filtro :for={col <- @columnas_render} col={col} filtros={@filtros} />
+                <.celda_filtro :for={col <- @columnas_render} col={col} filtros={@filtros} scope={@current_scope} />
                 <th class="px-2 py-1.5 sm:px-4"></th>
               </tr>
             </thead>
@@ -1293,6 +1487,7 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   attr :col, :map, required: true
   attr :filtros, :map, required: true
+  attr :scope, :any, required: true
 
   defp celda_filtro(%{col: %{tipo_columna: :negocio}} = assigns) do
     bloqueado? = assigns.col.columna.schema_context_properties["filtro_default_bloqueado"] == true
@@ -1300,7 +1495,7 @@ defmodule MetadataAppWeb.CatalogoLive do
 
     ~H"""
     <th data-col={@col.clave} class="px-2 py-1.5 sm:px-4 align-top">
-      <.fila_filtro_columna columna={@col.columna} valores={@filtros} bloqueado?={@bloqueado?} />
+      <.fila_filtro_columna columna={@col.columna} valores={@filtros} bloqueado?={@bloqueado?} scope={@scope} />
     </th>
     """
   end
@@ -1439,6 +1634,18 @@ defmodule MetadataAppWeb.CatalogoLive do
   # consulta con JOIN (donde :clave es un átomo) — funcionaba solo en un
   # catálogo normal, donde el campo crudo ya era un string.
   defp col_key(columna), do: columna |> Map.get(:clave) |> Kernel.||(columna.schema_context_field) |> to_string()
+
+  # Resalta el ícono de filtro por columna (2026-08-27) -- true si hay
+  # algo tipeado/elegido para ESA columna en @filtros, ya sea un valor
+  # exacto (campo) o un rango (campo_desde/campo_hasta, ver
+  # fila_filtro_columna/1 para integer/decimal/date).
+  defp filtro_columna_activo?(columna, filtros) do
+    campo = columna.schema_context_field
+
+    Map.get(filtros, campo) not in [nil, ""] or
+      Map.get(filtros, "#{campo}_desde") not in [nil, ""] or
+      Map.get(filtros, "#{campo}_hasta") not in [nil, ""]
+  end
 
   # Lista %{clave:, etiqueta:} para el selector de campos (panel_campos/1)
   # — SOLO los campos de negocio (meta_schema_detail). La variante /3 le
@@ -1775,6 +1982,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   attr :filtros_activos, :list, required: true
   attr :selector_campo_abierto, :boolean, required: true
   attr :busqueda_campo_filtro, :string, required: true
+  attr :scope, :any, required: true
 
   defp panel_filtros(%{mostrar: false} = assigns), do: ~H""
 
@@ -1858,7 +2066,7 @@ defmodule MetadataAppWeb.CatalogoLive do
           <% bloqueado? = columna.schema_context_properties["filtro_default_bloqueado"] == true %>
           <div class="flex items-start gap-1">
             <div class="flex-1">
-              <.filtro_columna columna={columna} valores={@filtros} bloqueado?={bloqueado?} />
+              <.filtro_columna columna={columna} valores={@filtros} bloqueado?={bloqueado?} scope={@scope} />
             </div>
             <div
               :if={bloqueado?}
@@ -1909,11 +2117,20 @@ defmodule MetadataAppWeb.CatalogoLive do
   # filtro_columna/1 (popover) como por fila_filtro_columna/1 (fila fija en
   # el thead), para que las dos UIs filtren el mismo campo con la misma
   # semántica (coincidencia exacta, no ILIKE).
-  defp opciones_para_columna(%{schema_context_properties: %{"tipo" => "enum"} = props}),
+  #
+  # `scope` (2026-08-26): antes esto SIEMPRE traía el catálogo destino
+  # ENTERO, sin importar sesión -- un filtro de "Sucursal" ofrecía todas
+  # las sucursales del sistema aunque el usuario solo pudiera operar
+  # una. `CatalogoGenerico.opciones_referencia/3` (la variante con scope,
+  # ya usada por los formularios de alta) acota Branch/SalesUnit/
+  # InventoryLocation al alcance real de la sesión -- acá se enchufa lo
+  # mismo para que el FILTRO respete el mismo alcance que ya respeta la
+  # fila.
+  defp opciones_para_columna(%{schema_context_properties: %{"tipo" => "enum"} = props}, _scope),
     do: CampoInputComponents.opciones_enum(props["valores"])
 
-  defp opciones_para_columna(%{schema_context_properties: %{"tipo" => "referencia"} = props}),
-    do: CatalogoGenerico.opciones_referencia(props)
+  defp opciones_para_columna(%{schema_context_properties: %{"tipo" => "referencia"} = props}, scope),
+    do: CatalogoGenerico.opciones_referencia(props, %{}, scope)
 
   # Etiqueta legible del valor actualmente elegido (para la rama
   # "bloqueado" de un filtro enum/referencia) — sin esto se mostraría el
@@ -1952,6 +2169,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   attr :columna, :map, required: true
   attr :valores, :map, required: true
   attr :bloqueado?, :boolean, default: false
+  attr :scope, :any, required: true
 
   defp filtro_columna(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
     campo = assigns.columna.schema_context_field
@@ -2021,7 +2239,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   defp filtro_columna(%{columna: %{schema_context_properties: %{"tipo" => tipo}}} = assigns)
        when tipo in ["enum", "referencia"] do
     campo = assigns.columna.schema_context_field
-    opciones = opciones_para_columna(assigns.columna)
+    opciones = opciones_para_columna(assigns.columna, assigns.scope)
     assigns = assigns |> assign(:campo, campo) |> assign(:opciones, opciones)
 
     ~H"""
@@ -2091,6 +2309,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   attr :columna, :map, required: true
   attr :valores, :map, required: true
   attr :bloqueado?, :boolean, default: false
+  attr :scope, :any, required: true
 
   defp fila_filtro_columna(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
     campo = assigns.columna.schema_context_field
@@ -2153,7 +2372,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   defp fila_filtro_columna(%{columna: %{schema_context_properties: %{"tipo" => tipo}}} = assigns)
        when tipo in ["enum", "referencia"] do
     campo = assigns.columna.schema_context_field
-    opciones = opciones_para_columna(assigns.columna)
+    opciones = opciones_para_columna(assigns.columna, assigns.scope)
     assigns = assigns |> assign(:campo, campo) |> assign(:opciones, opciones)
 
     ~H"""
@@ -2195,23 +2414,155 @@ defmodule MetadataAppWeb.CatalogoLive do
     """
   end
 
-  # Recorre @columnas armando un <th data-col={...}> por columna dentro de
-  # la fila fija de filtros — mismo data-col que la fila de encabezado de
-  # arriba, así SelectorCampos (assets/js/app.js) la oculta/reordena en
-  # sync sola cuando el usuario toca "Campos", igual que ya hace con
-  # celdas_resumen/1 en el <tfoot>. Se reusa tal cual en la tabla de
-  # catálogo y en la de consulta.
-  attr :columnas, :list, required: true
-  attr :filtros, :map, required: true
+  attr :id_seccion, :string, required: true, doc: "único por Consulta -- llave de localStorage vía el hook RecordarSeccion"
+  attr :parametros_string, :list, required: true
+  attr :parametros_numerico, :list, required: true
+  attr :parametros_fecha, :list, required: true
+  attr :overrides_parametro, :map, required: true
+  attr :modos_fecha_rango, :list, required: true
+  attr :modos_fecha_simple, :list, required: true
 
-  defp fila_filtros_columnas(assigns) do
+  # Atajo de filtros rápidos (rediseño 2026-08-27, ver moduledoc de
+  # MetaSchema.Consulta) -- TODO campo elegible (visible + tipo
+  # date/string/referencia/integer/decimal) aparece acá solo, sin que el
+  # admin tenga que marcar nada aparte, además del popover de Filtros
+  # genérico de siempre (que sigue disponible para cualquier otra
+  # columna). Los "Referenciado" son `<select multiple>`/`<select>`
+  # nativo -- las opciones ya vienen acotadas al alcance real del usuario
+  # (ver descriptor_parametro_string/3), nunca el catálogo entero.
+  #
+  # Colapsable con un pin (2026-08-27, a pedido explícito -- "tener más
+  # espacio en la consulta") -- <details>/<summary> nativo + el hook
+  # RecordarSeccion (mismo que ya usan las carpetas del riel: recuerda
+  # open/closed en localStorage por id, sin round-trip al servidor, ver
+  # app.js). Empieza CERRADO la primera vez (sin atributo `open`, a
+  # pedido explícito) -- RecordarSeccion pisa esto en cuanto haya una
+  # elección guardada para este id_seccion (el usuario ya lo abrió antes).
+  defp panel_parametros(assigns) do
     ~H"""
-    <%= for columna <- @columnas do %>
-      <% bloqueado? = columna.schema_context_properties["filtro_default_bloqueado"] == true %>
-      <th data-col={col_key(columna)} class="px-2 py-1.5 sm:px-4 align-top">
-        <.fila_filtro_columna columna={columna} valores={@filtros} bloqueado?={bloqueado?} />
-      </th>
-    <% end %>
+    <details id={@id_seccion} phx-hook="RecordarSeccion" class="group border border-purple-200 bg-purple-50/50 rounded-xl p-4 mb-4">
+      <summary class="text-[11px] font-bold uppercase tracking-wide text-purple-700 flex items-center gap-1.5 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+        <span class="material-symbols-outlined transition-transform group-open:rotate-90" style="font-size: 15px">chevron_right</span>
+        <span class="material-symbols-outlined" style="font-size: 15px">tune</span>
+        Parámetros
+      </summary>
+
+      <div class="mt-3">
+        <form id="form-parametros-reporte" class="hidden" aria-hidden="true"></form>
+
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          <.parametro_string_reporte :for={p <- @parametros_string} parametro={p} overrides_parametro={@overrides_parametro} />
+          <.parametro_numerico_reporte :for={campo <- @parametros_numerico} campo={campo} overrides_parametro={@overrides_parametro} />
+        </div>
+
+        <div :if={@parametros_fecha != []} class="flex flex-col gap-2 mt-3 pt-3 border-t border-purple-200/60">
+          <.parametro_fecha_reporte :for={campo <- @parametros_fecha} campo={campo} modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple} overrides_parametro={@overrides_parametro} />
+        </div>
+      </div>
+    </details>
+    """
+  end
+
+  # Defaults del admin (Consulta.campos) con el override de ESTA sesión
+  # (si lo hay) encima -- mismo merge que ya hace
+  # MetaConsultas.campo_efectivo/2 del lado del motor, para que lo que se
+  # ve acá sea EXACTAMENTE lo que se está aplicando.
+  defp defaults_efectivos(campo, overrides_parametro) do
+    clave = to_string(MetaConsultas.clave_campo(campo))
+    override_defaults = get_in(overrides_parametro, [clave, "defaults"]) || %{}
+    Map.merge(campo["defaults"] || %{}, override_defaults)
+  end
+
+  attr :parametro, :map, required: true
+  attr :overrides_parametro, :map, required: true
+
+  defp parametro_string_reporte(assigns) do
+    clave = to_string(MetaConsultas.clave_campo(assigns.parametro.campo))
+    defaults = defaults_efectivos(assigns.parametro.campo, assigns.overrides_parametro)
+    assigns = assigns |> assign(:clave, clave) |> assign(:defaults, defaults)
+
+    ~H"""
+    <div class="flex flex-col gap-1">
+      <label class="text-[10px] font-semibold text-gray-500 uppercase tracking-wide truncate" title={@parametro.etiqueta}>{@parametro.etiqueta}</label>
+      <.selector_multiple :if={@parametro.multiple?} id={"reporte-#{@clave}"} form_id="form-parametros-reporte"
+        evento="cambiar_override_valores" evento_todos="marcar_override_todos" evento_ninguno="limpiar_override_valores"
+        campo_clave={@clave} opciones={@parametro.opciones} seleccionados={Enum.map(@defaults["valores"] || [], &to_string/1)} />
+      <select :if={!@parametro.multiple? and @parametro.origen == "referenciado"} phx-change="cambiar_override_valor" form="form-parametros-reporte" name={"valor[#{@clave}]"}
+        class="border border-gray-300 rounded-lg text-xs px-2 py-1 bg-white">
+        <option value="" selected={@defaults["valor"] in [nil, ""]}>Todos</option>
+        <option :for={{id, etiqueta} <- @parametro.opciones} value={id} selected={to_string(id) == to_string(@defaults["valor"])}>{etiqueta}</option>
+      </select>
+      <input :if={!@parametro.multiple? and @parametro.origen == "libre"} type="text" value={@defaults["valor"]}
+        phx-change="cambiar_override_valor" form="form-parametros-reporte" name={"valor[#{@clave}]"} phx-debounce="400"
+        placeholder="Buscar..." class="border border-gray-300 rounded-lg text-xs px-2 py-1.5 bg-white" />
+    </div>
+    """
+  end
+
+  attr :campo, :map, required: true
+  attr :overrides_parametro, :map, required: true
+
+  defp parametro_numerico_reporte(assigns) do
+    clave = to_string(MetaConsultas.clave_campo(assigns.campo))
+    defaults = defaults_efectivos(assigns.campo, assigns.overrides_parametro)
+    assigns = assigns |> assign(:clave, clave) |> assign(:defaults, defaults)
+
+    ~H"""
+    <div class="flex flex-col gap-1">
+      <label class="text-[10px] font-semibold text-gray-500 uppercase tracking-wide truncate" title={@campo["etiqueta"]}>{@campo["etiqueta"]}</label>
+      <div :if={@campo["acotado"]} class="flex items-center gap-1">
+        <input type="number" step="any" value={@defaults["valor"]} placeholder="Desde"
+          phx-change="cambiar_override_valor" form="form-parametros-reporte" name={"valor[#{@clave}]"}
+          class="border border-gray-300 rounded-lg text-xs px-2 py-1.5 bg-white w-full" />
+        <input type="number" step="any" value={@defaults["valor_hasta"]} placeholder="Hasta"
+          phx-change="cambiar_override_valor_hasta" form="form-parametros-reporte" name={"valor_hasta[#{@clave}]"}
+          class="border border-gray-300 rounded-lg text-xs px-2 py-1.5 bg-white w-full" />
+      </div>
+      <input :if={!@campo["acotado"]} type="number" step="any" value={@defaults["valor"]}
+        phx-change="cambiar_override_valor" form="form-parametros-reporte" name={"valor[#{@clave}]"}
+        class="border border-gray-300 rounded-lg text-xs px-2 py-1.5 bg-white" />
+    </div>
+    """
+  end
+
+  attr :campo, :map, required: true
+  attr :modos_fecha_rango, :list, required: true
+  attr :modos_fecha_simple, :list, required: true
+  attr :overrides_parametro, :map, required: true
+
+  defp parametro_fecha_reporte(assigns) do
+    clave = to_string(MetaConsultas.clave_campo(assigns.campo))
+    defaults = defaults_efectivos(assigns.campo, assigns.overrides_parametro)
+    modos = if assigns.campo["acotado"], do: assigns.modos_fecha_rango, else: assigns.modos_fecha_simple
+    assigns = assigns |> assign(:clave, clave) |> assign(:defaults, defaults) |> assign(:modos, modos)
+
+    ~H"""
+    <div class="flex items-center gap-2 flex-wrap">
+      <span class="text-[10px] font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap min-w-[90px]">{@campo["etiqueta"]}</span>
+      <button :for={{modo, etiqueta} <- @modos} type="button"
+        phx-click="cambiar_override_fecha_modo" phx-value-campo={@clave} phx-value-modo={modo}
+        class={[
+          "text-[10px] font-semibold rounded-full px-2 py-1 whitespace-nowrap",
+          (@defaults["modo"] || "") == modo && "bg-purple-600 text-white",
+          (@defaults["modo"] || "") != modo && "bg-white border border-purple-200 text-purple-700 hover:bg-purple-100"
+        ]}>
+        {etiqueta}
+      </button>
+
+      <div :if={@defaults["modo"] == "formula" && @campo["acotado"]} class="flex items-center gap-1">
+        <input type="text" value={@defaults["valor"]} placeholder="ej. primer_dia_mes"
+          phx-change="cambiar_override_valor" form="form-parametros-reporte" name={"valor[#{@clave}]"}
+          class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-28" />
+        <span class="text-gray-400 text-[10px]">–</span>
+        <input type="text" value={@defaults["valor_hasta"]} placeholder="ej. actual"
+          phx-change="cambiar_override_valor_hasta" form="form-parametros-reporte" name={"valor_hasta[#{@clave}]"}
+          class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-28" />
+      </div>
+
+      <input :if={@defaults["modo"] == "formula" && !@campo["acotado"]} type="text" value={@defaults["valor"]} placeholder="ej. actual - 3 meses"
+        phx-change="cambiar_override_valor" form="form-parametros-reporte" name={"valor[#{@clave}]"}
+        class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-40" />
+    </div>
     """
   end
 end
