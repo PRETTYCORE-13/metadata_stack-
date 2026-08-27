@@ -70,8 +70,14 @@ RUN mix release
 # the compiled release and other runtime necessities
 FROM ${RUNNER_IMAGE} AS final
 
+# openssh-client: MetadataApp.Ssh (Panel Control, motor.desplegar) shellea
+# contra el binario `ssh` del sistema para conectarse a los Ambientes -- a
+# diferencia de mix motor.desplegar (siempre corre en la máquina de un
+# desarrollador, que ya tiene ssh), Panel Control dispara ese mismo código
+# DESDE la propia app ya desplegada, adentro de este contenedor -- sin este
+# paquete falla con "Erlang error: :enoent" (encontrado real, 2026-08-27).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libstdc++6 openssl libncurses6 locales ca-certificates \
+  && apt-get install -y --no-install-recommends libstdc++6 openssl libncurses6 locales ca-certificates openssh-client \
   && rm -rf /var/lib/apt/lists/*
 
 # Set the locale
