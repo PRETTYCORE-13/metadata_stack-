@@ -8,6 +8,17 @@ defmodule MetadataApp.Repo.Migrations.AgregarCampoReferenciaAMetaFixtureCliente 
   # (CatalogoLive intentaba resolver el catálogo destino de la referencia
   # sin tenerlo disponible). "meta_schema_branch" como destino porque es
   # un catálogo de sistema, siempre existe, sin depender de otro fixture.
+  #
+  # "opcional":true en las propiedades (bug real 2026-08-27, agregado acá
+  # después): sin esto, el generador de catálogos default a `false`
+  # (campo requerido) -- fixture_cliente/1 en los tests de este catálogo
+  # nunca setea este campo, así que CUALQUIER fixture reventaba con
+  # "no puede quedar vacío" apenas la metadata se re-generaba desde
+  # cero (`mix gen.catalogos` en una base vacía, ver CI). En dev/test
+  # locales no se notó porque el .ex ya compilado en disco venía de
+  # ANTES de este agregado real, con opcional:true puesto a mano en algún
+  # momento -- nunca se propagó a esta migración, que es la única fuente
+  # de verdad real para una base que arranca de cero.
   def change do
     alter table(:meta_fixture_cliente) do
       add :meta_fixture_cliente_sucursal_id, :integer, null: true
@@ -18,7 +29,7 @@ defmodule MetadataApp.Repo.Migrations.AgregarCampoReferenciaAMetaFixtureCliente 
       INSERT INTO meta_schema_detail
         (meta_schema_header_id, schema_context_field, schema_context_properties, insert_guid)
       SELECT h.id, 'meta_fixture_cliente_sucursal_id',
-        '{"tipo":"referencia","catalogo":"meta_schema_branch","etiqueta":"Sucursal","orden":4,"visible":true,"editable":true}'::jsonb,
+        '{"tipo":"referencia","catalogo":"meta_schema_branch","etiqueta":"Sucursal","orden":4,"visible":true,"editable":true,"opcional":true}'::jsonb,
         '00000000000000000000000000000f17'
       FROM meta_schema_header h
       WHERE h.schema_context_name = 'meta_fixture_cliente'

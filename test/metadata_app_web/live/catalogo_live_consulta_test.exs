@@ -241,13 +241,16 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
 
   # El default de fecha vive en Get Config (Consulta.campos, admin) --
   # cambiarlo desde acá (usuario final) es SOLO de esta sesión, nunca
-  # pisa ese default guardado. "fecha_registro" (columna de control real
-  # que TODO catálogo generado tiene) es nullable SIN default en la BD
-  # -- se le asigna un valor a mano acá porque el rediseño 2026-08-27 ya
-  # no tiene un modo "sin acotar" para Fecha (siempre bounded, ver
-  # moduledoc de MetaSchema.Consulta): con fecha_registro en NULL, NINGÚN
-  # modo lo mostraría nunca (NULL nunca matchea un BETWEEN), lo que
-  # volvería este test irreproducible.
+  # pisa ese default guardado. "fecha_registro" YA es un campo real de
+  # meta_fixture_cliente (meta_schema_detail, ver priv/repo/catalogos/
+  # meta_fixture_cliente.meta.json) -- criar_consulta_sobre_fixture/0 ya
+  # lo trae solo en consulta.campos, así que acá se actualiza ESE campo
+  # (Enum.map, mismo patrón que el resto de los tests de este archivo)
+  # en vez de agregar uno nuevo -- bug real 2026-08-27: agregarlo de
+  # nuevo duplicaba el campo (mismo catalogo+campo, mismo id de columna)
+  # y LiveView reventaba en el test con "Duplicate id found" apenas se
+  # armó el ícono de filtro por columna (cada uno con un id propio
+  # derivado de catalogo+campo).
   test "cambiar el modo de un parámetro Fecha desde el reporte no persiste el default de Get Config", %{conn: conn} do
     cliente =
       fixture_cliente(%{meta_fixture_cliente_nombre: "Con fecha #{unique()}", meta_fixture_cliente_edad: 1, meta_fixture_cliente_venta: Decimal.new("1")})
@@ -256,20 +259,22 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
 
     {_header, consulta, nav} = criar_consulta_sobre_fixture()
 
-    campo_fecha = %{
-      "catalogo" => consulta.catalogo_base,
-      "campo" => "fecha_registro",
-      "etiqueta" => "Fecha de registro",
-      "tipo" => "date",
-      "orden" => 99,
-      "visible" => true,
-      "totalizar" => false,
-      "es_parametro" => true,
-      "acotado" => true,
-      "defaults" => %{"modo" => "formula", "valor" => "2000-01-01", "valor_hasta" => "2000-01-02"}
-    }
+    campos =
+      Enum.map(consulta.campos, fn c ->
+        if c["campo"] == "fecha_registro" do
+          Map.merge(c, %{
+            "visible" => true,
+            "es_parametro" => true,
+            "acotado" => true,
+            "defaults" => %{"modo" => "formula", "valor" => "2000-01-01", "valor_hasta" => "2000-01-02"}
+          })
+        else
+          c
+        end
+      end)
 
-    {:ok, consulta} = MetaConsultas.actualizar_campos(consulta, consulta.campos ++ [campo_fecha])
+    {:ok, consulta} = MetaConsultas.actualizar_campos(consulta, campos)
+    campo_fecha = Enum.find(consulta.campos, &(&1["campo"] == "fecha_registro"))
 
     {:ok, view, html} = live(conn, nav)
     assert html =~ "Parámetros"

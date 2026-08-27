@@ -373,18 +373,24 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
 
   def render(assigns) do
     ~H"""
-    <div class="p-6 max-w-7xl mx-auto">
-      <div class="flex items-center justify-between mb-4">
-        <div>
-          <h1 class="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <span class="material-symbols-outlined text-purple-600">search</span>
-            {@header.schema_context_label}
-          </h1>
-          <p class="text-xs text-gray-500 mt-1">
-            Consulta Ecto de solo lectura sobre <strong>{Enum.join(MetaConsultas.catalogos_presentes(@consulta), " + ")}</strong> — {@header.schema_context_nav}
-          </p>
+    <div class="max-w-7xl mx-auto p-6 text-xs font-sans">
+      <div class="flex items-start justify-between gap-4 mb-4">
+        <div class="flex items-start gap-2">
+          <.link navigate={~p"/sysadmin/bc-list"} title="Volver al listado de BC"
+            class="mt-0.5 w-7 h-7 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors shrink-0">
+            <span class="material-symbols-outlined" style="font-size: 18px">arrow_back</span>
+          </.link>
+          <div>
+            <h1 class="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <span class="material-symbols-outlined text-purple-600">search</span>
+              {@header.schema_context_label}
+            </h1>
+            <p class="mt-0.5 text-gray-500">
+              Consulta Ecto de solo lectura sobre <strong>{Enum.join(MetaConsultas.catalogos_presentes(@consulta), " + ")}</strong> — {@header.schema_context_nav}
+            </p>
+          </div>
         </div>
-        <.link navigate={@header.schema_context_nav} class="text-xs font-semibold text-purple-700 hover:underline">
+        <.link navigate={@header.schema_context_nav} class="shrink-0 font-semibold text-purple-700 hover:underline">
           Ver reporte →
         </.link>
       </div>
