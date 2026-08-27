@@ -19,8 +19,16 @@ defmodule MetadataApp.PanelControl.Hostinger do
   require Logger
 
   @doc """
-  Crea (u overwrite=false, agrega/actualiza) el registro A de `subdominio`
-  en la zona de `dominio_base`, apuntando a `ip_destino`.
+  Crea (o reemplaza si ya existe) el registro A de `subdominio` en la zona
+  de `dominio_base`, apuntando a `ip_destino` -- `overwrite: true`, no
+  `false`: acá siempre queremos que ESTE subdominio apunte a ESTA IP, sin
+  importar si ya había un registro previo (ej. un intento anterior que
+  falló en un paso posterior, ver Desplegador.crear_app/1 -- el DNS es el
+  primer paso, así que un reintento SIEMPRE pisa lo que haya quedado del
+  intento anterior). Hostinger solo reemplaza el registro que matchea
+  nombre+tipo, no toca el resto de la zona (encontrado real: con
+  `overwrite: false` un reintento fallaba con "[DNS:4008] ... conflicts
+  with another resource record").
   """
   def crear_registro_a(dominio_base, subdominio, ip_destino) do
     case MetadataApp.Integraciones.obtener_credencial_por_sistema("hostinger") do
@@ -31,7 +39,7 @@ defmodule MetadataApp.PanelControl.Hostinger do
         url = (credencial.base_url || "https://developers.hostinger.com") <> "/api/dns/v1/zones/#{dominio_base}"
 
         body = %{
-          overwrite: false,
+          overwrite: true,
           zone: [
             %{name: subdominio, type: "A", ttl: 300, records: [%{content: ip_destino}]}
           ]
