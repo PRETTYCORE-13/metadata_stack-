@@ -8,11 +8,12 @@ defmodule MetadataApp.PanelControl.Hostinger do
   copia del token para llamar la API en runtime.
 
   Formato del body armado a partir de la documentación pública de la API
-  de Hostinger (`PUT /api/dns/v1/zones/{dominio}`, developers.hostinger.com)
-  -- no verificado todavía contra una llamada real (no hay token de prueba
-  a mano en este entorno). Antes de usar esto por primera vez de verdad,
-  confirmar el shape exacto del body contra la cuenta real y ajustar acá
-  si hace falta.
+  de Hostinger (`PUT /api/dns/v1/zones/{dominio}`).
+
+  El host real de la API es `developers.hostinger.com` -- `api.hostinger.com`
+  (el default original acá) no resuelve contra un origen válido y devuelve
+  530/"error code: 1016" (Cloudflare "Origin DNS error"), encontrado real
+  probando esto contra la cuenta de producción (2026-08-27).
   """
 
   require Logger
@@ -27,7 +28,7 @@ defmodule MetadataApp.PanelControl.Hostinger do
         {:error, "No hay ninguna credencial de Hostinger configurada -- creá una en /sysadmin/credenciales con sistema_externo \"hostinger\"."}
 
       credencial ->
-        url = (credencial.base_url || "https://api.hostinger.com") <> "/api/dns/v1/zones/#{dominio_base}"
+        url = (credencial.base_url || "https://developers.hostinger.com") <> "/api/dns/v1/zones/#{dominio_base}"
 
         body = %{
           overwrite: false,
