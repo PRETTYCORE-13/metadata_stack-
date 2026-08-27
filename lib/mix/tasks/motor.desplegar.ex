@@ -8,21 +8,21 @@ defmodule Mix.Tasks.Motor.Desplegar do
   Uso: mix motor.desplegar <ambiente> [--imagen ghcr.io/.../metadata_stack:tag]
 
   Contraparte de "Ambientes de Deploy" (ver Sysadmin.AmbientesLive,
-  MetadataApp.Ambientes) -- hasta esta entrega, el servidor de deploy
-  vivía hardcodeado en 3 secrets fijos de GitHub Actions
-  (DEPLOY_HOST/DEPLOY_USER/DEPLOY_SSH_KEY, usados igual por ci.yml y
-  bc-deploy.yml), un solo ambiente posible. `gh workflow run` (lo que
-  dispara `mix motor.publicar`) no puede pasar secrets como input --solo
-  strings planos-- así que elegir servidor en tiempo de deploy no se
-  puede resolver ADENTRO de esos workflows sin GitHub Environments (alta
-  manual en la UI de GitHub, fuera del alcance de esta app).
+  MetadataApp.Ambientes) -- hace el paso SSH DIRECTO desde la máquina de
+  quien lo corre, con las credenciales del ambiente elegido (columna
+  cifrada, ver MetadataApp.Encriptado), parametrizado por ambiente en vez
+  de fijo (a diferencia de ci.yml/bc-deploy.yml, que siguen apuntando
+  siempre al mismo servidor de oficina vía 3 secrets fijos de GitHub
+  Actions -- ver docs/ci-cd-deploy.md).
 
-  En cambio, este task hace el paso SSH DIRECTO desde la máquina de quien
-  lo corre, con las credenciales del ambiente elegido (columna cifrada,
-  ver MetadataApp.Encriptado) -- exactamente los mismos 4 pasos que ya
-  hacía el job "deploy" de ci.yml/bc-deploy.yml (docker pull, service
-  update --force, esperar 1/1, `docker exec .../app/bin/setup`), solo que
-  parametrizados por ambiente en vez de fijos.
+  Desde la migración de 167.233.84.151 a k3s (2026-08-26/27), este task
+  asume que CUALQUIER ambiente corre k3s -- namespace/deployment fijos
+  (`metadata-stack`/`metadata-stack-app`, mismos nombres que dejó esa
+  migración), no Docker Swarm. `ambiente.docker_servicio` quedó sin uso
+  acá (columna vestigial de cuando el único servidor era Swarm) -- si
+  algún día vuelve a hacer falta desplegar contra un Ambiente Swarm real,
+  esto necesita un campo por-ambiente para elegir el mecanismo, no un
+  hardcode global como este.
 
   No construye ni publica ninguna imagen -- asume que la imagen ya está
   en el registry (por un push a main normal, o por `mix motor.publicar`
@@ -78,7 +78,7 @@ defmodule Mix.Tasks.Motor.Desplegar do
         imagen = imagen_override || ambiente.imagen_docker
         Mix.shell().info("== Desplegando #{imagen} en \"#{ambiente.nombre}\" (#{ambiente.ssh_usuario}@#{ambiente.host}) ==")
 
-        case MetadataApp.Ssh.ejecutar(ambiente, comando_remoto(ambiente.docker_servicio, imagen)) do
+        case MetadataApp.Ssh.ejecutar(ambiente, comando_remoto(imagen)) do
           {:ok, 0, salida} ->
             Mix.shell().info(salida)
             Mix.shell().info("\n== Listo ==")
@@ -93,29 +93,32 @@ defmodule Mix.Tasks.Motor.Desplegar do
     end
   end
 
-  # Mismos 4 pasos que ya corrían fijos en ci.yml/bc-deploy.yml (job
-  # "deploy"), sin cambiarles nada -- solo parametrizados por servicio/
-  # imagen en vez de hardcodeados.
-  defp comando_remoto(servicio, imagen) do
+  @namespace "metadata-stack"
+  @deployment "metadata-stack-app"
+
+  # Equivalente en k3s de los 4 pasos que este task hacía contra Docker
+  # Swarm (docker pull + service update --force + esperar 1/1 + docker
+  # exec .../app/bin/setup) -- namespace/deployment fijos, mismos nombres
+  # que dejó la migración a k3s de 167.233.84.151 (2026-08-26/27).
+  # `rollout restart` (no solo `set image`) es necesario porque el tag
+  # `latest` casi nunca cambia de nombre entre deploys -- sin forzar un
+  # nuevo rollout, un `set image` a la MISMA imagen no dispara nada
+  # (mismo motivo que Swarm necesitaba `--force`).
+  defp comando_remoto(imagen) do
     """
     set -e
-    docker pull #{imagen}
-    docker service update --image #{imagen} --force #{servicio}
+    sudo k3s kubectl set image deployment/#{@deployment} app=#{imagen} -n #{@namespace}
+    sudo k3s kubectl rollout restart deployment/#{@deployment} -n #{@namespace}
 
-    echo "Esperando a que el servicio converja..."
-    for i in $(seq 1 12); do
-      REPLICAS=$(docker service ls --filter name=#{servicio} --format "{{.Replicas}}")
-      echo "  replicas: $REPLICAS"
-      if [ "$REPLICAS" = "1/1" ]; then break; fi
-      sleep 5
-    done
+    echo "Esperando a que el rollout converja..."
+    sudo k3s kubectl rollout status deployment/#{@deployment} -n #{@namespace} --timeout=120s
 
-    CONTAINER_ID=$(docker ps -q --filter "name=#{servicio}" | head -n1)
-    if [ -z "$CONTAINER_ID" ]; then
-      echo "No se encontró el contenedor de #{servicio}, no se pudo migrar"
+    POD=$(sudo k3s kubectl get pod -n #{@namespace} -l app=#{@deployment} -o jsonpath='{.items[0].metadata.name}')
+    if [ -z "$POD" ]; then
+      echo "No se encontró el pod de #{@deployment}, no se pudo migrar"
       exit 1
     fi
-    docker exec "$CONTAINER_ID" /app/bin/setup
+    sudo k3s kubectl exec -n #{@namespace} "$POD" -- /app/bin/setup
     """
   end
 end
