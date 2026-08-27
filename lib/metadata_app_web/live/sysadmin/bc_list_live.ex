@@ -623,6 +623,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         {:ok, union} -> Map.merge(union, %{"catalogo" => catalogo, "sin_union" => false})
         :sin_union -> %{"catalogo" => catalogo, "sin_union" => true}
       end
+      |> Map.put("maestro_detalle", MetaConsultas.maestro_de_detalle(catalogo))
 
     {:noreply,
      socket
@@ -648,17 +649,30 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         {catalogo, campo}
       end
 
+    campos_nuevo = MetaConsultas.campos_disponibles_para_union(fila["catalogo"])
+
     {:noreply,
      assign(socket, :union_manual, %{
        indice: indice,
        catalogo: fila["catalogo"],
-       campos_nuevo: MetaConsultas.campos_disponibles_para_union(fila["catalogo"]),
+       campos_nuevo: campos_nuevo,
+       campo_en_nuevo_elegido: List.first(campos_nuevo),
+       maestro_detalle: MetaConsultas.maestro_de_detalle(fila["catalogo"]),
        opciones_destino: opciones_destino
      })}
   end
 
   def handle_event("cerrar_union_manual", _params, socket) do
     {:noreply, assign(socket, :union_manual, nil)}
+  end
+
+  # Guardrail (R3, bug real 2026-08-26): "id" es prácticamente siempre un
+  # error para unir una tabla detalle -- avisa en vivo mientras se elige,
+  # sin bloquear el submit (el admin puede tener un motivo real, aunque
+  # rarísimo). No hace falta re-detectar nada acá -- maestro_detalle ya
+  # quedó calculado al abrir el modal, es fijo por catálogo.
+  def handle_event("cambiar_campo_union_manual", %{"campo_en_nuevo" => campo}, socket) do
+    {:noreply, update(socket, :union_manual, &Map.put(&1, :campo_en_nuevo_elegido, campo))}
   end
 
   def handle_event("guardar_union_manual", %{"campo_en_nuevo" => campo_en_nuevo, "destino" => destino}, socket) do
@@ -1738,6 +1752,9 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                     <% else %>
                       <span class="text-gray-500 font-mono break-all"> — {t["catalogo"]}.{t["campo_en_nuevo"]} = {t["catalogo_destino"]}.{t["campo_en_destino"]}</span>
                     <% end %>
+                    <p :if={t["maestro_detalle"]} class="text-amber-700">
+                      Detalle de <strong>{t["maestro_detalle"]}</strong> — puede traer varias filas por cada {t["maestro_detalle"]}.
+                    </p>
                   </span>
                   <div class="flex items-center gap-2 flex-shrink-0">
                     <button type="button" phx-click="abrir_union_manual" phx-value-indice={indice} class="text-purple-700 hover:text-purple-900 font-semibold">
@@ -1813,13 +1830,23 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             consulta — elegí a mano qué campo de cada lado conecta.
           </p>
 
+          <p :if={@um.maestro_detalle} class="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+            <strong>{@um.catalogo}</strong> es detalle de <strong>{@um.maestro_detalle}</strong> — puede traer varias
+            filas por cada {@um.maestro_detalle}.
+          </p>
+
           <div>
             <label class="block font-medium text-gray-900 mb-1">Campo en "{@um.catalogo}":</label>
-            <select name="campo_en_nuevo" required class="w-full border border-gray-300 rounded-lg text-gray-900 px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500">
+            <select name="campo_en_nuevo" phx-change="cambiar_campo_union_manual" required
+              class="w-full border border-gray-300 rounded-lg text-gray-900 px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500">
               <%= for campo <- @um.campos_nuevo do %>
-                <option value={campo}>{campo}</option>
+                <option value={campo} selected={campo == @um.campo_en_nuevo_elegido}>{campo}</option>
               <% end %>
             </select>
+            <p :if={@um.maestro_detalle && @um.campo_en_nuevo_elegido == "id"} class="mt-1 text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+              "id" casi seguro no es correcto acá — {@um.catalogo} es detalle de {@um.maestro_detalle}, la clave para
+              unirlo es "encabezado_id".
+            </p>
           </div>
 
           <div>

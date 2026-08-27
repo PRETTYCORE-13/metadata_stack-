@@ -923,7 +923,14 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # primero) lo mostraba y editaba bien, así que el bug era invisible
   # hasta mirar la columna de la tabla. Mismo orden de chequeo que
   # opciones_referencia/3 para no desincronizarse de nuevo.
-  defp modulo_destino_de(catalogo) do
+  #
+  # Pública (no defp) desde 2026-08-27: MetaConsultas.ejecutar/6 la
+  # reusa para resolver a nombre las columnas "referencia" de un reporte
+  # Consulta Ecto, mismo criterio exacto (sistema primero, BPB si no) que
+  # esta función ya usa para mapa_acompanamiento/2 -- evita un tercer
+  # lugar con la misma lógica de sistema-vs-BPB, que se desincronizaría
+  # tarde o temprano.
+  def modulo_destino_de(catalogo) do
     case MetadataApp.BusinessProcessBuilder.MetaSchemaContext.catalogo_sistema(catalogo) do
       %{modulo: modulo} -> modulo
       nil -> MetadataApp.BusinessProcessBuilder.MetaSchemaContext.modulo_por_nombre(catalogo)
