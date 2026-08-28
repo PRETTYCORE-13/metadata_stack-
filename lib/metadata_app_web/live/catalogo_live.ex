@@ -16,6 +16,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   alias MetadataApp.Autenticacion.Empresa
   alias MetadataApp.Repo
   alias MetadataApp.MetaAuditoria
+  alias MetadataApp.MetaImportacionDatos
   alias MetadataAppWeb.AdminNav
   alias MetadataAppWeb.CampoInputComponents
   import MetadataAppWeb.SelectorMultipleComponents, only: [selector_multiple: 1]
@@ -149,8 +150,18 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:bc_creado_por, bc_creado_por)
      |> assign(:campo_id_creado_por, campo_id_creado_por)
      |> assign(:modulo, modulo)
+     |> assign(:header, header)
      |> assign(:es_detalle?, es_detalle?)
      |> assign(:campos_alta, campos_alta)
+     # Botón "Importar" de la barra de acciones — solo visible con al menos
+     # una plantilla ACTIVA (ver MetaImportacionDatos.listar_activas/1), a
+     # pedido explícito: no saturar la barra de catálogos que no configuraron
+     # ninguna. Un catálogo detalle nunca importa por su cuenta (Fase 1/2
+     # del módulo de Importación — sus filas entran vía la plantilla del
+     # maestro), así que ni se consulta.
+     |> assign(:plantillas_importacion, if(es_detalle?, do: [], else: MetaImportacionDatos.listar_activas(header.id)))
+     |> assign(:importar_modal, nil)
+     |> allow_upload(:archivo_importacion, accept: ~w(.xlsx), max_entries: 1, auto_upload: true)
      |> assign(:estados_por_id, estados_por_id)
      |> assign(:pagina, 1)
      |> assign(:filtros, filtros)
@@ -456,6 +467,79 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   def handle_event("change_page", %{"id" => id}, socket) do
     AdminNav.handle_nav(id, socket, socket.assigns.current_page)
+  end
+
+  # --- Asistente "Importar" (Fase 1 del módulo de Importación) -------------
+  # Paso 1: elegir plantilla · Paso 2: descargar/subir el Excel · Paso 3:
+  # ver la previsualización (dry-run, nada persistido todavía) · Paso 4:
+  # confirmar y ejecutar de verdad. Reusa MetaImportacionDatos.previsualizar/3
+  # y ejecutar/3 tal cual — este LiveView no valida nada por su cuenta.
+
+  def handle_event("abrir_importar", _params, socket) do
+    {:noreply, assign(socket, :importar_modal, %{"paso" => 1, "plantilla_id" => nil, "filas_leidas" => nil, "resultado" => nil, "error" => nil})}
+  end
+
+  def handle_event("cerrar_importar", _params, socket) do
+    {:noreply, assign(socket, :importar_modal, nil)}
+  end
+
+  def handle_event("importar_elegir_plantilla", %{"id" => id}, socket) do
+    modal = %{
+      socket.assigns.importar_modal
+      | "paso" => 2,
+        "plantilla_id" => String.to_integer(id),
+        "filas_leidas" => nil,
+        "resultado" => nil,
+        "error" => nil
+    }
+
+    {:noreply, assign(socket, :importar_modal, modal)}
+  end
+
+  def handle_event("importar_volver", _params, socket) do
+    modal = %{socket.assigns.importar_modal | "paso" => 1, "plantilla_id" => nil, "filas_leidas" => nil, "resultado" => nil, "error" => nil}
+    {:noreply, assign(socket, :importar_modal, modal)}
+  end
+
+  # Requerido por <.live_file_input> (LiveView necesita un phx-change en el
+  # form que lo contiene para trackear selección/progreso) — nada que
+  # validar acá, la lectura real recién pasa al "Subir y validar".
+  def handle_event("importar_archivo_seleccionado", _params, socket), do: {:noreply, socket}
+
+  def handle_event("importar_procesar_archivo", _params, socket) do
+    modal = socket.assigns.importar_modal
+    plantilla = MetaImportacionDatos.obtener_plantilla!(modal["plantilla_id"])
+
+    resultados =
+      consume_uploaded_entries(socket, :archivo_importacion, fn %{path: path}, _entry ->
+        {:ok, MetaImportacionDatos.leer_excel(path, plantilla)}
+      end)
+
+    case resultados do
+      [{:ok, %{"encabezado" => []}}] ->
+        {:noreply, assign(socket, :importar_modal, Map.put(modal, "error", "El archivo no tiene ninguna fila de datos para importar."))}
+
+      [{:ok, filas}] ->
+        resultado = MetaImportacionDatos.previsualizar(plantilla, socket.assigns.current_scope, filas)
+
+        modal = %{modal | "paso" => 3, "filas_leidas" => filas, "resultado" => resultado, "error" => nil}
+        {:noreply, assign(socket, :importar_modal, modal)}
+
+      [{:error, motivo}] ->
+        {:noreply, assign(socket, :importar_modal, Map.put(modal, "error", "No se pudo leer el archivo: #{motivo}"))}
+
+      [] ->
+        {:noreply, assign(socket, :importar_modal, Map.put(modal, "error", "Elegí un archivo .xlsx para subir."))}
+    end
+  end
+
+  def handle_event("importar_confirmar", _params, socket) do
+    modal = socket.assigns.importar_modal
+    plantilla = MetaImportacionDatos.obtener_plantilla!(modal["plantilla_id"])
+    resultado = MetaImportacionDatos.ejecutar(plantilla, socket.assigns.current_scope, modal["filas_leidas"])
+
+    modal = %{modal | "paso" => 4, "resultado" => resultado}
+    {:noreply, socket |> assign(:importar_modal, modal) |> assign(:pagina, 1) |> cargar_filas()}
   end
 
   # Búsqueda general: mismo texto contra CUALQUIER columna (OR), a
@@ -1311,6 +1395,11 @@ defmodule MetadataAppWeb.CatalogoLive do
               </svg>
               <span>Nuevo registro</span>
             </.link>
+            <button :if={@plantillas_importacion != []} type="button" phx-click="abrir_importar"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50">
+              <span class="material-symbols-outlined" style="font-size:14px">upload_file</span>
+              <span>Importar</span>
+            </button>
             <span class="text-xs font-medium text-gray-500 bg-gray-100 rounded-full px-3 py-1">
               {@inicio}-{@fin} de {@total_filas}
             </span>
@@ -1458,6 +1547,138 @@ defmodule MetadataAppWeb.CatalogoLive do
               </tr>
             </tfoot>
           </table>
+        </div>
+      </div>
+
+      <.modal_importar :if={@importar_modal} modal={@importar_modal} plantillas={@plantillas_importacion} uploads={@uploads} />
+    </div>
+    """
+  end
+
+  attr :modal, :map, required: true
+  attr :plantillas, :list, required: true
+  attr :uploads, :map, required: true
+
+  defp modal_importar(assigns) do
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-xl w-full text-xs max-h-[90vh] overflow-y-auto">
+        <div class="px-4 pt-4 pb-3 border-b border-gray-100 flex items-start justify-between gap-3">
+          <div class="flex items-start gap-2.5">
+            <span class="material-symbols-outlined text-purple-600 mt-0.5" style="font-size:20px">upload_file</span>
+            <div>
+              <h2 class="text-sm font-bold text-gray-900">Importar registros</h2>
+              <p class="text-gray-500 mt-0.5">Descargá la plantilla, llenala y subila — validamos antes de confirmar.</p>
+            </div>
+          </div>
+          <button type="button" phx-click="cerrar_importar" class="text-gray-400 hover:text-gray-700 flex-shrink-0">
+            <span class="material-symbols-outlined" style="font-size:20px">close</span>
+          </button>
+        </div>
+
+        <div class="p-4">
+          <div :if={@modal["error"]} class="bg-red-50 text-red-700 rounded-lg px-2.5 py-1.5 mb-3">{@modal["error"]}</div>
+
+          <%= if @modal["paso"] == 1 do %>
+            <p class="text-gray-500 mb-2">Elegí qué plantilla vas a usar:</p>
+            <div class="flex flex-col gap-2">
+              <button :for={p <- @plantillas} type="button" phx-click="importar_elegir_plantilla" phx-value-id={p.id}
+                class="text-left border border-gray-200 rounded-lg px-3 py-2 hover:border-purple-400 hover:bg-purple-50">
+                <div class="font-semibold text-gray-900">{p.nombre}</div>
+                <div :if={p.descripcion} class="text-gray-500">{p.descripcion}</div>
+              </button>
+            </div>
+          <% end %>
+
+          <%= if @modal["paso"] == 2 do %>
+            <% plantilla_elegida = Enum.find(@plantillas, &(&1.id == @modal["plantilla_id"])) %>
+            <p class="text-gray-600 mb-2">
+              <%!-- target="_blank" a propósito (bug real reportado): un <a href>
+                   normal hace que LiveView detecte "va a navegar" y mate el
+                   socket de ESTA página ANTES de saber que la respuesta es una
+                   descarga de archivo (Content-Disposition: attachment), no una
+                   navegación real -- "Subir y validar" quedaba mudo después,
+                   sin ningún error visible, porque el socket ya estaba muerto.
+                   Abrir en pestaña nueva nunca toca el socket de acá. --%>
+              1. <.link href={~p"/sysadmin/importacion/#{@modal["plantilla_id"]}/descargar"} target="_blank" class="text-purple-700 font-semibold hover:underline">Descargá la plantilla "{plantilla_elegida.nombre}"</.link>,
+              llenala con los datos y subila acá abajo.
+            </p>
+            <p class="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+              La fila 2 (en cursiva/gris) es solo un ejemplo — no la edites. Agregá tus registros a partir de la fila 3.
+            </p>
+            <form id="form-importar-archivo" phx-submit="importar_procesar_archivo" phx-change="importar_archivo_seleccionado" class="border border-dashed border-gray-300 rounded-lg p-4">
+              <.live_file_input upload={@uploads.archivo_importacion} />
+              <div :for={entry <- @uploads.archivo_importacion.entries} class="mt-2 flex items-center gap-2">
+                <span class="text-gray-600">{entry.client_name}</span>
+                <progress value={entry.progress} max="100" class="flex-1 h-1.5">{entry.progress}%</progress>
+              </div>
+              <div class="flex justify-between mt-3">
+                <button type="button" phx-click="importar_volver" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
+                  ← Volver
+                </button>
+                <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">
+                  Subir y validar
+                </button>
+              </div>
+            </form>
+          <% end %>
+
+          <%= if @modal["paso"] == 3 do %>
+            <.resultado_importar resultado={@modal["resultado"]} confirmando?={false} />
+            <div class="flex justify-between mt-3">
+              <button type="button" phx-click="importar_volver" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
+                ← Elegir otro archivo
+              </button>
+              <button type="button" phx-click="importar_confirmar"
+                disabled={Enum.all?(@modal["resultado"], &(&1.resultado == :error))}
+                class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                Confirmar importación
+              </button>
+            </div>
+          <% end %>
+
+          <%= if @modal["paso"] == 4 do %>
+            <.resultado_importar resultado={@modal["resultado"]} confirmando?={true} />
+            <div class="flex justify-end mt-3">
+              <button type="button" phx-click="cerrar_importar" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">
+                Cerrar
+              </button>
+            </div>
+          <% end %>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  attr :resultado, :list, required: true
+  attr :confirmando?, :boolean, required: true
+
+  defp resultado_importar(assigns) do
+    ok = Enum.count(assigns.resultado, &(&1.resultado == :ok))
+    error = Enum.count(assigns.resultado, &(&1.resultado == :error))
+    assigns = assigns |> assign(:ok, ok) |> assign(:error, error)
+
+    ~H"""
+    <div class="flex items-center gap-3 mb-3">
+      <span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-green-50 text-green-700 font-semibold">
+        <span class="material-symbols-outlined" style="font-size:14px">check_circle</span>
+        {@ok} {if @confirmando?, do: "creados", else: "listos para crear"}
+      </span>
+      <span :if={@error > 0} class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-red-50 text-red-700 font-semibold">
+        <span class="material-symbols-outlined" style="font-size:14px">error</span>
+        {@error} con error
+      </span>
+    </div>
+
+    <div :if={@error > 0} class="flex flex-col gap-2 max-h-72 overflow-y-auto">
+      <div :for={fila <- Enum.filter(@resultado, &(&1.resultado == :error))} class="border border-red-200 bg-red-50 rounded-lg px-2.5 py-1.5">
+        <div class="font-semibold text-red-800 mb-1">Fila {fila.fila}</div>
+        <div :for={err <- fila.errores} class="text-red-700">
+          <span :if={err.etiqueta} class="font-semibold">{err.etiqueta}</span>
+          <span :if={err.valor not in [nil, ""]}> ("{err.valor}")</span>
+          : {err.mensaje}
+          <div class="text-red-500">{err.sugerencia}</div>
         </div>
       </div>
     </div>

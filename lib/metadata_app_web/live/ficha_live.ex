@@ -1333,9 +1333,18 @@ defmodule MetadataAppWeb.FichaLive do
       # ahí sí entra cualquier campo visible, sin curar.
       columnas_tabla = Enum.filter(columnas_detalle, &MetaSchemaContext.mostrar_en_tabla?(&1.schema_context_properties))
 
+      # tiene_detalle? (Fase 0 del módulo de Importación, multinivel,
+      # 2026-08-27): un catálogo detalle puede a su vez tener sus propios
+      # detalles (Pedido → Partidas → Lotes) — cargar_registro/2 YA los
+      # carga sin ningún gate especial en cuanto se navega a la ficha
+      # PROPIA de ese renglón (misma función, cat.nombre pasa a ser
+      # `tabla`), así que lo único que hace falta acá es saber si existe
+      # ese link "Ver detalle" desde dentro de la grilla del maestro (ver
+      # formulario_renglon/1) — nunca un grid anidado.
       %{
         nombre: h.schema_context_name,
         etiqueta: h.schema_context_label,
+        tiene_detalle?: MetaSchemaContext.listar_catalogos_detalle(h.id) != [],
         columnas: columnas_detalle,
         columnas_tabla: columnas_tabla,
         scope: scope
@@ -4005,6 +4014,18 @@ defmodule MetadataAppWeb.FichaLive do
   attr :campos_editables, :list, default: []
 
   defp panel_detalle_catalogo(assigns) do
+    # Id FÍSICO (no @seleccion.renglon_id, el contador por maestro) del
+    # renglón seleccionado — solo hace falta para armar el link "Ver
+    # ficha" de abajo (multinivel), se resuelve acá contra @filas (que sí
+    # trae :id, ver CatalogoGenerico.serializar/2) en vez de threadear un
+    # campo nuevo en @detalle_seleccion, que se arma en 4 handle_event
+    # distintos.
+    id_fisico =
+      assigns.seleccion && assigns.seleccion.renglon_id &&
+        Enum.find_value(assigns.filas, &(&1.renglon_id == assigns.seleccion.renglon_id && &1.id))
+
+    assigns = assign(assigns, :id_fisico, id_fisico)
+
     ~H"""
     <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
       <div class="px-4 py-2.5 border-b border-gray-100 bg-gray-50">
@@ -4012,7 +4033,7 @@ defmodule MetadataAppWeb.FichaLive do
       </div>
 
       <div class="border-b border-gray-100">
-        <.formulario_renglon cat={@cat} seleccion={@seleccion} total={length(@filas)} campos_editables={@campos_editables} />
+        <.formulario_renglon cat={@cat} seleccion={@seleccion} total={length(@filas)} campos_editables={@campos_editables} id_fisico={@id_fisico} />
       </div>
 
       <div class="overflow-x-auto">
@@ -4027,6 +4048,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :seleccion, :map, default: nil
   attr :total, :integer, required: true
   attr :campos_editables, :list, default: []
+  attr :id_fisico, :integer, default: nil
 
   defp formulario_renglon(assigns) do
     # Un renglón YA PERSISTIDO solo se puede tocar si al menos uno de sus
@@ -4061,6 +4083,19 @@ defmodule MetadataAppWeb.FichaLive do
           Enter confirma · Tab siguiente campo · F2 busca referencias · Esc cancela
         </div>
       </div>
+
+      <%!-- Multinivel (Fase 0, 2026-08-27): este renglón tiene sus propios
+           detalles (ej. una Partida que a su vez tiene Lotes) — para verlos/
+           editarlos hay que ir a la ficha PROPIA del renglón (misma
+           FichaLive, cat.nombre pasa a ser la tabla), nunca un grid anidado
+           acá adentro. Solo aparece con un renglón YA PERSISTIDO
+           seleccionado (@id_fisico viene de @filas, nil en una línea nueva
+           todavía sin guardar). --%>
+      <.link :if={@id_fisico && @cat.tiene_detalle?} navigate={"/registro/#{@cat.nombre}/#{@id_fisico}"}
+        class="px-4 py-1.5 border-b border-gray-100 bg-purple-50 text-purple-700 text-[11px] font-semibold flex items-center gap-1 hover:bg-purple-100">
+        Ver detalle de este renglón
+        <span class="material-symbols-outlined" style="font-size:13px">arrow_outward</span>
+      </.link>
 
       <%= if is_nil(@seleccion) do %>
         <div class="px-4 py-6 flex items-center justify-center text-gray-400">
