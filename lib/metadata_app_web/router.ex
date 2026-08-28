@@ -189,6 +189,7 @@ defmodule MetadataAppWeb.Router do
       live "/sysadmin/empresas", Sysadmin.EmpresasLive
       live "/sysadmin/credenciales", Sysadmin.CredencialesLive
       live "/sysadmin/ambientes", Sysadmin.AmbientesLive
+      live "/sysadmin/panel-control", Sysadmin.PanelControlLive
       live "/sysadmin/acciones-externas", Sysadmin.AccionesExternasLive
       live "/sysadmin/jerarquia", Sysadmin.JerarquiaOrganizacionalLive
       live "/sysadmin/catalogos/permisos", Sysadmin.CatalogoPermisosLive

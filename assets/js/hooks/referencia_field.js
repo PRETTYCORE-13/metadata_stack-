@@ -105,8 +105,15 @@ export default {
     this.elegir(this.filtradas[parseInt(li.dataset.idx, 10)])
   },
 
+  // F2 siempre muestra TODAS las opciones, ignorando lo que ya haya en el
+  // input de texto -- si el campo ya tiene un valor elegido (ej. "LISTA
+  // MAESTRA"), ese texto YA está en el input, y filtrar por él dejaba una
+  // sola opción (la actual) en vez de dejar elegir otra (bug real,
+  // reportado: "F2 no enlista más que el registro actual"). Tipear sigue
+  // filtrando normal (ver el listener de "input" en mounted()), esto solo
+  // afecta el estado inicial al abrir con F2.
   abrir() {
-    this.filtrar(this.texto.value)
+    this.filtrar("")
   },
 
   cerrar() {

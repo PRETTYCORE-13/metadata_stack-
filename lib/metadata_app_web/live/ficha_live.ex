@@ -29,9 +29,11 @@ defmodule MetadataAppWeb.FichaLive do
   import MetadataAppWeb.CampoInputComponents, only: [campo_input: 1]
 
   alias MetadataApp.Repo
-  alias MetadataApp.Autenticacion.Scope
+  alias MetadataApp.Autenticacion
+  alias MetadataApp.Autenticacion.{Scope, Empresa}
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerico}
   alias MetadataApp.MetaStateEngine
+  alias MetadataApp.MetaAuditoria
   alias MetadataApp.Renglones
   alias MetadataApp.Permissions
   alias MetadataApp.MetaPlantillas
@@ -48,6 +50,22 @@ defmodule MetadataAppWeb.FichaLive do
   # `<input type="date">` no puede mostrar "15 de agosto" mientras se
   # edita (limitación real del navegador, no de la app).
   @meses_es ~w(enero febrero marzo abril mayo junio julio agosto septiembre octubre noviembre diciembre)
+
+  # Mismas 8 claves que @campos_control de BcMotorLive/PlantillaConstructorLive
+  # -- acá es donde un nodo tipo "campo" con `propiedades["campo"]` en una de
+  # estas claves (en vez de un schema_context_field real) se resuelve a un
+  # valor mostrable. Ver campo_control_row/1 más abajo.
+  @claves_campos_control ~w(id estado trn empresa branch inventory_location sales_unit creado_por)
+  @etiquetas_campos_control %{
+    "id" => "ID",
+    "estado" => "Estado",
+    "trn" => "TRN",
+    "empresa" => "Empresa",
+    "branch" => "Sucursal",
+    "inventory_location" => "Almacén",
+    "sales_unit" => "Unidad de venta",
+    "creado_por" => "Creado por"
+  }
 
   def mount(%{"tabla" => tabla, "id" => id} = params, _session, socket) do
     socket =
@@ -124,14 +142,14 @@ defmodule MetadataAppWeb.FichaLive do
           |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
           |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
           |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
-          |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1)))
+          |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1, socket.assigns[:current_scope])))
 
         transicion_alta = if es_detalle?, do: nil, else: MetaStateEngine.transicion_alta(tabla)
 
         campos_editables =
           if es_detalle?,
             do: [],
-            else: tabla |> MetaStateEngine.campos_editables(transicion_alta) |> campos_editables_propios(columnas)
+            else: tabla |> MetaStateEngine.campos_editables(transicion_alta) |> campos_editables_propios(columnas, header)
 
         # "Duplicar" (icono rápido de la Ficha, modo :ver) llega acá con
         # ?duplicar_de=<id> — ver valores_duplicados/4 más abajo.
@@ -145,7 +163,8 @@ defmodule MetadataAppWeb.FichaLive do
         # incluido) en vez de la publicada real.
         socket = assign(socket, :plantilla_preview_id, Map.get(params, "plantilla_id"))
         plantilla = plantilla_a_mostrar(socket, header.id)
-        catalogos_detalle_mount = if es_detalle?, do: [], else: cargar_catalogos_detalle(header.id)
+        catalogos_detalle_mount =
+          if es_detalle?, do: [], else: cargar_catalogos_detalle(header.id, socket.assigns[:current_scope])
 
         {:ok,
          socket
@@ -998,9 +1017,27 @@ defmodule MetadataAppWeb.FichaLive do
   # maestro. Sin este filtro, campos_modificados/3 explotaba con
   # `String.to_existing_atom/1` al recibir un campo que nunca fue field
   # de ESTE schema (bug real, reportado en producción).
-  defp campos_editables_propios(campos_editables, columnas) do
+  # branch_id/inventory_id/sales_unit_id (Alcance de Datos) van sumados
+  # aparte, no vía campos_editables de la transición -- son campos de
+  # CONTROL, nunca filas de meta_schema_detail, así que nunca van a
+  # sobrevivir el MapSet.member?/2 de arriba. Se habilitan automático
+  # (mismo permiso que el resto de "guardar": si esta transición no dejó
+  # editar NADA, tampoco esto) en vez de requerir que el admin los liste a
+  # mano en "Campos editables" -- decisión 2026-08-24, no una lista
+  # abierta de cualquier campo de control (jamás "id"/"creado_por" acá).
+  # Gateado por alcance_habilitado porque esas columnas ni EXISTEN en el
+  # schema si el catálogo no lo tiene activado (ver alcance_field_asts/1
+  # en MetaCatalogoGenerico) -- campos_modificados/3 reventaría con
+  # String.to_existing_atom/Map.get si se colara acá sin la columna real.
+  @campos_alcance_editables ~w(branch_id inventory_id sales_unit_id)
+
+  defp campos_editables_propios(campos_editables, columnas, header) do
     propios = MapSet.new(columnas, & &1.schema_context_field)
-    Enum.filter(campos_editables, &MapSet.member?(propios, &1))
+    negocio = Enum.filter(campos_editables, &MapSet.member?(propios, &1))
+
+    alcance = if header.alcance_habilitado and negocio != [], do: @campos_alcance_editables, else: []
+
+    negocio ++ alcance
   end
 
   # Un renglón nuevo (sin renglon_id todavía) siempre es editable — el alta
@@ -1153,16 +1190,35 @@ defmodule MetadataAppWeb.FichaLive do
     |> Enum.map(fn {_campo, etiqueta, activo, nombre} -> {etiqueta, nombre.(activo)} end)
   end
 
+  # Opciones para el picker editable de branch_id/inventory_id/sales_unit_id
+  # de un nodo "campo" de control (ver campo_control_row/1) -- TODAS las
+  # vivas de la empresa activa (mismo criterio que un campo referencia
+  # normal: cualquiera con permiso de editar el registro puede asignar
+  # cualquier sucursal/almacén/unidad DE LA EMPRESA, sin acotar por los
+  # permisos operativos propios del usuario que edita -- eso es un
+  # concepto distinto, el de branches_operables/3 y compañía, que solo
+  # aplica al modal de "cambiar unidad operativa" de la SESIÓN de uno
+  # mismo, no a editar el dato de un registro ajeno). Calculado UNA vez
+  # por render (no por campo), igual que columnas/estados_por_id.
+  defp opciones_alcance(%{alcance_habilitado: true}, %Scope{empresa_activa: %{id: empresa_id}}) do
+    %{
+      "branch_id" => Enum.map(Autenticacion.listar_branches(empresa_id), &{&1.id, &1.branch_name}),
+      "inventory_id" => Enum.map(Autenticacion.listar_inventory_locations_de_empresa(empresa_id), &{&1.id, &1.inventory_name}),
+      "sales_unit_id" => Enum.map(Autenticacion.listar_sales_units_de_empresa(empresa_id), &{&1.id, &1.sales_unit_name})
+    }
+  end
+
+  defp opciones_alcance(_header, _scope), do: %{}
+
   defp cargar_registro(socket, registro) do
     %{tabla: tabla, header: header, es_detalle?: es_detalle?} = socket.assigns
-
     columnas =
       tabla
       |> MetaSchemaContext.listar_detalles()
       |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
       |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
       |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
-      |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1)))
+      |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1, socket.assigns[:current_scope])))
 
     estados_por_id = MetaStateEngine.mapa_nombres_estados(tabla)
 
@@ -1180,7 +1236,7 @@ defmodule MetadataAppWeb.FichaLive do
     campos_editables =
       if es_detalle?,
         do: [],
-        else: campos_editables_propios(detalle_campos_editables_raw, columnas)
+        else: campos_editables_propios(detalle_campos_editables_raw, columnas, header)
 
     # MetaStateEngine.transiciones_disponibles/2 asume estado_id no-nil
     # (transiciones_desde/2 hace `t.estado_origen_id == ^estado_id`, que Ecto
@@ -1206,7 +1262,7 @@ defmodule MetadataAppWeb.FichaLive do
     # agregar un renglón volviendo a la tabla y abriendo el modal viejo;
     # acá la Ficha 360° ya tiene el id real del maestro, así que se
     # resuelve en el lugar, sin ese viaje de ida y vuelta.
-    catalogos_detalle = cargar_catalogos_detalle(header.id)
+    catalogos_detalle = cargar_catalogos_detalle(header.id, socket.assigns[:current_scope])
     detalle_renglones = cargar_detalle_renglones(socket.assigns[:current_scope], catalogos_detalle, registro.id, estados_por_id)
 
     socket
@@ -1250,7 +1306,7 @@ defmodule MetadataAppWeb.FichaLive do
     |> Enum.filter(&Permissions.can?(socket.assigns.current_scope, "ejecutar_#{&1.nombre}", header.schema_context_name))
   end
 
-  defp cargar_catalogos_detalle(header_id) do
+  defp cargar_catalogos_detalle(header_id, scope) do
     header_id
     |> MetaSchemaContext.listar_catalogos_detalle()
     |> Enum.map(fn h ->
@@ -1268,7 +1324,7 @@ defmodule MetadataAppWeb.FichaLive do
         # usuario no puede completar de verdad, bloqueando "Guardar".
         |> Enum.reject(&(get_in(&1, [:schema_context_properties, "editable"]) == false))
         |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
-        |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1)))
+        |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1, scope)))
 
       # :columnas_tabla — subconjunto curado (BcMotorLive → Campos → "En
       # tabla") para catálogos con muchos campos, donde mostrar TODOS como
@@ -1290,7 +1346,8 @@ defmodule MetadataAppWeb.FichaLive do
         etiqueta: h.schema_context_label,
         tiene_detalle?: MetaSchemaContext.listar_catalogos_detalle(h.id) != [],
         columnas: columnas_detalle,
-        columnas_tabla: columnas_tabla
+        columnas_tabla: columnas_tabla,
+        scope: scope
       }
     end)
   end
@@ -1563,7 +1620,23 @@ defmodule MetadataAppWeb.FichaLive do
     do: Enum.map_join(fallas, " | ", & &1.mensaje)
 
   defp formatear_error(%Ecto.Changeset{} = changeset), do: MetadataApp.MetaErrores.resumen(changeset)
-  defp formatear_error({:postcondicion_fallida, _}), do: "Error interno, no se aplicó el cambio."
+
+  # `ReglaPost.ejecutar/4` devuelve `{:error, term()}` sin garantía de forma
+  # (a diferencia de `ReglaPre.evaluar/3`, que sí promete siempre un
+  # `String.t()` -- ver {:precondiciones, fallas} arriba, que por eso se
+  # muestra directo) -- por eso el catch-all de abajo se queda con el
+  # mensaje genérico para cualquier cosa que no sea un string reconocible.
+  # Bug real 2026-08-27 (cliente bloqueado por "Error interno" sin ninguna
+  # pista): cuando SÍ es un string (el caso típico -- una regla de negocio
+  # bien portada, como PtyDsdCsClientes.Post vía traducir_resultado/1, ya
+  # lo tradujo a un mensaje humano antes de llegar acá) no hay motivo para
+  # ocultarlo -- mismo criterio que ya usan las precondiciones.
+  defp formatear_error({:postcondicion_fallida, razon}) when is_binary(razon), do: razon
+
+  defp formatear_error({:postcondicion_fallida, razon}) do
+    Logger.error("FichaLive: postcondición transaccional falló: #{inspect(razon)}")
+    "Error interno, no se aplicó el cambio."
+  end
 
   # Jerarquía operativa activa (Fase 5, 2026-08-11) -- CatalogoGenerico
   # devuelve esto cuando el catálogo exige branch/sales_unit/inventory
@@ -1625,7 +1698,7 @@ defmodule MetadataAppWeb.FichaLive do
         plantilla={@plantilla_impresion} relaciones={@relaciones} detalle={%{catalogos: @catalogos_detalle, renglones: @detalle_renglones}}
         estados_por_id={@estados_por_id}
         otras_transiciones={@otras_transiciones}
-        edicion={%{valores: %{}, errores: %{}, contexto: @contexto_formula, calculados: @valores_calculados}} />
+        edicion={%{valores: %{}, errores: %{}, contexto: @contexto_formula, calculados: @valores_calculados, opciones_alcance: %{}, scope: nil}} />
     </div>
     """
   end
@@ -1652,6 +1725,7 @@ defmodule MetadataAppWeb.FichaLive do
         :valores_calculados,
         valores_con_calculados(assigns.columnas, assigns.registro, assigns.form_values, contexto_formula, assigns.plantilla)
       )
+      |> assign(:opciones_alcance, opciones_alcance(assigns.header, assigns[:current_scope]))
 
     ~H"""
     <div class="p-6 max-w-6xl">
@@ -1848,7 +1922,7 @@ defmodule MetadataAppWeb.FichaLive do
       <.tab_datos :if={@tab == "datos"} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
         plantilla={@plantilla} relaciones={@relaciones} detalle={%{catalogos: @catalogos_detalle, renglones: @detalle_renglones}}
         estados_por_id={@estados_por_id} otras_transiciones={@otras_transiciones}
-        edicion={%{valores: @form_values, errores: @errores_campos, contexto: @contexto_formula, calculados: @valores_calculados}} />
+        edicion={%{valores: @form_values, errores: @errores_campos, contexto: @contexto_formula, calculados: @valores_calculados, opciones_alcance: @opciones_alcance, scope: @current_scope}} />
       <.tab_relaciones :if={@tab == "relaciones"} relaciones={@relaciones} />
       <.tab_historial :if={@tab == "historial"} historial={@historial} estados_por_id={@estados_por_id} />
       <.tab_detalle :if={@tab == "detalle"} modo={@modo} catalogos_detalle={@catalogos_detalle} detalle_renglones={@detalle_renglones}
@@ -2291,6 +2365,15 @@ defmodule MetadataAppWeb.FichaLive do
         </div>
       </div>
     </div>
+    """
+  end
+
+  defp nodo_plantilla_render(%{nodo: %{"tipo" => "campo", "propiedades" => %{"campo" => clave}}} = assigns)
+       when clave in @claves_campos_control do
+    assigns = assign(assigns, :clave, clave)
+
+    ~H"""
+    <.campo_control_row clave={@clave} registro={@registro} campos_editables={@campos_editables} edicion={@edicion} estados_por_id={@estados_por_id} tabla={@registro.__struct__.__schema__(:source)} />
     """
   end
 
@@ -3352,6 +3435,92 @@ defmodule MetadataAppWeb.FichaLive do
     |> Map.new(&{&1.schema_context_field, &1.schema_context_properties["etiqueta"]})
   end
 
+  attr :clave, :string, required: true
+  attr :registro, :map, required: true
+  attr :campos_editables, :list, required: true
+  attr :edicion, :map, required: true
+  attr :estados_por_id, :map, required: true
+  attr :tabla, :string, required: true
+
+  # Contraparte de campo_row/1 para las 8 claves de @claves_campos_control
+  # (id/estado/trn/empresa/branch/inventory_location/sales_unit/creado_por)
+  # -- nunca tienen fila en meta_schema_detail, así que nunca pasan por
+  # `col`/schema_context_properties. Solo branch/inventory_location/
+  # sales_unit pueden ser editables (picker), y solo si su campo real
+  # (branch_id/inventory_id/sales_unit_id) está en campos_editables --
+  # ver campos_editables_propios/3 más abajo, que los suma ahí SOLO con
+  # Alcance de Datos activado. El resto (id/estado/trn/empresa/creado_por)
+  # es siempre de solo lectura, nunca tienen campo_real.
+  defp campo_control_row(assigns) do
+    real_campo = campo_real_de_control(assigns.clave)
+    editable? = not is_nil(real_campo) and real_campo in assigns.campos_editables
+    opciones = if editable?, do: Map.get(assigns.edicion.opciones_alcance, real_campo, []), else: []
+
+    valor_actual = if real_campo, do: Map.get(assigns.registro, String.to_existing_atom(real_campo))
+
+    valor_mostrado =
+      if editable?, do: Map.get(assigns.edicion.valores, real_campo, to_string(valor_actual))
+
+    valor_legible = valor_legible_control(assigns.clave, assigns.registro, assigns.estados_por_id, assigns.tabla)
+
+    assigns =
+      assigns
+      |> assign(:etiqueta, Map.fetch!(@etiquetas_campos_control, assigns.clave))
+      |> assign(:editable?, editable?)
+      |> assign(:real_campo, real_campo)
+      |> assign(:opciones, opciones)
+      |> assign(:valor_mostrado, valor_mostrado)
+      |> assign(:valor_legible, valor_legible)
+
+    ~H"""
+    <div class="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-3 px-4 py-1 border-b border-gray-100 last:border-b-0 text-sm">
+      <span class="flex-shrink-0 text-gray-500 w-full sm:w-56">{@etiqueta}</span>
+      <div :if={@editable?} class="flex-1 min-w-0">
+        <select name={"campos[#{@real_campo}]"} class="border border-gray-300 rounded px-2 py-1.5 text-sm w-full">
+          <option value="" selected={@valor_mostrado in [nil, "", "nil"]}>—</option>
+          <option :for={{id, nombre} <- @opciones} value={id} selected={to_string(id) == @valor_mostrado}>{nombre}</option>
+        </select>
+      </div>
+      <span :if={!@editable?} class="text-gray-900 font-medium truncate">
+        {(@valor_legible not in [nil, ""] && @valor_legible) || "—"}
+      </span>
+    </div>
+    """
+  end
+
+  defp campo_real_de_control("branch"), do: "branch_id"
+  defp campo_real_de_control("inventory_location"), do: "inventory_id"
+  defp campo_real_de_control("sales_unit"), do: "sales_unit_id"
+  defp campo_real_de_control(_clave), do: nil
+
+  defp valor_legible_control("id", registro, _estados_por_id, _tabla), do: Map.get(registro, :id)
+  defp valor_legible_control("trn", registro, _estados_por_id, _tabla), do: Map.get(registro, :trn)
+  defp valor_legible_control("estado", registro, estados_por_id, _tabla), do: Map.get(estados_por_id, registro.estado_id)
+  defp valor_legible_control("branch", registro, _estados_por_id, _tabla), do: valor_dimension_alcance(:branch, Map.get(registro, :branch_id))
+
+  defp valor_legible_control("inventory_location", registro, _estados_por_id, _tabla),
+    do: valor_dimension_alcance(:inventory, Map.get(registro, :inventory_id))
+
+  defp valor_legible_control("sales_unit", registro, _estados_por_id, _tabla),
+    do: valor_dimension_alcance(:sales_unit, Map.get(registro, :sales_unit_id))
+
+  defp valor_legible_control("empresa", registro, _estados_por_id, _tabla) do
+    with branch_id when not is_nil(branch_id) <- Map.get(registro, :branch_id),
+         %{empresa_id: empresa_id} when not is_nil(empresa_id) <- Autenticacion.obtener_branch(branch_id),
+         %Empresa{} = empresa <- Repo.get(Empresa, empresa_id) do
+      empresa.nombre
+    else
+      _ -> nil
+    end
+  end
+
+  defp valor_legible_control("creado_por", registro, _estados_por_id, tabla) do
+    MetaAuditoria.creadores_de(tabla, [registro.id]) |> Map.get(registro.id)
+  end
+
+  defp valor_dimension_alcance(_dimension, nil), do: nil
+  defp valor_dimension_alcance(dimension, id), do: etiqueta_dimension_alcance(dimension, id)
+
   attr :col, :map, required: true
   attr :registro, :map, required: true
   attr :campos_editables, :list, required: true
@@ -3383,9 +3552,12 @@ defmodule MetadataAppWeb.FichaLive do
     # a qué apunta. Precalculado en cargar_catalogos_detalle/1 (col.opciones)
     # — nunca se vuelve a consultar acá, esto corre en cada render.
     {opciones_referencia, deshabilitado_dependencia, mensaje_dependencia} =
-      resolver_info_dependencia(props, Map.get(assigns.col, :opciones, []), fn campo ->
-        Map.get(assigns.edicion.valores, campo) || valor_registro_seguro(assigns.registro, campo)
-      end)
+      resolver_info_dependencia(
+        props,
+        Map.get(assigns.col, :opciones, []),
+        fn campo -> Map.get(assigns.edicion.valores, campo) || valor_registro_seguro(assigns.registro, campo) end,
+        Map.get(assigns.edicion, :scope)
+      )
 
     # "Campo calculado" (Diseñador de campos): se recalcula en cada render
     # con los mismos valores efectivos que ya usa "campo_calculado" del
@@ -3935,7 +4107,8 @@ defmodule MetadataAppWeb.FichaLive do
 
           <div class="px-3 py-2 flex flex-wrap items-end gap-2">
             <div :for={campo <- @cat.columnas} class="flex-1 min-w-[120px]">
-              <% {opciones_campo, deshabilitado_dep?, mensaje_dep} = resolver_info_dependencia(campo.schema_context_properties, opciones_para_campo(campo), &Map.get(@seleccion.valores, &1)) %>
+              <% {opciones_campo, deshabilitado_dep?, mensaje_dep} =
+                resolver_info_dependencia(campo.schema_context_properties, opciones_para_campo(campo), &Map.get(@seleccion.valores, &1), @cat.scope) %>
               <% {valor_campo, calculado?} = valor_renglon_con_calculado(campo, @seleccion.valores) %>
               <.campo_input columna={campo} mostrar_etiqueta={true}
                 valor={valor_campo}
@@ -3976,10 +4149,10 @@ defmodule MetadataAppWeb.FichaLive do
   # antes esto corría en cada render de la Ficha 360° (cualquier evento:
   # click en fila, guardar, transición), trayendo hasta 500 filas del
   # catálogo referenciado cada vez.
-  defp opciones_para_columna(%{schema_context_properties: %{"tipo" => "referencia"}} = campo),
-    do: CatalogoGenerico.opciones_referencia(campo.schema_context_properties)
+  defp opciones_para_columna(%{schema_context_properties: %{"tipo" => "referencia"}} = campo, scope),
+    do: CatalogoGenerico.opciones_referencia(campo.schema_context_properties, %{}, scope)
 
-  defp opciones_para_columna(_campo), do: []
+  defp opciones_para_columna(_campo, _scope), do: []
 
   defp opciones_para_campo(campo), do: Map.get(campo, :opciones, [])
 
@@ -3997,12 +4170,12 @@ defmodule MetadataAppWeb.FichaLive do
   # caller arma distinto: campo_row/1 (encabezado) mezcla @edicion.valores
   # (sin guardar) con el registro persistido; formulario_renglon/1 lee
   # directo de @seleccion.valores (ya es el mapa completo del renglón).
-  defp resolver_info_dependencia(props, opciones_cacheadas, buscar_valor) do
+  defp resolver_info_dependencia(props, opciones_cacheadas, buscar_valor, scope) do
     if props["tipo"] == "referencia" and is_list(props["dependencias"]) and props["dependencias"] != [] do
       hermanos = valores_hermanos(props, buscar_valor)
 
       case MetaSchemaContext.resolver_filtros(props, hermanos) do
-        {:ok, filtros} -> {CatalogoGenerico.opciones_referencia(props, filtros), false, nil}
+        {:ok, filtros} -> {CatalogoGenerico.opciones_referencia(props, filtros, scope), false, nil}
         {:disabled, mensaje} -> {[], true, mensaje}
       end
     else

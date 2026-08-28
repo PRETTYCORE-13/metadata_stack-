@@ -26,6 +26,161 @@ defmodule MetadataApp.MetaConsultas do
   alias MetadataApp.MetaSchema.Consulta
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerico
+  alias MetadataApp.MetaStateEngine
+  alias MetadataApp.Autenticacion
+  alias MetadataApp.Autenticacion.Scope
+  alias MetadataApp.Permissions
+  alias MetadataApp.FiltrosDefault
+
+  # Campos de control del CATALOGO_BASE ofrecibles como columnas
+  # adicionales (2026-08-25) -- a diferencia de un campo de negocio
+  # normal, no vienen de meta_schema_detail (id/estado/trn/branch/etc.
+  # nunca tienen fila ahí, ver campos_del_catalogo/2 más abajo), así que
+  # se marcan con "control" => true en vez de resolverse por catálogo.
+  # Solo del catalogo_base a propósito (decisión 2026-08-25): las tablas
+  # unidas (`joins`) no ofrecen esto todavía, para no multiplicar la
+  # complejidad de "campo de control de CUÁL tabla" en la UI.
+  # "empresa"/"creado_por" quedan afuera de este primer alcance (ambos
+  # necesitan una resolución más cara -- empresa vía branch_id, creado_por
+  # vía meta_schema_auditoria por el id crudo de la fila -- que no vale
+  # la pena todavía sin un pedido concreto).
+  @claves_control ~w(id estado trn branch inventory_location sales_unit)
+  @etiquetas_control %{
+    "id" => "ID",
+    "estado" => "Estado",
+    "trn" => "TRN",
+    "branch" => "Sucursal",
+    "inventory_location" => "Almacén",
+    "sales_unit" => "Unidad de venta"
+  }
+  @campo_real_control %{
+    "id" => :id,
+    "estado" => :estado_id,
+    "trn" => :trn,
+    "branch" => :branch_id,
+    "inventory_location" => :inventory_id,
+    "sales_unit" => :sales_unit_id
+  }
+
+  @doc "Etiqueta legible de cada clave de control, para armar el checklist en el editor."
+  def etiquetas_control, do: @etiquetas_control
+
+  @doc """
+  Claves de control ofrecibles para `catalogo_base` (para el checklist de
+  Get Config) -- filtradas contra columnas reales del módulo compilado Y
+  contra las mismas condiciones que ya usa un catálogo normal para
+  decidir si "Estado"/"TRN"/Alcance tienen sentido ahí (ver
+  CatalogoLive.montar_catalogo/2: estado necesita motor de estados
+  adoptado, TRN necesita schema_es_transaccional, branch/inventory/sales
+  necesitan alcance_habilitado). "id" siempre está disponible.
+  """
+  def claves_control_disponibles(catalogo_base) do
+    header = MetaSchemaContext.obtener_header_por_nombre(catalogo_base)
+    modulo = MetaSchemaContext.modulo_por_nombre(catalogo_base)
+    campos_reales = modulo.__schema__(:fields)
+    tiene_estados? = MetaStateEngine.mapa_nombres_estados(catalogo_base) != %{}
+
+    Enum.filter(@claves_control, fn
+      "id" -> true
+      "estado" -> :estado_id in campos_reales and tiene_estados?
+      "trn" -> header.schema_es_transaccional and :trn in campos_reales
+      clave -> header.alcance_habilitado and Map.fetch!(@campo_real_control, clave) in campos_reales
+    end)
+  end
+
+  @doc """
+  Reemplaza los campos de control YA presentes (los del catalogo_base,
+  marcados "control" => true) por `claves_seleccionadas` -- conserva
+  etiqueta/orden/visible/totalizar de los que ya estaban, agrega los
+  nuevos al final, saca los que se destildaron. Los campos de NEGOCIO
+  (sin "control") no se tocan.
+  """
+  def sincronizar_campos_control(%Consulta{} = consulta, claves_seleccionadas) do
+    base = consulta.catalogo_base
+    existentes_por_clave = Map.new(Enum.filter(consulta.campos, &(&1["control"] == true)), &{&1["campo"], &1})
+    sin_control = Enum.reject(consulta.campos, &(&1["control"] == true))
+    offset = length(sin_control)
+
+    nuevos_control =
+      claves_seleccionadas
+      |> Enum.with_index()
+      |> Enum.map(fn {clave, indice} ->
+        Map.get(existentes_por_clave, clave) ||
+          %{
+            "catalogo" => base,
+            "campo" => clave,
+            "control" => true,
+            "etiqueta" => Map.fetch!(@etiquetas_control, clave),
+            "tipo" => nil,
+            "orden" => offset + indice,
+            "visible" => true,
+            "totalizar" => false
+          }
+      end)
+
+    actualizar_campos(consulta, sin_control ++ nuevos_control)
+  end
+
+  # Tipos elegibles para "Parámetro" estándar (ver moduledoc de
+  # MetaSchema.Consulta) -- boolean/enum quedan afuera a propósito, siguen
+  # filtrables solo por el panel de filtros genérico de columna (mecanismo
+  # aparte, sin cambios). Elegible por TIPO no alcanza para ser parámetro:
+  # hace falta además que el admin lo marque explícito con
+  # "es_parametro" => true en Get Config -- no toda columna visible de
+  # tipo elegible es automáticamente un parámetro (corrección 2026-08-27,
+  # ver moduledoc de MetaSchema.Consulta).
+  @tipos_elegibles_fecha ~w(date)
+  @tipos_elegibles_string ~w(string referencia)
+  @tipos_elegibles_numerico ~w(integer decimal)
+
+  # branch/inventory_location/sales_unit (campos de CONTROL, ver
+  # sincronizar_campos_control/2) SIEMPRE se guardan con "tipo" => nil
+  # (no vienen de meta_schema_detail, no hay de dónde copiar un tipo real)
+  # -- pero conceptualmente SON una referencia (apuntan a
+  # meta_schema_branch/inventory_location/sales_unit, mismo espíritu que
+  # cualquier campo "referencia" de negocio). Bug real (2026-08-27):
+  # sin esto, tipo_efectivo/1 devolvía nil para los tres y quedaban
+  # afuera de toda elegibilidad de Parámetro -- "inventory_location y
+  # sales_unit no permiten filtrar" (branch tenía el mismo problema).
+  # "id"/"estado"/"trn" quedan afuera a propósito: no son conceptualmente
+  # una referencia.
+  @controles_referencia ~w(branch inventory_location sales_unit)
+  @catalogo_control_sistema %{
+    "branch" => "meta_schema_branch",
+    "inventory_location" => "meta_schema_inventory_location",
+    "sales_unit" => "meta_schema_sales_unit"
+  }
+
+  @doc """
+  Tipo REAL a efectos de elegibilidad/UI de Parámetro estándar -- igual a
+  `campo["tipo"]` salvo para los 3 campos de control que son
+  conceptualmente una referencia (ver comentario arriba), donde siempre
+  se resuelve a "referencia" aunque el campo tenga `"tipo" => nil`
+  guardado (se resuelve en LECTURA, no hace falta backfill de datos ya
+  guardados).
+  """
+  def tipo_efectivo(%{"control" => true, "campo" => clave}) when clave in @controles_referencia, do: "referencia"
+  def tipo_efectivo(campo), do: campo["tipo"]
+
+  @doc "Catálogo de sistema real de un campo de control branch/inventory_location/sales_unit -- nil para cualquier otra clave."
+  def catalogo_control_sistema(clave), do: Map.get(@catalogo_control_sistema, clave)
+
+  @doc "true si el tipo de campo es elegible para Parámetro estándar (cualquiera de los tres grupos)."
+  def tipo_elegible?(tipo), do: tipo in @tipos_elegibles_fecha ++ @tipos_elegibles_string ++ @tipos_elegibles_numerico
+
+  @doc """
+  Campos VISIBLES, de tipo fecha Y marcados "es_parametro" => true por el
+  admin en Get Config -- ver moduledoc de `MetaSchema.Consulta`.
+  """
+  def campos_elegibles_fecha(%Consulta{campos: campos}), do: Enum.filter(campos, &campo_parametro?(&1, @tipos_elegibles_fecha))
+
+  @doc "Campos VISIBLES, de tipo string/referencia Y marcados \"es_parametro\" => true."
+  def campos_elegibles_string(%Consulta{campos: campos}), do: Enum.filter(campos, &campo_parametro?(&1, @tipos_elegibles_string))
+
+  @doc "Campos VISIBLES, de tipo integer/decimal Y marcados \"es_parametro\" => true."
+  def campos_elegibles_numerico(%Consulta{campos: campos}), do: Enum.filter(campos, &campo_parametro?(&1, @tipos_elegibles_numerico))
+
+  defp campo_parametro?(campo, tipos), do: campo["visible"] == true and tipo_efectivo(campo) in tipos and campo["es_parametro"] == true
 
   def obtener_por_header_id(header_id) do
     Repo.get_by(Consulta, meta_schema_header_id: header_id)
@@ -87,6 +242,21 @@ defmodule MetadataApp.MetaConsultas do
   end
 
   @doc """
+  "Orden de resultados" (R1, admin, 2026-08-27) — reemplaza `orden_por`
+  entero, mismo criterio simple que `actualizar_campos/2` (la lista
+  completa la arma el caller, acá solo persiste). Sin validar que cada
+  entrada siga apuntando a un campo real de la consulta -- `aplicar_orden/3`
+  ya ignora en silencio cualquier entrada que ya no calce (columna quitada
+  después de agregarla al orden), no hace falta duplicar ese chequeo acá.
+  """
+  def actualizar_orden_por(%Consulta{} = consulta, orden_por) do
+    consulta
+    |> Consulta.changeset(%{"orden_por" => orden_por})
+    |> Ecto.Changeset.change(%{update_guid: generar_guid()})
+    |> Repo.update()
+  end
+
+  @doc """
   Catálogos ya presentes en la consulta, en el orden en que se agregaron
   (`catalogo_base` primero) — el orden importa porque define los
   bindings `:t0`, `:t1`... de `construir_query_base/1`.
@@ -129,6 +299,34 @@ defmodule MetadataApp.MetaConsultas do
     guardar_tabla_nueva(consulta, catalogo_nuevo, union)
   end
 
+  @doc """
+  Corrige la unión de una tabla YA agregada (mismo shape que
+  `agregar_tabla_manual/5`, sin volver a agregarla) -- para cuando la
+  unión quedó mal configurada (ej. bug real 2026-08-27: un join contra
+  una tabla DETALLE de un maestro-detalle -- "encabezado_id"/"renglon_id",
+  ver moduledoc de CatalogoGenerador -- se agregó a mano con
+  campo_en_nuevo="id" en vez de "encabezado_id"; `detectar_union/2` solo
+  reconoce campos "referencia" reales, nunca la relación estructural de
+  maestro-detalle, así que ese caso siempre requiere `agregar_tabla_manual/5`
+  y es fácil elegir mal). A diferencia de sacar y volver a agregar la
+  tabla (`quitar_ultima_tabla/1` + `agregar_tabla_manual/5`), esto NO
+  toca `campos` -- toda la config de Get Config ya hecha sobre esa tabla
+  (etiquetas, Parámetro, Defaults) se conserva tal cual.
+  """
+  def corregir_union(%Consulta{} = consulta, catalogo, campo_en_nuevo, campo_en_destino) do
+    joins =
+      Enum.map(consulta.joins, fn join ->
+        if join["catalogo"] == catalogo,
+          do: Map.merge(join, %{"campo_en_nuevo" => campo_en_nuevo, "campo_en_destino" => campo_en_destino}),
+          else: join
+      end)
+
+    consulta
+    |> Consulta.changeset(%{"joins" => joins})
+    |> Ecto.Changeset.change(%{update_guid: generar_guid()})
+    |> Repo.update()
+  end
+
   defp guardar_tabla_nueva(consulta, catalogo_nuevo, union) do
     join = Map.merge(union, %{"catalogo" => catalogo_nuevo, "tipo" => "left"})
     campos_nuevos = campos_del_catalogo(catalogo_nuevo, length(consulta.campos))
@@ -158,6 +356,8 @@ defmodule MetadataApp.MetaConsultas do
   qué unión se va a usar ANTES de confirmar nada.
   """
   def detectar_union(catalogos_actuales, catalogo_nuevo) do
+    via_maestro_detalle = detectar_union_maestro_detalle(catalogos_actuales, catalogo_nuevo)
+
     via_nuevo =
       catalogo_nuevo
       |> MetaSchemaContext.listar_detalles()
@@ -169,10 +369,47 @@ defmodule MetadataApp.MetaConsultas do
         end
       end)
 
-    case via_nuevo || detectar_union_desde_existentes(catalogos_actuales, catalogo_nuevo) do
+    case via_maestro_detalle || via_nuevo || detectar_union_desde_existentes(catalogos_actuales, catalogo_nuevo) do
       nil -> :sin_union
       union -> {:ok, union}
     end
+  end
+
+  # Maestro-detalle (R3) se detecta APARTE de "referencia" (arriba/abajo)
+  # porque no es un campo "referencia" configurado en meta_schema_detail:
+  # "encabezado_id" es una columna de framework que CatalogoGenerador
+  # agrega sola a todo catálogo detalle (ver moduledoc de
+  # CatalogoGenerador) — listar_detalles/1 nunca la ve, así que
+  # detectar_union_desde_existentes/2 (que solo escanea "referencia") no
+  # puede encontrarla. A diferencia de una "referencia" (varias
+  # combinaciones legítimas de campo), acá la clave SIEMPRE es
+  # encabezado_id → id: se puede autodetectar sin ambigüedad, con
+  # prioridad sobre "referencia" (más específico, más confiable). Bug real
+  # 2026-08-26/27 que motiva esto: un admin unió a mano un maestro con su
+  # detalle por "id"="id" (la opción que ofrecía el editor manual antes de
+  # este cambio) — traía 1 fila por maestro en vez del fan-out real (ver
+  # corregir_union/4, que se usó para arreglarlo a mano en su momento).
+  defp detectar_union_maestro_detalle(catalogos_actuales, catalogo_nuevo) do
+    header_nuevo = MetaSchemaContext.obtener_header_por_nombre(catalogo_nuevo)
+
+    via_nuevo_es_detalle =
+      with %{schema_encabezado_id: id} when not is_nil(id) <- header_nuevo,
+           maestro <- MetaSchemaContext.obtener_header!(id),
+           true <- maestro.schema_context_name in catalogos_actuales do
+        %{"catalogo_destino" => maestro.schema_context_name, "campo_en_destino" => "id", "campo_en_nuevo" => "encabezado_id"}
+      else
+        _ -> nil
+      end
+
+    via_nuevo_es_detalle ||
+      (header_nuevo &&
+         Enum.find_value(catalogos_actuales, fn tabla ->
+           header_tabla = MetaSchemaContext.obtener_header_por_nombre(tabla)
+
+           if header_tabla && header_tabla.schema_encabezado_id == header_nuevo.id do
+             %{"catalogo_destino" => tabla, "campo_en_destino" => "encabezado_id", "campo_en_nuevo" => "id"}
+           end
+         end))
   end
 
   defp detectar_union_desde_existentes(catalogos_actuales, catalogo_nuevo) do
@@ -187,6 +424,25 @@ defmodule MetadataApp.MetaConsultas do
         end
       end)
     end)
+  end
+
+  @doc """
+  Etiqueta del maestro si `catalogo` es detalle de alguno, `nil` si no.
+  Pensado para que la UI (BcListLive) avise el fan-out de una tabla
+  detalle ANTES/mientras se configura su unión, sin importar qué campo
+  termine eligiéndose — la advertencia depende de la naturaleza
+  estructural del catálogo, no de la unión ya armada (ver
+  detectar_union_maestro_detalle/2 arriba). Bug real 2026-08-26 que
+  motiva esto: agregar una tabla detalle sin ningún aviso sorprendió con
+  "ahora salen 2 filas por cliente" recién al ver el reporte.
+  """
+  def maestro_de_detalle(catalogo) do
+    with %{schema_encabezado_id: id} when not is_nil(id) <- MetaSchemaContext.obtener_header_por_nombre(catalogo),
+         %{schema_context_label: etiqueta} <- MetaSchemaContext.obtener_header!(id) do
+      etiqueta
+    else
+      _ -> nil
+    end
   end
 
   @doc """
@@ -224,12 +480,18 @@ defmodule MetadataApp.MetaConsultas do
   Nombres de campo utilizables como llave de unión para un catálogo: sus
   campos configurados en `meta_schema_detail` más `"id"` (que siempre
   existe pero nunca es un detail configurable, así que no aparece solo
-  con `MetaSchemaContext.listar_detalles/1`). Usado por el editor manual
-  de uniones cuando `detectar_union/2` no encuentra nada.
+  con `MetaSchemaContext.listar_detalles/1`) más `"encabezado_id"` cuando
+  el catálogo es detalle de un maestro (columna de framework, tampoco
+  aparece en `meta_schema_detail` — ver `detectar_union_maestro_detalle/2`
+  arriba). Usado por el editor manual de uniones cuando `detectar_union/2`
+  no encuentra nada — red de seguridad para que, si el admin tiene que
+  elegir a mano, al menos tenga la opción correcta disponible.
   """
   def campos_disponibles_para_union(catalogo) do
     nombres = catalogo |> MetaSchemaContext.listar_detalles() |> Enum.map(& &1.schema_context_field)
-    Enum.uniq(["id" | nombres])
+    header = MetaSchemaContext.obtener_header_por_nombre(catalogo)
+    extra_detalle = if header && header.schema_encabezado_id, do: ["encabezado_id"], else: []
+    Enum.uniq(["id" | extra_detalle] ++ nombres)
   end
 
   @doc """
@@ -267,17 +529,351 @@ defmodule MetadataApp.MetaConsultas do
   end
 
   @doc """
+  Query "representativa" de la consulta -- joins reales + `select` de las
+  columnas visibles (Get Config), tal como las arma `ejecutar/6`, pero
+  SIN filtros/alcance/paginación (esos dependen de cada request, no
+  tiene sentido fijarlos en una query de referencia). Pensada para el
+  tab SQL del admin (ver ConsultaEditorLive) -- nunca para ejecutar
+  contra la base de verdad.
+  """
+  def query_representativa(%Consulta{} = consulta) do
+    {base, alias_por_catalogo} = construir_query_base(consulta)
+    visibles = campos_visibles_ordenados(consulta)
+    select(base, ^select_dinamico(visibles, alias_por_catalogo))
+  end
+
+  @doc """
+  Igual que `query_representativa/1`, pero además con los WHERE de
+  Parámetro estándar YA aplicados (fecha/string/numérico, ver moduledoc
+  de `MetaSchema.Consulta`) -- para que el admin vea la FORMA real del
+  filtro que se va a generar en el tab SQL/Ecto, no solo los joins+select.
+  Sigue sin alcance/paginación (dependen de la sesión de cada request,
+  no tiene sentido fijarlos acá) y sigue sin ejecutarse nunca contra la
+  base de verdad.
+
+  Un campo elegible SIN default todavía configurado usa un valor dummy
+  (ver `overrides_dummy/1`) solo para que el WHERE aparezca en el SQL de
+  ejemplo -- nunca pisa un default REAL ya guardado, que siempre gana.
+  """
+  def query_representativa_con_filtros(%Consulta{} = consulta) do
+    {base, alias_por_catalogo} = construir_query_base(consulta)
+    visibles = campos_visibles_ordenados(consulta)
+
+    base
+    |> select(^select_dinamico(visibles, alias_por_catalogo))
+    |> aplicar_filtros_parametro_estandar(consulta, alias_por_catalogo, overrides_dummy(consulta))
+  end
+
+  # Un valor placeholder POR CAMPO elegible que todavía no tiene default
+  # real -- nunca pisa uno ya configurado (cada dummy_*/1 solo llena las
+  # claves de "defaults" que vengan vacías, ver campo_efectivo/2).
+  defp overrides_dummy(consulta) do
+    fecha = Enum.map(campos_elegibles_fecha(consulta), &{to_string(clave_campo(&1)), dummy_fecha(&1)})
+    string = Enum.map(campos_elegibles_string(consulta), &{to_string(clave_campo(&1)), dummy_string(&1)})
+    numerico = Enum.map(campos_elegibles_numerico(consulta), &{to_string(clave_campo(&1)), dummy_numerico(&1)})
+    Map.new(fecha ++ string ++ numerico)
+  end
+
+  defp dummy_fecha(campo) do
+    if (campo["defaults"] || %{})["modo"] in [nil, ""] do
+      %{"defaults" => %{"modo" => if(campo["acotado"], do: "mes_actual", else: "actual")}}
+    else
+      %{}
+    end
+  end
+
+  defp dummy_string(campo) do
+    defaults = campo["defaults"] || %{}
+
+    cond do
+      campo["tipo_filtro"] == "multi" and (defaults["valores"] || []) == [] ->
+        %{"defaults" => %{"valores" => ["1"]}}
+
+      campo["tipo_filtro"] != "multi" and defaults["valor"] in [nil, ""] ->
+        valor = if tipo_efectivo(campo) == "referencia" or campo["origen"] == "referenciado", do: "1", else: "ejemplo"
+        %{"defaults" => %{"valor" => valor}}
+
+      true ->
+        %{}
+    end
+  end
+
+  defp dummy_numerico(campo) do
+    defaults = campo["defaults"] || %{}
+
+    if campo["acotado"] do
+      valor = if defaults["valor"] in [nil, ""], do: 1, else: defaults["valor"]
+      valor_hasta = if defaults["valor_hasta"] in [nil, ""], do: 100, else: defaults["valor_hasta"]
+      if valor == defaults["valor"] and valor_hasta == defaults["valor_hasta"], do: %{}, else: %{"defaults" => %{"valor" => valor, "valor_hasta" => valor_hasta}}
+    else
+      if defaults["valor"] in [nil, ""], do: %{"defaults" => %{"valor" => 1}}, else: %{}
+    end
+  end
+
+  @doc """
   Total de filas para los mismos filtros/búsqueda, sin paginar — para que
   CatalogoLive calcule `total_paginas` ANTES de pedir la página con el
   offset correcto, igual que ya hace para un catálogo normal.
+
+  `scope` -- posicional, sin default, mismo criterio que
+  `CatalogoGenerico.listar/contar` (elige a propósito no tener un default
+  "seguro": un choke point de lectura no debe dejar que un caller se
+  olvide el scope sin darse cuenta). Ver `aplicar_alcance_de_datos/4`.
+
+  Cada campo elegible (ver moduledoc de `MetaSchema.Consulta`) aplica su
+  propio default de Parámetro solo, leído directo de `consulta.campos`
+  (ver `aplicar_filtros_fecha_estandar/4` y análogas) -- no hace falta
+  que el caller calcule ni pase nada aparte, salvo que quiera pisar el
+  default de ALGÚN campo puntual para este request (`overrides_parametro`,
+  ver ahí).
   """
-  def contar(%Consulta{} = consulta, filtros \\ %{}, busqueda \\ nil) do
+  def contar(%Consulta{} = consulta, scope, filtros \\ %{}, busqueda \\ nil, overrides_parametro \\ %{}) do
     {base, alias_por_catalogo} = construir_query_base(consulta)
 
     base
     |> aplicar_filtros(filtros, consulta.campos, alias_por_catalogo)
     |> aplicar_busqueda(busqueda, consulta.campos, alias_por_catalogo)
+    |> aplicar_filtros_parametro_estandar(consulta, alias_por_catalogo, overrides_parametro)
+    |> aplicar_alcance_de_datos(consulta, alias_por_catalogo, scope)
     |> Repo.aggregate(:count)
+  end
+
+  # Los tres tipos de Parámetro estándar (ver moduledoc de MetaSchema.Consulta)
+  # se resuelven directo contra SU catalogo+campo, nunca vía el mapa
+  # `filtros` genérico (que busca por nombre crudo y sería ambiguo si dos
+  # tablas unidas repiten nombre de columna -- ej. dos "fecha_registro").
+  #
+  # `overrides_parametro` -- `%{clave_campo_string => %{...}}` (ver
+  # `clave_campo/1`, mismo shape que el "defaults"/"acotado"/"tipo_filtro"
+  # de ese campo) -- para cuando el USUARIO FINAL cambia un parámetro
+  # desde la barra de la Consulta (CatalogoLive), sin pisar el default
+  # que configuró el admin en Get Config: vive SOLO en el socket de esa
+  # sesión (nunca se persiste acá), `%{}` es "usar el default de todos
+  # los campos tal cual están guardados".
+  defp aplicar_filtros_parametro_estandar(query, %Consulta{} = consulta, alias_por_catalogo, overrides_parametro) do
+    query
+    |> aplicar_filtros_fecha_estandar(consulta, alias_por_catalogo, overrides_parametro)
+    |> aplicar_filtros_string_estandar(consulta, alias_por_catalogo, overrides_parametro)
+    |> aplicar_filtros_numerico_estandar(consulta, alias_por_catalogo, overrides_parametro)
+  end
+
+  defp campo_efectivo(campo, overrides_parametro) do
+    override = Map.get(overrides_parametro, to_string(clave_campo(campo)), %{})
+    defaults = Map.merge(Map.get(campo, "defaults", %{}) || %{}, Map.get(override, "defaults", %{}) || %{})
+    campo |> Map.merge(Map.drop(override, ["defaults"])) |> Map.put("defaults", defaults)
+  end
+
+  # Fecha ACOTADA: rango de dos formulas/preset (mes_actual/mes_a_fecha/
+  # anio_actual/formula). Fecha SIN acotar: un solo valor -- se resuelve
+  # pasando el MISMO texto como "desde" y "hasta" de FiltrosDefault.
+  # rango_fecha/3 (que ya sabe devolver el día completo cuando ambos
+  # extremos caen en el mismo día), así el motor de fórmulas no necesita
+  # saber nada de "acotado".
+  defp aplicar_filtros_fecha_estandar(query, consulta, alias_por_catalogo, overrides_parametro) do
+    consulta
+    |> campos_elegibles_fecha()
+    |> Enum.reduce(query, fn campo, acc ->
+      efectivo = campo_efectivo(campo, overrides_parametro)
+      defaults = efectivo["defaults"] || %{}
+      valor_hasta = if efectivo["acotado"], do: defaults["valor_hasta"], else: defaults["valor"]
+
+      case FiltrosDefault.rango_fecha(defaults["modo"], defaults["valor"], valor_hasta) do
+        nil -> acc
+        {desde, hasta} -> aplicar_filtro_estandar(acc, alias_por_catalogo, campo, {:entre, {desde, hasta}})
+      end
+    end)
+  end
+
+  # "like"/"igual" -- un valor (puede ser texto libre o elegido de un
+  # catálogo referenciado, el filtro compara la misma columna real de
+  # texto en los dos casos, ver moduledoc). "multi" -- lista de valores,
+  # comportamiento OR (IN). "valor"/"valores" vacíos -- no acota (mismo
+  # criterio que Fecha "Sin acotar" ya no existe, pero acá SÍ hay
+  # escape: el admin puede dejar el default en blanco a propósito).
+  defp aplicar_filtros_string_estandar(query, consulta, alias_por_catalogo, overrides_parametro) do
+    consulta
+    |> campos_elegibles_string()
+    |> Enum.reduce(query, fn campo, acc ->
+      efectivo = campo_efectivo(campo, overrides_parametro)
+      defaults = efectivo["defaults"] || %{}
+
+      case efectivo["tipo_filtro"] || "like" do
+        "like" -> aplicar_si_presente(acc, alias_por_catalogo, campo, defaults["valor"], :ilike)
+        "igual" -> aplicar_si_presente(acc, alias_por_catalogo, campo, defaults["valor"], :igual)
+        "multi" -> aplicar_filtro_estandar(acc, alias_por_catalogo, campo, {:in, defaults["valores"] || []})
+        _ -> acc
+      end
+    end)
+  end
+
+  # "entre" -- dos límites (Acotado=CHECK). "mayor"/"menor"/"igual"/
+  # "diferente" -- un límite (comparación estricta: "mayor que" es `>`,
+  # no `>=` -- "igual" ya cubre el caso de límite inclusivo). "valor"
+  # vacío -- no acota.
+  defp aplicar_filtros_numerico_estandar(query, consulta, alias_por_catalogo, overrides_parametro) do
+    consulta
+    |> campos_elegibles_numerico()
+    |> Enum.reduce(query, fn campo, acc ->
+      efectivo = campo_efectivo(campo, overrides_parametro)
+      defaults = efectivo["defaults"] || %{}
+      tipo_filtro = if efectivo["acotado"], do: "entre", else: efectivo["tipo_filtro"] || "mayor"
+
+      case tipo_filtro do
+        "entre" -> aplicar_filtro_estandar(acc, alias_por_catalogo, campo, {:entre, {defaults["valor"], defaults["valor_hasta"]}})
+        "mayor" -> aplicar_si_presente(acc, alias_por_catalogo, campo, defaults["valor"], :mayor)
+        "menor" -> aplicar_si_presente(acc, alias_por_catalogo, campo, defaults["valor"], :menor)
+        "igual" -> aplicar_si_presente(acc, alias_por_catalogo, campo, defaults["valor"], :igual)
+        "diferente" -> aplicar_si_presente(acc, alias_por_catalogo, campo, defaults["valor"], :diferente)
+        _ -> acc
+      end
+    end)
+  end
+
+  defp aplicar_si_presente(query, _alias_por_catalogo, _campo, valor, _operador) when valor in [nil, ""], do: query
+
+  defp aplicar_si_presente(query, alias_por_catalogo, campo, valor, :ilike), do: aplicar_filtro_estandar(query, alias_por_catalogo, campo, {:ilike, valor})
+  defp aplicar_si_presente(query, alias_por_catalogo, campo, valor, :igual), do: aplicar_filtro_estandar(query, alias_por_catalogo, campo, valor)
+  defp aplicar_si_presente(query, alias_por_catalogo, campo, valor, :mayor), do: aplicar_filtro_estandar(query, alias_por_catalogo, campo, {:mayor, valor})
+  defp aplicar_si_presente(query, alias_por_catalogo, campo, valor, :menor), do: aplicar_filtro_estandar(query, alias_por_catalogo, campo, {:menor, valor})
+  defp aplicar_si_presente(query, alias_por_catalogo, campo, valor, :diferente), do: aplicar_filtro_estandar(query, alias_por_catalogo, campo, {:diferente, valor})
+
+  defp aplicar_filtro_estandar(query, alias_por_catalogo, campo, valor) do
+    alias_tabla = Map.fetch!(alias_por_catalogo, campo["catalogo"])
+    aplicar_filtro(query, alias_tabla, campo_atom_real(campo), valor)
+  end
+
+  @doc """
+  `props` (shape `CatalogoGenerico.opciones_referencia/3`) para armar las
+  opciones de un parámetro con origen "referenciado" (ver moduledoc de
+  `MetaSchema.Consulta`) -- un campo YA tipo "referencia" resuelve su
+  catálogo destino real de `meta_schema_detail` (mismo criterio que
+  cualquier filtro "referencia" de siempre); un campo "string" genuino
+  usa el catálogo que el admin eligió a mano (`campo["catalogo_referenciado"]`).
+  Los 3 catálogos de sistema (branch/inventory_location/sales_unit) no
+  tienen fila en `meta_schema_detail` de la que copiar
+  "campos_acompanamiento" -- sin esto, `opciones_referencia/3` etiqueta
+  cada opción "#<id>" en vez del nombre real, se resuelve acá de
+  `MetaSchemaContext.catalogo_sistema/1`. `nil` si no se puede resolver
+  nada (campo/catálogo raro, no debería pasar desde la UI).
+  """
+  def props_referenciado(%{"control" => true, "campo" => clave}, _detalles_por_catalogo) do
+    case catalogo_control_sistema(clave) do
+      nil -> nil
+      catalogo -> completar_campos_acompanamiento_sistema(%{"catalogo" => catalogo})
+    end
+  end
+
+  def props_referenciado(%{"tipo" => "referencia"} = campo, detalles_por_catalogo) do
+    detalles_por_catalogo
+    |> Map.get(campo["catalogo"], [])
+    |> Enum.find(&(&1.schema_context_field == campo["campo"]))
+    |> case do
+      nil -> nil
+      detalle -> completar_campos_acompanamiento_sistema(detalle.schema_context_properties)
+    end
+  end
+
+  def props_referenciado(%{"catalogo_referenciado" => catalogo}, _detalles_por_catalogo) when is_binary(catalogo) and catalogo != "" do
+    completar_campos_acompanamiento_sistema(%{"catalogo" => catalogo})
+  end
+
+  def props_referenciado(_campo, _detalles_por_catalogo), do: nil
+
+  # Los 3 catálogos de sistema (branch/inventory_location/sales_unit) no
+  # tienen fila en meta_schema_detail de la que copiar
+  # "campos_acompanamiento" -- sin esto, CatalogoGenerico.opciones_referencia/3
+  # etiqueta cada opción "#<id>" en vez del nombre real. Un campo
+  # "referencia" de negocio cualquiera SÍ puede traer su propio
+  # "campos_acompanamiento" ya configurado por el admin -- ese se
+  # respeta tal cual, nunca se pisa.
+  defp completar_campos_acompanamiento_sistema(%{"catalogo" => catalogo} = props) do
+    if Map.get(props, "campos_acompanamiento") in [nil, []] do
+      case MetaSchemaContext.catalogo_sistema(catalogo) do
+        %{campo_nombre: campo_nombre} -> Map.put(props, "campos_acompanamiento", [campo_nombre])
+        nil -> props
+      end
+    else
+      props
+    end
+  end
+
+  defp completar_campos_acompanamiento_sistema(props), do: props
+
+  # Alcance de Datos (mismo modelo que CatalogoGenerico.aplicar_alcance_de_datos/3,
+  # ver ahí el moduledoc de Scope para el diseño completo) -- SOLO contra
+  # `catalogo_base`, nunca contra las tablas de `joins` (decisión explícita:
+  # una Consulta no tiene alcance propio, hereda el de la tabla que la
+  # origina; acotar también los joins abriría preguntas sin respuesta clara
+  # -- ¿alcance de CUÁL tabla manda si difieren? -- que no hacen falta para
+  # el caso real de hoy). Misma firma/orden de cláusulas que
+  # aplicar_filtro_fecha_default/4 de arriba: alcance_habilitado vive en el
+  # Header de catalogo_base, nunca en el de la Consulta (esa no tiene
+  # branch_id/sales_unit_id/etc. propios que filtrar).
+  defp aplicar_alcance_de_datos(query, _consulta, _alias_por_catalogo, :sistema), do: query
+
+  defp aplicar_alcance_de_datos(query, consulta, alias_por_catalogo, nil) do
+    case MetaSchemaContext.obtener_header_por_nombre(consulta.catalogo_base) do
+      %{alcance_habilitado: true} ->
+        alias_tabla = Map.fetch!(alias_por_catalogo, consulta.catalogo_base)
+        where(query, [{^alias_tabla, _r}], false)
+
+      _ ->
+        query
+    end
+  end
+
+  defp aplicar_alcance_de_datos(query, consulta, alias_por_catalogo, %Scope{} = scope) do
+    case MetaSchemaContext.obtener_header_por_nombre(consulta.catalogo_base) do
+      %{alcance_habilitado: true} = header ->
+        scope
+        |> Permissions.alcance_tipo_efectivo(header.id)
+        |> aplicar_where_de_alcance(query, scope, consulta.catalogo_base, alias_por_catalogo)
+
+      _ ->
+        query
+    end
+  end
+
+  defp aplicar_where_de_alcance(:global, query, _scope, _catalogo, _alias_por_catalogo), do: query
+
+  defp aplicar_where_de_alcance(:empresa, query, scope, catalogo, alias_por_catalogo) do
+    con_columna_alcance(query, catalogo, alias_por_catalogo, :empresa_id, fn alias_tabla, campo ->
+      where(query, [{^alias_tabla, r}], is_nil(field(r, ^campo)) or field(r, ^campo) == ^scope.empresa_activa.id)
+    end)
+  end
+
+  defp aplicar_where_de_alcance(:branch, query, scope, catalogo, alias_por_catalogo) do
+    con_columna_alcance(query, catalogo, alias_por_catalogo, :branch_id, fn alias_tabla, campo ->
+      where(query, [{^alias_tabla, r}], is_nil(field(r, ^campo)) or field(r, ^campo) in ^scope.branches_permitidos)
+    end)
+  end
+
+  defp aplicar_where_de_alcance(:sales_unit, query, scope, catalogo, alias_por_catalogo) do
+    con_columna_alcance(query, catalogo, alias_por_catalogo, :sales_unit_id, fn alias_tabla, campo ->
+      where(query, [{^alias_tabla, r}], is_nil(field(r, ^campo)) or field(r, ^campo) in ^scope.sales_units_permitidas)
+    end)
+  end
+
+  defp aplicar_where_de_alcance(:inventory_location, query, scope, catalogo, alias_por_catalogo) do
+    con_columna_alcance(query, catalogo, alias_por_catalogo, :inventory_id, fn alias_tabla, campo ->
+      where(query, [{^alias_tabla, r}], is_nil(field(r, ^campo)) or field(r, ^campo) in ^scope.inventory_locations_permitidas)
+    end)
+  end
+
+  defp aplicar_where_de_alcance(:propio, query, scope, catalogo, alias_por_catalogo) do
+    con_columna_alcance(query, catalogo, alias_por_catalogo, :creado_por_id, fn alias_tabla, campo ->
+      where(query, [{^alias_tabla, r}], is_nil(field(r, ^campo)) or field(r, ^campo) == ^scope.usuario.id)
+    end)
+  end
+
+  # Igual de permisivo que con_columna/3 en CatalogoGenerico: si
+  # catalogo_base no tiene la columna que ese alcance_tipo necesita, no
+  # filtra nada (no-op) en vez de reventar.
+  defp con_columna_alcance(query, catalogo, alias_por_catalogo, campo, construir_where) do
+    schema_mod = MetaSchemaContext.modulo_por_nombre(catalogo)
+    alias_tabla = Map.fetch!(alias_por_catalogo, catalogo)
+
+    if campo in schema_mod.__schema__(:fields), do: construir_where.(alias_tabla, campo), else: query
   end
 
   @doc """
@@ -288,12 +884,15 @@ defmodule MetadataApp.MetaConsultas do
   campo siguen siendo los crudos, sin catálogo — ver nota en
   `aplicar_filtros/3` sobre el único caso raro que no cubre).
 
+  `scope` -- ver `contar/5`. `overrides_parametro` -- ver
+  `aplicar_filtros_parametro_estandar/4`.
+
   `totales` — suma de cada campo marcado `"totalizar": true`, sobre TODAS
-  las filas que matchean filtros/búsqueda (no solo la página actual).
-  Las claves de `filas`/`totales` son las de `clave_campo/1`, no el
-  nombre de campo crudo.
+  las filas que matchean filtros/búsqueda/alcance (no solo la página
+  actual). Las claves de `filas`/`totales` son las de `clave_campo/1`, no
+  el nombre de campo crudo.
   """
-  def ejecutar(%Consulta{} = consulta, filtros \\ %{}, opciones \\ [], busqueda \\ nil) do
+  def ejecutar(%Consulta{} = consulta, scope, filtros \\ %{}, opciones \\ [], busqueda \\ nil, overrides_parametro \\ %{}) do
     {base, alias_por_catalogo} = construir_query_base(consulta)
     visibles = campos_visibles_ordenados(consulta)
 
@@ -301,17 +900,49 @@ defmodule MetadataApp.MetaConsultas do
       base
       |> aplicar_filtros(filtros, consulta.campos, alias_por_catalogo)
       |> aplicar_busqueda(busqueda, consulta.campos, alias_por_catalogo)
+      |> aplicar_filtros_parametro_estandar(consulta, alias_por_catalogo, overrides_parametro)
+      |> aplicar_alcance_de_datos(consulta, alias_por_catalogo, scope)
 
     total_filas = Repo.aggregate(query, :count)
     select_filas = select_dinamico(visibles, alias_por_catalogo)
 
+    detalles_por_catalogo = MetaSchemaContext.listar_detalles_de_varios(catalogos_presentes(consulta))
+
     filas =
       query
+      |> aplicar_orden(consulta, alias_por_catalogo)
       |> select(^select_filas)
       |> CatalogoGenerico.aplicar_paginacion(opciones)
       |> Repo.all()
+      |> resolver_campos_control(visibles, consulta.catalogo_base)
+      |> resolver_campos_referencia(visibles, detalles_por_catalogo)
 
     %{filas: filas, total_filas: total_filas, totales: totales(query, consulta, alias_por_catalogo)}
+  end
+
+  # "Orden de resultados" (R1, admin) -- aplicado SOLO a la query de
+  # `filas` (nunca a `query` en sí, que también alimenta total_filas/
+  # totales/3 más abajo -- un ORDER BY ahí es trabajo desperdiciado en el
+  # mejor caso, o puede chocar con un SELECT agregado sin GROUP BY en el
+  # peor, mismo motivo que el `exclude(:order_by)` de totales/3). Ecto
+  # acumula (no reemplaza) llamadas sucesivas a order_by/3, así que cada
+  # vuelta del reduce agrega una columna más de desempate, respetando la
+  # prioridad de `orden_por`. Una entrada que ya no calza con ningún campo
+  # real de la consulta (columna quitada después de agregarla al orden) se
+  # ignora en silencio, nunca revienta la consulta.
+  defp aplicar_orden(query, %Consulta{orden_por: orden_por, campos: campos}, alias_por_catalogo) do
+    Enum.reduce(orden_por, query, fn %{"catalogo" => catalogo, "campo" => campo, "direccion" => direccion}, acc ->
+      case Enum.find(campos, &(&1["catalogo"] == catalogo and &1["campo"] == campo)) do
+        nil ->
+          acc
+
+        campo_def ->
+          alias_tabla = Map.fetch!(alias_por_catalogo, catalogo)
+          campo_atom = campo_atom_real(campo_def)
+          direccion_atom = if direccion == "desc", do: :desc, else: :asc
+          order_by(acc, [{^alias_tabla, t}], [{^direccion_atom, field(t, ^campo_atom)}])
+      end
+    end)
   end
 
   defp campos_visibles_ordenados(%Consulta{campos: campos}) do
@@ -323,9 +954,83 @@ defmodule MetadataApp.MetaConsultas do
   defp select_dinamico(campos, alias_por_catalogo) do
     Map.new(campos, fn campo ->
       alias_tabla = Map.fetch!(alias_por_catalogo, campo["catalogo"])
-      campo_atom = String.to_existing_atom(campo["campo"])
+      campo_atom = campo_atom_real(campo)
       {clave_campo(campo), dynamic([{^alias_tabla, t}], field(t, ^campo_atom))}
     end)
+  end
+
+  # "id"/"trn" seleccionan directo, valen tal cual. "estado"/"branch"/
+  # "inventory_location"/"sales_unit" seleccionan el id crudo real
+  # (estado_id/branch_id/...) -- se resuelven a nombre legible recién
+  # después del Repo.all/1, ver resolver_campos_control/3.
+  defp campo_atom_real(%{"control" => true, "campo" => clave}), do: Map.fetch!(@campo_real_control, clave)
+  defp campo_atom_real(%{"campo" => campo}), do: String.to_existing_atom(campo)
+
+  @claves_control_a_resolver ~w(estado branch inventory_location sales_unit)
+
+  # Batch por columna (una consulta por clave de control presente, nunca
+  # una por fila) -- mismo espíritu que agregar_alcance_a_filas/2 y
+  # mapa_nombres_estados/1 para un catálogo normal.
+  defp resolver_campos_control(filas, campos_visibles, catalogo_base) do
+    campos_visibles
+    |> Enum.filter(&(&1["control"] == true and &1["campo"] in @claves_control_a_resolver))
+    |> Enum.reduce(filas, fn campo, filas_acc ->
+      clave = clave_campo(campo)
+      resolver = resolver_control(campo["campo"], catalogo_base)
+      Enum.map(filas_acc, &Map.update!(&1, clave, resolver))
+    end)
+  end
+
+  defp resolver_control("estado", catalogo_base) do
+    mapa = MetaStateEngine.mapa_nombres_estados(catalogo_base)
+    fn id -> id && Map.get(mapa, id) end
+  end
+
+  defp resolver_control("branch", _catalogo_base) do
+    fn id -> id && with(%{branch_name: nombre} <- Autenticacion.obtener_branch(id), do: nombre) end
+  end
+
+  defp resolver_control("inventory_location", _catalogo_base) do
+    fn id -> id && with(%{inventory_name: nombre} <- Autenticacion.obtener_inventory_location(id), do: nombre) end
+  end
+
+  defp resolver_control("sales_unit", _catalogo_base) do
+    fn id -> id && with(%{sales_unit_name: nombre} <- Autenticacion.obtener_sales_unit(id), do: nombre) end
+  end
+
+  # Un campo "tipo" => "referencia" normal (no de control -- esos ya
+  # quedaron resueltos arriba) mostraba el id crudo de la FK en vez de su
+  # etiqueta -- bug real 2026-08-27 (reporte "Clientes Core": columna
+  # "U.Venta" mostraba "4"/"5" en vez de "Prev-Uriel"/"Prev-Jazmin", pese a
+  # tener "campo_visualizacion" modo "descripcion" configurado -- la
+  # misma etiqueta que CatalogoGenerico.etiqueta_para_referencia/2 ya usa
+  # para un catálogo normal, acá nunca se llamaba). Batch por columna
+  # (una query por relación por página, nunca una por fila) -- mismo
+  # criterio que CatalogoGenerico.mapa_acompanamiento/2, reusando su
+  # etiqueta_para_referencia/2 y modulo_destino_de/1 para no tener un
+  # segundo mecanismo que se desincronice del primero.
+  defp resolver_campos_referencia(filas, campos_visibles, detalles_por_catalogo) do
+    campos_visibles
+    |> Enum.filter(&(&1["control"] != true and &1["tipo"] == "referencia"))
+    |> Enum.reduce(filas, fn campo, filas_acc ->
+      clave = clave_campo(campo)
+      props = props_referenciado(campo, detalles_por_catalogo)
+      modulo = props && CatalogoGenerico.modulo_destino_de(props["catalogo"])
+
+      ids = filas_acc |> Enum.map(&Map.get(&1, clave)) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+      etiquetas = resolver_etiquetas_referencia(modulo, ids, props)
+
+      Enum.map(filas_acc, &Map.update!(&1, clave, fn id -> id && Map.get(etiquetas, id) end))
+    end)
+  end
+
+  defp resolver_etiquetas_referencia(nil, _ids, _props), do: %{}
+  defp resolver_etiquetas_referencia(_modulo, [], _props), do: %{}
+
+  defp resolver_etiquetas_referencia(modulo, ids, props) do
+    from(t in modulo, where: t.id in ^ids)
+    |> Repo.all()
+    |> Map.new(&{&1.id, CatalogoGenerico.etiqueta_para_referencia(&1, props)})
   end
 
   # `filtros`/`busqueda` siguen llegando con el nombre de campo CRUDO
@@ -344,10 +1049,15 @@ defmodule MetadataApp.MetaConsultas do
     end)
   end
 
+  # campo_atom_real/1 (no String.to_existing_atom/1 directo): un campo de
+  # control "estado"/"branch"/"inventory_location"/"sales_unit" filtra
+  # contra su columna real (estado_id/branch_id/...), nunca contra un
+  # átomo literal con el nombre de la clave de control -- ese átomo no
+  # es una columna real, filtrar/buscar con él reventaría en Postgres.
   defp resolver_campo(campos, alias_por_catalogo, campo_nombre) do
     case Enum.find(campos, &(&1["campo"] == to_string(campo_nombre))) do
       nil -> nil
-      campo -> {Map.fetch!(alias_por_catalogo, campo["catalogo"]), String.to_existing_atom(campo["campo"])}
+      campo -> {Map.fetch!(alias_por_catalogo, campo["catalogo"]), campo_atom_real(campo)}
     end
   end
 
@@ -368,12 +1078,39 @@ defmodule MetadataApp.MetaConsultas do
     where(query, [{^alias_tabla, t}], field(t, ^campo) <= ^valor)
   end
 
+  # "mayor que"/"menor que" del Parámetro numérico estándar (ver moduledoc
+  # de MetaSchema.Consulta) -- ESTRICTOS a propósito (`>`/`<`, no `>=`/
+  # `<=`): "igual" ya cubre el caso de límite inclusivo, así que no hace
+  # falta que "mayor" tape ese mismo caso.
+  defp aplicar_filtro(query, alias_tabla, campo, {:mayor, valor}) do
+    where(query, [{^alias_tabla, t}], field(t, ^campo) > ^valor)
+  end
+
+  defp aplicar_filtro(query, alias_tabla, campo, {:menor, valor}) do
+    where(query, [{^alias_tabla, t}], field(t, ^campo) < ^valor)
+  end
+
+  defp aplicar_filtro(query, alias_tabla, campo, {:diferente, valor}) do
+    where(query, [{^alias_tabla, t}], field(t, ^campo) != ^valor)
+  end
+
   defp aplicar_filtro(query, _alias_tabla, _campo, {:entre, {nil, nil}}), do: query
   defp aplicar_filtro(query, alias_tabla, campo, {:entre, {desde, nil}}), do: aplicar_filtro(query, alias_tabla, campo, {:gte, desde})
   defp aplicar_filtro(query, alias_tabla, campo, {:entre, {nil, hasta}}), do: aplicar_filtro(query, alias_tabla, campo, {:lte, hasta})
 
   defp aplicar_filtro(query, alias_tabla, campo, {:entre, {desde, hasta}}) do
     where(query, [{^alias_tabla, t}], field(t, ^campo) >= ^desde and field(t, ^campo) <= ^hasta)
+  end
+
+  # Selección múltiple (parámetros tipo Sucursal/Almacén/Unidad de
+  # venta/Producto, ver moduledoc de MetaSchema.Consulta) -- lista vacía
+  # es "no elegiste nada todavía", no "no traigas nada": se ignora en vez
+  # de armar un WHERE false, mismo criterio que un <select multiple>
+  # nativo sin nada tildado.
+  defp aplicar_filtro(query, _alias_tabla, _campo, {:in, []}), do: query
+
+  defp aplicar_filtro(query, alias_tabla, campo, {:in, lista}) do
+    where(query, [{^alias_tabla, t}], field(t, ^campo) in ^lista)
   end
 
   defp aplicar_filtro(query, alias_tabla, campo, valor) do

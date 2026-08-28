@@ -33,7 +33,8 @@ defmodule MetadataAppWeb.Sysadmin.AccionesExternasLive do
     %{tipo: :pagina, id: "empresas", label: "Empresas", nav: "/sysadmin/empresas"},
     %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
     %{tipo: :pagina, id: "ambientes", label: "Ambientes de Deploy", nav: "/sysadmin/ambientes"},
-    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"}
+    %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
+    %{tipo: :pagina, id: "panel_control", label: "Panel Control", nav: "/sysadmin/panel-control"}
   ]
 
   def mount(_params, _session, socket) do

@@ -10,7 +10,7 @@ defmodule MetadataAppWeb.UsuarioLive.Login do
       <div class="mx-auto max-w-sm space-y-4">
         <div class="text-center">
           <img
-            src="https://prettycore.xyz/IMAGENES/Logo%20Prettycore%20(8).png"
+            src="https://ennovacore.com.mx/IMAGENES/IMAGENES_pret/gota.png"
             alt="Prettycore"
             class="mx-auto mb-4 h-12 w-auto"
           />

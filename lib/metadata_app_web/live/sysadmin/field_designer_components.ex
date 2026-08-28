@@ -190,7 +190,7 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
 
   def construir_propiedades(%{"tipo" => "referencia"} = form, campos_existentes, catalogo_nombre) do
     catalogo = form["catalogo"] || ""
-    destino = catalogo != "" && MetaSchemaContext.obtener_header_por_nombre(catalogo)
+    destino = catalogo != "" && resolver_destino_referencia(catalogo)
     dependencias_check = validar_dependencias_form(form, campos_existentes)
 
     cond do
@@ -204,15 +204,16 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
         dependencias_check
 
       true ->
-        nombre = "#{catalogo_nombre}_#{String.replace_prefix(catalogo, "pty_", "")}"
+        sufijo = catalogo |> String.replace_prefix("pty_", "") |> String.replace_prefix("meta_schema_", "")
+        nombre = "#{catalogo_nombre}_#{sufijo}"
         cap = form["capacidades"] || %{}
 
         if Enum.any?(campos_existentes, &(&1.schema_context_field == nombre)) do
-          {:error, "Ya existe un campo que referencia a #{destino.schema_context_label} en este catálogo."}
+          {:error, "Ya existe un campo que referencia a #{destino.etiqueta} en este catálogo."}
         else
           propiedades =
             %{
-              "etiqueta" => destino.schema_context_label,
+              "etiqueta" => destino.etiqueta,
               "tipo" => "referencia",
               "orden" => length(campos_existentes) + 1,
               "visible" => cap["oculto"] != true,
@@ -220,10 +221,46 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
               "opcional" => false,
               "catalogo" => catalogo
             }
+            |> agregar_visualizacion_por_defecto(catalogo)
             |> agregar_relaciones(form, cap)
 
           {:ok, nombre, propiedades}
         end
+    end
+  end
+
+  # Empresa/Branch/InventoryLocation/SalesUnit (tablas de sistema, ver
+  # MetaSchemaContext.catalogo_sistema/1) no tienen meta_schema_header --
+  # se arma un "destino" equivalente ahí mismo en vez de buscarlo en la
+  # tabla de headers, único punto de donde sale la etiqueta/duplicado más
+  # abajo (mismo dato, sin importar el origen).
+  defp resolver_destino_referencia(catalogo) do
+    case MetaSchemaContext.catalogo_sistema(catalogo) do
+      %{etiqueta: etiqueta} ->
+        %{etiqueta: etiqueta}
+
+      nil ->
+        case MetaSchemaContext.obtener_header_por_nombre(catalogo) do
+          nil -> nil
+          header -> %{etiqueta: header.schema_context_label}
+        end
+    end
+  end
+
+  # Sin esto el combo de una tabla de sistema mostraría "#3" en vez de
+  # "Temoaya": no hay meta_schema_detail para Empresa/Branch/etc., así
+  # que el admin no tiene forma de elegir "campos_acompanamiento" como en
+  # un catálogo normal -- se precarga el único campo de nombre que cada
+  # una tiene, mismo mecanismo ("campo_visualizacion" modo "descripcion")
+  # que ya usa cualquier referencia configurada a mano. Pública -- también
+  # la usa BcNuevoCompletoLive.detalle_attrs/1 (wizard de creación,
+  # lógica de campo "referencia" duplicada acá a propósito por el
+  # principio "nada toca la base hasta Crear", pero esto puntual no vale
+  # la pena repetirlo dos veces).
+  def agregar_visualizacion_por_defecto(propiedades, catalogo) do
+    case MetaSchemaContext.catalogo_sistema(catalogo) do
+      %{campo_nombre: campo} -> Map.put(propiedades, "campo_visualizacion", %{"modo" => "descripcion", "campo_descripcion" => campo})
+      nil -> propiedades
     end
   end
 

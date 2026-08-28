@@ -12,7 +12,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "editar"}}
 
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador, CatalogoGenerico}
-  alias MetadataApp.FiltrosDefault
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaReglasCodigo
@@ -20,9 +19,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   alias MetadataAppWeb.AdminNav
   alias MetadataAppWeb.Sysadmin.FieldDesignerComponents
   alias MetadataAppWeb.AuditoriaContexto
-  alias Phoenix.LiveView.JS
 
   import MetadataAppWeb.FiltrosDefaultComponents, only: [panel_filtros_default: 1]
+  import MetadataAppWeb.EncabezadoBcComponents, only: [panel_encabezado: 1]
+
+  alias MetadataAppWeb.EncabezadoBcComponents
 
   @menu [
     %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
@@ -34,7 +35,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
     %{tipo: :pagina, id: "ambientes", label: "Ambientes de Deploy", nav: "/sysadmin/ambientes"},
     %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
-    %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
+    %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"},
+  %{tipo: :pagina, id: "panel_control", label: "Panel Control", nav: "/sysadmin/panel-control"}
   ]
 
   # Get View unificado (panel_get_view/1) — descriptores fijos de los
@@ -57,19 +59,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   # Mismo set curado que BcListLive (modales de carpeta) — el ícono del
   # header se edita con el mismo selector en ambas pantallas.
-  @iconos_sugeridos ~w(
-    inventory_2 inventory shopping_cart storefront store sell local_offer
-    category label folder folder_open description receipt_long assignment
-    checklist rule task list_alt table_chart grid_view apps widgets
-    dashboard bar_chart pie_chart insights trending_up payments credit_card
-    attach_money account_balance business apartment factory warehouse
-    local_shipping directions_car build engineering handyman construction
-    group person people badge admin_panel_settings support_agent
-    notifications campaign mail chat event schedule calendar_month
-    place map public language security lock key qr_code print
-    archive star favorite flag settings tune
-  )
-
   def mount(%{"nombre" => nombre}, _session, socket) do
     header = MetaSchemaContext.obtener_header_por_nombre(nombre)
 
@@ -92,7 +81,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       # reuse (roadmap #13, ver AuditoriaContexto.desde_socket/1).
       |> assign(:contexto_auditoria, AuditoriaContexto.desde_socket(socket))
       |> assign(:header_form, header_form_desde(header))
-      |> assign(:iconos_sugeridos, @iconos_sugeridos)
+      |> assign(:iconos_sugeridos, EncabezadoBcComponents.iconos_sugeridos())
       |> assign(:carpetas, MetaSchemaContext.listar_carpetas_existentes())
       |> assign(:catalogos_referenciables, MetaSchemaContext.listar_catalogos_referenciables())
       |> assign(:reglas_mensajes, %{"pre" => nil, "post" => nil})
@@ -102,65 +91,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
   defp header_form_desde(nil), do: nil
-
-  defp header_form_desde(header) do
-    {carpeta_padre, segmento} = dividir_nav(header.schema_context_nav)
-
-    %{
-      "etiqueta" => header.schema_context_label,
-      "carpeta_padre" => carpeta_padre,
-      "segmento" => segmento,
-      "icono" => header.schema_context_icono || "",
-      "visible" => header.schema_visible,
-      "error" => nil
-    }
-  end
-
-  # "Navegación" se corrige a raíz de un bug real: dejar la ruta entera como
-  # texto libre llevó a que alguien tipeara "/alyconfig/canales" a mano
-  # editando OTRO catálogo, pisando sin darse cuenta la ruta de uno que
-  # recién se había creado ahí — construir_arbol/1 solo puede mostrar un
-  # nodo por ruta, así que el segundo en cargarse "hacía desaparecer" al
-  # primero. Separar en carpeta (select, solo rutas de carpeta que ya
-  # existen) + segmento propio (texto, pero validado contra colisión antes
-  # de guardar) hace ese error estructuralmente imposible en la carpeta, y
-  # detectable antes de guardar en el segmento.
-  defp dividir_nav(nav) do
-    case nav |> String.trim_leading("/") |> String.split("/", trim: true) do
-      [] -> {"", ""}
-      [unico] -> {"", unico}
-      varios -> {varios |> Enum.slice(0..-2//1) |> Enum.join("/"), List.last(varios)}
-    end
-  end
-
-  defp componer_nav_header(carpeta_padre, segmento) do
-    cond do
-      segmento == "" -> ""
-      carpeta_padre in [nil, ""] -> "/" <> segmento
-      true -> "/" <> carpeta_padre <> "/" <> segmento
-    end
-  end
-
-  # Permisivo a propósito (no fuerza minúsculas): rutas ya existentes como
-  # "/catalogos/Clientes" usan mayúsculas y forzar el case acá las cambiaría
-  # solo por tocar este formulario, rompiendo cualquier link/bookmark viejo
-  # que dependa del case exacto. Lo que sí se quita son espacios y "/" —
-  # que es justo lo que permitía meter una ruta de varios niveles en lo que
-  # se pensaba como "solo el segmento final".
-  defp sanitizar_segmento_header(valor) do
-    (valor || "")
-    |> String.trim()
-    |> String.replace(~r/[^A-Za-z0-9\-_]/, "")
-    |> String.slice(0, 50)
-  end
-
-  defp colisiona_con_otro?(nav, header_id) do
-    case MetaSchemaContext.obtener_header_por_nav(nav) do
-      nil -> false
-      %{id: ^header_id} -> false
-      _otro -> true
-    end
-  end
+  defp header_form_desde(header), do: EncabezadoBcComponents.form_desde_header(header)
 
   defp cargar_motor(%{assigns: %{header: nil}} = socket), do: socket
 
@@ -206,7 +137,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # "grupo" del selector de campos editables: "header" o el
   # schema_context_name de un catálogo detalle — mismo valor que la key
   # del tab (ver tabs_motor en modal_transicion/1).
-  defp campos_del_grupo(assigns, "header"), do: assigns.campos
+  # "fecha_registro" es de CONTROL -- mismo criterio que grupo_campos_editables/1
+  # (que ya lo saca de la lista visible); acá cubre "Todos"/"Ninguno", que
+  # de otro modo lo agregaría a campos_editables sin que nunca haya sido
+  # visible/toggleable en el checklist.
+  defp campos_del_grupo(assigns, "header"), do: Enum.reject(assigns.campos, &(&1.schema_context_field == "fecha_registro"))
 
   defp campos_del_grupo(assigns, grupo) do
     case Enum.find(assigns.catalogos_detalle, &(&1.nombre == grupo)) do
@@ -247,68 +182,24 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # --- Encabezado: etiqueta/navegación/ícono ----------------------------------
 
   def handle_event("validar_header", %{"header" => params}, socket) do
-    carpeta_padre = params["carpeta_padre"] || ""
-    segmento = sanitizar_segmento_header(params["segmento"])
-    nav = componer_nav_header(carpeta_padre, segmento)
-
-    error =
-      if segmento != "" and colisiona_con_otro?(nav, socket.assigns.header.id) do
-        "Esa ruta ya la usa otro catálogo o carpeta — elegí otra."
-      end
-
-    form = %{
-      "etiqueta" => params["etiqueta"],
-      "carpeta_padre" => carpeta_padre,
-      "segmento" => segmento,
-      "icono" => normalizar_icono(params["icono"]),
-      "visible" => params["visible"] == "true",
-      "error" => error
-    }
-
-    {:noreply, assign(socket, :header_form, form)}
+    {:noreply, assign(socket, :header_form, EncabezadoBcComponents.validar(params, socket.assigns.header.id))}
   end
 
   def handle_event("elegir_icono_header", %{"icono" => icono}, socket) do
-    {:noreply, update(socket, :header_form, &Map.put(&1, "icono", icono))}
+    {:noreply, update(socket, :header_form, &EncabezadoBcComponents.elegir_icono(&1, icono))}
   end
 
   def handle_event("guardar_header", %{"header" => params}, socket) do
-    etiqueta = String.trim(params["etiqueta"] || "")
-    carpeta_padre = params["carpeta_padre"] || ""
-    segmento = sanitizar_segmento_header(params["segmento"])
-    nav = componer_nav_header(carpeta_padre, segmento)
-    header = socket.assigns.header
-
-    cond do
-      etiqueta == "" ->
-        {:noreply, update(socket, :header_form, &Map.put(&1, "error", "La etiqueta no puede quedar vacía."))}
-
-      segmento == "" ->
-        {:noreply, update(socket, :header_form, &Map.put(&1, "error", "La navegación no puede quedar vacía."))}
-
-      colisiona_con_otro?(nav, header.id) ->
+    case EncabezadoBcComponents.guardar(params, socket.assigns.header) do
+      {:ok, header} ->
         {:noreply,
-         update(socket, :header_form, &Map.put(&1, "error", "Esa ruta ya la usa otro catálogo o carpeta — elegí otra."))}
+         socket
+         |> assign(:header, header)
+         |> assign(:header_form, header_form_desde(header))
+         |> put_flash(:info, "Encabezado actualizado.")}
 
-      true ->
-        attrs = %{
-          "schema_context_label" => etiqueta,
-          "schema_context_nav" => nav,
-          "schema_context_icono" => nil_si_vacio(normalizar_icono(params["icono"])),
-          "schema_visible" => params["visible"] == "true"
-        }
-
-        case MetaSchemaContext.actualizar_header(header, attrs) do
-          {:ok, header} ->
-            {:noreply,
-             socket
-             |> assign(:header, header)
-             |> assign(:header_form, header_form_desde(header))
-             |> put_flash(:info, "Encabezado actualizado.")}
-
-          {:error, changeset} ->
-            {:noreply, update(socket, :header_form, &Map.put(&1, "error", resumen_errores(changeset)))}
-        end
+      {:error, header_form} ->
+        {:noreply, assign(socket, :header_form, header_form)}
     end
   end
 
@@ -1041,21 +932,20 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # CatalogoPermisosLive/pestaña Permisos, ver ese módulo — "revuelve
   # mucho" tenerlo separado de la config por rol en otra pestaña).
 
-  # Sub-filtro de fecha de "Filtros por default" — "primer_dia_anio"/
-  # "ultimo_dia_anio"/"actual" (una sola fecha por calendario, precargada
-  # con el valor obvio de cada modo — el usuario la puede cambiar
-  # después) / "rango" (necesita desde Y hasta, dos calendarios, sin
-  # precargar porque no hay un valor obvio para ninguno de los dos) o ""
-  # para apagarlo — al cambiar de modo se limpian las fechas viejas para
-  # no dejar pegado un valor de un modo distinto (ver
+  # Sub-filtro de fecha de "Filtros por default" — "rango" (necesita desde
+  # Y hasta, dos calendarios, sin precargar porque no hay un valor obvio
+  # para ninguno de los dos) / "actual", "primer_dia_anio", "ultimo_dia_anio"
+  # (sin calendario — son dinámicos, se recalculan solos contra la fecha de
+  # hoy en cada consulta, ver FiltrosDefault.rango_fecha/3) o "" para
+  # apagarlo — al cambiar de modo se limpian las fechas viejas para no
+  # dejar pegado un valor de "rango" si se cambia a otro modo (ver
   # cambiar_filtro_fecha_valor/2 abajo).
   def handle_event("cambiar_filtro_fecha_modo", %{"modo" => modo}, socket) do
     header = socket.assigns.header
-    valor_default = FiltrosDefault.valor_default_para_modo(modo)
 
     attrs = %{
       "filtro_default_fecha_modo" => if(modo == "", do: nil, else: modo),
-      "filtro_default_fecha_valor" => valor_default,
+      "filtro_default_fecha_valor" => nil,
       "filtro_default_fecha_valor_hasta" => nil
     }
 
@@ -1065,24 +955,16 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # "campo" es "desde"/"hasta" (modo "rango", dos inputs) o siempre
-  # "desde" para los modos de una sola fecha ("actual"/"primer_dia_anio"/
-  # "ultimo_dia_anio"). Para estos dos últimos el <input> ya trae min/max
-  # acotando al año en curso (ver FiltrosDefault.min_calendario_unico/1),
-  # pero se re-valida acá server-side porque el min/max de un <input
-  # type="date"> se puede saltear escribiendo el valor a mano.
+  # "campo" es "desde"/"hasta" — solo el modo "rango" tiene calendario hoy
+  # (ver panel_filtros_default/1), los otros 3 modos de fecha son dinámicos
+  # y no disparan este evento.
   def handle_event("cambiar_filtro_fecha_valor", %{"campo" => campo, "valor" => valor}, socket) do
     header = socket.assigns.header
     clave = if campo == "desde", do: "filtro_default_fecha_valor", else: "filtro_default_fecha_valor_hasta"
 
-    if FiltrosDefault.fecha_fuera_de_anio_actual?(header.filtro_default_fecha_modo, valor) do
-      {:noreply,
-       put_flash(socket, :error, "La fecha tiene que ser del año en curso (#{Date.utc_today().year}).")}
-    else
-      case MetaSchemaContext.actualizar_header(header, %{clave => valor}) do
-        {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
-        {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la fecha.")}
-      end
+    case MetaSchemaContext.actualizar_header(header, %{clave => valor}) do
+      {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la fecha.")}
     end
   end
 
@@ -1665,22 +1547,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
 
-  defp normalizar_icono(valor) do
-    (valor || "")
-    |> String.trim()
-    |> String.downcase()
-    |> quitar_acentos()
-    |> String.replace(~r/[^a-z0-9]+/, "_")
-    |> String.trim("_")
-    |> String.slice(0, 50)
-  end
-
-  defp quitar_acentos(valor) do
-    valor
-    |> String.normalize(:nfd)
-    |> String.replace(~r/\p{Mn}/u, "")
-  end
-
   defp nil_si_vacio(""), do: nil
   defp nil_si_vacio(valor), do: valor
 
@@ -1920,8 +1786,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           ) ++
           [
             %{key: "get", label: "Relaciones"},
-            %{key: "getview", label: "Vista Get"},
-            %{key: "postview", label: "Vista Post"}
+            %{key: "getview", label: "Get Config"},
+            %{key: "postview", label: "Post Config"}
           ] ++
           if(@es_detalle?,
             do: [],
@@ -2094,7 +1960,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # Catálogo Maestro-Detalle (R3): sin pasos de autómata — un catálogo
   # detalle nunca tiene estados/transiciones propias, mostrarlos como
   # "pendientes" para siempre sería engañoso (nunca se van a completar,
-  # ni hace falta que lo hagan). Sí tiene Relaciones/Vista Get/Vista Post
+  # ni hace falta que lo hagan). Sí tiene Relaciones/Get Config/Post Config
   # (campos propios, get view propio) — Permisos no, un detalle nunca
   # tiene permisos aparte (los de la fila los da su maestro), mismo
   # criterio que ya regía el viejo link "Permisos" de BcListLive.
@@ -2148,8 +2014,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
        do: [{"Permisos", true}],
        else: []) ++
       (if referencias_sin_configurar > 0, do: [{"Relaciones", false}], else: []) ++
-      (if tiene_algo_oculto?, do: [{"Vista Get", true}], else: []) ++
-      (if tiene_plantilla?, do: [{"Vista Post", true}], else: [])
+      (if tiene_algo_oculto?, do: [{"Get Config", true}], else: []) ++
+      (if tiene_plantilla?, do: [{"Post Config", true}], else: [])
   end
 
   defp campo_referencia?(campo), do: get_in(campo.schema_context_properties, ["tipo"]) == "referencia"
@@ -2198,97 +2064,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           <span>{problema.mensaje}</span>
         </div>
       <% end %>
-    </div>
-    """
-  end
-
-  attr :header_form, :map, required: true
-  attr :iconos_sugeridos, :list, required: true
-  attr :carpetas, :list, required: true
-
-  defp panel_encabezado(assigns) do
-    assigns = assign(assigns, :nav_preview, componer_nav_header(assigns.header_form["carpeta_padre"], assigns.header_form["segmento"]))
-
-    ~H"""
-    <div class="border border-gray-200 rounded-lg">
-      <div class="px-1.5 ml-2 -mb-2 relative">
-        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-500">Encabezado</span>
-      </div>
-      <div class="p-3 pt-4">
-        <%= if @header_form["error"] do %>
-          <div class="bg-red-50 text-red-700 rounded-lg px-2 py-1.5 mb-2">{@header_form["error"]}</div>
-        <% end %>
-
-        <form phx-change="validar_header" phx-submit="guardar_header" class="grid grid-cols-[100px_1fr] gap-y-2 gap-x-2 items-center">
-          <label class="font-medium text-gray-900">Etiqueta:</label>
-          <input type="text" name="header[etiqueta]" value={@header_form["etiqueta"]} required maxlength="100"
-            class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
-
-          <label class="font-medium text-gray-900">Navegación:</label>
-          <div>
-            <div class="flex items-center gap-1">
-              <select name="header[carpeta_padre]"
-                title="Solo carpetas que ya existen en el menú — así no se puede tipear una ruta con errores ni pisar la de otro catálogo."
-                class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500">
-                <option value="" selected={@header_form["carpeta_padre"] in [nil, ""]}>— Sin carpeta (raíz) —</option>
-                <%= for carpeta <- @carpetas do %>
-                  <option value={carpeta.ruta} selected={@header_form["carpeta_padre"] == carpeta.ruta}>{carpeta.etiqueta}</option>
-                <% end %>
-              </select>
-              <span class="text-gray-400">/</span>
-              <input type="text" name="header[segmento]" value={@header_form["segmento"]} required maxlength="50"
-                title="Solo el segmento final de este catálogo — sin espacios ni '/'."
-                class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 flex-1 font-mono focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
-            </div>
-            <div class="mt-1 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg px-1.5 py-0.5 inline-flex items-center gap-1">
-              <span class="text-purple-400">Vista previa:</span>
-              <span class="font-mono">{@nav_preview}</span>
-            </div>
-          </div>
-
-          <label class="font-medium text-gray-900">Ícono:</label>
-          <div>
-            <input type="hidden" name="header[icono]" value={@header_form["icono"]} />
-            <button type="button" phx-click={JS.toggle(to: "#selector-iconos-header")}
-              class="w-6 h-6 flex items-center justify-center border border-gray-300 rounded-lg bg-gray-50 hover:bg-gray-100 text-gray-700 transition-colors" title="Elegir ícono">
-              <%= if @header_form["icono"] not in [nil, ""] do %>
-                <span class="material-symbols-outlined" style="font-size: 16px">{@header_form["icono"]}</span>
-              <% else %>
-                <span class="material-symbols-outlined text-gray-400" style="font-size: 16px">apps</span>
-              <% end %>
-            </button>
-
-            <div id="selector-iconos-header" class="hidden mt-1 border border-gray-200 rounded-lg bg-white shadow-lg p-1.5 max-w-md">
-              <div class="grid grid-cols-10 gap-0.5 max-h-40 overflow-y-auto">
-                <%= for icono <- @iconos_sugeridos do %>
-                  <button type="button" title={icono}
-                    phx-click={JS.push("elegir_icono_header", value: %{icono: icono}) |> JS.hide(to: "#selector-iconos-header")}
-                    class={[
-                      "w-6 h-6 flex items-center justify-center rounded-lg text-gray-700 hover:bg-purple-50 hover:text-purple-700 transition-colors",
-                      @header_form["icono"] == icono && "bg-purple-100 text-purple-700"
-                    ]}>
-                    <span class="material-symbols-outlined" style="font-size: 16px">{icono}</span>
-                  </button>
-                <% end %>
-              </div>
-            </div>
-          </div>
-
-          <div></div>
-          <label class="flex items-center gap-1.5 font-medium text-gray-900 cursor-pointer select-none">
-            <input type="hidden" name="header[visible]" value="false" />
-            <input type="checkbox" name="header[visible]" value="true" checked={@header_form["visible"] == true} class="accent-purple-600" />
-            Es visible
-          </label>
-
-          <div></div>
-          <div>
-            <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
-              Guardar encabezado
-            </button>
-          </div>
-        </form>
-      </div>
     </div>
     """
   end
@@ -3424,7 +3199,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       <.tarjeta_endpoint metodo="POST" url={"/api/#{@tabla}"}
         descripcion={
           if @tiene_detalles,
-            do: "Crea UN registro con TODOS sus renglones, en un solo request atómico. \"renglones\" es una lista por catálogo detalle — el ejemplo muestra 2 items, pero podés mandar los que necesites (10, 50, sin límite).",
+            do: "Crea UN registro con TODOS sus renglones, en un solo request atómico. \"renglones\" es una lista por catálogo detalle — el ejemplo muestra 2 items, pero puedes mandar los que necesites (10, 50, sin límite).",
             else: "Crea un registro nuevo."
         }
         body={@payload_crear} respuesta_status="201 Created" respuesta={@respuesta_creado} />
@@ -3636,7 +3411,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # Qué campos del catálogo REFERENCIADO trae de prestado este campo tipo
   # "referencia" — lanzado desde el panel Relaciones. Presentado como 3
   # preguntas de negocio en columnas (no como una configuración de tablas):
-  # 1) qué ves del catálogo relacionado, 2) qué le mandás vos de este, 3)
+  # 1) qué ves del catálogo relacionado, 2) qué le envías de este, 3)
   # cómo se ve el registro al elegirlo/mostrarlo. El "stepper" de arriba es
   # solo decorativo/orientativo — las 3 columnas están siempre visibles
   # juntas, no hay paginado real (menos clics: nadie tiene que ir y volver
@@ -3696,7 +3471,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 </div>
               </div>
 
-              <!-- ---------------- COLUMNA 2: qué mandás vos ---------------- -->
+              <!-- ---------------- COLUMNA 2: qué envías ---------------- -->
               <div class="p-4 flex flex-col gap-2.5 min-h-0" data-columna="2">
                 <div>
                   <p class="font-bold text-gray-800">2. Datos que envías a {@form["catalogo_destino_label"]}</p>
@@ -3762,7 +3537,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                     </div>
                   </.opcion_visualizacion>
 
-                  <.opcion_visualizacion valor="plantilla" cv={cv} titulo="Personalizado" descripcion="Armalo vos combinando los datos que quieras.">
+                  <.opcion_visualizacion valor="plantilla" cv={cv} titulo="Personalizado" descripcion="Ármalo combinando los datos que quieras.">
                     <div :if={cv["modo"] == "plantilla"} class="mt-2">
                       <input type="text" name="campo_visualizacion[plantilla]" value={cv["plantilla"]} placeholder="{campo_a} - {campo_b}"
                         class="w-full border border-gray-300 rounded-lg px-2 py-1.5 font-mono" />
@@ -4550,7 +4325,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
   # Un grupo (header o un catálogo detalle) del selector de campos
-  # editables — buscador propio + "Todos/Ninguno" + grilla de 2 columnas
+  # editables — buscador propio + "Todos/Ninguno" + tabla de 2 columnas
   # (menos alto que una fila por checkbox, mismo criterio que el selector
   # de íconos). `campos_editables[]` es el mismo input en todos los
   # grupos — la selección real vive en @form, no en qué tab está visible.
@@ -4562,12 +4337,19 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     busqueda = get_in(assigns.form, ["busqueda_campos", assigns.grupo]) || ""
     seleccionados = assigns.form["campos_editables"] || []
 
+    # "fecha_registro" es de CONTROL (mismo criterio que panel_campos/1 y
+    # cargar_motor/1 para catalogos_detalle) -- acá cubre el grupo
+    # "header", que usa @campos crudo (a diferencia de catalogos_detalle,
+    # ya filtrado en el origen) y nunca debería ofrecerse como campo
+    # editable de una transición.
+    campos = Enum.reject(assigns.campos, &(&1.schema_context_field == "fecha_registro"))
+
     visibles =
       if busqueda == "" do
-        assigns.campos
+        campos
       else
         texto = String.downcase(busqueda)
-        Enum.filter(assigns.campos, &String.contains?(String.downcase(&1.schema_context_field), texto))
+        Enum.filter(campos, &String.contains?(String.downcase(&1.schema_context_field), texto))
       end
 
     assigns =

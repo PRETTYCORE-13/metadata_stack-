@@ -164,4 +164,35 @@ defmodule MetadataAppWeb.CatalogoLiveFiltrosTest do
     assert html =~ otro.meta_fixture_cliente_nombre
     assert html =~ ~r/bg-purple-600 text-white text-\[10px\] font-bold">\s*1\s*</
   end
+
+  test "un campo activo en el popover Y en la fila fija del thead a la vez no se pisan entre sí", %{conn: conn} do
+    sufijo = unique()
+
+    ana = fixture_cliente(%{meta_fixture_cliente_nombre: "Ana#{sufijo}", meta_fixture_cliente_edad: 30, meta_fixture_cliente_venta: Decimal.new("1")})
+    beto = fixture_cliente(%{meta_fixture_cliente_nombre: "Beto#{sufijo}", meta_fixture_cliente_edad: 30, meta_fixture_cliente_venta: Decimal.new("1")})
+
+    {:ok, view, _html} = live(conn, "/__test__/fixture-cliente")
+
+    # La fila fija del thead (name "filtros[...]") ya trae un valor de una
+    # vuelta anterior — simula que el campo ya estaba filtrado antes de
+    # que el usuario lo agregara TAMBIÉN al popover ("Agregar filtro").
+    render_change(view, "filtrar", %{"filtros" => %{"meta_fixture_cliente_nombre" => "Beto#{sufijo}"}})
+
+    # El usuario cambia el valor DESDE EL POPOVER (name distinto,
+    # "filtros_popover[...]") — el submit manda las DOS copias del campo
+    # (la vieja "Beto..." de la fila fija + la nueva "Ana..." del popover)
+    # junto con "_target" apuntando a la que realmente cambió. Sin el
+    # merge por _target (merge_filtros_por_target/1), "filtros" pisaría a
+    # "filtros_popover" y el filtro seguiría buscando "Beto" — bug real
+    # que rompía el filtro de cualquier campo agregado a las dos UIs.
+    html =
+      render_change(view, "filtrar", %{
+        "filtros" => %{"meta_fixture_cliente_nombre" => "Beto#{sufijo}"},
+        "filtros_popover" => %{"meta_fixture_cliente_nombre" => "Ana#{sufijo}"},
+        "_target" => ["filtros_popover", "meta_fixture_cliente_nombre"]
+      })
+
+    assert html =~ ana.meta_fixture_cliente_nombre
+    refute html =~ beto.meta_fixture_cliente_nombre
+  end
 end

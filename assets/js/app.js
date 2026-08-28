@@ -428,16 +428,33 @@ const ZoomLienzo = {
 // catalogo_live.ex) — 100% del lado del cliente, sin un solo evento al
 // servidor: tildar/destildar/arrastrar un campo solo oculta/reordena
 // <th>/<td> por CSS/DOM (display:none, appendChild), nunca toca @columnas
-// ni la query real. El estado vive acá, a nivel de MÓDULO — no en
-// localStorage a propósito — indexado por la ruta actual:
-//   - Sobrevive una navegación LiveView (push_navigate/<.link navigate>)
-//     porque esas NO recargan la página de verdad; el módulo de JS sigue
-//     vivo en memoria, solo se re-monta el hook con el mismo estado.
-//   - Se borra solo con un refresh real del navegador (F5/Ctrl+R), que
-//     reinicia todo el runtime de JS — exactamente el comportamiento
-//     pedido: "momentáneo", nunca localStorage.
-const memoriaColumnasOcultas = {}
-const memoriaOrdenColumnas = {}
+// ni la query real. Se guarda en localStorage, indexado por la ruta
+// actual dentro de un único objeto JSON por preferencia (mismo criterio
+// que el resto de preferencias de UI de este archivo — ancho del
+// sidebar, sidebar abierto/cerrado: por NAVEGADOR, nunca por servidor,
+// nunca compartido entre usuarios ni pisa el orden fijo que un admin
+// haya configurado desde BC Motor — Header.orden_columnas_tabla sigue
+// siendo el punto de partida, esto solo se aplica ENCIMA en el cliente).
+// Pedido explícito (2026-08-19): que sobreviva un refresh real del
+// navegador, no solo una navegación LiveView — antes vivía en memoria
+// del módulo y se perdía con cualquier F5/Ctrl+R.
+function leerMapaPreferenciaColumnas(llave) {
+  try {
+    return JSON.parse(localStorage.getItem(llave)) || {}
+  } catch {
+    return {}
+  }
+}
+
+function escribirPreferenciaColumnas(llave, ruta, valor) {
+  const mapa = leerMapaPreferenciaColumnas(llave)
+  if (valor === null) delete mapa[ruta]
+  else mapa[ruta] = valor
+  localStorage.setItem(llave, JSON.stringify(mapa))
+}
+
+const LLAVE_COLUMNAS_OCULTAS = "camposOcultosPorRuta"
+const LLAVE_COLUMNAS_ORDEN = "campoOrdenPorRuta"
 
 const SelectorCampos = {
   mounted() {
@@ -451,10 +468,10 @@ const SelectorCampos = {
     // usa para decidir si hay override que guardar o no.
     this.ordenOriginal = this.ordenActual()
 
-    const ordenGuardado = memoriaOrdenColumnas[this.clave]
+    const ordenGuardado = leerMapaPreferenciaColumnas(LLAVE_COLUMNAS_ORDEN)[this.clave]
     if (ordenGuardado) this.reordenarLista(ordenGuardado)
 
-    const ocultos = memoriaColumnasOcultas[this.clave] || this.ocultosPorDefecto()
+    const ocultos = leerMapaPreferenciaColumnas(LLAVE_COLUMNAS_OCULTAS)[this.clave] || this.ocultosPorDefecto()
     this.casillas().forEach((cb) => { cb.checked = !ocultos.includes(cb.dataset.campo) })
 
     this.aplicar()
@@ -499,18 +516,45 @@ const SelectorCampos = {
         },
       })
     }
+
+    // Arrastrar directo en los <th> de la tabla (pedido explícito: no
+    // solo desde la lista de "Campos") — mismo <thead>/<tbody>/<tfoot> que
+    // ya reordena aplicarOrden/reordenarFila, así que reusa exactamente
+    // ese motor. `draggable: "[data-col]"` deja afuera la columna de
+    // Acciones al final (sin data-col a propósito, ver reordenarFila) sin
+    // necesidad de un `filter` aparte. La fuente de verdad acá es el DOM
+    // de la fila de encabezado (ordenDesdeTabla), no las casillas del
+    // popover — al revés que el Sortable de arriba — por eso el onEnd
+    // sincroniza la LISTA de "Campos" con lo que quedó en la tabla, en
+    // vez de aplicar la tabla según la lista.
+    const filaEncabezado = this.tabla?.querySelector("thead tr:first-child")
+
+    if (filaEncabezado) {
+      this.sortableEncabezado = new Sortable(filaEncabezado, {
+        animation: 150,
+        draggable: "[data-col]",
+        ghostClass: "jal-fantasma",
+        onEnd: () => {
+          const orden = this.ordenDesdeTabla()
+          this.reordenarLista(orden)
+          this.aplicarOrden(orden)
+          this.guardarOrden(orden)
+        },
+      })
+    }
   },
 
   destroyed() {
     this.sortable?.destroy()
+    this.sortableEncabezado?.destroy()
   },
 
   casillas() {
     return this.el.querySelectorAll("input[type=checkbox][data-campo]")
   },
 
-  // En celular, sin que el usuario haya tocado "Campos" todavía en esta
-  // sesión (ver memoriaColumnasOcultas arriba), arranca ocultando las
+  // En celular, sin que el usuario haya tocado "Campos" todavía en este
+  // navegador (ver LLAVE_COLUMNAS_OCULTAS arriba), arranca ocultando las
   // columnas "estructurales" (Estado/TRN/Empresa/Sucursal/Almacén/Unidad
   // de venta) — son las que más empujan la tabla a scroll horizontal en
   // una pantalla angosta, y casi nunca son el dato que alguien busca de
@@ -527,6 +571,19 @@ const SelectorCampos = {
 
   ordenActual() {
     return Array.from(this.casillas()).map((cb) => cb.dataset.campo)
+  },
+
+  // Mismo concepto que ordenActual/0, pero leyendo la fuente de verdad
+  // DESDE la tabla (fila de encabezado real) en vez de las casillas del
+  // popover — para cuando el usuario arrastró un <th> directo, que nunca
+  // tocó la lista de "Campos".
+  ordenDesdeTabla() {
+    const filaEncabezado = this.tabla?.querySelector("thead tr:first-child")
+    if (!filaEncabezado) return this.ordenActual()
+
+    return Array.from(filaEncabezado.children)
+      .map((th) => th.dataset.col)
+      .filter(Boolean)
   },
 
   // Reordena las filas [data-fila-campo] del popover (no la tabla) según
@@ -562,12 +619,13 @@ const SelectorCampos = {
   },
 
   // Reordena las celdas [data-col] de CADA fila de la tabla (thead/tbody/
-  // tfoot por igual, misma consulta genérica) según el orden actual del
-  // popover — las celdas SIN data-col (la columna de Acciones al final)
-  // se dejan tal cual, al final, en su lugar de siempre.
-  aplicarOrden() {
+  // tfoot por igual, misma consulta genérica) según `orden` — las celdas
+  // SIN data-col (la columna de Acciones al final) se dejan tal cual, al
+  // final, en su lugar de siempre. `orden` es opcional (default: el de
+  // las casillas del popover) para que el Sortable del encabezado pueda
+  // pasarle el suyo propio (ordenDesdeTabla/0) sin que se pisen entre sí.
+  aplicarOrden(orden = this.ordenActual()) {
     if (!this.tabla) return
-    const orden = this.ordenActual()
     this.tabla.querySelectorAll("tr").forEach((fila) => this.reordenarFila(fila, orden))
   },
 
@@ -587,17 +645,14 @@ const SelectorCampos = {
       .filter((cb) => !cb.checked)
       .map((cb) => cb.dataset.campo)
 
-    if (ocultos.length === 0) delete memoriaColumnasOcultas[this.clave]
-    else memoriaColumnasOcultas[this.clave] = ocultos
+    escribirPreferenciaColumnas(LLAVE_COLUMNAS_OCULTAS, this.clave, ocultos.length === 0 ? null : ocultos)
   },
 
-  guardarOrden() {
-    const actual = this.ordenActual()
+  guardarOrden(actual = this.ordenActual()) {
     const esOriginal =
       actual.length === this.ordenOriginal.length && actual.every((clave, i) => clave === this.ordenOriginal[i])
 
-    if (esOriginal) delete memoriaOrdenColumnas[this.clave]
-    else memoriaOrdenColumnas[this.clave] = actual
+    escribirPreferenciaColumnas(LLAVE_COLUMNAS_ORDEN, this.clave, esOriginal ? null : actual)
   },
 }
 

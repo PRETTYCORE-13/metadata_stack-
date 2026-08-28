@@ -9,6 +9,35 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   alias MetadataApp.Permissions
   import Ecto.Query
 
+  # Tablas de sistema (jerarquía organizacional) que un campo "referencia"
+  # puede apuntar además de un catálogo BPB normal (2026-08-20, a pedido
+  # explícito) — NO son catálogos generados por el Motor (sin
+  # meta_schema_header, sin estado_id/delete_guid en el mismo formato que
+  # CatalogoGenerador asume), así que el nombre acá es literal el de la
+  # tabla física real (necesario para `references(:...)` en la migración,
+  # ver construir_opciones/2 en catalogo_generador.ex) y cada punto de
+  # integración de "referencia" (listar_catalogos_referenciables/0 acá,
+  # opciones_referencia/2 en CatalogoGenerico, construir_propiedades/3 en
+  # FieldDesignerComponents) mira `catalogo_sistema/1` ANTES de asumir que
+  # es un catálogo BPB con header. `campo_nombre` es el campo que se usa
+  # como etiqueta legible por default en el combo (ver
+  # agregar_visualizacion_por_defecto/1 en FieldDesignerComponents) — no
+  # hay meta_schema_detail para estas tablas, así que no hay forma de que
+  # el admin elija "campos_acompanamiento" como en un catálogo normal.
+  @catalogos_sistema %{
+    "meta_schema_empresa" => %{etiqueta: "Empresa", modulo: MetadataApp.Autenticacion.Empresa, campo_nombre: "nombre"},
+    "meta_schema_branch" => %{etiqueta: "Sucursal", modulo: MetadataApp.Autenticacion.Branch, campo_nombre: "branch_name"},
+    "meta_schema_inventory_location" => %{
+      etiqueta: "Almacén",
+      modulo: MetadataApp.Autenticacion.InventoryLocation,
+      campo_nombre: "inventory_name"
+    },
+    "meta_schema_sales_unit" => %{etiqueta: "Unidad de venta", modulo: MetadataApp.Autenticacion.SalesUnit, campo_nombre: "sales_unit_name"}
+  }
+
+  @doc "`%{etiqueta:, modulo:, campo_nombre:}` si `nombre` es una de las tablas de sistema referenciables, `nil` si es un catálogo BPB normal (o no existe)."
+  def catalogo_sistema(nombre), do: Map.get(@catalogos_sistema, nombre)
+
   # order_by explícito a propósito: sin esto Postgres no garantiza el orden
   # de las filas devueltas, y mix meta.export terminaba produciendo diffs
   # sin sentido (el archivo entero "cambiaba" de orden) sin ningún cambio
@@ -321,9 +350,17 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   # CatalogoGenerador.generar/1 fallaba en silencio al no encontrar esa
   # propiedad (ver construir_opciones/2 en catalogo_generador.ex).
   def listar_catalogos_referenciables do
-    from(h in Header, where: is_nil(h.delete_guid) and h.schema_context_type == 1, order_by: h.schema_context_label)
-    |> Repo.all()
-    |> Enum.map(&%{nombre: &1.schema_context_name, etiqueta: &1.schema_context_label})
+    catalogos =
+      from(h in Header, where: is_nil(h.delete_guid) and h.schema_context_type == 1, order_by: h.schema_context_label)
+      |> Repo.all()
+      |> Enum.map(&%{nombre: &1.schema_context_name, etiqueta: &1.schema_context_label})
+
+    sistema =
+      @catalogos_sistema
+      |> Enum.map(fn {nombre, %{etiqueta: etiqueta}} -> %{nombre: nombre, etiqueta: "#{etiqueta} (sistema)"} end)
+      |> Enum.sort_by(& &1.etiqueta)
+
+    catalogos ++ sistema
   end
 
   def obtener_header!(id), do: Repo.get!(Header, id)
@@ -1365,7 +1402,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   defp validar_campo_visualizacion(changeset) do
     case Ecto.Changeset.get_field(changeset, :schema_context_properties) do
       %{"tipo" => "referencia", "catalogo" => catalogo, "campo_visualizacion" => %{} = config} ->
-        campos_reales = catalogo |> listar_detalles() |> Enum.map(& &1.schema_context_field)
+        campos_reales = campos_reales_de(catalogo)
 
         case validar_config_visualizacion(config, campos_reales) do
           :ok -> changeset
@@ -1374,6 +1411,16 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
 
       _ ->
         changeset
+    end
+  end
+
+  # Empresa/Branch/InventoryLocation/SalesUnit (ver catalogo_sistema/1) no
+  # tienen meta_schema_detail -- su único "campo real" válido para
+  # campo_visualizacion es el campo de nombre que cada una define.
+  defp campos_reales_de(catalogo) do
+    case catalogo_sistema(catalogo) do
+      %{campo_nombre: campo} -> [campo]
+      nil -> catalogo |> listar_detalles() |> Enum.map(& &1.schema_context_field)
     end
   end
 

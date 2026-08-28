@@ -1,4 +1,4 @@
-defmodule MetadataApp.Repo.Migrations.EliminarMetaFixtureEquipo20260727191255132 do
+defmodule MetadataApp.Repo.Migrations.EliminarMetaFixtureEquipo do
   use Ecto.Migration
 
   def change do

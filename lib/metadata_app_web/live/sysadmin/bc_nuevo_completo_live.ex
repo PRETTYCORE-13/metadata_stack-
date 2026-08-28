@@ -21,6 +21,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataAppWeb.AdminNav
+  alias MetadataAppWeb.Sysadmin.FieldDesignerComponents
   alias Phoenix.LiveView.JS
 
   @topic "bc_contextos"
@@ -35,7 +36,8 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     %{tipo: :pagina, id: "credenciales", label: "Credenciales", nav: "/sysadmin/credenciales"},
     %{tipo: :pagina, id: "ambientes", label: "Ambientes de Deploy", nav: "/sysadmin/ambientes"},
     %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
-    %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"}
+    %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"},
+  %{tipo: :pagina, id: "panel_control", label: "Panel Control", nav: "/sysadmin/panel-control"}
   ]
 
   @tipos_campo ~w(string integer decimal boolean date enum referencia)
@@ -80,7 +82,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       "icono" => "",
       "visible" => true,
       "es_transaccional" => false,
-      "codigo_trn" => "",
       "encabezado_de" => ""
     })
     |> assign(:campos, [])
@@ -107,7 +108,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       |> Map.put("nombre", normalizar_identificador(contexto["nombre"]))
       |> Map.put("icono", normalizar_icono(contexto["icono"]))
       |> Map.put("es_transaccional", contexto["es_transaccional"] == "true")
-      |> Map.put("codigo_trn", normalizar_codigo_trn(contexto["codigo_trn"]))
 
     nav = componer_nav(contexto["carpeta_padre"], contexto["nombre"])
 
@@ -183,21 +183,35 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
             {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Ese catálogo destino ya no existe."))}
 
           destino ->
-            nombre = "#{nombre_actual}_#{String.replace_prefix(catalogo, "pty_", "")}"
+            sufijo = catalogo |> String.replace_prefix("pty_", "") |> String.replace_prefix("meta_schema_", "")
+            nombre = "#{nombre_actual}_#{sufijo}"
 
             if Enum.any?(socket.assigns.campos, &(&1["nombre"] == nombre)) do
               {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Ya hay un campo con ese nombre."))}
             else
-              campo = %{
-                "nombre" => nombre,
-                "etiqueta" => destino.etiqueta,
-                "tipo" => "referencia",
-                "longitud" => "",
-                "precision" => "",
-                "escala" => "",
-                "catalogo" => catalogo,
-                "opcional" => false
-              }
+              # "destino" sale de @catalogos_referenciables, cuya etiqueta
+              # trae el sufijo " (sistema)" pensado solo para distinguirlas
+              # en el <select> -- acá se usa la etiqueta LIMPIA de
+              # catalogo_sistema/1 para el campo en sí (mismo criterio que
+              # FieldDesignerComponents.construir_propiedades/3).
+              etiqueta =
+                case MetaSchemaContext.catalogo_sistema(catalogo) do
+                  %{etiqueta: etiqueta_limpia} -> etiqueta_limpia
+                  nil -> destino.etiqueta
+                end
+
+              campo =
+                %{
+                  "nombre" => nombre,
+                  "etiqueta" => etiqueta,
+                  "tipo" => "referencia",
+                  "longitud" => "",
+                  "precision" => "",
+                  "escala" => "",
+                  "catalogo" => catalogo,
+                  "opcional" => false
+                }
+                |> FieldDesignerComponents.agregar_visualizacion_por_defecto(catalogo)
 
               {:noreply,
                socket
@@ -454,9 +468,9 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
 
     encabezado_id = encabezado_id_desde_nombre(contexto["encabezado_de"])
 
-    case validar_contexto(nombre_sistema, nav, contexto["etiqueta"], es_transaccional?, contexto["codigo_trn"] || "") do
+    case validar_contexto(nombre_sistema, nav, contexto["etiqueta"]) do
       :ok ->
-        attrs = %{
+        attrs_base = %{
           "header" => %{
             "schema_context_name" => nombre_sistema,
             "schema_context_label" => contexto["etiqueta"],
@@ -465,7 +479,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
             "schema_context_type" => 1,
             "schema_context_icono" => nil_si_vacio(contexto["icono"]),
             "schema_es_transaccional" => es_transaccional?,
-            "codigo_trn" => if(es_transaccional?, do: contexto["codigo_trn"], else: nil),
             "schema_encabezado_id" => encabezado_id,
             "detalles" => Enum.map(socket.assigns.campos, &detalle_attrs/1)
           },
@@ -473,7 +486,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
           "transiciones" => socket.assigns.transiciones
         }
 
-        case MetaEstadosAdmin.crear_proceso_completo(attrs) do
+        case crear_con_reintento_codigo_trn(attrs_base, es_transaccional?) do
           {:ok, %{header: header}} ->
             # Bug operacional (2026-08-12): un BC nacía sin Alcance de Datos,
             # cada rol caía en :propio hasta que un admin lo prendía a mano
@@ -494,6 +507,39 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     end
   end
 
+  # codigo_trn ya no lo elige el admin -- se genera solo, 4 caracteres al
+  # azar (A-Z0-9), transparente en el wizard (2026-08-20, a pedido
+  # explícito: el campo manual "no agregaba valor"). Reintenta unas pocas
+  # veces si el random choca contra un código ya usado por otro catálogo
+  # (unique_constraint en Header) -- con 36^4 (~1.7M) combinaciones la
+  # chance de choque es baja, pero no cero.
+  @intentos_codigo_trn 5
+
+  defp crear_con_reintento_codigo_trn(attrs_base, false), do: MetaEstadosAdmin.crear_proceso_completo(attrs_base)
+  defp crear_con_reintento_codigo_trn(attrs_base, true), do: crear_con_reintento_codigo_trn(attrs_base, 1)
+
+  defp crear_con_reintento_codigo_trn(attrs_base, intento) do
+    attrs = put_in(attrs_base, ["header", "codigo_trn"], generar_codigo_trn_aleatorio())
+
+    case MetaEstadosAdmin.crear_proceso_completo(attrs) do
+      {:error, :header, changeset, _cambios} = error ->
+        if intento < @intentos_codigo_trn and Keyword.has_key?(changeset.errors, :codigo_trn) do
+          crear_con_reintento_codigo_trn(attrs_base, intento + 1)
+        else
+          error
+        end
+
+      resultado ->
+        resultado
+    end
+  end
+
+  defp generar_codigo_trn_aleatorio do
+    1..4
+    |> Enum.map(fn _ -> Enum.random(~c"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") end)
+    |> List.to_string()
+  end
+
   # campos_requeridos.campos: texto separado por coma -> lista, sin vacíos.
   defp formatear_error_creacion({:error, motivo}) when is_binary(motivo), do: motivo
 
@@ -511,18 +557,13 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   @identificador ~r/^[a-z][a-z0-9_]{0,49}$/
   @nav ~r/^\/[a-z0-9\-\/]{0,49}$/
 
-  defp validar_contexto(nombre, nav, etiqueta, es_transaccional?, codigo_trn) do
+  defp validar_contexto(nombre, nav, etiqueta) do
     with :ok <- validar_regex(nombre, @identificador, "Nombre de sistema"),
          :ok <- validar_regex(nav, @nav, "Navegación"),
-         :ok <- validar_completado(etiqueta, "Catálogo de", "Etiqueta"),
-         :ok <- validar_nav_libre(nav) do
-      validar_codigo_trn_requerido(es_transaccional?, codigo_trn)
+         :ok <- validar_completado(etiqueta, "Catálogo de", "Etiqueta") do
+      validar_nav_libre(nav)
     end
   end
-
-  defp validar_codigo_trn_requerido(false, _codigo_trn), do: :ok
-  defp validar_codigo_trn_requerido(true, codigo_trn) when byte_size(codigo_trn) == 4, do: :ok
-  defp validar_codigo_trn_requerido(true, _codigo_trn), do: {:error, "Código de módulo TRN inválido: debe ser exactamente 4 caracteres (ej. VENT)."}
 
   defp validar_regex(valor, regex, etiqueta) do
     if valor && Regex.match?(regex, valor) do
@@ -581,7 +622,10 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   defp agregar_opciones_tipo_campo(propiedades, "decimal", c),
     do: propiedades |> maybe_put_int("precision", c["precision"]) |> maybe_put_int("escala", c["escala"])
 
-  defp agregar_opciones_tipo_campo(propiedades, "referencia", c), do: Map.put(propiedades, "catalogo", c["catalogo"])
+  defp agregar_opciones_tipo_campo(propiedades, "referencia", c) do
+    propiedades = Map.put(propiedades, "catalogo", c["catalogo"])
+    if c["campo_visualizacion"], do: Map.put(propiedades, "campo_visualizacion", c["campo_visualizacion"]), else: propiedades
+  end
 
   defp agregar_opciones_tipo_campo(propiedades, _tipo, _c), do: propiedades
 
@@ -611,16 +655,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     |> String.replace(~r/[^a-z0-9]+/, "_")
     |> String.trim("_")
     |> String.slice(0, 50)
-  end
-
-  # PrettyCore TRN: mismo criterio que codigo_trn en Header.changeset/2
-  # (mayúsculas, máx 4) — se normaliza acá TAMBIÉN para que la vista previa
-  # del wizard ya muestre el valor real antes de llegar al changeset.
-  defp normalizar_codigo_trn(valor) do
-    (valor || "")
-    |> String.trim()
-    |> String.upcase()
-    |> String.slice(0, 4)
   end
 
   # Catálogo Maestro-Detalle: el <select> manda el schema_context_name del
@@ -954,13 +988,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
             <input type="checkbox" name="contexto[es_transaccional]" value="true" checked={@contexto["es_transaccional"] == true} class="accent-purple-600" />
             Es una operación transaccional (necesita TRN — Venta, Factura, Cobro, etc.)
           </label>
-          <%= if @contexto["es_transaccional"] do %>
-            <div class="mt-1 flex items-center gap-1">
-              <span class="text-gray-600">Código de módulo (4 caracteres, ej. VENT):</span>
-              <input type="text" name="contexto[codigo_trn]" value={@contexto["codigo_trn"]} required maxlength="4"
-                class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 w-20 font-mono uppercase focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" placeholder="VENT" />
-            </div>
-          <% end %>
         </div>
 
         <label class="font-medium text-gray-900 pt-1">Detalle de:</label>

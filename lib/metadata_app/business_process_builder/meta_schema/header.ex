@@ -24,13 +24,16 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # cargar_todos_por_default) — acota lo que ve el usuario final por
     # fecha de ALTA, filtrando directo sobre la columna real
     # "fecha_registro" (ver MetaCatalogoGenerico, en TODA tabla de
-    # catálogo desde 2026-08-06). Modos: "primer_dia_anio" (desde el 1/1 del AÑO de
-    # filtro_default_fecha_valor, elegido por calendario), "ultimo_dia_anio"
-    # (hasta el 31/12 del año de filtro_default_fecha_valor), "actual" (el
-    # día exacto de filtro_default_fecha_valor, elegido por calendario —
-    # ya no siempre "hoy"), "rango" (usa filtro_default_fecha_valor como
-    # desde y filtro_default_fecha_valor_hasta como hasta, ambos
-    # obligatorios). nil = sin acotar por fecha.
+    # catálogo desde 2026-08-06). Modos: "primer_dia_anio" (desde el 1/1 del
+    # AÑO EN CURSO, calculado en el momento), "ultimo_dia_anio" (hasta el
+    # 31/12 del año en curso), "actual" (SIEMPRE el día de hoy) — los tres
+    # son dinámicos de verdad: no dependen de filtro_default_fecha_valor ni
+    # de ningún calendario, se recalculan solos cada vez (ver
+    # FiltrosDefault.rango_fecha/3). "rango" es el único que sí depende de
+    # una fecha guardada (usa filtro_default_fecha_valor como desde y
+    # filtro_default_fecha_valor_hasta como hasta, ambos obligatorios) —
+    # por diseño, un rango es un par de fechas puntuales elegidas a
+    # propósito, no un período relativo a "hoy". nil = sin acotar por fecha.
     field :filtro_default_fecha_modo, :string
     field :filtro_default_fecha_valor, :date
     field :filtro_default_fecha_valor_hasta, :date

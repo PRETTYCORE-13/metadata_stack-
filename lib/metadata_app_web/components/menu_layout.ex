@@ -101,7 +101,7 @@ defmodule MetadataAppWeb.MenuLayout do
                content: space-between en pc-sidebar-header, ver menu.css) —
                antes vivía en la topbar, a pedido explícito se movió acá. -->
           <div class="pc-sidebar-logo">
-            <img src="https://prettycore.xyz/IMAGENES/Logo%20Prettycore%20(8).png" alt="Prettycore" />
+            <img src="https://ennovacore.com.mx/IMAGENES/IMAGENES_pret/gota.png" alt="Prettycore" />
           </div>
           <!-- Tema claro/oscuro — reusa "phx:set-theme" (ya escuchado en
                root.html.heex desde que existe la app, generado por
@@ -289,6 +289,9 @@ defmodule MetadataAppWeb.MenuLayout do
                 </.link>
                 <.link :if={"sysadmin_ambientes" in @capacidades_sysadmin_visibles} navigate="/sysadmin/ambientes" class="pc-user-menu-item pc-user-menu-subitem">
                   Ambientes de Deploy
+                </.link>
+                <.link :if={"sysadmin_panel_control" in @capacidades_sysadmin_visibles} navigate="/sysadmin/panel-control" class="pc-user-menu-item pc-user-menu-subitem">
+                  Panel Control
                 </.link>
                 <.link :if={"sysadmin_acciones_externas" in @capacidades_sysadmin_visibles} navigate="/sysadmin/acciones-externas" class="pc-user-menu-item pc-user-menu-subitem">
                   Acciones externas
