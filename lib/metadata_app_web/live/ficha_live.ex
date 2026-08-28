@@ -1611,7 +1611,23 @@ defmodule MetadataAppWeb.FichaLive do
     do: Enum.map_join(fallas, " | ", & &1.mensaje)
 
   defp formatear_error(%Ecto.Changeset{} = changeset), do: MetadataApp.MetaErrores.resumen(changeset)
-  defp formatear_error({:postcondicion_fallida, _}), do: "Error interno, no se aplicó el cambio."
+
+  # `ReglaPost.ejecutar/4` devuelve `{:error, term()}` sin garantía de forma
+  # (a diferencia de `ReglaPre.evaluar/3`, que sí promete siempre un
+  # `String.t()` -- ver {:precondiciones, fallas} arriba, que por eso se
+  # muestra directo) -- por eso el catch-all de abajo se queda con el
+  # mensaje genérico para cualquier cosa que no sea un string reconocible.
+  # Bug real 2026-08-27 (cliente bloqueado por "Error interno" sin ninguna
+  # pista): cuando SÍ es un string (el caso típico -- una regla de negocio
+  # bien portada, como PtyDsdCsClientes.Post vía traducir_resultado/1, ya
+  # lo tradujo a un mensaje humano antes de llegar acá) no hay motivo para
+  # ocultarlo -- mismo criterio que ya usan las precondiciones.
+  defp formatear_error({:postcondicion_fallida, razon}) when is_binary(razon), do: razon
+
+  defp formatear_error({:postcondicion_fallida, razon}) do
+    Logger.error("FichaLive: postcondición transaccional falló: #{inspect(razon)}")
+    "Error interno, no se aplicó el cambio."
+  end
 
   # Jerarquía operativa activa (Fase 5, 2026-08-11) -- CatalogoGenerico
   # devuelve esto cuando el catálogo exige branch/sales_unit/inventory

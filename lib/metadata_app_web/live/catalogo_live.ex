@@ -323,6 +323,7 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:overrides_parametro, overrides_parametro)
      |> assign(:modos_fecha_rango, FiltrosDefault.modos_fecha_rango())
      |> assign(:modos_fecha_simple, FiltrosDefault.modos_fecha_simple())
+     |> assign(:orden_usuario, nil)
      |> assign(:pagina, 1)
      |> assign(:filtros, %{})
      |> assign(:filtros_activos, [])
@@ -486,6 +487,27 @@ defmodule MetadataAppWeb.CatalogoLive do
   def handle_event("limpiar_filtros", _params, socket) do
     filtros = preservar_filtros_bloqueados(socket.assigns.filtros, socket.assigns.columnas)
     {:noreply, socket |> assign(:filtros, filtros) |> assign(:pagina, 1) |> cargar_filas()}
+  end
+
+  # Clic en un encabezado de Consulta Ecto (R2, usuario final) -- ciclo de
+  # 3 estados en la MISMA columna (asc -> desc -> vuelve al "Orden de
+  # resultados" del admin), clic en OTRA columna arranca de nuevo en asc.
+  # Solo dura la sesión (@orden_usuario, nunca se persiste) -- ver
+  # cargar_filas_consulta/1.
+  def handle_event("ordenar_por_columna", %{"catalogo" => catalogo, "campo" => campo}, socket) do
+    nuevo =
+      case socket.assigns.orden_usuario do
+        %{"catalogo" => ^catalogo, "campo" => ^campo, "direccion" => "asc"} ->
+          %{"catalogo" => catalogo, "campo" => campo, "direccion" => "desc"}
+
+        %{"catalogo" => ^catalogo, "campo" => ^campo, "direccion" => "desc"} ->
+          nil
+
+        _ ->
+          %{"catalogo" => catalogo, "campo" => campo, "direccion" => "asc"}
+      end
+
+    {:noreply, socket |> assign(:orden_usuario, nuevo) |> assign(:pagina, 1) |> cargar_filas()}
   end
 
   # --- Barra de Parámetros (Consulta Ecto, rediseño 2026-08-27) ---------
@@ -753,12 +775,20 @@ defmodule MetadataAppWeb.CatalogoLive do
       columnas: columnas,
       filtros: filtros,
       busqueda_general: busqueda_general,
-      overrides_parametro: overrides_parametro
+      overrides_parametro: overrides_parametro,
+      orden_usuario: orden_usuario
     } = socket.assigns
 
     filtros_ecto = construir_filtros_ecto(filtros, columnas)
     campos_busqueda = Enum.map(columnas, & &1.schema_context_field)
     busqueda = {busqueda_general, campos_busqueda}
+
+    # Clic en un encabezado (R2, usuario final) pisa el "Orden de
+    # resultados" del admin SOLO para esta sesión -- nunca se persiste en
+    # `consulta` (eso sigue siendo Get Config). Una sola columna a la vez,
+    # a diferencia de la lista con prioridad del admin -- el patrón típico
+    # de "clic para ordenar" de cualquier grilla, no una combinación.
+    consulta_ordenada = if orden_usuario, do: %{consulta | orden_por: [orden_usuario]}, else: consulta
 
     scope = socket.assigns[:current_scope]
     total_filas = MetaConsultas.contar(consulta, scope, filtros_ecto, busqueda, overrides_parametro)
@@ -767,7 +797,7 @@ defmodule MetadataAppWeb.CatalogoLive do
     offset = (pagina - 1) * @por_pagina
 
     %{filas: filas, totales: totales} =
-      MetaConsultas.ejecutar(consulta, scope, filtros_ecto, [limit: @por_pagina, offset: offset], busqueda, overrides_parametro)
+      MetaConsultas.ejecutar(consulta_ordenada, scope, filtros_ecto, [limit: @por_pagina, offset: offset], busqueda, overrides_parametro)
 
     socket
     |> assign(:filas, filas)
@@ -1169,7 +1199,13 @@ defmodule MetadataAppWeb.CatalogoLive do
                     class={["relative px-2 py-3 sm:px-4 text-[10px] font-semibold text-black uppercase tracking-wide whitespace-nowrap", alineacion_columna(columna)]}
                   >
                     <span class="inline-flex items-center gap-1">
-                      {columna.schema_context_properties["etiqueta"]}
+                      <button type="button" phx-click="ordenar_por_columna" phx-value-catalogo={columna.catalogo} phx-value-campo={columna.schema_context_field}
+                        class="inline-flex items-center gap-0.5 hover:text-purple-700" title="Ordenar por esta columna">
+                        {columna.schema_context_properties["etiqueta"]}
+                        <span :if={orden_activo_en?(@orden_usuario, columna)} class="text-purple-600 text-[9px]">
+                          {if @orden_usuario["direccion"] == "desc", do: "▼", else: "▲"}
+                        </span>
+                      </button>
                       <button type="button" phx-click={JS.toggle(to: "#filtro-popover-#{col_key(columna)}")}
                         class={[
                           "flex items-center justify-center rounded p-0.5 hover:bg-gray-200",
@@ -1633,6 +1669,11 @@ defmodule MetadataAppWeb.CatalogoLive do
   # consulta con JOIN (donde :clave es un átomo) — funcionaba solo en un
   # catálogo normal, donde el campo crudo ya era un string.
   defp col_key(columna), do: columna |> Map.get(:clave) |> Kernel.||(columna.schema_context_field) |> to_string()
+
+  defp orden_activo_en?(nil, _columna), do: false
+
+  defp orden_activo_en?(orden_usuario, columna),
+    do: orden_usuario["catalogo"] == columna.catalogo and orden_usuario["campo"] == columna.schema_context_field
 
   # Resalta el ícono de filtro por columna (2026-08-27) -- true si hay
   # algo tipeado/elegido para ESA columna en @filtros, ya sea un valor

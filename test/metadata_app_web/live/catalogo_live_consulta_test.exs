@@ -296,4 +296,36 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
     assert campo_persistido["defaults"]["valor"] == "2000-01-01"
     assert campo_persistido["defaults"]["valor_hasta"] == "2000-01-02"
   end
+
+  # "Orden de resultados" (R2, usuario final, 2026-08-27) -- clic en el
+  # encabezado ordena SOLO la sesión, nunca pisa "Orden de resultados" que
+  # haya configurado el admin en Get Config (@orden_usuario, socket-only).
+  test "clic en un encabezado ordena la sesión (asc -> desc -> vuelve al default), sin persistir nada", %{conn: conn} do
+    prefijo = "ordenclic_#{unique()}"
+    fixture_cliente(%{meta_fixture_cliente_nombre: "#{prefijo}-b", meta_fixture_cliente_edad: 30, meta_fixture_cliente_venta: Decimal.new("1")})
+    fixture_cliente(%{meta_fixture_cliente_nombre: "#{prefijo}-a", meta_fixture_cliente_edad: 10, meta_fixture_cliente_venta: Decimal.new("1")})
+
+    {_header, consulta, nav} = criar_consulta_sobre_fixture()
+
+    {:ok, view, _html} = live(conn, nav)
+    view |> render_change("buscar_general", %{"value" => prefijo})
+
+    html_asc = view |> render_click("ordenar_por_columna", %{"catalogo" => "meta_fixture_cliente", "campo" => "meta_fixture_cliente_edad"})
+    assert String.contains?(html_asc, "#{prefijo}-a") and String.contains?(html_asc, "#{prefijo}-b")
+    assert :binary.match(html_asc, "#{prefijo}-a") |> elem(0) < (:binary.match(html_asc, "#{prefijo}-b") |> elem(0))
+
+    html_desc = view |> render_click("ordenar_por_columna", %{"catalogo" => "meta_fixture_cliente", "campo" => "meta_fixture_cliente_edad"})
+    assert :binary.match(html_desc, "#{prefijo}-b") |> elem(0) < (:binary.match(html_desc, "#{prefijo}-a") |> elem(0))
+
+    # 3er clic en la MISMA columna vuelve al default del admin (nil) -- sin
+    # ninguna columna de orden configurada en Get Config, no hay garantía
+    # de posición, así que acá solo se confirma que la flecha de orden
+    # desaparece del encabezado, no un orden de filas puntual.
+    html_default = view |> render_click("ordenar_por_columna", %{"catalogo" => "meta_fixture_cliente", "campo" => "meta_fixture_cliente_edad"})
+    refute html_default =~ "▲"
+    refute html_default =~ "▼"
+
+    consulta_sin_tocar = MetaConsultas.obtener_por_header_id(consulta.meta_schema_header_id)
+    assert consulta_sin_tocar.orden_por == []
+  end
 end

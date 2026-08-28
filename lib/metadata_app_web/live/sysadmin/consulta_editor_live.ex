@@ -118,6 +118,8 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     |> assign(:modos_fecha_rango, FiltrosDefault.modos_fecha_rango())
     |> assign(:modos_fecha_simple, FiltrosDefault.modos_fecha_simple())
     |> assign(:catalogos_referenciables, MetaSchemaContext.listar_catalogos_referenciables())
+    |> assign(:orden_por, consulta.orden_por)
+    |> assign(:selector_orden_abierto, false)
   end
 
   defp nil_si_vacio(""), do: nil
@@ -223,6 +225,60 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
 
       {:error, changeset} ->
         {:noreply, put_flash(socket, :error, "No se pudo guardar: #{inspect(changeset.errors)}")}
+    end
+  end
+
+  # --- Get Config: Orden de resultados (R1 admin, 2026-08-27) -----------
+  # Cualquier campo de la consulta es elegible, visible o no (ordenar por
+  # una columna no la hace aparecer en la tabla) -- a diferencia del resto
+  # de este editor, que solo ofrece manejar columnas visibles. Guardado
+  # inmediato por acción (agregar/quitar/mover/cambiar dirección), mismo
+  # criterio que Parámetro estándar más abajo.
+
+  def handle_event("abrir_selector_orden", _params, socket) do
+    {:noreply, assign(socket, :selector_orden_abierto, true)}
+  end
+
+  def handle_event("cerrar_selector_orden", _params, socket) do
+    {:noreply, assign(socket, :selector_orden_abierto, false)}
+  end
+
+  def handle_event("agregar_orden", %{"catalogo" => catalogo, "campo" => campo}, socket) do
+    nueva_entrada = %{"catalogo" => catalogo, "campo" => campo, "direccion" => "asc"}
+    orden_por = socket.assigns.orden_por ++ [nueva_entrada]
+
+    guardar_orden_por(socket, orden_por, close: true)
+  end
+
+  def handle_event("quitar_orden", %{"indice" => indice}, socket) do
+    orden_por = List.delete_at(socket.assigns.orden_por, String.to_integer(indice))
+    guardar_orden_por(socket, orden_por, close: false)
+  end
+
+  def handle_event("cambiar_direccion_orden", %{"indice" => indice}, socket) do
+    indice = String.to_integer(indice)
+
+    orden_por =
+      List.update_at(socket.assigns.orden_por, indice, fn entrada ->
+        Map.put(entrada, "direccion", if(entrada["direccion"] == "desc", do: "asc", else: "desc"))
+      end)
+
+    guardar_orden_por(socket, orden_por, close: false)
+  end
+
+  def handle_event("mover_orden", %{"indice" => indice, "direccion" => direccion}, socket) do
+    indice = String.to_integer(indice)
+    destino = if direccion == "arriba", do: indice - 1, else: indice + 1
+    orden_por = socket.assigns.orden_por
+
+    if destino >= 0 and destino < length(orden_por) do
+      actual = Enum.at(orden_por, indice)
+      vecino = Enum.at(orden_por, destino)
+
+      nuevo_orden = orden_por |> List.replace_at(indice, vecino) |> List.replace_at(destino, actual)
+      guardar_orden_por(socket, nuevo_orden, close: false)
+    else
+      {:noreply, socket}
     end
   end
 
@@ -411,7 +467,8 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
         multi_tabla?={@multi_tabla?} tipos_totalizables={@tipos_totalizables}
         claves_control_disponibles={@claves_control_disponibles} claves_control_actuales={@claves_control_actuales}
         etiquetas_control={@etiquetas_control} consulta={@consulta} detalles_por_catalogo={@detalles_por_catalogo}
-        modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple} catalogos_referenciables={@catalogos_referenciables} />
+        modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple} catalogos_referenciables={@catalogos_referenciables}
+        orden_por={@orden_por} selector_orden_abierto={@selector_orden_abierto} />
       <.panel_configuracion :if={@tab == "configuracion"} campos={@campos} multi_tabla?={@multi_tabla?}
         header_form={@header_form} iconos_sugeridos={@iconos_sugeridos} carpetas={@carpetas} />
       <.panel_contrato :if={@tab == "contrato"} header={@header} campos={@campos} />
@@ -432,6 +489,8 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
   attr :modos_fecha_rango, :list, required: true
   attr :modos_fecha_simple, :list, required: true
   attr :catalogos_referenciables, :list, required: true
+  attr :orden_por, :list, required: true
+  attr :selector_orden_abierto, :boolean, required: true
 
   defp panel_get_config(assigns) do
     ~H"""
@@ -523,8 +582,90 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
         </form>
       </div>
 
+      <div class="bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
+        <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Orden de resultados</div>
+        <p class="text-xs text-gray-400 mb-3">
+          Define en qué orden salen las filas del reporte — la primera columna manda, las siguientes desempatan.
+          Cualquier columna de la consulta sirve, esté visible o no.
+        </p>
+
+        <ul :if={@orden_por != []} class="flex flex-col gap-1.5 mb-3">
+          <li :for={{entrada, indice} <- Enum.with_index(@orden_por)} class="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
+            <span class="text-gray-400 font-mono w-4 text-center flex-shrink-0">{indice + 1}</span>
+            <span class="flex-1 min-w-0 text-gray-900 truncate">{etiqueta_orden(@campos, entrada)}</span>
+            <button type="button" phx-click="cambiar_direccion_orden" phx-value-indice={indice}
+              class={[
+                "px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0",
+                entrada["direccion"] == "desc" && "bg-purple-100 text-purple-700",
+                entrada["direccion"] != "desc" && "bg-gray-100 text-gray-600"
+              ]}>
+              {if entrada["direccion"] == "desc", do: "Descendente", else: "Ascendente"}
+            </button>
+            <button type="button" phx-click="mover_orden" phx-value-indice={indice} phx-value-direccion="arriba" disabled={indice == 0}
+              class="w-6 h-6 rounded border border-gray-300 text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0" title="Subir prioridad">↑</button>
+            <button type="button" phx-click="mover_orden" phx-value-indice={indice} phx-value-direccion="abajo" disabled={indice == length(@orden_por) - 1}
+              class="w-6 h-6 rounded border border-gray-300 text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0" title="Bajar prioridad">↓</button>
+            <button type="button" phx-click="quitar_orden" phx-value-indice={indice}
+              class="w-6 h-6 rounded border border-gray-300 text-red-600 hover:bg-red-50 flex-shrink-0" title="Quitar del orden">×</button>
+          </li>
+        </ul>
+        <p :if={@orden_por == []} class="text-xs text-gray-400 mb-3">Sin orden configurado — el reporte sale en el orden que devuelva la base, sin garantía.</p>
+
+        <div class="relative inline-block">
+          <button type="button" phx-click="abrir_selector_orden" class="text-purple-700 hover:text-purple-900 font-semibold text-sm">
+            + Agregar columna de orden
+          </button>
+          <%= if @selector_orden_abierto do %>
+            <div class="fixed inset-0 z-40" phx-click="cerrar_selector_orden"></div>
+            <%!-- Abre hacia ARRIBA (bottom-full, no top-full) -- esta es la
+            última sección de Get Config, casi siempre pegada al borde de
+            abajo de la ventana; abriendo hacia abajo el popover quedaba
+            cortado contra el viewport, sin espacio para desplegar (bug
+            real 2026-08-27, "no puedo ordenar porque no se ve el
+            control"). Mismo motivo por el que no puede haber otro
+            popover ABAJO de este en la página. --%>
+            <div class="absolute left-0 bottom-full mb-1 w-64 max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-1">
+              <button :for={c <- campos_disponibles_orden(@campos, @orden_por)} type="button"
+                phx-click="agregar_orden" phx-value-catalogo={c["catalogo"]} phx-value-campo={c["campo"]}
+                class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-purple-50 hover:text-purple-700 text-xs">
+                {c["etiqueta"]} <span :if={@multi_tabla?} class="text-gray-400 font-mono">· {c["catalogo"]}</span>
+              </button>
+              <p :if={campos_disponibles_orden(@campos, @orden_por) == []} class="px-3 py-2 text-gray-400 text-xs">Ya agregaste todas las columnas.</p>
+            </div>
+          <% end %>
+        </div>
+      </div>
+
     </div>
     """
+  end
+
+  defp etiqueta_orden(campos, %{"catalogo" => catalogo, "campo" => campo}) do
+    case Enum.find(campos, &(&1["catalogo"] == catalogo and &1["campo"] == campo)) do
+      nil -> "#{catalogo}.#{campo} (columna eliminada)"
+      campo_def -> campo_def["etiqueta"]
+    end
+  end
+
+  defp campos_disponibles_orden(campos, orden_por) do
+    ya_usados = MapSet.new(orden_por, &{&1["catalogo"], &1["campo"]})
+    Enum.reject(campos, &MapSet.member?(ya_usados, {&1["catalogo"], &1["campo"]}))
+  end
+
+  defp guardar_orden_por(socket, orden_por, opciones) do
+    case MetaConsultas.actualizar_orden_por(socket.assigns.consulta, orden_por) do
+      {:ok, consulta} ->
+        socket =
+          socket
+          |> assign(:consulta, consulta)
+          |> assign(:orden_por, consulta.orden_por)
+
+        socket = if opciones[:close], do: assign(socket, :selector_orden_abierto, false), else: socket
+        {:noreply, socket}
+
+      {:error, changeset} ->
+        {:noreply, put_flash(socket, :error, "No se pudo guardar el orden: #{inspect(changeset.errors)}")}
+    end
   end
 
   # --- Get Config: 4 celdas de Parámetro (Tipo/Es acotado/Parámetro/

@@ -427,6 +427,43 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
     assert html_sql =~ "42"
   end
 
+  # "Orden de resultados" (R1 admin, 2026-08-27) -- pedido explícito:
+  # poder ordenar el reporte por varias columnas en prioridad. Cualquier
+  # campo de la consulta es elegible, visible o no (a diferencia de
+  # Parámetro estándar).
+  test "Orden de resultados: agregar, cambiar dirección, reordenar y quitar, todo persistido", %{conn: conn} do
+    {header, _consulta} = criar_consulta()
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
+
+    render_click(view, "cambiar_tab", %{"tab" => "get_config"})
+
+    html = render_click(view, "abrir_selector_orden", %{})
+    assert html =~ "Agregar columna de orden"
+
+    html = render_click(view, "agregar_orden", %{"catalogo" => "meta_fixture_cliente", "campo" => "meta_fixture_cliente_edad"})
+    assert html =~ "Ascendente"
+
+    render_click(view, "abrir_selector_orden", %{})
+    render_click(view, "agregar_orden", %{"catalogo" => "meta_fixture_cliente", "campo" => "meta_fixture_cliente_nombre"})
+
+    consulta = MetaConsultas.obtener_por_header_id(header.id)
+    assert Enum.map(consulta.orden_por, & &1["campo"]) == ~w(meta_fixture_cliente_edad meta_fixture_cliente_nombre)
+    assert Enum.map(consulta.orden_por, & &1["direccion"]) == ~w(asc asc)
+
+    html = render_click(view, "cambiar_direccion_orden", %{"indice" => "0"})
+    assert html =~ "Descendente"
+    consulta = MetaConsultas.obtener_por_header_id(header.id)
+    assert Enum.at(consulta.orden_por, 0)["direccion"] == "desc"
+
+    render_click(view, "mover_orden", %{"indice" => "1", "direccion" => "arriba"})
+    consulta = MetaConsultas.obtener_por_header_id(header.id)
+    assert Enum.map(consulta.orden_por, & &1["campo"]) == ~w(meta_fixture_cliente_nombre meta_fixture_cliente_edad)
+
+    render_click(view, "quitar_orden", %{"indice" => "0"})
+    consulta = MetaConsultas.obtener_por_header_id(header.id)
+    assert Enum.map(consulta.orden_por, & &1["campo"]) == ~w(meta_fixture_cliente_edad)
+  end
+
   test "un header que no es Consulta redirige a bc-list", %{conn: conn} do
     {:ok, {header, _}} =
       MetaSchemaContext.crear_header_con_detalles(%{

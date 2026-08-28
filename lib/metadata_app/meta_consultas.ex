@@ -242,6 +242,21 @@ defmodule MetadataApp.MetaConsultas do
   end
 
   @doc """
+  "Orden de resultados" (R1, admin, 2026-08-27) — reemplaza `orden_por`
+  entero, mismo criterio simple que `actualizar_campos/2` (la lista
+  completa la arma el caller, acá solo persiste). Sin validar que cada
+  entrada siga apuntando a un campo real de la consulta -- `aplicar_orden/3`
+  ya ignora en silencio cualquier entrada que ya no calce (columna quitada
+  después de agregarla al orden), no hace falta duplicar ese chequeo acá.
+  """
+  def actualizar_orden_por(%Consulta{} = consulta, orden_por) do
+    consulta
+    |> Consulta.changeset(%{"orden_por" => orden_por})
+    |> Ecto.Changeset.change(%{update_guid: generar_guid()})
+    |> Repo.update()
+  end
+
+  @doc """
   Catálogos ya presentes en la consulta, en el orden en que se agregaron
   (`catalogo_base` primero) — el orden importa porque define los
   bindings `:t0`, `:t1`... de `construir_query_base/1`.
@@ -895,6 +910,7 @@ defmodule MetadataApp.MetaConsultas do
 
     filas =
       query
+      |> aplicar_orden(consulta, alias_por_catalogo)
       |> select(^select_filas)
       |> CatalogoGenerico.aplicar_paginacion(opciones)
       |> Repo.all()
@@ -902,6 +918,31 @@ defmodule MetadataApp.MetaConsultas do
       |> resolver_campos_referencia(visibles, detalles_por_catalogo)
 
     %{filas: filas, total_filas: total_filas, totales: totales(query, consulta, alias_por_catalogo)}
+  end
+
+  # "Orden de resultados" (R1, admin) -- aplicado SOLO a la query de
+  # `filas` (nunca a `query` en sí, que también alimenta total_filas/
+  # totales/3 más abajo -- un ORDER BY ahí es trabajo desperdiciado en el
+  # mejor caso, o puede chocar con un SELECT agregado sin GROUP BY en el
+  # peor, mismo motivo que el `exclude(:order_by)` de totales/3). Ecto
+  # acumula (no reemplaza) llamadas sucesivas a order_by/3, así que cada
+  # vuelta del reduce agrega una columna más de desempate, respetando la
+  # prioridad de `orden_por`. Una entrada que ya no calza con ningún campo
+  # real de la consulta (columna quitada después de agregarla al orden) se
+  # ignora en silencio, nunca revienta la consulta.
+  defp aplicar_orden(query, %Consulta{orden_por: orden_por, campos: campos}, alias_por_catalogo) do
+    Enum.reduce(orden_por, query, fn %{"catalogo" => catalogo, "campo" => campo, "direccion" => direccion}, acc ->
+      case Enum.find(campos, &(&1["catalogo"] == catalogo and &1["campo"] == campo)) do
+        nil ->
+          acc
+
+        campo_def ->
+          alias_tabla = Map.fetch!(alias_por_catalogo, catalogo)
+          campo_atom = campo_atom_real(campo_def)
+          direccion_atom = if direccion == "desc", do: :desc, else: :asc
+          order_by(acc, [{^alias_tabla, t}], [{^direccion_atom, field(t, ^campo_atom)}])
+      end
+    end)
   end
 
   defp campos_visibles_ordenados(%Consulta{campos: campos}) do
