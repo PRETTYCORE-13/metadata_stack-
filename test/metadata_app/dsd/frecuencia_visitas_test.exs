@@ -89,8 +89,16 @@ defmodule MetadataApp.Dsd.FrecuenciaVisitasTest do
     end
   end
 
+  # Bug real (2026-08-27, CI): max_length 5 sobre un dominio de solo 6
+  # valores posibles (1..6) deja muy poco margen -- StreamData.uniq_list_of/2
+  # rechaza-y-reintenta para lograr unicidad, y cerca del límite del
+  # dominio a veces agota sus reintentos antes de completar la lista
+  # (StreamData.TooManyDuplicatesError, visto real en CI: "too many (10)
+  # non-unique elements were generated consecutively"). max_length 4 sigue
+  # ejercitando selecciones multi-día de sobra, con margen real contra el
+  # dominio de 6.
   defp selector_dias_sin_domingo_generator do
-    gen all dias <- uniq_list_of(integer(1..6), min_length: 1, max_length: 5) do
+    gen all dias <- uniq_list_of(integer(1..6), min_length: 1, max_length: 4) do
       Enum.join(dias, ",")
     end
   end
