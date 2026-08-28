@@ -8,18 +8,27 @@ defmodule MetadataApp.PanelControl.Hostinger do
   copia del token para llamar la API en runtime.
 
   Formato del body armado a partir de la documentación pública de la API
-  de Hostinger (`PUT /api/dns/v1/zones/{dominio}`, developers.hostinger.com)
-  -- no verificado todavía contra una llamada real (no hay token de prueba
-  a mano en este entorno). Antes de usar esto por primera vez de verdad,
-  confirmar el shape exacto del body contra la cuenta real y ajustar acá
-  si hace falta.
+  de Hostinger (`PUT /api/dns/v1/zones/{dominio}`).
+
+  El host real de la API es `developers.hostinger.com` -- `api.hostinger.com`
+  (el default original acá) no resuelve contra un origen válido y devuelve
+  530/"error code: 1016" (Cloudflare "Origin DNS error"), encontrado real
+  probando esto contra la cuenta de producción (2026-08-27).
   """
 
   require Logger
 
   @doc """
-  Crea (u overwrite=false, agrega/actualiza) el registro A de `subdominio`
-  en la zona de `dominio_base`, apuntando a `ip_destino`.
+  Crea (o reemplaza si ya existe) el registro A de `subdominio` en la zona
+  de `dominio_base`, apuntando a `ip_destino` -- `overwrite: true`, no
+  `false`: acá siempre queremos que ESTE subdominio apunte a ESTA IP, sin
+  importar si ya había un registro previo (ej. un intento anterior que
+  falló en un paso posterior, ver Desplegador.crear_app/1 -- el DNS es el
+  primer paso, así que un reintento SIEMPRE pisa lo que haya quedado del
+  intento anterior). Hostinger solo reemplaza el registro que matchea
+  nombre+tipo, no toca el resto de la zona (encontrado real: con
+  `overwrite: false` un reintento fallaba con "[DNS:4008] ... conflicts
+  with another resource record").
   """
   def crear_registro_a(dominio_base, subdominio, ip_destino) do
     case MetadataApp.Integraciones.obtener_credencial_por_sistema("hostinger") do
@@ -27,10 +36,10 @@ defmodule MetadataApp.PanelControl.Hostinger do
         {:error, "No hay ninguna credencial de Hostinger configurada -- creá una en /sysadmin/credenciales con sistema_externo \"hostinger\"."}
 
       credencial ->
-        url = (credencial.base_url || "https://api.hostinger.com") <> "/api/dns/v1/zones/#{dominio_base}"
+        url = (credencial.base_url || "https://developers.hostinger.com") <> "/api/dns/v1/zones/#{dominio_base}"
 
         body = %{
-          overwrite: false,
+          overwrite: true,
           zone: [
             %{name: subdominio, type: "A", ttl: 300, records: [%{content: ip_destino}]}
           ]
