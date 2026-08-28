@@ -1728,7 +1728,14 @@ defmodule MetadataAppWeb.FichaLive do
       |> assign(:opciones_alcance, opciones_alcance(assigns.header, assigns[:current_scope]))
 
     ~H"""
-    <div class="p-6 max-w-6xl">
+    <%!-- Sin max-width fijo (2026-08-28, a pedido explícito -- "aprovechar
+    más el espacio en PC") -- la Ficha 360° ya reflowea con flex/grid
+    adentro (el aside de la derecha es w-60 fijo, el resto es flex-1), así
+    que crece sola con el ancho real de la ventana en vez de dejar una
+    franja vacía en monitores anchos. Achicaba justo la grilla de
+    Renglones (Catálogo Maestro-Detalle), que ya necesitaba scroll
+    horizontal con columnas de sobra. --%>
+    <div class="p-6">
       <div :if={@plantilla_preview_id} class="text-xs rounded-lg px-3 py-2 mb-3 bg-purple-50 text-purple-700 flex items-center gap-2">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" /><circle cx="12" cy="12" r="3" /></svg>
         <span>
