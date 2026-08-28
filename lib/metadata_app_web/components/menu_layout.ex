@@ -284,15 +284,21 @@ defmodule MetadataAppWeb.MenuLayout do
                 <.link :if={"sysadmin_jerarquia" in @capacidades_sysadmin_visibles} navigate="/sysadmin/jerarquia" class="pc-user-menu-item pc-user-menu-subitem">
                   Jerarquía organizacional
                 </.link>
-                <.link :if={"sysadmin_credenciales" in @capacidades_sysadmin_visibles} navigate="/sysadmin/credenciales" class="pc-user-menu-item pc-user-menu-subitem">
-                  Credenciales
-                </.link>
-                <.link :if={"sysadmin_ambientes" in @capacidades_sysadmin_visibles} navigate="/sysadmin/ambientes" class="pc-user-menu-item pc-user-menu-subitem">
-                  Ambientes de Deploy
-                </.link>
-                <.link :if={"sysadmin_panel_control" in @capacidades_sysadmin_visibles} navigate="/sysadmin/panel-control" class="pc-user-menu-item pc-user-menu-subitem">
-                  Panel Control
-                </.link>
+                <details
+                  :if={Enum.any?(["sysadmin_credenciales", "sysadmin_ambientes", "sysadmin_panel_control"], &(&1 in @capacidades_sysadmin_visibles))}
+                  class="pc-user-menu-submenu"
+                >
+                  <summary class="pc-user-menu-item pc-user-menu-subitem pc-user-menu-item-submenu pc-user-menu-item-submenu-anidado">Deploy</summary>
+                  <.link :if={"sysadmin_credenciales" in @capacidades_sysadmin_visibles} navigate="/sysadmin/credenciales" class="pc-user-menu-item pc-user-menu-subitem-anidado">
+                    Credenciales
+                  </.link>
+                  <.link :if={"sysadmin_ambientes" in @capacidades_sysadmin_visibles} navigate="/sysadmin/ambientes" class="pc-user-menu-item pc-user-menu-subitem-anidado">
+                    Ambientes de Deploy
+                  </.link>
+                  <.link :if={"sysadmin_panel_control" in @capacidades_sysadmin_visibles} navigate="/sysadmin/panel-control" class="pc-user-menu-item pc-user-menu-subitem-anidado">
+                    Panel Control
+                  </.link>
+                </details>
                 <.link :if={"sysadmin_acciones_externas" in @capacidades_sysadmin_visibles} navigate="/sysadmin/acciones-externas" class="pc-user-menu-item pc-user-menu-subitem">
                   Acciones externas
                 </.link>

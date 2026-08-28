@@ -356,6 +356,18 @@
   font-size: 11.5px;
 }
 
+/* Sub-grupo anidado DENTRO de "Sysadmin" (ej. "Deploy": Credenciales/
+   Ambientes/Panel Control) -- mismo <details>/<summary> nativo, un nivel
+   más de indentación para que se note que está adentro del grupo padre. */
+.pc-user-menu-item-submenu-anidado {
+  padding-left: 30px;
+}
+
+.pc-user-menu-subitem-anidado {
+  padding-left: 48px;
+  font-size: 11.5px;
+}
+
 /* ---- TOPBAR (branding: logo + nombre de empresa configurable) ---- */
 .pc-topbar {
   display: flex;
