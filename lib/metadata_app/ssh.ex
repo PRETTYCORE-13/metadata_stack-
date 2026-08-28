@@ -23,7 +23,7 @@ defmodule MetadataApp.Ssh do
     en_directorio_temporal(fn dir ->
       llave_path = Path.join(dir, "llave")
       File.write!(llave_path, llave)
-      File.chmod!(llave_path, 0o600)
+      restringir_permisos_secreto(llave_path)
       correr(["-i", llave_path, "-o", "PasswordAuthentication=no"], [], destino, comando)
     end)
   end
@@ -33,14 +33,9 @@ defmodule MetadataApp.Ssh do
 
     en_directorio_temporal(fn dir ->
       pw_path = Path.join(dir, "pw")
-      askpass_path = Path.join(dir, "askpass.sh")
       File.write!(pw_path, senha)
-      File.chmod!(pw_path, 0o600)
-      # cat de una ruta fija -- nunca interpola el secreto adentro de un
-      # script que un shell podría reinterpretar (comillas, $, backticks
-      # en la contraseña real no rompen nada acá).
-      File.write!(askpass_path, "#!/bin/sh\ncat \"#{pw_path}\"\n")
-      File.chmod!(askpass_path, 0o700)
+      restringir_permisos_secreto(pw_path)
+      askpass_path = escribir_askpass(dir, pw_path)
 
       correr(
         ["-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no"],
@@ -67,6 +62,67 @@ defmodule MetadataApp.Ssh do
       File.rm_rf(dir)
     end
   end
+
+  # File.chmod!(path, 0o600) no alcanza en Windows -- el bit de modo POSIX
+  # que Erlang expone ahí no controla las ACLs reales de NTFS, así que el
+  # archivo sigue siendo legible por más que el usuario actual (heredado
+  # del directorio temporal), y el propio `ssh` cliente lo rechaza con
+  # "UNPROTECTED PRIVATE KEY FILE" (encontrado real probando Panel Control
+  # desde una máquina de desarrollo Windows, 2026-08-27) -- en Linux
+  # (producción) nunca pasó porque chmod ahí sí es real. `icacls` es el
+  # equivalente nativo de Windows: tira toda ACL heredada y deja al
+  # usuario actual como único con permiso de lectura. Se usa tanto para la
+  # llave privada como para el archivo de contraseña (mismo requisito).
+  defp restringir_permisos_secreto(path) do
+    case :os.type() do
+      {:win32, _} ->
+        usuario = System.get_env("USERNAME") || raise "No se pudo determinar el usuario actual (USERNAME) para restringir permisos del secreto"
+        {_salida, 0} = System.cmd("icacls", [path, "/inheritance:r", "/grant:r", "#{usuario}:R"], stderr_to_stdout: true)
+        :ok
+
+      _ ->
+        File.chmod!(path, 0o600)
+    end
+  end
+
+  # El helper de SSH_ASKPASS tiene que ser un ejecutable de verdad, no un
+  # script interpretado por shebang -- en Linux/macOS un `#!/bin/sh` andaba
+  # bien, pero en Windows el propio `ssh` (el de Git for Windows/MSYS, el
+  # que termina en el PATH de una app Elixir corriendo nativo, sin pasar
+  # por una shell MSYS) lo invoca con CreateProcess DIRECTO sobre ese
+  # archivo -- sin arrancar ninguna shell que interprete el shebang, así
+  # que explota con "CreateProcessW failed error:193" / "ssh_askpass:
+  # posix_spawnp: Unknown error" (encontrado real, 2026-08-28, probando
+  # Panel Control desde una máquina de desarrollo Windows). Un `.cmd` SÍ
+  # lo ejecuta bien -- confirmado real contra el servidor de producción.
+  #
+  # PERO tiene que ser con backslashes, no forward slashes -- Path.join/
+  # System.tmp_dir! en Elixir arman rutas con "/" (estilo "portable") aun
+  # en Windows, y ese mismo mecanismo de auto-despacho de Windows para
+  # ejecutar un .cmd (sin pasar por una shell POSIX) NO encuentra el
+  # archivo si la ruta viene con "/": falla con "El sistema no puede
+  # encontrar el archivo especificado" (encontrado real, mismo día) --
+  # aplica tanto a la ruta del .cmd (SSH_ASKPASS) como a la ruta de la
+  # contraseña referenciada ADENTRO de su contenido.
+  defp escribir_askpass(dir, pw_path) do
+    case :os.type() do
+      {:win32, _} ->
+        askpass_path = Path.join(dir, "askpass.cmd")
+        File.write!(askpass_path, "@type \"#{a_backslashes(pw_path)}\"\r\n")
+        a_backslashes(askpass_path)
+
+      _ ->
+        askpass_path = Path.join(dir, "askpass.sh")
+        # cat de una ruta fija -- nunca interpola el secreto adentro de un
+        # script que un shell podría reinterpretar (comillas, $, backticks
+        # en la contraseña real no rompen nada acá).
+        File.write!(askpass_path, "#!/bin/sh\ncat \"#{pw_path}\"\n")
+        File.chmod!(askpass_path, 0o700)
+        askpass_path
+    end
+  end
+
+  defp a_backslashes(path), do: String.replace(path, "/", "\\")
 
   # Captura síncrona (no "into: IO.stream") a propósito -- confirmado real
   # con mix motor.desplegar: comandos remotos que tardan minutos (docker
