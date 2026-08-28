@@ -1922,7 +1922,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             %{key: "get", label: "Relaciones"},
             %{key: "getview", label: "Vista Get"},
             %{key: "postview", label: "Vista Post"}
-          ]
+          ] ++
+          if(@es_detalle?,
+            do: [],
+            else: [%{key: "importacion", label: "Importación"}]
+          )
       } />
 
       <div id="motor-panel-config" class="space-y-4">
@@ -1993,6 +1997,14 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       <div id="motor-panel-postview" class="hidden">
         {live_render(@socket, MetadataAppWeb.Sysadmin.PlantillaConstructorLive,
           id: "plantilla-embebido-#{@header.schema_context_name}",
+          session: %{"nombre" => @header.schema_context_name}
+        )}
+      </div>
+
+      <!-- Mismo patrón que "postview" de arriba, ver su comentario. -->
+      <div :if={!@es_detalle?} id="motor-panel-importacion" class="hidden">
+        {live_render(@socket, MetadataAppWeb.Sysadmin.ImportacionConstructorLive,
+          id: "importacion-embebido-#{@header.schema_context_name}",
           session: %{"nombre" => @header.schema_context_name}
         )}
       </div>

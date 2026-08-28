@@ -175,11 +175,15 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     end
   end
 
-  # Sin multinivel (R1/§3 del requerimiento): el maestro tiene que ser un
-  # catálogo normal (schema_context_type == 1, no una carpeta) y no puede
-  # a su vez ser detalle de otro. Consulta eager acá mismo (no vía
-  # MetaSchemaContext, para no crear una dependencia de Header hacia su
-  # propio módulo de contexto) — mismo criterio que ya usa
+  # Multinivel (Fase 0 del módulo de Importación, 2026-08-27): el maestro
+  # tiene que ser un catálogo normal (schema_context_type == 1, no una
+  # carpeta) — YA NO tiene que ser "raíz" (antes se rechazaba que un
+  # catálogo detalle fuera a su vez maestro de otro, "sin multinivel").
+  # Ahora una cadena Pedido → Partidas → Lotes → Series es válida; lo único
+  # que sigue prohibido es un CICLO (ver forma_ciclo?/3 — A detalle de B que
+  # ya es detalle de A, directo o a través de más eslabones). Consulta eager
+  # acá mismo (no vía MetaSchemaContext, para no crear una dependencia de
+  # Header hacia su propio módulo de contexto) — mismo criterio que ya usa
   # CatalogoGenerador.validar_referencias/1 para "referencia".
   defp validar_encabezado(changeset) do
     case get_field(changeset, :schema_encabezado_id) do
@@ -194,15 +198,45 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
           %__MODULE__{delete_guid: dg} when not is_nil(dg) ->
             add_error(changeset, :schema_encabezado_id, "el catálogo maestro no existe")
 
-          %__MODULE__{schema_encabezado_id: mid} when not is_nil(mid) ->
-            add_error(changeset, :schema_encabezado_id, "no puede ser detalle de otro catálogo que ya es detalle (sin multinivel)")
-
           %__MODULE__{schema_context_type: tipo} when tipo != 1 ->
             add_error(changeset, :schema_encabezado_id, "el catálogo maestro debe ser un catálogo, no una carpeta")
 
-          _maestro ->
-            changeset
+          maestro ->
+            if forma_ciclo?(maestro, changeset.data.id) do
+              add_error(
+                changeset,
+                :schema_encabezado_id,
+                "formaría un ciclo de maestro-detalle: este catálogo ya es antepasado de \"#{maestro.schema_context_name}\""
+              )
+            else
+              changeset
+            end
         end
+    end
+  end
+
+  # Camina la cadena schema_encabezado_id hacia arriba desde `maestro` — si
+  # en algún punto llega a `propio_id` (el catálogo que se está editando),
+  # sería un ciclo. `propio_id` es nil en un alta (catálogo todavía sin id,
+  # no puede formar un ciclo consigo mismo todavía) — solo aplica al editar
+  # el schema_encabezado_id de uno YA existente. `visitados` es puramente
+  # defensivo (esta misma validación impide que se guarde un ciclo desde
+  # acá en adelante, pero protege contra recursión infinita si alguna vez
+  # hubiera uno preexistente en la base).
+  defp forma_ciclo?(_maestro, nil), do: false
+  defp forma_ciclo?(maestro, propio_id), do: forma_ciclo_desde?(maestro, propio_id, MapSet.new())
+
+  defp forma_ciclo_desde?(%__MODULE__{id: id}, propio_id, _visitados) when id == propio_id, do: true
+  defp forma_ciclo_desde?(%__MODULE__{schema_encabezado_id: nil}, _propio_id, _visitados), do: false
+
+  defp forma_ciclo_desde?(%__MODULE__{id: id, schema_encabezado_id: siguiente_id}, propio_id, visitados) do
+    if MapSet.member?(visitados, id) do
+      false
+    else
+      case MetadataApp.Repo.get(__MODULE__, siguiente_id) do
+        nil -> false
+        siguiente -> forma_ciclo_desde?(siguiente, propio_id, MapSet.put(visitados, id))
+      end
     end
   end
 end

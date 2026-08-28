@@ -1,0 +1,3 @@
+defmodule MetadataApp.MetaBusinessProcess.Catalogos.ProductosCascadaPrueba do
+  use MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico, tabla: "productos_cascada_prueba", campos: [{:productos_cascada_prueba_nombre, :string, %{formato: nil, longitud: 150, longitud_minima: nil, opcional: false, transformacion: nil, valor_default: nil}}, {:productos_cascada_prueba_categorias_prueba, :integer, %{opcional: false, tabla_referenciada: "categorias_prueba", valor_default: nil}}, {:productos_cascada_prueba_subcategoria, :integer, %{opcional: false, tabla_referenciada: "subcategorias_prueba", valor_default: nil}}]
+end

@@ -82,6 +82,14 @@ defmodule MetadataApp.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
       {:ulid, "~> 0.2.0"},
+      # Módulo de Importación de Datos (Fase 1, 2026-08-27) — puro
+      # Elixir/BEAM, sin compilación nativa/Rust (a diferencia de
+      # umya_spreadsheet, que necesita el toolchain de Rust — riesgo real
+      # en esta máquina Windows, que ya tuvo fricción con symlinks/
+      # permisos de Phoenix). elixlsx genera la plantilla descargable
+      # (multi-hoja); xlsxir lee el archivo que el usuario sube.
+      {:elixlsx, "~> 0.6"},
+      {:xlsxir, "~> 1.6"},
       # Fase 5 del modelo de Alcance de Datos (2026-08-11) — guardrails
       # estructurales: Credo (check custom que prohíbe Repo.* directo
       # fuera de CatalogoGenerico) + Dialyzer (typespecs de Scope/scope

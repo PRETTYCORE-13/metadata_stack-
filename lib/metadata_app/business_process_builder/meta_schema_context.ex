@@ -338,6 +338,28 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     |> Repo.all()
   end
 
+  @doc """
+  Árbol COMPLETO de catálogos detalle de un maestro (multinivel, Fase 0 del
+  módulo de Importación — antes `listar_catalogos_detalle/1` alcanzaba
+  porque solo existía un nivel). Cada nodo: `%{header: %Header{}, hijos:
+  [nodo, ...]}` — `hijos` es `[]` en una hoja. Reusa `listar_catalogos_detalle/1`
+  nivel por nivel (BFS/DFS recursivo simple, no una sola query recursiva de
+  SQL — el árbol nunca es profundo ni ancho en la práctica). `visitados` es
+  defensivo contra un ciclo preexistente en la base (Header.forma_ciclo?/2
+  ya impide que se guarde uno nuevo desde la Fase 0 en adelante).
+  """
+  def arbol_detalle(header_maestro_id, visitados \\ MapSet.new()) do
+    if MapSet.member?(visitados, header_maestro_id) do
+      []
+    else
+      visitados = MapSet.put(visitados, header_maestro_id)
+
+      header_maestro_id
+      |> listar_catalogos_detalle()
+      |> Enum.map(&%{header: &1, hijos: arbol_detalle(&1.id, visitados)})
+    end
+  end
+
   # Bloque de meta_campos por cada catálogo detalle de un maestro (Fase 4,
   # R10) — %{} si no tiene detalles, para que el contrato de siempre no
   # gane una llave nueva en el caso común (retrocompatible). Mismo shape

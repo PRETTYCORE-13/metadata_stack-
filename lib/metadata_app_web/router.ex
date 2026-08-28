@@ -118,6 +118,11 @@ defmodule MetadataAppWeb.Router do
     # empresa+branch+inventory+sales_unit juntos en un solo POST, recién
     # al aceptar el modal.
     post "/meta_schema_usuario/unidad-operativa/activar", UnidadOperativaSessionController, :activar
+
+    # Descarga de la plantilla Excel de importación — acción de controller,
+    # no LiveView (un socket no puede stream-ear un archivo al navegador),
+    # ver ImportacionDescargaController.
+    get "/sysadmin/importacion/:plantilla_id/descargar", ImportacionDescargaController, :descargar
   end
 
   scope "/", MetadataAppWeb do
@@ -164,6 +169,7 @@ defmodule MetadataAppWeb.Router do
         live "/sysadmin/bc-list/:nombre/motor", Sysadmin.BcMotorLive
         live "/sysadmin/bc-list/:nombre/consulta", Sysadmin.ConsultaEditorLive
         live "/sysadmin/bc-list/:nombre/plantilla", Sysadmin.PlantillaConstructorLive
+        live "/sysadmin/bc-list/:nombre/importacion", Sysadmin.ImportacionConstructorLive
         live "/sysadmin/tepache", Sysadmin.TepacheLive
       end
 
