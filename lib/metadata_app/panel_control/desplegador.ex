@@ -1,11 +1,19 @@
 defmodule MetadataApp.PanelControl.Desplegador do
   @moduledoc """
-  Orquesta el alta de una `MetadataApp.PanelControl.App`: DNS (Hostinger)
+  Orquesta el alta de una `MetadataApp.PanelControl.App`: DNS (Cloudflare)
   -> deploy en k3s (por SSH, reusando MetadataApp.Ssh) -> exponerla detrás
   de Caddy (mismo patrón ya probado a mano en la migración a k3s,
   2026-08-26: Caddy sigue siendo el único front-door en 80/443, cada app
   nueva es un bloque más en su Caddyfile apuntando al NodePort de k3s vía
   `172.17.0.1`, igual que ya hace para metadata_stack/Chatwoot).
+
+  DNS vía `MetadataApp.PanelControl.Cloudflare`, no Hostinger -- los
+  dominios reales de esta cuenta (`ventaenruta.com.mx`) tienen sus
+  *nameservers* apuntando a Cloudflare, no a Hostinger (que sigue siendo
+  el REGISTRADOR, pero no quien resuelve DNS de verdad). Encontrado real
+  2026-08-28: `Hostinger.crear_registro_a/3` "funcionaba" (sin error) pero
+  el registro nunca resolvía. `Hostinger.ex` queda en el código por si
+  algún dominio futuro sí use sus nameservers.
 
   Namespace fijo `panel-control` para todo lo creado desde acá -- separado
   de `metadata-stack`/`chatwoot` (los servicios migrados), así un
@@ -14,7 +22,7 @@ defmodule MetadataApp.PanelControl.Desplegador do
   """
 
   alias MetadataApp.{Ambientes, PanelControl}
-  alias MetadataApp.PanelControl.{App, Hostinger}
+  alias MetadataApp.PanelControl.{App, Cloudflare}
 
   @namespace "panel-control"
   @caddyfile_remoto "/home/elixir/caddy/Caddyfile"
@@ -24,7 +32,7 @@ defmodule MetadataApp.PanelControl.Desplegador do
     ambiente = Ambientes.obtener_ambiente!(app.ambiente_id)
 
     resultado =
-      with :ok <- Hostinger.crear_registro_a(app.dominio_base, app.subdominio, ambiente.host),
+      with :ok <- Cloudflare.crear_registro_a(app.dominio_base, app.subdominio, ambiente.host),
            {:ok, nodeport} <- desplegar_en_k8s(ambiente, app),
            :ok <- agregar_a_caddy(ambiente, app, nodeport) do
         {:ok, %{estado: "activo", nodeport: nodeport, ultimo_error: nil}}
@@ -119,14 +127,27 @@ defmodule MetadataApp.PanelControl.Desplegador do
   # escribe en el inodo existente, el próximo `caddy reload` lo ve bien.
   defp agregar_a_caddy(ambiente, app, nodeport) do
     with {:ok, 0, actual} <- MetadataApp.Ssh.ejecutar(ambiente, "cat #{@caddyfile_remoto}") do
+      host = "#{app.subdominio}.#{app.dominio_base}"
+
       bloque_nuevo = """
 
-      #{app.subdominio}.#{app.dominio_base} {
+      #{host} {
           reverse_proxy 172.17.0.1:#{nodeport}
       }
       """
 
-      nuevo_contenido = String.trim_trailing(actual) <> "\n" <> bloque_nuevo
+      # Reemplaza un bloque previo para el MISMO host en vez de agregar
+      # uno nuevo al lado -- sin esto, reintentar una app cuyo bloque ya
+      # había quedado escrito (ej. un intento anterior que llegó hasta acá
+      # pero falló/se cortó en un paso posterior) deja DOS bloques para el
+      # mismo hostname, y Caddy rechaza el archivo entero con "ambiguous
+      # site definition" (encontrado real reintentando la primera app de
+      # prueba). Asume el formato simple que este mismo código siempre
+      # escribe (sin llaves anidadas dentro del bloque).
+      contenido_sin_bloque_previo =
+        Regex.replace(~r/\n*#{Regex.escape(host)}\s*\{[^}]*\}\n?/, actual, "")
+
+      nuevo_contenido = String.trim_trailing(contenido_sin_bloque_previo) <> "\n" <> bloque_nuevo
 
       comando = """
       set -e
