@@ -94,6 +94,143 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
     assert campo_venta["visible"] == false
   end
 
+  # Bug real 2026-08-27 ("no puedo configurar rango de fechas con
+  # Acotado"): el botón de Parámetro no chequeaba "visible", así que se
+  # podía prender Parámetro en una columna todavía no visible -- quedaba
+  # es_parametro:true + visible:false persistido, celdas_parametro/1
+  # nunca renderiza eso como interactivo (exige visible:true), así que
+  # "Acotado" no aparecía nunca aunque Parámetro ya dijera "Sí".
+  test "el botón de Parámetro viene disabled en una columna no visible, y el toggle server-side lo respeta", %{conn: conn} do
+    {header, _consulta} = criar_consulta()
+
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
+    render_click(view, "cambiar_tab", %{"tab" => "get_config"})
+
+    id = "meta_fixture_cliente::meta_fixture_cliente_nombre"
+
+    # Ninguna columna visible -- estado inicial de "no visible" sin pasar
+    # por ningún otro handler.
+    html = view |> form("form[phx-submit=guardar_columnas]", %{"visibles" => []}) |> render_submit()
+    assert html =~ ~s(phx-value-campo="#{id}")
+
+    # El botón de Parámetro para esa fila viene disabled.
+    assert view
+           |> element("button[phx-click=cambiar_es_parametro][phx-value-campo=\"#{id}\"]")
+           |> render() =~ "disabled"
+
+    # Aunque se dispare el evento igual (bypass del disabled, ej. DOM
+    # viejo) -- el handler lo ignora, sigue sin ser parámetro.
+    render_click(view, "cambiar_es_parametro", %{"campo" => id})
+    consulta = MetaConsultas.obtener_por_header_id(header.id)
+    assert Enum.find(consulta.campos, &(&1["campo"] == "meta_fixture_cliente_nombre"))["es_parametro"] != true
+
+    # Visible primero -- ahora sí se puede prender Parámetro.
+    view |> form("form[phx-submit=guardar_columnas]", %{"visibles" => [id]}) |> render_submit()
+    refute view |> element("button[phx-click=cambiar_es_parametro][phx-value-campo=\"#{id}\"]") |> render() =~ "disabled"
+
+    render_click(view, "cambiar_es_parametro", %{"campo" => id})
+    consulta = MetaConsultas.obtener_por_header_id(header.id)
+    assert Enum.find(consulta.campos, &(&1["campo"] == "meta_fixture_cliente_nombre"))["es_parametro"] == true
+  end
+
+  # Mismo chequeo que el test de arriba, pero para los otros 3 tipos
+  # reales del catálogo fixture (referencia/integer/decimal) -- confirma
+  # que el gate de toggle_es_parametro/1 es parejo entre tipos, no algo
+  # que solo se probó para "string" (pedido explícito: probar los demás
+  # tipos de datos).
+  for {campo, _tipo} <- [{"meta_fixture_cliente_sucursal_id", "referencia"}, {"meta_fixture_cliente_edad", "integer"}, {"meta_fixture_cliente_venta", "decimal"}] do
+    test "el botón de Parámetro viene disabled sin visible -- #{campo}", %{conn: conn} do
+      {header, _consulta} = criar_consulta()
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
+      render_click(view, "cambiar_tab", %{"tab" => "get_config"})
+
+      id = "meta_fixture_cliente::#{unquote(campo)}"
+
+      view |> form("form[phx-submit=guardar_columnas]", %{"visibles" => []}) |> render_submit()
+
+      assert view
+             |> element("button[phx-click=cambiar_es_parametro][phx-value-campo=\"#{id}\"]")
+             |> render() =~ "disabled"
+
+      render_click(view, "cambiar_es_parametro", %{"campo" => id})
+      consulta = MetaConsultas.obtener_por_header_id(header.id)
+      assert Enum.find(consulta.campos, &(&1["campo"] == unquote(campo)))["es_parametro"] != true
+
+      view |> form("form[phx-submit=guardar_columnas]", %{"visibles" => [id]}) |> render_submit()
+      refute view |> element("button[phx-click=cambiar_es_parametro][phx-value-campo=\"#{id}\"]") |> render() =~ "disabled"
+
+      render_click(view, "cambiar_es_parametro", %{"campo" => id})
+      consulta = MetaConsultas.obtener_por_header_id(header.id)
+      assert Enum.find(consulta.campos, &(&1["campo"] == unquote(campo)))["es_parametro"] == true
+    end
+  end
+
+  # Round-trip: configurar Acotado/Tipo/Origen a fondo, apagar Visible
+  # (Get Config lo permite -- no fuerza "apagar Parámetro" al mismo
+  # tiempo), prenderlo de nuevo -- nada debería perderse ni quedar en un
+  # estado no interactivo. Cubre los 3 grupos reales de celdas_parametro/1
+  # (date, string/referencia, integer/decimal) con datos reales del
+  # catálogo fixture + un campo "date" sintético (el fixture no trae uno
+  # nativo).
+  test "Acotado/Tipo/Origen sobreviven un apagado y reencendido de Visible, en cada grupo de tipo", %{conn: conn} do
+    {header, consulta} = criar_consulta()
+
+    campo_fecha = %{
+      "catalogo" => consulta.catalogo_base,
+      "campo" => "fecha_registro",
+      "etiqueta" => "Fecha",
+      "tipo" => "date",
+      "orden" => 99,
+      "visible" => true,
+      "totalizar" => false,
+      "es_parametro" => false
+    }
+
+    campos = Enum.reject(consulta.campos, &(&1["campo"] == "fecha_registro")) ++ [campo_fecha]
+    {:ok, _} = MetaConsultas.actualizar_campos(consulta, campos)
+
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
+    render_click(view, "cambiar_tab", %{"tab" => "get_config"})
+
+    id_fecha = "meta_fixture_cliente::fecha_registro"
+    id_edad = "meta_fixture_cliente::meta_fixture_cliente_edad"
+    id_nombre = "meta_fixture_cliente::meta_fixture_cliente_nombre"
+    id_sucursal = "meta_fixture_cliente::meta_fixture_cliente_sucursal_id"
+
+    # Visible ya viene true por default (campos_del_catalogo/2) -- prende
+    # Parámetro + Acotado (date/integer) y un tipo_filtro no-default
+    # (string) en los 4.
+    for id <- [id_fecha, id_edad, id_nombre, id_sucursal], do: render_click(view, "cambiar_es_parametro", %{"campo" => id})
+    for id <- [id_fecha, id_edad], do: render_click(view, "cambiar_acotado", %{"campo" => id})
+    render_change(view, "cambiar_tipo_filtro", %{"tipo_filtro" => %{id_nombre => "igual"}})
+
+    # Apaga Visible de los 4 juntos, sin tocar nada de Parámetro/Acotado.
+    view |> form("form[phx-submit=guardar_columnas]", %{"visibles" => []}) |> render_submit()
+
+    consulta_oculta = MetaConsultas.obtener_por_header_id(header.id)
+    for campo <- ~w(fecha_registro meta_fixture_cliente_edad meta_fixture_cliente_nombre meta_fixture_cliente_sucursal_id) do
+      c = Enum.find(consulta_oculta.campos, &(&1["campo"] == campo))
+      assert c["visible"] == false
+      assert c["es_parametro"] == true, "es_parametro debería seguir true (oculto, no perdido) para #{campo}"
+    end
+
+    # Prende Visible de nuevo -- Acotado/Tipo tienen que seguir ahí y ser
+    # interactivos, no reseteados a default ni escondidos.
+    html = view |> form("form[phx-submit=guardar_columnas]", %{"visibles" => [id_fecha, id_edad, id_nombre, id_sucursal]}) |> render_submit()
+
+    consulta_final = MetaConsultas.obtener_por_header_id(header.id)
+    assert Enum.find(consulta_final.campos, &(&1["campo"] == "fecha_registro"))["acotado"] == true
+    assert Enum.find(consulta_final.campos, &(&1["campo"] == "meta_fixture_cliente_edad"))["acotado"] == true
+    assert Enum.find(consulta_final.campos, &(&1["campo"] == "meta_fixture_cliente_nombre"))["tipo_filtro"] == "igual"
+
+    assert html =~ "Acot."
+    # Cada botón de Parámetro de los 4 vuelve a estar habilitado (no
+    # "disabled" en su <button>).
+    for id <- [id_fecha, id_edad, id_nombre, id_sucursal] do
+      refute view |> element("button[phx-click=cambiar_es_parametro][phx-value-campo=\"#{id}\"]") |> render() =~ "disabled"
+    end
+  end
+
   test "el checkbox de totalizar viene disabled para un campo no numérico", %{conn: conn} do
     {header, _consulta} = criar_consulta()
 
@@ -179,8 +316,8 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
 
     {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
     html = render_click(view, "cambiar_tab", %{"tab" => "get_config"})
-    assert html =~ "Es acotado"
-    assert html =~ "Defaults"
+    assert html =~ "Acot."
+    assert html =~ "Default"
 
     id_1 = "#{consulta.catalogo_base}::fecha_alta"
     id_2 = "#{consulta.catalogo_base}::fecha_baja"
@@ -425,6 +562,43 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
     assert html_sql =~ "ILIKE"
     assert html_sql =~ "%ejemplo%"
     assert html_sql =~ "42"
+  end
+
+  # "Orden de resultados" (R1 admin, 2026-08-27) -- pedido explícito:
+  # poder ordenar el reporte por varias columnas en prioridad. Cualquier
+  # campo de la consulta es elegible, visible o no (a diferencia de
+  # Parámetro estándar).
+  test "Orden de resultados: agregar, cambiar dirección, reordenar y quitar, todo persistido", %{conn: conn} do
+    {header, _consulta} = criar_consulta()
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
+
+    render_click(view, "cambiar_tab", %{"tab" => "get_config"})
+
+    html = render_click(view, "abrir_selector_orden", %{})
+    assert html =~ "Agregar columna de orden"
+
+    html = render_click(view, "agregar_orden", %{"catalogo" => "meta_fixture_cliente", "campo" => "meta_fixture_cliente_edad"})
+    assert html =~ "Ascendente"
+
+    render_click(view, "abrir_selector_orden", %{})
+    render_click(view, "agregar_orden", %{"catalogo" => "meta_fixture_cliente", "campo" => "meta_fixture_cliente_nombre"})
+
+    consulta = MetaConsultas.obtener_por_header_id(header.id)
+    assert Enum.map(consulta.orden_por, & &1["campo"]) == ~w(meta_fixture_cliente_edad meta_fixture_cliente_nombre)
+    assert Enum.map(consulta.orden_por, & &1["direccion"]) == ~w(asc asc)
+
+    html = render_click(view, "cambiar_direccion_orden", %{"indice" => "0"})
+    assert html =~ "Descendente"
+    consulta = MetaConsultas.obtener_por_header_id(header.id)
+    assert Enum.at(consulta.orden_por, 0)["direccion"] == "desc"
+
+    render_click(view, "mover_orden", %{"indice" => "1", "direccion" => "arriba"})
+    consulta = MetaConsultas.obtener_por_header_id(header.id)
+    assert Enum.map(consulta.orden_por, & &1["campo"]) == ~w(meta_fixture_cliente_nombre meta_fixture_cliente_edad)
+
+    render_click(view, "quitar_orden", %{"indice" => "0"})
+    consulta = MetaConsultas.obtener_por_header_id(header.id)
+    assert Enum.map(consulta.orden_por, & &1["campo"]) == ~w(meta_fixture_cliente_edad)
   end
 
   test "un header que no es Consulta redirige a bc-list", %{conn: conn} do

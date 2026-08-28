@@ -925,6 +925,19 @@ window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
 // connect if there are any LiveViews on the page
 liveSocket.connect()
 
+// bfcache (Back/Forward Cache) del navegador: al volver a una página con
+// atrás/adelante, Chrome a veces la restaura CONGELADA en vez de
+// recargarla de cero -- el socket de LiveView queda cerrado ("Page
+// entered Back-Forward Cache" en la consola) pero el DOM se ve intacto,
+// así que cualquier phx-click/phx-change se queda mudo sin ningún aviso
+// visible (bug real reportado: "Activar" en una plantilla no hacía
+// nada). `pageshow` con `event.persisted` es la señal estándar de que la
+// página viene de bfcache -- forzar un reload real reconecta el socket
+// en vez de dejar la página zombie.
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) window.location.reload()
+})
+
 // expose liveSocket on window for web console debug logs and latency simulation:
 // >> liveSocket.enableDebug()
 // >> liveSocket.enableLatencySim(1000)  // enabled for duration of browser session

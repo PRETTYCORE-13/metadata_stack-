@@ -118,6 +118,8 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     |> assign(:modos_fecha_rango, FiltrosDefault.modos_fecha_rango())
     |> assign(:modos_fecha_simple, FiltrosDefault.modos_fecha_simple())
     |> assign(:catalogos_referenciables, MetaSchemaContext.listar_catalogos_referenciables())
+    |> assign(:orden_por, consulta.orden_por)
+    |> assign(:selector_orden_abierto, false)
   end
 
   defp nil_si_vacio(""), do: nil
@@ -226,6 +228,60 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     end
   end
 
+  # --- Get Config: Orden de resultados (R1 admin, 2026-08-27) -----------
+  # Cualquier campo de la consulta es elegible, visible o no (ordenar por
+  # una columna no la hace aparecer en la tabla) -- a diferencia del resto
+  # de este editor, que solo ofrece manejar columnas visibles. Guardado
+  # inmediato por acción (agregar/quitar/mover/cambiar dirección), mismo
+  # criterio que Parámetro estándar más abajo.
+
+  def handle_event("abrir_selector_orden", _params, socket) do
+    {:noreply, assign(socket, :selector_orden_abierto, true)}
+  end
+
+  def handle_event("cerrar_selector_orden", _params, socket) do
+    {:noreply, assign(socket, :selector_orden_abierto, false)}
+  end
+
+  def handle_event("agregar_orden", %{"catalogo" => catalogo, "campo" => campo}, socket) do
+    nueva_entrada = %{"catalogo" => catalogo, "campo" => campo, "direccion" => "asc"}
+    orden_por = socket.assigns.orden_por ++ [nueva_entrada]
+
+    guardar_orden_por(socket, orden_por, close: true)
+  end
+
+  def handle_event("quitar_orden", %{"indice" => indice}, socket) do
+    orden_por = List.delete_at(socket.assigns.orden_por, String.to_integer(indice))
+    guardar_orden_por(socket, orden_por, close: false)
+  end
+
+  def handle_event("cambiar_direccion_orden", %{"indice" => indice}, socket) do
+    indice = String.to_integer(indice)
+
+    orden_por =
+      List.update_at(socket.assigns.orden_por, indice, fn entrada ->
+        Map.put(entrada, "direccion", if(entrada["direccion"] == "desc", do: "asc", else: "desc"))
+      end)
+
+    guardar_orden_por(socket, orden_por, close: false)
+  end
+
+  def handle_event("mover_orden", %{"indice" => indice, "direccion" => direccion}, socket) do
+    indice = String.to_integer(indice)
+    destino = if direccion == "arriba", do: indice - 1, else: indice + 1
+    orden_por = socket.assigns.orden_por
+
+    if destino >= 0 and destino < length(orden_por) do
+      actual = Enum.at(orden_por, indice)
+      vecino = Enum.at(orden_por, destino)
+
+      nuevo_orden = orden_por |> List.replace_at(indice, vecino) |> List.replace_at(destino, actual)
+      guardar_orden_por(socket, nuevo_orden, close: false)
+    else
+      {:noreply, socket}
+    end
+  end
+
   # --- Get Config: Parámetro estándar por columna (rediseño 2026-08-27) --
   # Guardado inmediato (no forma parte de "Guardar columnas") -- mismo
   # criterio que el resto de los toggles de configuración de este editor.
@@ -240,10 +296,20 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
   # NUNCA llega en un evento de change, solo el name -- ver el comentario
   # grande en panel_get_config/1 más abajo).
 
+  # Segunda barrera server-side (la primera es el botón disabled en
+  # toggle_es_parametro/1) -- solo bloquea PRENDER Parámetro en una
+  # columna no visible; apagarlo siempre se permite, incluso no visible,
+  # para poder limpiar una fila que ya quedó en ese estado inconsistente
+  # de antes de este fix (visible:false + es_parametro:true, ver bug real
+  # 2026-08-27 en el moduledoc de toggle_es_parametro/1).
   def handle_event("cambiar_es_parametro", %{"campo" => id}, socket) do
     campos =
       mapear_campo(socket, id, fn campo ->
-        campo |> Map.put("es_parametro", !campo["es_parametro"]) |> Map.put("acotado", false) |> Map.put("tipo_filtro", nil) |> Map.put("origen", nil) |> Map.put("catalogo_referenciado", nil) |> Map.put("defaults", %{})
+        if campo["visible"] == true or campo["es_parametro"] == true do
+          campo |> Map.put("es_parametro", !campo["es_parametro"]) |> Map.put("acotado", false) |> Map.put("tipo_filtro", nil) |> Map.put("origen", nil) |> Map.put("catalogo_referenciado", nil) |> Map.put("defaults", %{})
+        else
+          campo
+        end
       end)
 
     guardar_campos(socket, campos, "Parámetro actualizado.")
@@ -411,7 +477,8 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
         multi_tabla?={@multi_tabla?} tipos_totalizables={@tipos_totalizables}
         claves_control_disponibles={@claves_control_disponibles} claves_control_actuales={@claves_control_actuales}
         etiquetas_control={@etiquetas_control} consulta={@consulta} detalles_por_catalogo={@detalles_por_catalogo}
-        modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple} catalogos_referenciables={@catalogos_referenciables} />
+        modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple} catalogos_referenciables={@catalogos_referenciables}
+        orden_por={@orden_por} selector_orden_abierto={@selector_orden_abierto} />
       <.panel_configuracion :if={@tab == "configuracion"} campos={@campos} multi_tabla?={@multi_tabla?}
         header_form={@header_form} iconos_sugeridos={@iconos_sugeridos} carpetas={@carpetas} />
       <.panel_contrato :if={@tab == "contrato"} header={@header} campos={@campos} />
@@ -432,12 +499,29 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
   attr :modos_fecha_rango, :list, required: true
   attr :modos_fecha_simple, :list, required: true
   attr :catalogos_referenciables, :list, required: true
+  attr :orden_por, :list, required: true
+  attr :selector_orden_abierto, :boolean, required: true
 
   defp panel_get_config(assigns) do
     ~H"""
     <div class="flex flex-col gap-4">
-      <div class="bg-white border border-gray-200 rounded-2xl shadow-sm">
-        <div class="px-4 pt-4 text-[11px] font-bold uppercase tracking-wide text-gray-400">Columnas del GET (orden, visibilidad, totales, parámetro)</div>
+      <%!-- Las 3 secciones de Get Config son acordeones (2026-08-28, a
+      pedido explícito -- "permite mejor administración") -- <details>/
+      <summary> nativo + el hook RecordarSeccion, mismo patrón exacto que
+      panel_parametros/1 en catalogo_live.ex (recuerda open/closed en
+      localStorage por id, sin round-trip al servidor). Empiezan CERRADAS
+      la primera vez (sin atributo `open`, a pedido explícito). Ids fijos
+      (no por Consulta) a propósito -- a diferencia de Parámetros (cuyo
+      contenido varía mucho de una Consulta a otra), estas 3 secciones son
+      siempre la misma estructura sea cual sea la Consulta, así que la
+      preferencia de qué tener abierto/cerrado tiene más sentido como algo
+      global del admin, no algo que se resetea en cada Consulta distinta. --%>
+      <details id="get-config-columnas" phx-hook="RecordarSeccion" class="group bg-white border border-gray-200 rounded-2xl shadow-sm">
+        <summary class="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-gray-400 flex items-center gap-1.5 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+          <span class="material-symbols-outlined text-gray-400 transition-transform group-open:rotate-90" style="font-size: 15px">chevron_right</span>
+          <span class="material-symbols-outlined" style="font-size: 15px">view_column</span>
+          Columnas del GET (orden, visibilidad, totales, parámetro)
+        </summary>
 
         <%!-- phx-value-* NUNCA llega en un evento de "change" disparado
         por un <select>/<input> (el cliente JS de LiveView solo lo lee de
@@ -456,37 +540,36 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
           <table class="min-w-full divide-y divide-gray-200 text-xs">
             <thead class="bg-gray-50">
               <tr>
-                <th class="px-1.5 py-2"></th>
-                <th :if={@multi_tabla?} class="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">Tabla</th>
-                <th class="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">Campo</th>
-                <th class="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">Etiqueta</th>
-                <th class="px-3 py-2 text-center font-semibold text-gray-500 uppercase tracking-wide">Visible</th>
-                <th class="px-3 py-2 text-center font-semibold text-gray-500 uppercase tracking-wide">Totalizar</th>
-                <th class="px-3 py-2 text-center font-semibold text-gray-500 uppercase tracking-wide">Parámetro</th>
-                <th class="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">Tipo</th>
-                <th class="px-3 py-2 text-center font-semibold text-gray-500 uppercase tracking-wide">Es acotado</th>
-                <th class="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">Origen</th>
-                <th class="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">Defaults</th>
+                <th class="px-1 py-1.5"></th>
+                <th :if={@multi_tabla?} class="px-1.5 py-1.5 text-left font-semibold text-gray-500 uppercase tracking-wide">Tabla</th>
+                <th class="px-1.5 py-1.5 text-left font-semibold text-gray-500 uppercase tracking-wide">Campo</th>
+                <th class="px-1.5 py-1.5 text-left font-semibold text-gray-500 uppercase tracking-wide">Etq</th>
+                <th class="px-1.5 py-1.5 text-center font-semibold text-gray-500 uppercase tracking-wide">Vis.</th>
+                <th class="px-1.5 py-1.5 text-center font-semibold text-gray-500 uppercase tracking-wide">Tot.</th>
+                <th class="px-1.5 py-1.5 text-center font-semibold text-gray-500 uppercase tracking-wide">Param</th>
+                <th class="px-1.5 py-1.5 text-left font-semibold text-gray-500 uppercase tracking-wide">Tipo</th>
+                <th class="px-1.5 py-1.5 text-center font-semibold text-gray-500 uppercase tracking-wide">Acot.</th>
+                <th class="px-1.5 py-1.5 text-left font-semibold text-gray-500 uppercase tracking-wide">Default</th>
               </tr>
             </thead>
             <tbody id="consulta-columnas-get-ordenable" phx-hook="ListaOrdenable" data-grupo="consulta-columnas-get" class="divide-y divide-gray-100">
               <tr :for={campo <- @campos} id={"columna-get-row-#{identificador(campo)}"} data-id={identificador(campo)}>
-                <td class="px-1.5 py-2 text-gray-300 jal-manija cursor-grab" title="Arrastrar para reordenar">
-                  <span class="material-symbols-outlined" style="font-size: 16px">drag_indicator</span>
+                <td class="px-1 py-1.5 text-gray-300 jal-manija cursor-grab" title="Arrastrar para reordenar">
+                  <span class="material-symbols-outlined" style="font-size: 14px">drag_indicator</span>
                 </td>
-                <td :if={@multi_tabla?} class="px-3 py-2 text-gray-500 font-mono">{campo["catalogo"]}</td>
-                <td class="px-3 py-2 text-gray-500 font-mono">{campo["campo"]}</td>
-                <td class="px-3 py-2 text-gray-700">{campo["etiqueta"]}</td>
-                <td class="px-3 py-2 text-center">
+                <td :if={@multi_tabla?} class="px-1.5 py-1.5 text-gray-500 font-mono max-w-[7rem] truncate" title={campo["catalogo"]}>{campo["catalogo"]}</td>
+                <td class="px-1.5 py-1.5 text-gray-500 font-mono max-w-[9rem] truncate" title={campo["campo"]}>{campo["campo"]}</td>
+                <td class="px-1.5 py-1.5 text-gray-700 max-w-[6rem] truncate" title={campo["etiqueta"]}>{campo["etiqueta"]}</td>
+                <td class="px-1.5 py-1.5 text-center">
                   <input type="checkbox" form="form-guardar-columnas" name="visibles[]" value={identificador(campo)} checked={campo["visible"]} class="accent-purple-600" />
                 </td>
-                <td class="px-3 py-2 text-center">
+                <td class="px-1.5 py-1.5 text-center">
                   <input type="checkbox" form="form-guardar-columnas" name="totalizar[]" value={identificador(campo)} checked={campo["totalizar"]}
                     disabled={campo["tipo"] not in @tipos_totalizables}
                     title={if campo["tipo"] not in @tipos_totalizables, do: "Solo campos numéricos se pueden totalizar"}
                     class="accent-purple-600 disabled:opacity-20" />
                 </td>
-                <td class="px-3 py-2 text-center">
+                <td class="px-1.5 py-1.5 text-center">
                   <.toggle_es_parametro :if={MetaConsultas.tipo_elegible?(MetaConsultas.tipo_efectivo(campo))} campo={campo} id={identificador(campo)} />
                   <span :if={!MetaConsultas.tipo_elegible?(MetaConsultas.tipo_efectivo(campo))} class="text-[10px] text-gray-300" title="Tipo sin parámetro estándar">—</span>
                 </td>
@@ -494,21 +577,25 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
                   catalogos_referenciables={@catalogos_referenciables} detalles_por_catalogo={@detalles_por_catalogo} />
               </tr>
               <tr :if={@campos == []}>
-                <td colspan={if @multi_tabla?, do: 11, else: 10} class="px-3 py-6 text-center text-gray-400">Esta consulta no tiene campos.</td>
+                <td colspan={if @multi_tabla?, do: 10, else: 9} class="px-1.5 py-6 text-center text-gray-400">Esta consulta no tiene campos.</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <div class="px-4 py-3 border-t border-gray-200 flex justify-end">
+        <div class="px-4 py-3 border-t border-gray-200">
           <button type="submit" form="form-guardar-columnas" class="px-4 py-2 rounded-lg bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700">
             Guardar columnas
           </button>
         </div>
-      </div>
+      </details>
 
-      <div class="bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
-        <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Campos de control del catálogo base</div>
-        <p class="text-xs text-gray-400 mb-3">Solo se ofrecen los que tienen sentido para este catálogo (Estado si adoptó el motor de estados, TRN si es transaccional, Sucursal/Almacén/Unidad de venta si tiene Alcance de Datos).</p>
+      <details id="get-config-campos-control" phx-hook="RecordarSeccion" class="group bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
+        <summary class="text-[11px] font-bold uppercase tracking-wide text-gray-400 flex items-center gap-1.5 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+          <span class="material-symbols-outlined text-gray-400 transition-transform group-open:rotate-90" style="font-size: 15px">chevron_right</span>
+          <span class="material-symbols-outlined" style="font-size: 15px">settings</span>
+          Campos de control del catálogo base
+        </summary>
+        <p class="text-xs text-gray-400 mb-3 mt-2">Solo se ofrecen los que tienen sentido para este catálogo (Estado si adoptó el motor de estados, TRN si es transaccional, Sucursal/Almacén/Unidad de venta si tiene Alcance de Datos).</p>
         <form phx-submit="guardar_campos_control" class="flex flex-col gap-3">
           <div :if={@claves_control_disponibles == []} class="text-xs text-gray-400">Este catálogo no tiene campos de control disponibles.</div>
           <label :for={clave <- @claves_control_disponibles} class="flex items-center gap-1.5 text-sm text-gray-700">
@@ -521,10 +608,96 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
             </button>
           </div>
         </form>
-      </div>
+      </details>
+
+      <details id="get-config-orden" phx-hook="RecordarSeccion" class="group bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
+        <summary class="text-[11px] font-bold uppercase tracking-wide text-gray-400 flex items-center gap-1.5 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+          <span class="material-symbols-outlined text-gray-400 transition-transform group-open:rotate-90" style="font-size: 15px">chevron_right</span>
+          <span class="material-symbols-outlined" style="font-size: 15px">sort</span>
+          Orden de resultados
+        </summary>
+        <p class="text-xs text-gray-400 mb-3 mt-2">
+          Define en qué orden salen las filas del reporte — la primera columna manda, las siguientes desempatan.
+          Cualquier columna de la consulta sirve, esté visible o no.
+        </p>
+
+        <ul :if={@orden_por != []} class="flex flex-col gap-1.5 mb-3">
+          <li :for={{entrada, indice} <- Enum.with_index(@orden_por)} class="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
+            <span class="text-gray-400 font-mono w-4 text-center flex-shrink-0">{indice + 1}</span>
+            <span class="flex-1 min-w-0 text-gray-900 truncate">{etiqueta_orden(@campos, entrada)}</span>
+            <button type="button" phx-click="cambiar_direccion_orden" phx-value-indice={indice}
+              class={[
+                "px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0",
+                entrada["direccion"] == "desc" && "bg-purple-100 text-purple-700",
+                entrada["direccion"] != "desc" && "bg-gray-100 text-gray-600"
+              ]}>
+              {if entrada["direccion"] == "desc", do: "Descendente", else: "Ascendente"}
+            </button>
+            <button type="button" phx-click="mover_orden" phx-value-indice={indice} phx-value-direccion="arriba" disabled={indice == 0}
+              class="w-6 h-6 rounded border border-gray-300 text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0" title="Subir prioridad">↑</button>
+            <button type="button" phx-click="mover_orden" phx-value-indice={indice} phx-value-direccion="abajo" disabled={indice == length(@orden_por) - 1}
+              class="w-6 h-6 rounded border border-gray-300 text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0" title="Bajar prioridad">↓</button>
+            <button type="button" phx-click="quitar_orden" phx-value-indice={indice}
+              class="w-6 h-6 rounded border border-gray-300 text-red-600 hover:bg-red-50 flex-shrink-0" title="Quitar del orden">×</button>
+          </li>
+        </ul>
+        <p :if={@orden_por == []} class="text-xs text-gray-400 mb-3">Sin orden configurado — el reporte sale en el orden que devuelva la base, sin garantía.</p>
+
+        <div class="relative inline-block">
+          <button type="button" phx-click="abrir_selector_orden" class="text-purple-700 hover:text-purple-900 font-semibold text-sm">
+            + Agregar columna de orden
+          </button>
+          <%= if @selector_orden_abierto do %>
+            <div class="fixed inset-0 z-40" phx-click="cerrar_selector_orden"></div>
+            <%!-- Abre hacia ARRIBA (bottom-full, no top-full) -- esta es la
+            última sección de Get Config, casi siempre pegada al borde de
+            abajo de la ventana; abriendo hacia abajo el popover quedaba
+            cortado contra el viewport, sin espacio para desplegar (bug
+            real 2026-08-27, "no puedo ordenar porque no se ve el
+            control"). Mismo motivo por el que no puede haber otro
+            popover ABAJO de este en la página. --%>
+            <div class="absolute left-0 bottom-full mb-1 w-64 max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-1">
+              <button :for={c <- campos_disponibles_orden(@campos, @orden_por)} type="button"
+                phx-click="agregar_orden" phx-value-catalogo={c["catalogo"]} phx-value-campo={c["campo"]}
+                class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-purple-50 hover:text-purple-700 text-xs">
+                {c["etiqueta"]} <span :if={@multi_tabla?} class="text-gray-400 font-mono">· {c["catalogo"]}</span>
+              </button>
+              <p :if={campos_disponibles_orden(@campos, @orden_por) == []} class="px-3 py-2 text-gray-400 text-xs">Ya agregaste todas las columnas.</p>
+            </div>
+          <% end %>
+        </div>
+      </details>
 
     </div>
     """
+  end
+
+  defp etiqueta_orden(campos, %{"catalogo" => catalogo, "campo" => campo}) do
+    case Enum.find(campos, &(&1["catalogo"] == catalogo and &1["campo"] == campo)) do
+      nil -> "#{catalogo}.#{campo} (columna eliminada)"
+      campo_def -> campo_def["etiqueta"]
+    end
+  end
+
+  defp campos_disponibles_orden(campos, orden_por) do
+    ya_usados = MapSet.new(orden_por, &{&1["catalogo"], &1["campo"]})
+    Enum.reject(campos, &MapSet.member?(ya_usados, {&1["catalogo"], &1["campo"]}))
+  end
+
+  defp guardar_orden_por(socket, orden_por, opciones) do
+    case MetaConsultas.actualizar_orden_por(socket.assigns.consulta, orden_por) do
+      {:ok, consulta} ->
+        socket =
+          socket
+          |> assign(:consulta, consulta)
+          |> assign(:orden_por, consulta.orden_por)
+
+        socket = if opciones[:close], do: assign(socket, :selector_orden_abierto, false), else: socket
+        {:noreply, socket}
+
+      {:error, changeset} ->
+        {:noreply, put_flash(socket, :error, "No se pudo guardar el orden: #{inspect(changeset.errors)}")}
+    end
   end
 
   # --- Get Config: 4 celdas de Parámetro (Tipo/Es acotado/Parámetro/
@@ -547,13 +720,18 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     assigns = assign(assigns, :id, id)
 
     ~H"""
-    <td class="px-3 py-2 text-gray-500">Fecha</td>
-    <td class="px-3 py-2 text-center"><.toggle_acotado campo={@campo} id={@id} /></td>
-    <td class="px-3 py-2 text-gray-500">{if @campo["acotado"], do: "Rango", else: "Fecha única"}</td>
-    <td class="px-3 py-2"><.defaults_fecha campo={@campo} id={@id} modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple} /></td>
+    <td class="px-1.5 py-1.5 text-gray-500">Fecha</td>
+    <td class="px-1.5 py-1.5 text-center"><.toggle_acotado campo={@campo} id={@id} /></td>
+    <td class="px-1.5 py-1.5"><.defaults_fecha campo={@campo} id={@id} modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple} /></td>
     """
   end
 
+  # "Origen" (libre vs. catálogo referenciado) se sacó de columna propia
+  # (2026-08-28, a pedido explícito -- "no aporta valor" como columna
+  # aparte) y se juntó dentro de la celda de "Defaults", justo arriba del
+  # valor por default -- están acopladas de todos modos (defaults_string/1
+  # YA rama por `origen` para "igual", ver abajo), tenerlas separadas en
+  # columnas distintas no sumaba nada, solo hacía la tabla más ancha.
   defp celdas_parametro(%{campo: %{"visible" => true, "es_parametro" => true}, tipo_efectivo: tipo} = assigns) when tipo in ~w(string referencia) do
     id = identificador(assigns.campo)
     tipo_filtro = assigns.campo["tipo_filtro"] || "like"
@@ -561,14 +739,12 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     assigns = assigns |> assign(:id, id) |> assign(:tipo_filtro, tipo_filtro) |> assign(:origen, origen) |> assign(:es_referencia_real?, tipo == "referencia")
 
     ~H"""
-    <td class="px-3 py-2">
+    <td class="px-1.5 py-1.5">
       <.selector_tipo_filtro id={@id} valor={@tipo_filtro} opciones={[{"like", "Contiene"}, {"igual", "Igual"}, {"multi", "Múltiple"}]} />
     </td>
-    <td class="px-3 py-2 text-center text-[10px] text-gray-300" title="String nunca es acotado">No</td>
-    <td class="px-3 py-2">
+    <td class="px-1.5 py-1.5 text-center text-[10px] text-gray-300" title="String nunca es acotado">No</td>
+    <td class="px-1.5 py-1.5">
       <.origen_string campo={@campo} id={@id} tipo_filtro={@tipo_filtro} origen={@origen} es_referencia_real?={@es_referencia_real?} catalogos_referenciables={@catalogos_referenciables} />
-    </td>
-    <td class="px-3 py-2">
       <.defaults_string campo={@campo} id={@id} tipo_filtro={@tipo_filtro} origen={@origen} detalles_por_catalogo={@detalles_por_catalogo} />
     </td>
     """
@@ -581,19 +757,18 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     assigns = assigns |> assign(:id, id) |> assign(:acotado, acotado) |> assign(:tipo_filtro, tipo_filtro)
 
     ~H"""
-    <td class="px-3 py-2">
+    <td class="px-1.5 py-1.5">
       <span :if={@acotado} class="text-[10px] text-gray-500">Entre</span>
       <.selector_tipo_filtro :if={!@acotado} id={@id} valor={@tipo_filtro} opciones={[{"mayor", "Mayor que"}, {"menor", "Menor que"}, {"igual", "Igual"}, {"diferente", "Diferente de"}]} />
     </td>
-    <td class="px-3 py-2 text-center"><.toggle_acotado campo={@campo} id={@id} /></td>
-    <td class="px-3 py-2 text-[10px] text-gray-500">Libre</td>
-    <td class="px-3 py-2"><.defaults_numerico campo={@campo} id={@id} acotado={@acotado} /></td>
+    <td class="px-1.5 py-1.5 text-center"><.toggle_acotado campo={@campo} id={@id} /></td>
+    <td class="px-1.5 py-1.5"><.defaults_numerico campo={@campo} id={@id} acotado={@acotado} /></td>
     """
   end
 
   defp celdas_parametro(assigns) do
     ~H"""
-    <td colspan="4" class="px-3 py-2 text-center text-gray-300" title="No visible o tipo sin parámetro estándar">—</td>
+    <td colspan="3" class="px-1.5 py-1.5 text-center text-gray-300" title="No visible o tipo sin parámetro estándar">—</td>
     """
   end
 
@@ -605,13 +780,26 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
   # 2026-08-27 -- "no todas las columnas llevan parámetro, solo las que
   # indico que llevan"). Ver MetaConsultas.campos_elegibles_fecha/1 y
   # análogas, que exigen este flag además de tipo+visible.
+  #
+  # Bug real 2026-08-27: este botón no chequeaba "visible", así que se
+  # podía prender Parámetro en una columna todavía NO visible -- quedaba
+  # es_parametro:true + visible:false persistido, una combinación que
+  # celdas_parametro/1 nunca renderiza como interactivo (esa exige
+  # "visible" => true en su guard, ver el clause de arriba), así que
+  # "Acotado" no aparecía nunca aunque Parámetro ya dijera "Sí" --
+  # confuso, parecía roto. "Visible" se guarda recién al tocar "Guardar
+  # columnas" (form aparte, ver arriba) -- por eso el mensaje le dice al
+  # admin exactamente qué hacer primero, no solo que está deshabilitado.
   defp toggle_es_parametro(assigns) do
     ~H"""
     <button type="button" phx-click="cambiar_es_parametro" phx-value-campo={@id}
+      disabled={@campo["visible"] != true}
+      title={if @campo["visible"] != true, do: "Primero marcá \"Visible\" y guardá columnas -- Parámetro exige que la columna sea visible"}
       class={[
         "text-[10px] font-semibold rounded-full px-2 py-1",
         @campo["es_parametro"] && "bg-purple-600 text-white",
-        !@campo["es_parametro"] && "bg-gray-100 text-gray-500 hover:bg-gray-200"
+        !@campo["es_parametro"] && "bg-gray-100 text-gray-500 hover:bg-gray-200",
+        @campo["visible"] != true && "opacity-40 cursor-not-allowed"
       ]}>
       {if @campo["es_parametro"], do: "Sí", else: "No"}
     </button>
@@ -674,13 +862,13 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
       </div>
 
       <div :if={@defaults["modo"] == "formula" && @campo["acotado"]} class="flex items-center gap-1 mt-1">
-        <input type="text" value={@defaults["valor"]} placeholder="ej. primer_dia_mes"
+        <input type="text" value={@defaults["valor"]} placeholder="primer_dia_mes"
           phx-change="cambiar_defaults_valor" form="form-guardar-columnas" name={"defaults_valor[#{@id}]"}
-          class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-28" />
+          class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-20" />
         <span class="text-gray-400 text-[10px]">–</span>
-        <input type="text" value={@defaults["valor_hasta"]} placeholder="ej. actual"
+        <input type="text" value={@defaults["valor_hasta"]} placeholder="actual"
           phx-change="cambiar_defaults_valor_hasta" form="form-guardar-columnas" name={"defaults_valor_hasta[#{@id}]"}
-          class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-28" />
+          class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-20" />
       </div>
 
       <input :if={@defaults["modo"] == "formula" && !@campo["acotado"]} type="text" value={@defaults["valor"]} placeholder="ej. actual - 3 meses"

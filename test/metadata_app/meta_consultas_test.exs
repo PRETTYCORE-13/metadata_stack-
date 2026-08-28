@@ -44,6 +44,13 @@ defmodule MetadataApp.MetaConsultasTest do
     consulta
   end
 
+  defp fixture_cliente(nombre, edad) do
+    %MetaFixtureCliente{}
+    |> MetaFixtureCliente.changeset(%{meta_fixture_cliente_nombre: nombre, meta_fixture_cliente_edad: edad, meta_fixture_cliente_venta: Decimal.new("1.00")})
+    |> Ecto.Changeset.put_change(:insert_guid, guid())
+    |> Repo.insert!()
+  end
+
   defp header_detalle_de(nombre, maestro_id, detalles \\ []) do
     {:ok, {header, _}} =
       MetaSchemaContext.crear_header_con_detalles(%{
@@ -371,6 +378,49 @@ defmodule MetadataApp.MetaConsultasTest do
       fila = Enum.find(resultado.filas, &(&1[:meta_fixture_cliente__meta_fixture_cliente_nombre] == nombre_cliente))
       refute is_nil(fila)
       assert fila[:meta_fixture_cliente__meta_fixture_cliente_sucursal_id] == branch.branch_name
+    end
+  end
+
+  # "Orden de resultados" (R1 admin, 2026-08-27) -- pedido explícito:
+  # ordenar el reporte por varias columnas en prioridad (ej. sucursal,
+  # unit sale, nombre del cliente), cualquiera sea su visibilidad.
+  describe "ejecutar/6 respeta orden_por (Orden de resultados)" do
+    test "ordena por la primera columna y desempata con la segunda" do
+      prefijo = "orden_#{unique()}"
+      # edad IGUAL en las dos primeras a propósito -- si la 2da columna
+      # (nombre) no desempata, el orden entre ellas queda indefinido y el
+      # test sería flaky.
+      fixture_cliente("#{prefijo}-b", 30)
+      fixture_cliente("#{prefijo}-a", 30)
+      fixture_cliente("#{prefijo}-z", 20)
+
+      consulta = crear_consulta("meta_fixture_cliente")
+
+      {:ok, consulta} =
+        MetaConsultas.actualizar_orden_por(consulta, [
+          %{"catalogo" => "meta_fixture_cliente", "campo" => "meta_fixture_cliente_edad", "direccion" => "asc"},
+          %{"catalogo" => "meta_fixture_cliente", "campo" => "meta_fixture_cliente_nombre", "direccion" => "asc"}
+        ])
+
+      resultado = MetaConsultas.ejecutar(consulta, :sistema)
+
+      nombres =
+        resultado.filas
+        |> Enum.map(& &1[:meta_fixture_cliente__meta_fixture_cliente_nombre])
+        |> Enum.filter(&String.starts_with?(&1, prefijo))
+
+      assert nombres == ["#{prefijo}-z", "#{prefijo}-a", "#{prefijo}-b"]
+    end
+
+    test "una entrada de orden_por que ya no matchea ningún campo se ignora, no revienta" do
+      consulta = crear_consulta("meta_fixture_cliente")
+
+      {:ok, consulta} =
+        MetaConsultas.actualizar_orden_por(consulta, [
+          %{"catalogo" => "meta_fixture_cliente", "campo" => "campo_que_no_existe", "direccion" => "asc"}
+        ])
+
+      assert %{filas: _} = MetaConsultas.ejecutar(consulta, :sistema)
     end
   end
 end

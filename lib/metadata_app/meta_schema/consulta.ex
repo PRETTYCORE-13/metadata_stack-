@@ -84,10 +84,21 @@ defmodule MetadataApp.MetaSchema.Consulta do
   #
   # `joins` reservado para Fase 2 (todavía sin usar) — Fase 1 es una sola
   # tabla (`catalogo_base`).
+  #
+  # `orden_por` (Orden de resultados, R1 admin, 2026-08-27) -- lista
+  # ordenada de columnas por las que ordenar el reporte, en prioridad:
+  #
+  #   %{"catalogo" => .., "campo" => .., "direccion" => "asc" | "desc"}
+  #
+  # Cualquier campo de `campos` es elegible para ordenar, visible o no --
+  # a diferencia de "es_parametro" (que exige "visible" == true), ordenar
+  # por una columna no la hace aparecer en la tabla. Vacío = comportamiento
+  # de siempre (sin ORDER BY explícito), ver MetaConsultas.ejecutar/6.
   schema "meta_schema_consulta" do
     field :catalogo_base, :string
     field :campos, {:array, :map}, default: []
     field :joins, {:array, :map}, default: []
+    field :orden_por, {:array, :map}, default: []
 
     field :insert_guid, :string
     field :update_guid, :string
@@ -102,7 +113,7 @@ defmodule MetadataApp.MetaSchema.Consulta do
 
   def changeset(consulta, attrs) do
     consulta
-    |> cast(attrs, @requeridos ++ [:campos, :joins])
+    |> cast(attrs, @requeridos ++ [:campos, :joins, :orden_por])
     |> validate_required(@requeridos)
     |> unique_constraint([:meta_schema_header_id])
     |> foreign_key_constraint(:meta_schema_header_id)
