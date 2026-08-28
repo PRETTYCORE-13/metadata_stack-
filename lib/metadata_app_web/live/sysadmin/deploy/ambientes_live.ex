@@ -36,7 +36,7 @@ defmodule MetadataAppWeb.Sysadmin.AmbientesLive do
     %{tipo: :pagina, id: "ambientes", label: "Ambientes de Deploy", nav: "/sysadmin/ambientes"},
     %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
     %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"},
-  %{tipo: :pagina, id: "panel_control", label: "Panel Control", nav: "/sysadmin/panel-control"}
+    %{tipo: :pagina, id: "panel_control", label: "Panel Control", nav: "/sysadmin/panel-control"}
   ]
 
   def mount(_params, _session, socket) do
@@ -105,6 +105,23 @@ defmodule MetadataAppWeb.Sysadmin.AmbientesLive do
 
       {:error, changeset} ->
         {:noreply, assign(socket, :form, to_form(changeset, action: :validate))}
+    end
+  end
+
+  def handle_event("quitar_llave_privada", _params, socket) do
+    ambiente = socket.assigns.ambiente_seleccionado
+
+    case Ambientes.quitar_llave_privada(ambiente) do
+      {:ok, ambiente_actualizado} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Llave privada quitada -- \"#{ambiente.nombre}\" ahora usa la contraseña.")
+         |> assign(:ambiente_seleccionado, ambiente_actualizado)
+         |> assign(:form, to_form(Ambiente.changeset_edicion(ambiente_actualizado, %{})))
+         |> cargar_ambientes()}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "No se pudo quitar la llave (¿el ambiente se quedaría sin ninguna credencial?).")}
     end
   end
 
@@ -237,6 +254,15 @@ defmodule MetadataAppWeb.Sysadmin.AmbientesLive do
                 <p :if={@form[:ssh_password_nuevo].errors != []} class="text-[11px] text-red-600 mt-0.5">
                   {elem(hd(@form[:ssh_password_nuevo].errors), 0)}
                 </p>
+                <button
+                  :if={is_struct(@ambiente_seleccionado) and @ambiente_seleccionado.ssh_llave_privada not in [nil, ""]}
+                  type="button"
+                  phx-click="quitar_llave_privada"
+                  data-confirm="¿Quitar la llave privada guardada? El ambiente va a usar la contraseña de ahora en más."
+                  class="text-[11px] text-red-600 hover:underline mt-1"
+                >
+                  Quitar llave privada guardada
+                </button>
               </div>
 
               <div>

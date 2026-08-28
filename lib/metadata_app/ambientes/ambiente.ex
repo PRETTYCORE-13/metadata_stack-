@@ -44,6 +44,21 @@ defmodule MetadataApp.Ambientes.Ambiente do
     |> validar_alguna_credencial()
   end
 
+  @doc """
+  Quita la llave privada guardada -- único camino explícito para esto. El
+  form normal (changeset_edicion/2) NUNCA lo hace a propósito: dejar el
+  campo en blanco significa "no tocar lo ya guardado" (ver
+  aplicar_secreto_nuevo/3), no "borrarlo". Encontrado real (2026-08-27):
+  una llave pegada mal formada ("invalid format" de ssh) queda sin forma
+  de sacarla si el ambiente también tiene contraseña -- este changeset es
+  el escape hatch para ese caso.
+  """
+  def changeset_quitar_llave(ambiente) do
+    ambiente
+    |> change(%{ssh_llave_privada: nil})
+    |> validar_alguna_credencial()
+  end
+
   defp aplicar_secretos_nuevos(changeset) do
     changeset
     |> aplicar_secreto_nuevo(:ssh_password_nuevo, :ssh_password)

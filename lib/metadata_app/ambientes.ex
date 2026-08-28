@@ -43,6 +43,14 @@ defmodule MetadataApp.Ambientes do
     |> Repo.update()
   end
 
+  @doc "Quita la llave privada guardada (deja solo la contraseña, si hay) -- ver Ambiente.changeset_quitar_llave/1, el form normal nunca puede hacer esto."
+  def quitar_llave_privada(%Ambiente{} = ambiente) do
+    ambiente
+    |> Ambiente.changeset_quitar_llave()
+    |> Ecto.Changeset.change(%{update_guid: generar_guid()})
+    |> Repo.update()
+  end
+
   @doc "Soft-delete, mismo criterio que el resto del sistema."
   def eliminar_ambiente(%Ambiente{} = ambiente) do
     ambiente
