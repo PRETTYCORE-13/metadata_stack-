@@ -578,11 +578,23 @@
 }
 
 /* ---- SIDEBAR ---- */
+/* Riel colapsado angostado (2026-08-28, a pedido explícito -- "sin
+   redimensionar los íconos"): 68px -> 54px -> 48px, el piso real. El
+   elemento fijo más ancho NO es el toggle (31px) ni el ícono de carpeta
+   (18px) -- es el ícono de una página HOJA (.pc-nav-icon colapsado),
+   32px con glifo de 26px, dejado grande a propósito ("es lo único
+   visible ahí, necesita el tamaño completo", ver su comentario). Con
+   padding 4px de cada lado (48 - 32 = 16, 8px de aire por lado) el ícono
+   más grande sigue respirando sin tocar el borde -- bajar más de acá
+   empieza a cortarle el aire a ESE ícono, aunque no lo achique. Solo el
+   riel COLAPSADO -- el expandido (pc-platform-sidebar-open) lo
+   redimensiona el usuario a mano con la manija, no es parte de este
+   ajuste. */
 .pc-platform-sidebar {
   display: flex;
   flex-direction: column;
-  width: 68px;
-  padding: 14px 10px;
+  width: 48px;
+  padding: 14px 4px;
   background: #0a0a0a;
   border-right: 1px solid rgba(255, 255, 255, 0.1);
   transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
@@ -857,27 +869,14 @@
   display: none;
 }
 
-/* Debajo del ícono, solo con el riel colapsado (ver pc-menu-carpeta-nombre-corto
-   en menu_nodos/1, menu_layout.ex) — primeras 6 letras de la sección, para
-   no dejar el ícono solo sin ninguna pista de qué es. Oculto por default
-   (riel expandido, donde ya sobra con el nombre completo de al lado). */
+/* Etiqueta corta bajo el ícono del riel colapsado (pc-menu-carpeta-nombre-corto
+   en menu_nodos/1, menu_layout.ex) -- sacada del riel colapsado a pedido
+   explícito (2026-08-28, "quita los títulos de los íconos, solo de esa
+   barra"). Sigue oculta por default (riel expandido, donde ya sobra con
+   el nombre completo de al lado) -- el <span> lo sigue generando el
+   template, simplemente no se muestra en ningún estado del riel. */
 .pc-menu-carpeta-nombre-corto {
   display: none;
-}
-
-.pc-platform-sidebar:not(.pc-platform-sidebar-open) .pc-menu-carpeta-nombre-corto {
-  display: block;
-  font-size: 8px;
-  font-weight: 600;
-  line-height: 1.1;
-  text-align: center;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  color: #9ca3af;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
 }
 
 /* Colapsado, cada carpeta es solo su fila-ícono — el contenido de adentro

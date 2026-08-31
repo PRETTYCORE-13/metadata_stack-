@@ -24,6 +24,17 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   @por_pagina 25
 
+  # Filtro por columna de control (Estado/Sucursal/Almacén/Unidad de
+  # venta) en la tabla normal del catálogo (2026-08-28, mismo pedido que
+  # el ícono+popover de columnas de negocio) — mapea la `clave` de
+  # construir_columnas_render/3 al campo REAL del schema (ej. "branch" es
+  # solo la etiqueta de columna, el FK real es :branch_id). "id"/"trn"/
+  # "empresa"/"creado_por" quedan afuera a propósito: no fueron parte del
+  # pedido y no tienen un catálogo de opciones razonable para un <select>.
+  @campos_filtro_control %{"estado" => :estado_id, "branch" => :branch_id, "inventory_location" => :inventory_id, "sales_unit" => :sales_unit_id}
+  @campo_acompanamiento_control %{"branch" => "branch_name", "inventory_location" => "inventory_name", "sales_unit" => "sales_unit_name"}
+  @claves_filtro_control Map.keys(@campos_filtro_control)
+
   # Get View unificado (ver panel_get_view/1 en BcMotorLive) — mismas 8
   # claves de control que allá, en el mismo orden de siempre (para
   # catálogos que nunca configuraron Header.orden_columnas_tabla, ver
@@ -1046,6 +1057,14 @@ defmodule MetadataAppWeb.CatalogoLive do
         agregar_filtro_ecto(acc, campo, tipo, filtros)
       end)
 
+    base =
+      Enum.reduce(@campos_filtro_control, base, fn {clave, campo_real}, acc ->
+        case Map.get(filtros, clave) |> valor_no_vacio() |> convertir("referencia") do
+          nil -> acc
+          valor -> Map.put(acc, campo_real, valor)
+        end
+      end)
+
     # "__fecha_registro__" (ver filtros_por_default/1) — mismo campo real
     # "fecha_registro" que ya procesó el reduce de arriba (si el usuario
     # final lo agregó a mano desde el panel de Filtros normal), pero con
@@ -1495,12 +1514,8 @@ defmodule MetadataAppWeb.CatalogoLive do
           <table id="tabla-catalogo" class="min-w-full divide-y divide-gray-200 text-xs">
             <thead class="bg-gray-50">
               <tr>
-                <.celda_encabezado :for={col <- @columnas_render} col={col} />
+                <.celda_encabezado :for={col <- @columnas_render} col={col} filtros={@filtros} scope={@current_scope} estados_por_id={@estados_por_id} />
                 <th class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"></th>
-              </tr>
-              <tr class="bg-gray-50/60 border-t border-gray-100">
-                <.celda_filtro :for={col <- @columnas_render} col={col} filtros={@filtros} scope={@current_scope} />
-                <th class="px-2 py-1.5 sm:px-4"></th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
@@ -1685,20 +1700,36 @@ defmodule MetadataAppWeb.CatalogoLive do
     """
   end
 
-  # Las 4 piezas de abajo (celda_encabezado/celda_filtro/celda_body/
-  # celda_resumen_col) son el dispatch por tipo de columna del Get View
-  # unificado (ver construir_columnas_render/3) — una por cada fila de la
-  # tabla (título, filtro, dato, resumen), SIEMPRE en el mismo orden
-  # (@columnas_render), para que las 4 sigan alineadas verticalmente sin
-  # importar qué tan mezclados queden campos de control y de negocio.
-  # Reusan el markup exacto que ya tenía cada columna cuando la secuencia
-  # era fija — esto es reordenar código, no una funcionalidad nueva.
+  # Las 3 piezas de abajo (celda_encabezado/celda_body/celda_resumen_col)
+  # son el dispatch por tipo de columna del Get View unificado (ver
+  # construir_columnas_render/3) — una por cada fila de la tabla (título,
+  # dato, resumen), SIEMPRE en el mismo orden (@columnas_render), para que
+  # las 3 sigan alineadas verticalmente sin importar qué tan mezclados
+  # queden campos de control y de negocio. El filtro por columna ya no es
+  # una fila propia (ver celda_encabezado/1, ahora incluye su propio
+  # ícono + popover de filtro).
+  #
+  # Filtro por columna: ícono + popover (2026-08-28, a pedido explícito --
+  # "aplica los cambios que ya hiciste en la Consulta Ecto") reemplaza acá
+  # también la fila fija que vivía SIEMPRE visible debajo del encabezado
+  # (ver celda_filtro/1, ahora eliminada) -- mismo patrón exacto que
+  # panel_get_config del reporte Consulta Ecto (2026-08-27), reusando
+  # fila_filtro_columna/1 tal cual, ahora dentro del popover en vez de en
+  # una celda de una fila aparte. También se sacó el ícono de arrastrar
+  # (mismo pedido) -- reordenar columnas sigue disponible desde "Campos"
+  # (panel_campos/1), que ya tiene su propia manija de drag.
   attr :col, :map, required: true
+  attr :filtros, :map, required: true
+  attr :scope, :any, required: true
+  attr :estados_por_id, :map, required: true
 
   defp celda_encabezado(%{col: %{tipo_columna: :negocio}} = assigns) do
+    bloqueado? = assigns.col.columna.schema_context_properties["filtro_default_bloqueado"] == true
+    assigns = assign(assigns, :bloqueado?, bloqueado?)
+
     ~H"""
     <th data-col={@col.clave} class={[
-      "px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide",
+      "relative px-2 py-3 sm:px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide",
       alineacion_columna(@col.columna)
     ]}>
       <span class="inline-flex items-center gap-1">
@@ -1706,8 +1737,60 @@ defmodule MetadataAppWeb.CatalogoLive do
         <%= if @col.columna.schema_context_properties["tipo"] == "referencia" do %>
           <span class="material-symbols-outlined text-blue-500" style="font-size: 13px" title={"Relación con #{@col.columna.schema_context_properties["catalogo"]}"}>link</span>
         <% end %>
-        <.icono_arrastrar_columna />
+        <button type="button" phx-click={JS.toggle(to: "#filtro-popover-#{@col.clave}")}
+          class={[
+            "flex items-center justify-center rounded p-0.5 hover:bg-gray-200",
+            filtro_columna_activo?(@col.columna, @filtros) && "text-purple-600",
+            !filtro_columna_activo?(@col.columna, @filtros) && "text-gray-400"
+          ]}
+          aria-label={"Filtrar por #{@col.columna.schema_context_properties["etiqueta"]}"}
+        >
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+          </svg>
+        </button>
       </span>
+
+      <div id={"filtro-popover-#{@col.clave}"} class="hidden absolute z-50 top-full left-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-xl p-2 normal-case" phx-click-away={JS.hide()}>
+        <.fila_filtro_columna columna={@col.columna} valores={@filtros} bloqueado?={@bloqueado?} scope={@scope} />
+      </div>
+    </th>
+    """
+  end
+
+  # Estado/Sucursal/Almacén/Unidad de venta (2026-08-28, mismo pedido que
+  # el ícono+popover de arriba) — mismo patrón visual, pero la opciones
+  # salen de opciones_para_control/3 (estados del automaton del catálogo
+  # o catálogo de sistema vía CatalogoGenerico.opciones_referencia/3, ver
+  # ahí) en vez de fila_filtro_columna/1 (que exige un struct
+  # meta_schema_detail real, que estas columnas de control no tienen).
+  defp celda_encabezado(%{col: %{clave: clave}} = assigns) when clave in @claves_filtro_control do
+    assigns = assign(assigns, :opciones, opciones_para_control(clave, assigns.scope, assigns.estados_por_id))
+
+    ~H"""
+    <th data-col={@col.clave} class="relative px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
+      <span class="inline-flex items-center gap-1">
+        {@col.etiqueta}
+        <button type="button" phx-click={JS.toggle(to: "#filtro-popover-#{@col.clave}")}
+          class={[
+            "flex items-center justify-center rounded p-0.5 hover:bg-gray-200",
+            filtro_control_activo?(@col.clave, @filtros) && "text-purple-600",
+            !filtro_control_activo?(@col.clave, @filtros) && "text-gray-400"
+          ]}
+          aria-label={"Filtrar por #{@col.etiqueta}"}
+        >
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+          </svg>
+        </button>
+      </span>
+
+      <div id={"filtro-popover-#{@col.clave}"} class="hidden absolute z-50 top-full left-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-xl p-2 normal-case" phx-click-away={JS.hide()}>
+        <select form="form-filtros" name={"filtros[#{@col.clave}]"} class="w-full border border-gray-300 rounded text-gray-900 text-[10px] px-1.5 py-1">
+          <option value="" selected={@filtros[@col.clave] in [nil, ""]}>Todos</option>
+          <option :for={{valor, etiqueta} <- @opciones} value={valor} selected={to_string(@filtros[@col.clave]) == to_string(valor)}>{etiqueta}</option>
+        </select>
+      </div>
     </th>
     """
   end
@@ -1715,52 +1798,21 @@ defmodule MetadataAppWeb.CatalogoLive do
   defp celda_encabezado(assigns) do
     ~H"""
     <th data-col={@col.clave} class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
-      <span class="inline-flex items-center gap-1">
-        {@col.etiqueta}
-        <.icono_arrastrar_columna />
-      </span>
+      {@col.etiqueta}
     </th>
     """
   end
 
-  # Mismo ícono (y mismo criterio de color/cursor) que ".jal-manija" en la
-  # lista de "Campos" — sin esto, arrastrar un <th> directo en la tabla
-  # (ver el segundo Sortable en app.js) no tenía ninguna pista visual de
-  # que fuera posible. `cursor-grab` solo (sin :active, eso ya lo pone
-  # SortableJS mientras arrastra) porque acá no hay una "manija" aparte
-  # que agarrar — la columna entera es arrastrable, el ícono solo avisa.
-  defp icono_arrastrar_columna(assigns) do
-    ~H"""
-    <span class="flex-shrink-0 flex items-center justify-center w-4 h-4 text-gray-400 hover:text-purple-600 cursor-grab" title="Arrastrar para reordenar">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-        <circle cx="8" cy="6" r="2" /><circle cx="16" cy="6" r="2" />
-        <circle cx="8" cy="12" r="2" /><circle cx="16" cy="12" r="2" />
-        <circle cx="8" cy="18" r="2" /><circle cx="16" cy="18" r="2" />
-      </svg>
-    </span>
-    """
+  defp opciones_para_control("estado", _scope, estados_por_id) do
+    estados_por_id |> Enum.map(fn {id, nombre} -> {id, nombre} end) |> Enum.sort_by(&elem(&1, 1))
   end
 
-  attr :col, :map, required: true
-  attr :filtros, :map, required: true
-  attr :scope, :any, required: true
-
-  defp celda_filtro(%{col: %{tipo_columna: :negocio}} = assigns) do
-    bloqueado? = assigns.col.columna.schema_context_properties["filtro_default_bloqueado"] == true
-    assigns = assign(assigns, :bloqueado?, bloqueado?)
-
-    ~H"""
-    <th data-col={@col.clave} class="px-2 py-1.5 sm:px-4 align-top">
-      <.fila_filtro_columna columna={@col.columna} valores={@filtros} bloqueado?={@bloqueado?} scope={@scope} />
-    </th>
-    """
+  defp opciones_para_control(clave, scope, _estados_por_id) do
+    props = %{"catalogo" => MetaConsultas.catalogo_control_sistema(clave), "campos_acompanamiento" => [Map.fetch!(@campo_acompanamiento_control, clave)]}
+    CatalogoGenerico.opciones_referencia(props, %{}, scope)
   end
 
-  defp celda_filtro(assigns) do
-    ~H"""
-    <th data-col={@col.clave} class="px-2 py-1.5 sm:px-4"></th>
-    """
-  end
+  defp filtro_control_activo?(clave, filtros), do: Map.get(filtros, clave) not in [nil, ""]
 
   attr :col, :map, required: true
   attr :fila, :map, required: true
