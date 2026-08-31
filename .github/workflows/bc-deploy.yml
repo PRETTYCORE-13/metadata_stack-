@@ -98,7 +98,11 @@ jobs:
             ghcr.io/${{ env.IMAGE_NAME }}:latest
             ghcr.io/${{ env.IMAGE_NAME }}:bc-${{ inputs.catalogo }}-${{ github.run_number }}
 
-      - name: Actualizar metadata_stack_app en Docker Swarm y migrar
+      # k3s, no Docker Swarm -- ver el comentario largo en ci.yml (mismo
+      # bug, mismo fix, 2026-08-28): DEPLOY_HOST apunta al servidor Hetzner
+      # ya migrado a k3s, este workflow seguía con comandos viejos de
+      # Swarm.
+      - name: Actualizar metadata-stack-app en k3s y migrar
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -106,20 +110,15 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             set -e
-            docker pull ghcr.io/prettycore-13/metadata_stack:latest
-            docker service update --image ghcr.io/prettycore-13/metadata_stack:latest --force metadata_stack_app
+            sudo k3s kubectl set image deployment/metadata-stack-app app=ghcr.io/prettycore-13/metadata_stack:latest -n metadata-stack
+            sudo k3s kubectl rollout restart deployment/metadata-stack-app -n metadata-stack
 
-            echo "Esperando a que el servicio converja..."
-            for i in $(seq 1 12); do
-              REPLICAS=$(docker service ls --filter name=metadata_stack_app --format "{{.Replicas}}")
-              echo "  replicas: $REPLICAS"
-              if [ "$REPLICAS" = "1/1" ]; then break; fi
-              sleep 5
-            done
+            echo "Esperando a que el rollout converja..."
+            sudo k3s kubectl rollout status deployment/metadata-stack-app -n metadata-stack --timeout=120s
 
-            CONTAINER_ID=$(docker ps -q --filter "name=metadata_stack_app" | head -n1)
-            if [ -z "$CONTAINER_ID" ]; then
-              echo "No se encontró el contenedor de metadata_stack_app corriendo, no se pudo migrar"
+            POD=$(sudo k3s kubectl get pod -n metadata-stack -l app=metadata-stack-app -o jsonpath='{.items[0].metadata.name}')
+            if [ -z "$POD" ]; then
+              echo "No se encontró el pod de metadata-stack-app, no se pudo migrar"
               exit 1
             fi
             # setup = migrate + import_meta (crea el registro en
@@ -128,4 +127,4 @@ jobs:
             # real -- sin esto la tabla existe pero la API responde "no
             # encontrado") + sysadmin/empresa inicial si hicieran falta,
             # ver docs/onboarding-nuevo-sistema.md.
-            docker exec "$CONTAINER_ID" /app/bin/setup
+            sudo k3s kubectl exec -n metadata-stack "$POD" -- /app/bin/setup

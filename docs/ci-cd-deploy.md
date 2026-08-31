@@ -1,6 +1,6 @@
 # CI/CD y deploy — cómo funciona
 
-> **⚠️ Nota principal:** todos los comandos de validación/diagnóstico de este documento (`docker run`, `docker service ps`, `docker history`, etc.) se corren **en el servidor Linux de producción** (`reiayanami.mine.nu`), conectado por SSH — nunca en tu máquina local. Localmente no tenés Docker Swarm ni la imagen de producción corriendo.
+> **⚠️ Nota principal:** todos los comandos de validación/diagnóstico de este documento se corren **en el servidor de producción** (Hetzner, migrado a k3s el 2026-08-26/27 -- ver `MetadataApp.Ssh`/`mix motor.desplegar`), conectado por SSH — nunca en tu máquina local. `reiayanami.mine.nu` ya NO existe, quedó reemplazado por este servidor. Localmente no tenés k3s ni la imagen de producción corriendo.
 
 Este documento explica el flujo completo: desde que generás un catálogo en tu máquina hasta que corre en el servidor. 
 
@@ -10,7 +10,7 @@ Este documento explica el flujo completo: desde que generás un catálogo en tu 
 
 ```
 [Tu máquina / devcontainer]        [GitHub Actions]                  [Servidor de producción]
-   compilador presente        →    ├─ validate (con compilador)  →   Docker Swarm
+   compilador presente        →    ├─ validate (con compilador)  →   k3s (Kubernetes)
    mix gen.catalogos                │   compila, migra, testea       (lo hace el job deploy,
    probás en caliente              ├─ build-image (si validate OK)   por SSH, automático)
    git commit + push               │   compila release, arma
@@ -18,17 +18,17 @@ Este documento explica el flujo completo: desde que generás un catálogo en tu 
                                     │   la publica en ghcr.io
                                     └─ deploy (si build-image OK)
                                         SSH al servidor:
-                                        docker pull + service update
-                                        + docker exec .../bin/migrate
+                                        kubectl set image + rollout
+                                        + kubectl exec .../bin/setup
 ```
 
-**El deploy ya es automático** — cada push a `main` que pasa `validate` y `build-image` dispara el job `deploy`, que se conecta por SSH al servidor y actualiza el servicio solo. Ya no hace falta correr `docker pull`/`docker service update` a mano salvo que el job falle o quieras hacer un rollback puntual.
+**El deploy ya es automático** — cada push a `main` que pasa `validate` y `build-image` dispara el job `deploy`, que se conecta por SSH al servidor y actualiza el Deployment de k3s solo. Ya no hace falta correr `kubectl` a mano salvo que el job falle o quieras hacer un rollback puntual.
 
 Tres ambientes distintos, cada uno con un rol:
 
 1. **Tu máquina (dev/builder):** tiene el compilador de Elixir instalado. Acá es donde `mix gen.catalogos` puede generar en caliente migración + schema + context + controller a partir de la metadata versionada, y el router los reconoce automáticamente. Es el único lugar donde "crear un catálogo nuevo" tiene sentido.
 2. **GitHub Actions (CI):** también tiene compilador (temporalmente, en un contenedor efímero). Repite lo que hiciste localmente para verificar que no te olvidaste de commitear algo, corre los tests, y arma la imagen de producción.
-3. **Servidor de producción (Docker Swarm):** **no tiene compilador**. Solo sabe correr una imagen ya armada. No puedes crear catálogos ahí — si lo intentás, no hay con qué compilarlos.
+3. **Servidor de producción (k3s):** **no tiene compilador**. Solo sabe correr una imagen ya armada. No puedes crear catálogos ahí — si lo intentás, no hay con qué compilarlos.
 
 
 ## Paso 1 — Local: generar y probar un catálogo
@@ -77,55 +77,54 @@ Esa imagen final se publica en GitHub Container Registry: `ghcr.io/prettycore-13
 - Docker exige que los tags de imagen estén en **minúsculas** — `github.repository` viene con mayúsculas, así que el workflow lo convierte explícitamente.
 - Docker no permite que un nombre de imagen **termine en un separador** (`-`, `.`, `_`) — como el nombre del repo termina en guion, el workflow lo recorta antes de armar el tag.
 
-## Paso 3 — Deploy en el servidor (Docker Swarm)
+## Paso 3 — Deploy en el servidor (k3s)
 
-El servidor corre **Docker Swarm** (no `docker run` suelto, ni `docker-compose` plano).Administra "servicios" que Docker mantiene corriendo, reinicia si se caen, y conecta entre sí por una red virtual propia.
+El servidor corría **Docker Swarm** hasta el 2026-08-26/27 -- migrado a **k3s** (Kubernetes liviano, single-node) esa fecha, junto con Chatwoot/Evolution API (ver memoria del proyecto para el detalle completo). Caddy sigue siendo el único front-door en 80/443 (sin cambios), reverse-proxeando por subdominio hacia el NodePort de k3s de cada servicio.
 
-- Existe un **stack** (grupo de servicios relacionados) llamado `metadata_stack`, con:
-  - un servicio de Postgres ya existente (para persistencia),
-  - un servicio de la app (`metadata_stack_app`) que corre la imagen que publicó el CI.
-- Ambos servicios comparten una **red overlay** (una red virtual privada entre contenedores del mismo stack), así que la app puede conectarse a la base de datos usando el **nombre del servicio** como si fuera un hostname (Swarm resuelve DNS interno automáticamente) — no hace falta IP fija ni exponer el puerto de Postgres hacia afuera.
+- Namespace `metadata-stack`, con:
+  - un Deployment de Postgres (`metadata-stack-postgres`, con su PVC para persistencia),
+  - un Deployment de la app (`metadata-stack-app`) que corre la imagen que publicó el CI, expuesto vía Service NodePort.
+- Ambos comparten el namespace y se resuelven por **DNS interno de k3s** (`chatwoot-postgres`, etc., como hostname) — no hace falta IP fija ni exponer el puerto de Postgres hacia afuera.
 - La app se configura enteramente por **variables de entorno** (host/puerto/usuario/password/nombre de la base de datos, `SECRET_KEY_BASE` para firmar cookies, `PHX_HOST` con el hostname público real por el que se accede — importante: si no coincide con el hostname real, Phoenix rechaza la conexión de LiveView por seguridad).
 - **SMTP para el magic-link de login** (agregado 2026-07-31, para dar de alta usuarios reales): `SMTP_RELAY`, `SMTP_USERNAME`, `SMTP_PASSWORD` (obligatorias — el release ni arranca sin ellas, mismo criterio que las de la base de datos) y `SMTP_PORT` (opcional, default `587`). Antes de esto, el Mailer usaba `Swoosh.Adapters.Local` en TODOS los ambientes — en prod eso significa que el correo de login nunca le llegaba a nadie (se "enviaba" a una bandeja en memoria que solo se ve en `/dev/mailbox`, ni montado ahí). Ya está resuelto y confirmado con correo real recibido: las variables están puestas en el servicio, el remitente (`mailer_from`) usa `SMTP_USERNAME` en vez de un placeholder (si no, Gmail acepta el envío pero el destinatario lo descarta por DMARC/SPF), y el Mailer pasa `cacerts: :public_key.cacerts_get()` explícito en `tls_options` (sin esto el handshake TLS contra Gmail falla con `:tls_failed`, ya que Erlang no usa el trust store del SO por su cuenta).
 
 ### Actualizar a una versión nueva (automático desde el job `deploy`)
-Como el tag `latest` no cambia de nombre en cada build, hay que forzar a Swarm a resolver el `latest` más reciente y recrear el contenedor. Esto ya lo hace solo el job `deploy` del workflow (`.github/workflows/ci.yml`) por SSH en cada push a `main`:
+Como el tag `latest` no cambia de nombre en cada build, hay que forzar a k3s a re-pullear el `latest` más reciente y recrear el pod. Esto ya lo hace solo el job `deploy` del workflow (`.github/workflows/ci.yml`) por SSH en cada push a `main`:
 ```
-docker pull ghcr.io/prettycore-13/metadata_stack:latest
-docker service update --image ghcr.io/prettycore-13/metadata_stack:latest --force metadata_stack_app
+sudo k3s kubectl set image deployment/metadata-stack-app app=ghcr.io/prettycore-13/metadata_stack:latest -n metadata-stack
+sudo k3s kubectl rollout restart deployment/metadata-stack-app -n metadata-stack
 ```
-Si hace falta correrlo a mano (el job falló, o un rollback puntual), son los mismos dos comandos por SSH en el servidor.
+Si hace falta correrlo a mano (el job falló, o un rollback puntual), son los mismos dos comandos por SSH en el servidor. También sirve `mix motor.desplegar <ambiente>` desde tu máquina (ver "Ambientes de Deploy" más abajo) — hace exactamente esto mismo, parametrizado.
 
 ### Migraciones (automático desde el job `deploy`)
-El release incluye un script propio (generado a partir de `rel/overlays/bin/migrate`, que llama a `MetadataApp.Release.migrate/0`) para correr migraciones sin necesitar `mix` (que no existe en la imagen final, porque `mix` es una herramienta del *compilador*). El job `deploy` espera a que el servicio converja y lo corre solo:
+El release incluye un script propio (generado a partir de `rel/overlays/bin/migrate`, que llama a `MetadataApp.Release.migrate/0`) para correr migraciones sin necesitar `mix` (que no existe en la imagen final, porque `mix` es una herramienta del *compilador*). El job `deploy` espera a que el rollout converja y lo corre solo:
 ```
-docker exec <container_id> /app/bin/migrate
+sudo k3s kubectl exec -n metadata-stack <pod> -- /app/bin/migrate
 ```
 
 ### Usuario SYSADMIN (automático desde el job `deploy`, después de migrar)
 Bootstrap del usuario administrador cross-empresa (`Usuario.super_admin`) — mismo criterio que Oracle con `SYS`/`SYSTEM`: el nombre/identidad es fijo pero la contraseña se define en el momento de desplegar, nunca hardcodeada en código ni en una migración (`MetadataApp.Release.seed_sysadmin/0`, corrido vía `rel/overlays/bin/seed_sysadmin`):
 ```
-docker exec <container_id> /app/bin/seed_sysadmin
+sudo k3s kubectl exec -n metadata-stack <pod> -- /app/bin/seed_sysadmin
 ```
-**Requiere que el servicio de Swarm tenga configuradas `SYSADMIN_EMAIL`/`SYSADMIN_PASSWORD` en su entorno** (mismo lugar donde ya viven las credenciales de DB/SMTP del servicio — no en este repo ni en los secrets del workflow, que solo tiene acceso SSH). Si faltan, el comando falla fuerte con un mensaje explícito en vez de arrancar con una contraseña adivinable. Entra por contraseña (no magic-link — no depende de que haya SMTP configurado todavía), es idempotente (correrlo de nuevo con las mismas credenciales no rompe nada, y cambiar `SYSADMIN_PASSWORD` + re-correr es la forma de rotarla).
+**Requiere que el Deployment tenga configuradas `SYSADMIN_EMAIL`/`SYSADMIN_PASSWORD` en su entorno** (mismo lugar donde ya viven las credenciales de DB/SMTP del servicio, en el Secret de k3s -- no en este repo ni en los secrets del workflow, que solo tiene acceso SSH). Si faltan, el comando falla fuerte con un mensaje explícito en vez de arrancar con una contraseña adivinable. Entra por contraseña (no magic-link — no depende de que haya SMTP configurado todavía), es idempotente (correrlo de nuevo con las mismas credenciales no rompe nada, y cambiar `SYSADMIN_PASSWORD` + re-correr es la forma de rotarla).
 
 **No existe ninguna pantalla para marcar/desmarcar `super_admin` en un usuario** — a propósito: es el flag de mayor privilegio del sistema (ver/crear/unirse a CUALQUIER empresa), y dejarlo como un toggle de UI abre la puerta a otorgarlo por error. Hoy el único camino es este bootstrap, que además es idempotente: busca primero la fila que YA tiene `super_admin: true` y la actualiza (nunca crea una segunda) — así que sirve tanto para el alta inicial como para rotar el email/contraseña de esa misma cuenta más adelante.
 
 #### Paso a paso — producción
-1. Conectarte por SSH al servidor (`ssh <usuario>@reiayanami.mine.nu`).
-2. Configurar las variables en el servicio de Swarm (dispara un reinicio del contenedor para tomarlas):
+1. Conectarte por SSH al servidor de producción (ver memoria del proyecto para el host real -- no se documenta acá, este repo es público).
+2. Editar el Secret de k3s con las variables nuevas y reiniciar el pod para que las tome:
    ```
-   docker service update \
-     --env-add SYSADMIN_EMAIL=<email> \
-     --env-add SYSADMIN_PASSWORD='<contraseña-fuerte>' \
-     metadata_stack_app
+   sudo k3s kubectl set env deployment/metadata-stack-app -n metadata-stack \
+     SYSADMIN_EMAIL=<email> \
+     SYSADMIN_PASSWORD='<contraseña-fuerte>'
    ```
-3. Esperar a que el servicio converja (`docker service ls --filter name=metadata_stack_app`, `1/1`).
-4. Correr el seed en el contenedor ya actualizado:
+3. Esperar a que el rollout converja (`sudo k3s kubectl rollout status deployment/metadata-stack-app -n metadata-stack`).
+4. Correr el seed en el pod ya actualizado:
    ```
-   docker exec <container_id> /app/bin/seed_sysadmin
+   sudo k3s kubectl exec -n metadata-stack <pod> -- /app/bin/seed_sysadmin
    ```
-   (`<container_id>`: `docker ps -q --filter "name=metadata_stack_app" | head -n1`). Si el push a `main` ya disparó un deploy después del paso 2, este paso ya corrió solo — no hace falta repetirlo salvo que quieras rotar la contraseña.
+   (`<pod>`: `sudo k3s kubectl get pod -n metadata-stack -l app=metadata-stack-app -o jsonpath='{.items[0].metadata.name}'`).
 5. Entrar a `/meta_schema_usuario/log-in`, usar el formulario de **contraseña** (no el de magic-link) con el email/contraseña del paso 2.
 
 #### Paso a paso — dev local
@@ -154,9 +153,9 @@ Todo lo de arriba despliega el **BPB** (la plataforma) — este mecanismo aparte
 
 ```
 [Máquina de ADN]                    [GitHub Actions]                  [Servidor de producción]
-   mix motor.publicar <catalogo>  →  bc-deploy.yml (workflow_dispatch)  →  Docker Swarm
-   (valida, exporta, arma           checkout de main (limpio, SIN el     (mismo docker service
-   un .tar.gz, lo manda en          BC) + el bundle se EXTRAE ENCIMA      update de siempre)
+   mix motor.publicar <catalogo>  →  bc-deploy.yml (workflow_dispatch)  →  k3s
+   (valida, exporta, arma           checkout de main (limpio, SIN el     (mismo kubectl set
+   un .tar.gz, lo manda en          BC) + el bundle se EXTRAE ENCIMA      image de siempre)
    base64 vía "gh workflow run")    → compila → build-image → deploy
 ```
 
@@ -196,7 +195,7 @@ También se corrigió que agregar un campo nuevo a un catálogo ya publicado nun
 
 ## Estado actual
 
-El servidor de oficina (`reiayanami.mine.nu`) funciona hoy como **producción simulada** — todavía no hay un ambiente de staging separado. El objetivo de esta etapa es dominar el proceso de punta a punta antes de sumar más ambientes. Ver la memoria del proyecto para el detalle operativo (credenciales, nombres exactos de servicios) — no se documenta acá porque este archivo es público.
+El servidor de producción (Hetzner) corre **k3s** desde el 2026-08-26/27 (migrado desde Docker Swarm) — `reiayanami.mine.nu` (el servidor de oficina viejo) ya no existe, `DEPLOY_HOST` pasó a apuntar a este mismo servidor Hetzner. Ver la memoria del proyecto para el detalle operativo (credenciales, nombres exactos de recursos) — no se documenta acá porque este archivo es público.
 
 ## Ambientes de Deploy (2026-08-16)
 
@@ -204,5 +203,6 @@ El servidor de oficina (`reiayanami.mine.nu`) funciona hoy como **producción si
 
 Para eso existe un camino aparte, pensado para desplegar a mano a un servidor puntual (no reemplaza el push-a-`main` automático):
 
-- **`/sysadmin/ambientes`** (`Sysadmin.AmbientesLive`) — CRUD de servidores (host, usuario SSH, contraseña/llave privada cifradas con `MetadataApp.Encriptado`, servicio Docker Swarm, imagen). Gateado por `sysadmin_ambientes`/`leer`, mismo mecanismo de switches por pantalla que el resto de Sysadmin (ver `Permissions.capacidades_sysadmin/0`).
-- **`mix motor.desplegar <ambiente> [--imagen tag]`** — asume que la imagen YA está en `ghcr.io` (por un push a `main` normal, o por `mix motor.publicar` para un `pty_*`) y hace los mismos 4 pasos que el job `deploy` de los workflows (`docker pull` + `service update --force` + esperar `1/1` + `docker exec .../app/bin/setup`), pero por SSH directo desde la máquina de quien lo corre, con las credenciales del ambiente elegido. Útil para reforzar un deploy en un servidor específico, o para desplegar un tag puntual (`--imagen ghcr.io/.../metadata_stack:bc-<catalogo>-<run>`) sin esperar al próximo push a `main`.
+- **`/sysadmin/ambientes`** (`Sysadmin.AmbientesLive`) — CRUD de servidores (host, usuario SSH, contraseña/llave privada cifradas con `MetadataApp.Encriptado`, imagen). Gateado por `sysadmin_ambientes`/`leer`, mismo mecanismo de switches por pantalla que el resto de Sysadmin (ver `Permissions.capacidades_sysadmin/0`). El campo "Servicio Docker Swarm" quedó vestigial desde la migración a k3s -- `motor.desplegar` ya no lo usa (namespace/deployment de k3s son fijos), no se borró de la pantalla para no romper el formulario sin necesidad.
+- **`mix motor.desplegar <ambiente> [--imagen tag]`** — asume que la imagen YA está en `ghcr.io` (por un push a `main` normal, o por `mix motor.publicar` para un `pty_*`) y hace los mismos pasos que el job `deploy` de los workflows (`kubectl set image` + `rollout restart` + esperar el rollout + `kubectl exec .../app/bin/setup`), pero por SSH directo desde la máquina de quien lo corre, con las credenciales del ambiente elegido. Útil para reforzar un deploy en un servidor específico, o para desplegar un tag puntual (`--imagen ghcr.io/.../metadata_stack:bc-<catalogo>-<run>`) sin esperar al próximo push a `main`.
+- **`/sysadmin/panel-control`** (`Sysadmin.Deploy.PanelControlLive`, 2026-08-27) — levantar una app nueva (dominio + deploy en k3s), no solo metadata_stack. Ver `MetadataApp.PanelControl.Desplegador`.
