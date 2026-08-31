@@ -318,8 +318,13 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     # agnóstico del catálogo— a este concepto de negocio. Sin ventana
     # observable desde afuera: crear/2 no devuelve el registro hasta que
     # esto termina. No hace nada si el catálogo no es transaccional.
+    # NDT (2026-08-31) — mismo criterio y mismo punto de enganche que TRN
+    # arriba: corre DESPUÉS (Folio necesita el `trn` YA asignado, para
+    # denormalizarlo en ndt_numbering_audits), agnóstico del catálogo. No
+    # hace nada si el catálogo no configuró requiere_folio.
     resultado
     |> MetadataApp.TRN.asignar_si_transaccional()
+    |> MetadataApp.Folio.asignar_si_configurado()
     |> auditar_alta(catalogo, contexto)
   end
 

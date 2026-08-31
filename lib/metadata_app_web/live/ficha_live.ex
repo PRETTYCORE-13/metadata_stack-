@@ -3622,12 +3622,13 @@ defmodule MetadataAppWeb.FichaLive do
         </span>
         <span class={["flex-shrink-0 text-gray-500 self-start mt-0.5", @compacto && "whitespace-nowrap", !@compacto && "w-full sm:w-56"]}>
           {@col.schema_context_properties["etiqueta"]}
-          <span :if={@editable? and @col.schema_context_properties["tipo"] != "boolean"} class="text-red-500">*</span>
+          <span :if={@editable? and @col.schema_context_properties["tipo"] != "boolean" and @col.schema_context_properties["opcional"] != true} class="text-red-500">*</span>
         </span>
       </div>
 
       <div :if={@editable?} class="flex-1 min-w-0">
         <.campo_input columna={@col} valor={@valor_mostrado} mostrar_etiqueta={false} opciones={@opciones_referencia}
+          required={@col.schema_context_properties["opcional"] != true}
           disabled={@deshabilitado_dependencia} mensaje_dependencia={@mensaje_dependencia} />
         <p :if={@errores_campo} class="text-red-600 text-xs mt-1">{Enum.join(@errores_campo, "; ")}</p>
       </div>
@@ -4121,6 +4122,7 @@ defmodule MetadataAppWeb.FichaLive do
                 valor={valor_campo}
                 name={"renglon[#{campo.schema_context_field}]"} opciones={opciones_campo}
                 id={"campo-#{@cat.nombre}-#{campo.schema_context_field}"}
+                required={campo.schema_context_properties["opcional"] != true}
                 disabled={!campo_detalle_editable?(campo, @seleccion, @campos_editables) or deshabilitado_dep? or calculado?}
                 mensaje_dependencia={mensaje_dep} />
             </div>

@@ -180,6 +180,12 @@ defmodule MetadataAppWeb.Router do
       # compilados), así que no hace falta el gate de bpb_habilitado.
       live "/sysadmin/buscar-trn", Sysadmin.BuscadorTrnLive
 
+      # NDT Config (Numeración de Documentos Transaccionales) — mismo
+      # criterio que Buscar TRN arriba: solo lee/escribe sus propias
+      # tablas (ndt_numbering_profiles/ranges/audits) + meta_schema_header
+      # ya compilado, nada de generación dinámica de catálogos.
+      live "/sysadmin/ndt-config", Sysadmin.NdtConfigLive
+
       # Administración de RBAC: siempre disponible (a diferencia del BPB de
       # arriba, esto no es una herramienta de desarrollador — administradores
       # en producción también necesitan gestionar roles/permisos).

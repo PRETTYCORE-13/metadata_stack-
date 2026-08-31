@@ -384,6 +384,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
     if campos_nuevos != [], do: agregar_columnas(schema_context_name, campos_nuevos)
     asegurar_trn(schema_context_name, header, columnas_actuales)
+    asegurar_folio(schema_context_name, header, columnas_actuales)
 
     # Siempre regenera el schema (no solo cuando hay columnas nuevas): así
     # también recoge cambios de propiedades en campos que ya existían como
@@ -493,6 +494,23 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     if "ulid" not in columnas_actuales do
       Repo.query!("ALTER TABLE #{schema_context_name} ADD COLUMN IF NOT EXISTS ulid varchar(26)")
       Repo.query!("CREATE UNIQUE INDEX IF NOT EXISTS #{MetadataApp.TRN.nombre_indice(schema_context_name, "ulid")} ON #{schema_context_name} (ulid) WHERE ulid IS NOT NULL")
+    end
+
+    :ok
+  end
+
+  # NDT (2026-08-31) — mismo criterio de retrofit que asegurar_trn/3
+  # arriba: un catálogo YA existente que recién ahora marca
+  # requiere_folio: true necesita la columna agregada a mano (ALTER
+  # TABLE), no vía la migración de creación (esa ya corrió hace rato).
+  defp asegurar_folio(_schema_context_name, %{requiere_folio: false}, _columnas), do: :ok
+  defp asegurar_folio(_schema_context_name, %{requiere_folio: nil}, _columnas), do: :ok
+  defp asegurar_folio(_schema_context_name, nil, _columnas), do: :ok
+
+  defp asegurar_folio(schema_context_name, %{requiere_folio: true}, columnas_actuales) do
+    if "folio" not in columnas_actuales do
+      Repo.query!("ALTER TABLE #{schema_context_name} ADD COLUMN IF NOT EXISTS folio varchar(40)")
+      Repo.query!("CREATE INDEX IF NOT EXISTS #{schema_context_name}_folio_index ON #{schema_context_name} (folio)")
     end
 
     :ok
@@ -991,6 +1009,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
     nombre_indice = nombre_indice_unico(schema_context_name)
     {columnas_trn, indices_trn} = columnas_trn(schema_context_name, header)
+    {columnas_folio, indices_folio} = columnas_folio(schema_context_name, header)
     {columnas_encab, indices_encab} = columnas_encabezado_detalle(schema_context_name, header)
     columnas_alcance = columnas_alcance(header)
 
@@ -1009,11 +1028,11 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
           add :estado_id, references(:meta_schema_estados), null: true
 
           add :fecha_registro, :utc_datetime, null: true
-    #{columnas_trn}#{columnas_encab}#{columnas_alcance}
+    #{columnas_trn}#{columnas_folio}#{columnas_encab}#{columnas_alcance}
         end
 
         create unique_index(:#{schema_context_name}, [#{nombres_campos}], name: :#{nombre_indice})
-    #{indices_trn}#{indices_encab}
+    #{indices_trn}#{indices_folio}#{indices_encab}
       end
     end
     """
@@ -1038,6 +1057,31 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     indices = """
         create unique_index(:#{schema_context_name}, [:trn], name: :#{MetadataApp.TRN.nombre_indice(schema_context_name, "trn")})
         create unique_index(:#{schema_context_name}, [:ulid], name: :#{MetadataApp.TRN.nombre_indice(schema_context_name, "ulid")})
+    """
+
+    {columnas, indices}
+  end
+
+  # NDT (2026-08-31) — folio solo se agrega si el header marcó
+  # requiere_folio. Nullable a nivel columna (mismo criterio que trn/ulid
+  # arriba): la garantía es de aplicación (MetadataApp.Folio corre en
+  # cada alta), no de constraint de base. Sin índice único acá a
+  # propósito -- la unicidad real es (numbering_profile_id, folio) en
+  # ndt_numbering_audits (dos catálogos podrían compartir la misma
+  # cadena de folio en teoría, aunque en la práctica cada perfil apunta
+  # a un solo meta_schema_header_id); esto es solo un índice de lectura.
+  defp columnas_folio(_schema_context_name, nil), do: {"", ""}
+  defp columnas_folio(_schema_context_name, %{requiere_folio: false}), do: {"", ""}
+  defp columnas_folio(_schema_context_name, %{requiere_folio: nil}), do: {"", ""}
+
+  defp columnas_folio(schema_context_name, %{requiere_folio: true}) do
+    columnas = """
+
+          add :folio, :string, size: 40, null: true
+    """
+
+    indices = """
+        create index(:#{schema_context_name}, [:folio])
     """
 
     {columnas, indices}
@@ -1139,12 +1183,13 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
       |> Enum.join(", ")
 
     opciones_trn = opciones_trn_use(header)
+    opciones_folio = opciones_folio_use(header)
     opciones_detalle = opciones_detalle_use(header)
     opciones_alcance = opciones_alcance_use(header)
 
     contenido = """
     defmodule MetadataApp.MetaBusinessProcess.Catalogos.#{modulo} do
-      use MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico, tabla: "#{schema_context_name}", campos: [#{campos_literal}]#{opciones_trn}#{opciones_detalle}#{opciones_alcance}
+      use MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico, tabla: "#{schema_context_name}", campos: [#{campos_literal}]#{opciones_trn}#{opciones_folio}#{opciones_detalle}#{opciones_alcance}
     end
     """
 
@@ -1172,6 +1217,9 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
   defp opciones_trn_use(%{schema_es_transaccional: true, codigo_trn: codigo}), do: ", transaccional: true, codigo_trn: #{inspect(codigo)}"
   defp opciones_trn_use(_header), do: ""
+
+  defp opciones_folio_use(%{requiere_folio: true}), do: ", folio: true"
+  defp opciones_folio_use(_header), do: ""
 
   defp opciones_detalle_use(%{schema_encabezado_id: id}) when not is_nil(id) do
     maestro = MetaSchemaContext.obtener_header!(id)

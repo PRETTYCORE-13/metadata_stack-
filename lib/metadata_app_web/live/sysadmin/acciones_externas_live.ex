@@ -27,6 +27,7 @@ defmodule MetadataAppWeb.Sysadmin.AccionesExternasLive do
   @menu [
     %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
     %{tipo: :pagina, id: "buscar_trn", label: "Buscar TRN", nav: "/sysadmin/buscar-trn"},
+    %{tipo: :pagina, id: "ndt_config", label: "NDT Config", nav: "/sysadmin/ndt-config"},
     %{tipo: :pagina, id: "tepache", label: "Tepache Exp/Imp", nav: "/sysadmin/tepache"},
     %{tipo: :pagina, id: "roles", label: "Roles y Usuarios", nav: "/sysadmin/roles"},
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
