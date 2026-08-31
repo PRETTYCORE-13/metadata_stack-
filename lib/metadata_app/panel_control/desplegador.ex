@@ -71,7 +71,7 @@ defmodule MetadataApp.PanelControl.Desplegador do
           containers:
             - name: app
               image: #{app.imagen_docker}
-    #{bloque_env(app.variables_entorno)}
+    #{String.trim_trailing(bloque_env(app.variables_entorno))}
               ports:
                 - containerPort: #{app.puerto_interno}
     ---
@@ -109,13 +109,18 @@ defmodule MetadataApp.PanelControl.Desplegador do
 
   defp bloque_env(variables) when map_size(variables) == 0, do: ""
 
+  # Indentación absoluta (no relativa al heredoc que la interpola en
+  # desplegar_en_k8s/2 -- ver comentario ahí) para calzar como hermano de
+  # "image:"/"ports:" dentro del mismo container: 10 espacios para "env:",
+  # +2 para cada "- name:" de la lista, +2 más para "value:" (mismo nivel
+  # que "name:", no que el "-").
   defp bloque_env(variables) do
     entradas =
       Enum.map_join(variables, "\n", fn {clave, valor} ->
-        "        - name: #{clave}\n          value: #{inspect(to_string(valor))}"
+        "            - name: #{clave}\n              value: #{inspect(to_string(valor))}"
       end)
 
-    "      env:\n#{entradas}\n"
+    "          env:\n#{entradas}\n"
   end
 
   # Reescribe el archivo completo con `cat > ... <<EOF` (trunca el mismo

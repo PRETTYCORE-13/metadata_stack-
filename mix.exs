@@ -96,7 +96,22 @@ defmodule MetadataApp.MixProject do
       # obligatorio ya agregados en CatalogoGenerico).
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:stream_data, "~> 1.1", only: :test}
+      {:stream_data, "~> 1.1", only: :test},
+      # Panel Control > "Generar imagen desde repositorio" (2026-08-31) --
+      # NIF que enlaza contra libsodium del sistema, usado solo para
+      # crypto_box_seal (cifrar los secrets de GitHub Actions contra la
+      # clave pública que expone cada repo -- es el único mecanismo que
+      # la API de GitHub acepta). only: :prod a propósito: esta máquina de
+      # dev (Windows) no tiene compilador de C -- sin esta restricción,
+      # mix compile/test/phx.server local se rompen enteros (no solo esta
+      # función) al intentar compilar el NIF, mismo riesgo que ya evita
+      # elixlsx/xlsxir más arriba. Solo se compila dentro del Dockerfile,
+      # que sí tiene libsodium-dev en la etapa builder y libsodium23 en
+      # la final -- si falta esto último, el release arranca bien pero
+      # crashea recién al primer intento real de cifrar un secret (mismo
+      # patrón de falla que ya documenta el comentario de openssh-client
+      # en el Dockerfile).
+      {:enacl, "~> 1.2", only: :prod}
     ]
   end
 
