@@ -23,7 +23,15 @@ defmodule MetadataAppWeb.Sysadmin.AmbientesLive do
 
   alias MetadataApp.Ambientes
   alias MetadataApp.Ambientes.Ambiente
+  alias MetadataApp.Ssh
   alias MetadataAppWeb.AdminNav
+
+  # Mismos nombres fijos que usa mix motor.desplegar (namespace/deployment
+  # que dejó la migración a k3s de 167.233.84.151, 2026-08-26/27) -- "Detectar
+  # automáticamente" lee la imagen que YA corre ahí para no tener que
+  # tipearla/copiarla a mano al dar de alta un ambiente.
+  @namespace "metadata-stack"
+  @deployment "metadata-stack-app"
 
   @menu [
     %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
@@ -50,6 +58,7 @@ defmodule MetadataAppWeb.Sysadmin.AmbientesLive do
      |> assign(:show_prettycore_children, false)
      |> assign(:ambiente_seleccionado, nil)
      |> assign(:form, nil)
+     |> assign(:detectando_imagen, false)
      |> cargar_ambientes()}
   end
 
@@ -61,6 +70,7 @@ defmodule MetadataAppWeb.Sysadmin.AmbientesLive do
     {:noreply,
      socket
      |> assign(:ambiente_seleccionado, :nuevo)
+     |> assign(:detectando_imagen, false)
      |> assign(:form, to_form(Ambiente.changeset_creacion(%Ambiente{}, %{})))}
   end
 
@@ -70,6 +80,7 @@ defmodule MetadataAppWeb.Sysadmin.AmbientesLive do
     {:noreply,
      socket
      |> assign(:ambiente_seleccionado, ambiente)
+     |> assign(:detectando_imagen, false)
      |> assign(:form, to_form(Ambiente.changeset_edicion(ambiente, %{})))}
   end
 
@@ -125,6 +136,38 @@ defmodule MetadataAppWeb.Sysadmin.AmbientesLive do
     end
   end
 
+  # SSHea con las credenciales YA cargadas en el form (aunque el ambiente
+  # todavía ni se haya guardado -- útil al dar de alta uno nuevo) y lee la
+  # imagen que el deployment de k3s tiene corriendo de verdad, para no
+  # tener que copiarla/tipearla a mano. Si el campo de contraseña/llave
+  # quedó en blanco (edición sin cambiar el secreto), cae a la credencial
+  # ya guardada del ambiente -- mismo criterio que Ambiente.changeset_edicion.
+  def handle_event("detectar_imagen", _params, socket) do
+    changeset = socket.assigns.form.source
+    seleccionado = socket.assigns.ambiente_seleccionado
+
+    ambiente_temporal = %{
+      host: Ecto.Changeset.get_field(changeset, :host),
+      ssh_usuario: Ecto.Changeset.get_field(changeset, :ssh_usuario),
+      ssh_password: credencial_efectiva(changeset, seleccionado, :ssh_password_nuevo, :ssh_password),
+      ssh_llave_privada: credencial_efectiva(changeset, seleccionado, :ssh_llave_privada_nueva, :ssh_llave_privada)
+    }
+
+    cond do
+      ambiente_temporal.host in [nil, ""] or ambiente_temporal.ssh_usuario in [nil, ""] ->
+        {:noreply, put_flash(socket, :error, "Completá host y usuario SSH antes de detectar la imagen.")}
+
+      ambiente_temporal.ssh_password in [nil, ""] and ambiente_temporal.ssh_llave_privada in [nil, ""] ->
+        {:noreply, put_flash(socket, :error, "Completá la contraseña o la llave privada antes de detectar la imagen.")}
+
+      true ->
+        {:noreply,
+         socket
+         |> assign(:detectando_imagen, true)
+         |> start_async(:detectar_imagen, fn -> detectar_imagen_remota(ambiente_temporal) end)}
+    end
+  end
+
   def handle_event("eliminar_ambiente", _params, socket) do
     case Ambientes.eliminar_ambiente(socket.assigns.ambiente_seleccionado) do
       {:ok, _} ->
@@ -137,6 +180,71 @@ defmodule MetadataAppWeb.Sysadmin.AmbientesLive do
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "No se pudo eliminar el ambiente.")}
+    end
+  end
+
+  def handle_async(:detectar_imagen, {:ok, {:ok, imagen}}, socket) do
+    changeset = Ecto.Changeset.put_change(socket.assigns.form.source, :imagen_docker, imagen)
+
+    {:noreply,
+     socket
+     |> assign(:detectando_imagen, false)
+     |> assign(:form, to_form(changeset))
+     |> put_flash(:info, "Imagen detectada: #{imagen}")}
+  end
+
+  def handle_async(:detectar_imagen, {:ok, {:error, motivo}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:detectando_imagen, false)
+     |> put_flash(:error, "No se pudo detectar la imagen: #{motivo}")}
+  end
+
+  def handle_async(:detectar_imagen, {:exit, razon}, socket) do
+    {:noreply,
+     socket
+     |> assign(:detectando_imagen, false)
+     |> put_flash(:error, "No se pudo detectar la imagen: #{inspect(razon)}")}
+  end
+
+  # Habilita el botón "Detectar automáticamente" solo cuando ya hay con
+  # qué conectarse -- mismo criterio que handle_event("detectar_imagen",
+  # ...): host/usuario del form, contraseña/llave del form o (si se está
+  # editando) la ya guardada.
+  defp datos_ssh_completos?(form, seleccionado) do
+    changeset = form.source
+
+    not blank?(Ecto.Changeset.get_field(changeset, :host)) and
+      not blank?(Ecto.Changeset.get_field(changeset, :ssh_usuario)) and
+      (not blank?(credencial_efectiva(changeset, seleccionado, :ssh_password_nuevo, :ssh_password)) or
+         not blank?(credencial_efectiva(changeset, seleccionado, :ssh_llave_privada_nueva, :ssh_llave_privada)))
+  end
+
+  defp blank?(valor), do: valor in [nil, ""]
+
+  defp credencial_efectiva(changeset, seleccionado, campo_nuevo, campo_real) do
+    case Ecto.Changeset.get_change(changeset, campo_nuevo) do
+      valor when valor not in [nil, ""] -> valor
+      _ -> if is_struct(seleccionado, Ambiente), do: Map.get(seleccionado, campo_real), else: nil
+    end
+  end
+
+  defp detectar_imagen_remota(ambiente_temporal) do
+    comando =
+      "sudo k3s kubectl get deployment/#{@deployment} -n #{@namespace} -o jsonpath='{.spec.template.spec.containers[0].image}'"
+
+    case Ssh.ejecutar(ambiente_temporal, comando) do
+      {:ok, 0, salida} ->
+        case String.trim(salida) do
+          "" -> {:error, "el servidor respondió vacío -- ¿existe el deployment #{@deployment} en el namespace #{@namespace}?"}
+          imagen -> {:ok, imagen}
+        end
+
+      {:ok, _codigo, salida} ->
+        {:error, String.trim(salida)}
+
+      {:error, motivo} ->
+        {:error, motivo}
     end
   end
 
@@ -266,15 +374,23 @@ defmodule MetadataAppWeb.Sysadmin.AmbientesLive do
               </div>
 
               <div>
-                <label class="block text-xs text-gray-500 mb-1">Servicio Docker Swarm</label>
-                <input type="text" name={@form[:docker_servicio].name} value={@form[:docker_servicio].value}
-                  class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-mono" required />
-              </div>
-
-              <div>
-                <label class="block text-xs text-gray-500 mb-1">Imagen Docker</label>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="block text-xs text-gray-500">Imagen Docker</label>
+                  <button
+                    type="button"
+                    phx-click="detectar_imagen"
+                    disabled={@detectando_imagen or not datos_ssh_completos?(@form, @ambiente_seleccionado)}
+                    title={if not datos_ssh_completos?(@form, @ambiente_seleccionado), do: "Completá host, usuario y contraseña/llave antes de detectar"}
+                    class="text-[11px] text-purple-600 hover:underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed"
+                  >
+                    {if @detectando_imagen, do: "Detectando...", else: "Detectar automáticamente"}
+                  </button>
+                </div>
                 <input type="text" name={@form[:imagen_docker].name} value={@form[:imagen_docker].value}
                   class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-mono" required />
+                <p class="text-[11px] text-gray-400 mt-0.5">
+                  Se conecta por SSH con los datos de arriba y lee la imagen que ya corre en el servidor.
+                </p>
               </div>
 
               <div class="flex justify-between items-center pt-2 border-t border-gray-100">

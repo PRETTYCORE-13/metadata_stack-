@@ -20,7 +20,7 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
   on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_panel_control", "leer"}}
 
   alias MetadataApp.{Ambientes, PanelControl}
-  alias MetadataApp.PanelControl.{App, Desplegador}
+  alias MetadataApp.PanelControl.{App, Desplegador, Github, RegistryInspector}
   alias MetadataAppWeb.AdminNav
 
   @menu [
@@ -49,7 +49,13 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
      |> assign(:app_seleccionada, nil)
      |> assign(:form, nil)
      |> assign(:desplegando, false)
+     |> assign(:detectando_metadata, false)
+     |> assign(:variables_entorno_texto, "")
      |> assign(:ambientes, Ambientes.listar_ambientes())
+     |> assign(:mostrar_generador, false)
+     |> assign(:generando_imagen, false)
+     |> assign(:imagen_generada, nil)
+     |> assign(:error_generador, nil)
      |> cargar_apps()}
   end
 
@@ -57,29 +63,103 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
     AdminNav.handle_nav(id, socket, "panel_control")
   end
 
+  # `imagen_docker` opcional -- lo manda "Usar esta imagen" del generador
+  # (ver handle_event("usar_imagen_generada", ...) abajo) para dejar el
+  # formulario de "Nueva app" ya precargado con la imagen recién publicada.
+  # Este clause va ANTES del catch-all de abajo -- si no, nunca matchea.
+  def handle_event("nueva_app", %{"imagen_docker" => imagen_docker}, socket) do
+    {:noreply,
+     socket
+     |> assign(:app_seleccionada, :nuevo)
+     |> assign(:detectando_metadata, false)
+     |> assign(:variables_entorno_texto, "")
+     |> assign(:mostrar_generador, false)
+     |> assign(:form, to_form(App.changeset_creacion(%App{}, %{"imagen_docker" => imagen_docker})))}
+  end
+
   def handle_event("nueva_app", _params, socket) do
     {:noreply,
      socket
      |> assign(:app_seleccionada, :nuevo)
+     |> assign(:detectando_metadata, false)
+     |> assign(:variables_entorno_texto, "")
+     |> assign(:mostrar_generador, false)
      |> assign(:form, to_form(App.changeset_creacion(%App{}, %{})))}
   end
 
   def handle_event("seleccionar_app", %{"id" => id}, socket) do
     app = Enum.find(socket.assigns.apps, &(&1.id == String.to_integer(id)))
-    {:noreply, socket |> assign(:app_seleccionada, app) |> assign(:form, nil)}
+    {:noreply, socket |> assign(:app_seleccionada, app) |> assign(:form, nil) |> assign(:mostrar_generador, false)}
   end
 
   def handle_event("cerrar_detalle", _params, socket) do
-    {:noreply, socket |> assign(:app_seleccionada, nil) |> assign(:form, nil)}
+    {:noreply,
+     socket
+     |> assign(:app_seleccionada, nil)
+     |> assign(:form, nil)
+     |> assign(:mostrar_generador, false)
+     |> assign(:imagen_generada, nil)
+     |> assign(:error_generador, nil)}
+  end
+
+  def handle_event("mostrar_generador", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:app_seleccionada, nil)
+     |> assign(:form, nil)
+     |> assign(:mostrar_generador, true)
+     |> assign(:generando_imagen, false)
+     |> assign(:imagen_generada, nil)
+     |> assign(:error_generador, nil)}
+  end
+
+  def handle_event("generar_imagen", %{"repo" => repo, "ambiente_id" => ambiente_id, "k8s_deployment" => k8s_deployment}, socket) do
+    cond do
+      blank?(repo) or blank?(ambiente_id) or blank?(k8s_deployment) ->
+        {:noreply, assign(socket, :error_generador, "Completá el repositorio, el subdominio/deployment y elegí un ambiente.")}
+
+      true ->
+        ambiente = Ambientes.obtener_ambiente!(String.to_integer(ambiente_id))
+
+        {:noreply,
+         socket
+         |> assign(:generando_imagen, true)
+         |> assign(:error_generador, nil)
+         |> assign(:imagen_generada, nil)
+         |> start_async(:generar_imagen, fn -> Github.generar_imagen(repo, ambiente, k8s_deployment) end)}
+    end
+  end
+
+  def handle_event("usar_imagen_generada", _params, socket) do
+    handle_event("nueva_app", %{"imagen_docker" => socket.assigns.imagen_generada}, socket)
   end
 
   def handle_event("validar_app", %{"app" => params}, socket) do
     changeset = App.changeset_creacion(%App{}, normalizar_params(params))
-    {:noreply, assign(socket, :form, to_form(changeset, action: :validate))}
+
+    {:noreply,
+     socket
+     |> assign(:form, to_form(changeset, action: :validate))
+     |> assign(:variables_entorno_texto, Map.get(params, "variables_entorno_texto", ""))}
+  end
+
+  # Lee la imagen ya tipeada en el form y consulta su metadata pública en
+  # el registry (MetadataApp.PanelControl.RegistryInspector) para
+  # autocompletar puerto/variables -- a diferencia del "Detectar" de
+  # Ambientes de Deploy, esto NUNCA toca el servidor de producción: la
+  # app todavía no existe en ningún lado, solo se lee el manifiesto de la
+  # imagen por HTTP.
+  def handle_event("detectar_metadata_imagen", _params, socket) do
+    imagen = Ecto.Changeset.get_field(socket.assigns.form.source, :imagen_docker)
+
+    {:noreply,
+     socket
+     |> assign(:detectando_metadata, true)
+     |> start_async(:detectar_metadata_imagen, fn -> RegistryInspector.inspeccionar(imagen) end)}
   end
 
   def handle_event("guardar_app", %{"app" => params}, socket) do
-    case PanelControl.crear_app(normalizar_params(params)) do
+    case PanelControl.crear_app(normalizar_params(completar_metadata_faltante(params))) do
       {:ok, app} ->
         {:noreply,
          socket
@@ -109,6 +189,28 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
     end
   end
 
+  def handle_async(:generar_imagen, {:ok, {:ok, imagen}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:generando_imagen, false)
+     |> assign(:imagen_generada, imagen)
+     |> assign(:error_generador, nil)}
+  end
+
+  def handle_async(:generar_imagen, {:ok, {:error, motivo}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:generando_imagen, false)
+     |> assign(:error_generador, motivo)}
+  end
+
+  def handle_async(:generar_imagen, {:exit, razon}, socket) do
+    {:noreply,
+     socket
+     |> assign(:generando_imagen, false)
+     |> assign(:error_generador, "Terminó de forma inesperada: #{inspect(razon)}")}
+  end
+
   def handle_async(:desplegar_app, {:ok, {:ok, app}}, socket) do
     mensaje =
       if app.estado == "activo" do
@@ -135,6 +237,78 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
      |> cargar_apps()}
   end
 
+  def handle_async(:detectar_metadata_imagen, {:ok, {:ok, %{puerto: puerto, variables: variables}}}, socket) do
+    changeset =
+      if puerto, do: Ecto.Changeset.put_change(socket.assigns.form.source, :puerto_interno, puerto), else: socket.assigns.form.source
+
+    texto_variables = Enum.join(variables, "\n")
+
+    mensaje =
+      case {puerto, variables} do
+        {nil, []} -> {:error, "La imagen no declara ningún puerto ni variable de entorno por defecto -- completalos a mano."}
+        {nil, _} -> {:info, "Se detectaron variables de entorno, pero la imagen no declara ningún puerto -- completalo a mano."}
+        {_, []} -> {:info, "Puerto detectado: #{puerto}. La imagen no declara variables de entorno por defecto."}
+        {_, _} -> {:info, "Puerto y variables de entorno detectados."}
+      end
+
+    {tipo, texto} = mensaje
+
+    {:noreply,
+     socket
+     |> assign(:detectando_metadata, false)
+     |> assign(:form, to_form(changeset))
+     |> assign(:variables_entorno_texto, texto_variables)
+     |> put_flash(tipo, texto)}
+  end
+
+  def handle_async(:detectar_metadata_imagen, {:ok, {:error, motivo}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:detectando_metadata, false)
+     |> put_flash(:error, "No se pudo detectar la metadata de la imagen: #{motivo}")}
+  end
+
+  def handle_async(:detectar_metadata_imagen, {:exit, razon}, socket) do
+    {:noreply,
+     socket
+     |> assign(:detectando_metadata, false)
+     |> put_flash(:error, "No se pudo detectar la metadata de la imagen: #{inspect(razon)}")}
+  end
+
+  # Si al guardar el puerto y/o las variables quedaron en blanco, intenta
+  # resolverlos solo contra el registry de la imagen -- mismo mecanismo
+  # que el botón "Detectar puerto/variables", pero sin obligar a
+  # apretarlo antes: alcanza con escribir la imagen y darle "Crear y
+  # desplegar" directo. Es una llamada HTTP corta (no SSH, no toca el
+  # servidor) así que corre síncrono acá mismo, antes del deploy real
+  # (ese sí async). Si la imagen no declara nada reconocible, los campos
+  # quedan como estaban y el changeset los marca "can't be blank" igual
+  # que siempre -- nunca bloquea el guardado por sí sola.
+  defp completar_metadata_faltante(%{"imagen_docker" => imagen} = params) when imagen not in [nil, ""] do
+    puerto_vacio? = blank?(Map.get(params, "puerto_interno"))
+    variables_vacias? = blank?(Map.get(params, "variables_entorno_texto"))
+
+    if puerto_vacio? or variables_vacias? do
+      case RegistryInspector.inspeccionar(imagen) do
+        {:ok, %{puerto: puerto, variables: variables}} ->
+          params
+          |> completar_si_vacio("puerto_interno", puerto_vacio? and puerto, fn -> to_string(puerto) end)
+          |> completar_si_vacio("variables_entorno_texto", variables_vacias? and variables != [], fn -> Enum.join(variables, "\n") end)
+
+        {:error, _motivo} ->
+          params
+      end
+    else
+      params
+    end
+  end
+
+  defp completar_metadata_faltante(params), do: params
+
+  defp completar_si_vacio(params, campo, condicion, valor) do
+    if condicion, do: Map.put(params, campo, valor.()), else: params
+  end
+
   # variables_entorno viaja como texto libre "CLAVE=valor" (una por línea)
   # en vez de un campo del schema -- App.changeset_creacion espera un
   # :map ahí, ningún input HTML plano arma eso solo.
@@ -151,6 +325,21 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
   end
 
   defp cargar_apps(socket), do: assign(socket, :apps, PanelControl.listar_apps())
+
+  defp blank?(valor), do: valor in [nil, ""]
+
+  # Sugerencias del <datalist> de "Imagen Docker" -- imágenes que ya se
+  # usaron en otra app de este mismo panel, para no tener que
+  # recordarlas/copiarlas a mano cada vez. El navegador no auto-completa
+  # este campo solo (a diferencia de Nombre/Puerto, que suelen repetirse
+  # idénticos entre altas) porque cada imagen es distinta la mayoría de
+  # las veces -- un datalist explícito no depende de esa heurística.
+  defp imagenes_conocidas(apps) do
+    apps
+    |> Enum.map(& &1.imagen_docker)
+    |> Enum.reject(&blank?/1)
+    |> Enum.uniq()
+  end
 
   defp badge_estado(estado) do
     clase =
@@ -181,10 +370,14 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
 
       <div class="flex gap-4 items-start">
         <div class="w-80 flex-shrink-0 border border-gray-200 rounded-xl overflow-hidden flex flex-col" style="height: 70vh">
-          <div class="p-2 border-b border-gray-100">
+          <div class="p-2 border-b border-gray-100 space-y-1.5">
             <button type="button" phx-click="nueva_app"
               class="w-full px-3 py-1.5 rounded-lg bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700">
               + Nueva app
+            </button>
+            <button type="button" phx-click="mostrar_generador"
+              class="w-full px-3 py-1.5 rounded-lg border border-purple-200 text-purple-700 text-xs font-semibold hover:bg-purple-50">
+              Generar imagen desde repositorio
             </button>
           </div>
 
@@ -217,6 +410,60 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
 
         <div class="flex-1 border border-gray-200 rounded-xl p-4" style="min-height: 70vh">
           <%= cond do %>
+            <% @mostrar_generador -> %>
+              <div class="flex items-center justify-between mb-3">
+                <h2 class="text-sm font-bold text-gray-900">Generar imagen desde repositorio</h2>
+                <button type="button" phx-click="cerrar_detalle" class="text-xs text-gray-500 hover:underline">Cerrar</button>
+              </div>
+              <p class="text-[11px] text-gray-400 mb-3">
+                Para un repo Phoenix/Elixir de este equipo -- arma el Dockerfile y el CI, los commitea, publica la
+                imagen en ghcr.io y la deja lista para usar en "Nueva app". No arma bases de datos ni arregla bugs
+                propios del repo (si el repo tiene tests rotos o rutas faltantes, el build va a fallar igual que
+                cualquier otro push).
+              </p>
+
+              <.form for={%{}} as={:generador} phx-submit="generar_imagen" class="space-y-3 max-w-md">
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">Repositorio de GitHub</label>
+                  <input type="text" name="repo" placeholder="PRETTYCORE-13/mi-app o la URL completa"
+                    disabled={@generando_imagen}
+                    class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-mono" required />
+                </div>
+
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">Subdominio / nombre del deployment en k3s</label>
+                  <input type="text" name="k8s_deployment" placeholder="mi-app"
+                    disabled={@generando_imagen}
+                    class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-mono" required />
+                </div>
+
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">Servidor de destino</label>
+                  <select name="ambiente_id" disabled={@generando_imagen} class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
+                    <option value="">Elegir ambiente...</option>
+                    <option :for={ambiente <- @ambientes} value={ambiente.id}>{ambiente.nombre} ({ambiente.host})</option>
+                  </select>
+                  <p :if={@ambientes == []} class="text-[11px] text-amber-600 mt-0.5">No hay ningún ambiente configurado -- creá uno primero en /sysadmin/ambientes.</p>
+                </div>
+
+                <p :if={@error_generador} class="text-[11px] text-red-600 whitespace-pre-wrap">{@error_generador}</p>
+
+                <div :if={@imagen_generada} class="text-[11px] text-green-700 bg-green-50 border border-green-100 rounded-lg p-2 space-y-1.5">
+                  <p>Imagen publicada: <span class="font-mono">{@imagen_generada}</span></p>
+                  <button type="button" phx-click="usar_imagen_generada"
+                    class="px-2 py-1 rounded-lg bg-purple-600 text-white text-[11px] font-semibold hover:bg-purple-700">
+                    Usar esta imagen en "Nueva app"
+                  </button>
+                </div>
+
+                <div class="flex justify-end pt-2 border-t border-gray-100">
+                  <button type="submit" disabled={@generando_imagen}
+                    class="px-4 py-1.5 rounded-lg bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700 disabled:opacity-50">
+                    {if @generando_imagen, do: "Generando y publicando... (puede tardar varios minutos)", else: "Generar y publicar imagen"}
+                  </button>
+                </div>
+              </.form>
+
             <% @form -> %>
               <div class="flex items-center justify-between mb-3">
                 <h2 class="text-sm font-bold text-gray-900">Nueva app</h2>
@@ -250,11 +497,28 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
                 </div>
 
                 <div>
-                  <label class="block text-xs text-gray-500 mb-1">Imagen Docker</label>
+                  <div class="flex items-center justify-between mb-1">
+                    <label class="block text-xs text-gray-500">Imagen Docker</label>
+                    <button
+                      type="button"
+                      phx-click="detectar_metadata_imagen"
+                      disabled={@detectando_metadata or blank?(@form[:imagen_docker].value)}
+                      title={if blank?(@form[:imagen_docker].value), do: "Escribí primero el nombre de la imagen"}
+                      class="text-[11px] text-purple-600 hover:underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed"
+                    >
+                      {if @detectando_metadata, do: "Detectando...", else: "Detectar puerto/variables"}
+                    </button>
+                  </div>
                   <input type="text" name={@form[:imagen_docker].name} value={@form[:imagen_docker].value}
-                    placeholder="nginx:latest, ghcr.io/org/app:tag..."
+                    placeholder="nginx:latest, ghcr.io/org/app:tag..." list="imagenes-conocidas"
                     class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-mono" required />
+                  <datalist id="imagenes-conocidas">
+                    <option :for={imagen <- imagenes_conocidas(@apps)} value={imagen} />
+                  </datalist>
                   <p :if={@form[:imagen_docker].errors != []} class="text-[11px] text-red-600 mt-0.5">{elem(hd(@form[:imagen_docker].errors), 0)}</p>
+                  <p class="text-[11px] text-gray-400 mt-0.5">
+                    Lee el manifiesto público de la imagen en su registry -- no toca el servidor de producción.
+                  </p>
                 </div>
 
                 <div>
@@ -269,7 +533,8 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
                   <label class="block text-xs text-gray-500 mb-1">Variables de entorno (una por línea, CLAVE=valor)</label>
                   <textarea name="app[variables_entorno_texto]" rows="4"
                     placeholder={"DATABASE_URL=postgres://...\nAPI_KEY=..."}
-                    class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs font-mono"></textarea>
+                    class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs font-mono"
+                  >{@variables_entorno_texto}</textarea>
                 </div>
 
                 <div>

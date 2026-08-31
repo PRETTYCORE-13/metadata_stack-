@@ -21,8 +21,14 @@ ARG RUNNER_IMAGE="docker.io/debian:${DEBIAN_VERSION}"
 FROM ${BUILDER_IMAGE} AS builder
 
 # install build dependencies
+#
+# libsodium-dev: MetadataApp.PanelControl.Github (Panel Control > "Generar
+# imagen desde repositorio") usa el NIF `enacl` (only: :prod en mix.exs --
+# esta máquina de dev en Windows no tiene compilador de C) para cifrar los
+# secrets de GitHub Actions vía crypto_box_seal. Sin esto acá, la compilación
+# del NIF falla directo en este builder stage.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends build-essential git \
+  && apt-get install -y --no-install-recommends build-essential git libsodium-dev \
   && rm -rf /var/lib/apt/lists/*
 
 # prepare build dir
@@ -76,8 +82,14 @@ FROM ${RUNNER_IMAGE} AS final
 # desarrollador, que ya tiene ssh), Panel Control dispara ese mismo código
 # DESDE la propia app ya desplegada, adentro de este contenedor -- sin este
 # paquete falla con "Erlang error: :enoent" (encontrado real, 2026-08-27).
+#
+# libsodium23: el NIF `enacl` (ver libsodium-dev más arriba) queda linkeado
+# dinámicamente contra libsodium -- compilar bien en el builder stage NO
+# alcanza, sin la librería compartida ACÁ el release arranca bien pero
+# crashea recién al primer intento real de cifrar un secret de GitHub
+# (mismo patrón de falla que ya describe este comentario para openssh-client).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libstdc++6 openssl libncurses6 locales ca-certificates openssh-client \
+  && apt-get install -y --no-install-recommends libstdc++6 openssl libncurses6 locales ca-certificates openssh-client libsodium23 \
   && rm -rf /var/lib/apt/lists/*
 
 # Set the locale
