@@ -45,16 +45,6 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :schema_es_transaccional, :boolean, default: false
     field :codigo_trn, :string
 
-    # NDT (Numeración de Documentos Transaccionales, 2026-08-31) — folio de
-    # negocio opcional, separado a propósito de schema_es_transaccional
-    # (mismo criterio que alcance_habilitado): un catálogo transaccional
-    # NO necesariamente necesita folio (ver MetadataApp.Folio). Exige
-    # schema_es_transaccional Y alcance_habilitado (ver validar_folio/1) —
-    # MetadataApp.Folio resuelve la Organización del folio vía
-    # branch_id -> Branch.empresa_id, que solo está GARANTIZADO presente
-    # cuando el catálogo activó Alcance de Datos.
-    field :requiere_folio, :boolean, default: false
-
     # Get View → columnas ESTRUCTURALES (bc_motor_live.ex, 2026-08-06) — a
     # diferencia de cargar_todos_por_default/filtro_default_fecha_* (qué
     # filas trae), esto es qué COLUMNAS de sistema muestra CatalogoLive:
@@ -144,7 +134,6 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
           :schema_profiles,
           :schema_es_transaccional,
           :codigo_trn,
-          :requiere_folio,
           :schema_encabezado_id,
           :orden,
           :cargar_todos_por_default,
@@ -166,7 +155,6 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     |> validate_required(@requeridos)
     |> update_change(:codigo_trn, &nil_si_vacio_o_mayusculas/1)
     |> validar_codigo_trn()
-    |> validar_requiere_folio()
     |> validar_encabezado()
     |> unique_constraint(:schema_context_name)
     |> unique_constraint(:codigo_trn, name: :meta_schema_header_codigo_trn_unico_index)
@@ -187,29 +175,6 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
       |> validate_format(:codigo_trn, ~r/^[A-Z0-9]{4}$/, message: "debe ser exactamente 4 letras/dígitos (ej. VENT)")
     else
       changeset
-    end
-  end
-
-  # NDT — folio necesita TRN (el módulo Folio denormaliza el `trn` en
-  # ndt_numbering_audits, y conceptualmente "un documento con folio pero
-  # sin identidad transaccional" no aparece en ningún ejemplo del spec) Y
-  # Alcance de Datos (la Organización del folio se resuelve vía
-  # branch_id -> Branch.empresa_id, ver moduledoc de MetadataApp.Folio).
-  defp validar_requiere_folio(changeset) do
-    if get_field(changeset, :requiere_folio) do
-      changeset
-      |> validar_flag_requerido(:schema_es_transaccional, "requiere que el catálogo sea transaccional (TRN)")
-      |> validar_flag_requerido(:alcance_habilitado, "requiere que el catálogo tenga Alcance de Datos habilitado")
-    else
-      changeset
-    end
-  end
-
-  defp validar_flag_requerido(changeset, campo, mensaje) do
-    if get_field(changeset, campo) do
-      changeset
-    else
-      add_error(changeset, :requiere_folio, mensaje)
     end
   end
 

@@ -19,7 +19,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "crear"}}
 
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
-  alias MetadataApp.BusinessProcessBuilder.CatalogoGenerador
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataAppWeb.AdminNav
   alias MetadataAppWeb.Sysadmin.FieldDesignerComponents
@@ -30,7 +29,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   @menu [
     %{tipo: :pagina, id: "bc_list", label: "BC List", nav: "/sysadmin/bc-list"},
     %{tipo: :pagina, id: "buscar_trn", label: "Buscar TRN", nav: "/sysadmin/buscar-trn"},
-    %{tipo: :pagina, id: "ndt_config", label: "NDT Config", nav: "/sysadmin/ndt-config"},
     %{tipo: :pagina, id: "tepache", label: "Tepache Exp/Imp", nav: "/sysadmin/tepache"},
     %{tipo: :pagina, id: "roles", label: "Roles y Usuarios", nav: "/sysadmin/roles"},
     %{tipo: :pagina, id: "usuarios_empresa", label: "Usuarios", nav: "/sysadmin/usuarios"},
@@ -84,7 +82,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       "icono" => "",
       "visible" => true,
       "es_transaccional" => false,
-      "requiere_folio" => false,
       "encabezado_de" => ""
     })
     |> assign(:campos, [])
@@ -111,14 +108,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       |> Map.put("nombre", normalizar_identificador(contexto["nombre"]))
       |> Map.put("icono", normalizar_icono(contexto["icono"]))
       |> Map.put("es_transaccional", contexto["es_transaccional"] == "true")
-      # NDT (2026-08-31) -- requiere_folio exige es_transaccional (ver
-      # Header.validar_requiere_folio/1); alcance_habilitado el otro
-      # requisito ya nace en true SIEMPRE para un BC nuevo (ver
-      # activar_alcance_con_default_sucursal/1 más abajo), así que acá
-      # solo hace falta cuidar la dependencia con TRN. Si el checkbox de
-      # TRN se destilda después de haber tildado folio, folio se resetea
-      # solo -- el checkbox queda deshabilitado en ese estado (ver render).
-      |> Map.put("requiere_folio", contexto["es_transaccional"] == "true" and contexto["requiere_folio"] == "true")
 
     nav = componer_nav(contexto["carpeta_padre"], contexto["nombre"])
 
@@ -476,7 +465,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     nombre_sistema = nombre_sistema_desde(contexto["nombre"])
     nav = componer_nav(contexto["carpeta_padre"], contexto["nombre"])
     es_transaccional? = contexto["es_transaccional"] == true
-    requiere_folio? = es_transaccional? and contexto["requiere_folio"] == true
 
     encabezado_id = encabezado_id_desde_nombre(contexto["encabezado_de"])
 
@@ -505,18 +493,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
             # -- ahora nace acotado a Sucursal por default (ver
             # MetaSchemaContext.activar_alcance_con_default_sucursal/1, que
             # ya incluye el CatalogoGenerador.generar/1 que antes iba acá suelto).
-            {:ok, header} = MetaSchemaContext.activar_alcance_con_default_sucursal(header)
-
-            # NDT (2026-08-31) -- requiere_folio no puede ir en attrs_base de
-            # arriba: Header.validar_requiere_folio/1 exige
-            # alcance_habilitado, que TODAVÍA es false en el momento del
-            # insert original (se activa recién en el paso de arriba). Va
-            # como segundo update, DESPUÉS de que alcance ya quedó true, con
-            # su propio CatalogoGenerador.generar/1 para agregar la columna
-            # folio (el generar/1 de arriba corrió con requiere_folio
-            # todavía false, no la agregó).
-            header = if requiere_folio?, do: activar_requiere_folio(header), else: header
-
+            MetaSchemaContext.activar_alcance_con_default_sucursal(header)
             Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:bc_creado, header})
 
             {:noreply, push_navigate(socket, to: ~p"/sysadmin/bc-list/#{header.schema_context_name}/motor")}
@@ -554,21 +531,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
 
       resultado ->
         resultado
-    end
-  end
-
-  # Best-effort a propósito -- si esto falla (motivo real: el nombre
-  # random de codigo_trn de arriba no tiene nada que ver, no debería
-  # fallar salvo un problema de infraestructura), el catálogo YA nació
-  # bien igual (transaccional + alcance), solo sin folio -- un admin
-  # puede prenderlo después a mano si hace falta. No vale la pena
-  # abortar la creación completa (todo-o-nada) por este paso extra.
-  defp activar_requiere_folio(header) do
-    with {:ok, header} <- MetaSchemaContext.actualizar_header(header, %{"requiere_folio" => true}),
-         {:ok, _resultado} <- CatalogoGenerador.generar(header.schema_context_name) do
-      header
-    else
-      _ -> header
     end
   end
 
@@ -1025,25 +987,6 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
             <input type="hidden" name="contexto[es_transaccional]" value="false" />
             <input type="checkbox" name="contexto[es_transaccional]" value="true" checked={@contexto["es_transaccional"] == true} class="accent-purple-600" />
             Es una operación transaccional (necesita TRN — Venta, Factura, Cobro, etc.)
-          </label>
-        </div>
-
-        <label class="font-medium text-gray-900 pt-1">Folio:</label>
-        <div>
-          <label
-            class={["flex items-center gap-1.5 font-medium cursor-pointer select-none", @contexto["es_transaccional"] == true && "text-gray-900", @contexto["es_transaccional"] != true && "text-gray-400 cursor-not-allowed"]}
-            title={if @contexto["es_transaccional"] != true, do: "Primero marcá \"Es una operación transaccional\" -- Folio lo necesita"}
-          >
-            <input type="hidden" name="contexto[requiere_folio]" value="false" />
-            <input
-              type="checkbox"
-              name="contexto[requiere_folio]"
-              value="true"
-              checked={@contexto["requiere_folio"] == true}
-              disabled={@contexto["es_transaccional"] != true}
-              class="accent-purple-600"
-            />
-            Necesita folio de negocio (numeración configurable — Pedido, Factura, OC, etc. — ver NDT Config)
           </label>
         </div>
 

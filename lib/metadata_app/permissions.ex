@@ -831,11 +831,10 @@ defmodule MetadataApp.Permissions do
     {"sysadmin_credenciales", "acceso_sysadmin_credenciales", "Credenciales"},
     {"sysadmin_acciones_externas", "acceso_sysadmin_acciones_externas", "Acciones externas"},
     {"sysadmin_ambientes", "acceso_sysadmin_ambientes", "Ambientes de Deploy"},
-    {"sysadmin_panel_control", "acceso_sysadmin_panel_control", "Panel Control"},
-    {"sysadmin_ndt", "acceso_sysadmin_ndt", "NDT Config"}
+    {"sysadmin_panel_control", "acceso_sysadmin_panel_control", "Panel Control"}
   ]
 
-  @doc "Las 12 capacidades de Sysadmin, `{recurso, rol_nombre, etiqueta}` -- fuente única para la migración de seed y para la pestaña Sysadmin de UsuariosEmpresaLive."
+  @doc "Las 11 capacidades de Sysadmin, `{recurso, rol_nombre, etiqueta}` -- fuente única para la migración de seed y para la pestaña Sysadmin de UsuariosEmpresaLive."
   def capacidades_sysadmin, do: @capacidades_sysadmin
 
   @doc """

@@ -26,14 +26,6 @@ defmodule MetadataApp.MetaFixtureAlcance do
     field :update_guid, :string
     field :delete_guid, :string
 
-    # NDT/TRN (2026-08-31) -- ver migración
-    # agregar_trn_folio_a_meta_fixture_alcance -- no forman parte del
-    # changeset (mismo criterio que estado_id: MetadataApp.TRN/Folio los
-    # asignan aparte, después del insert, nunca por PATCH directo).
-    field :trn, :string
-    field :ulid, :string
-    field :folio, :string
-
     timestamps(type: :utc_datetime)
   end
 

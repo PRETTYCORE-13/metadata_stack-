@@ -32,14 +32,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
       modulo: MetadataApp.Autenticacion.InventoryLocation,
       campo_nombre: "inventory_name"
     },
-    "meta_schema_sales_unit" => %{etiqueta: "Unidad de venta", modulo: MetadataApp.Autenticacion.SalesUnit, campo_nombre: "sales_unit_name"},
-    # NDT (2026-08-31) — "Tipo de documento" en el BC "NDT Configuración"
-    # apunta acá: cualquier catálogo BPB (Header) es potencialmente un
-    # "tipo de documento" elegible para folio, sin necesitar su propio
-    # meta_schema_header (sería recursivo). No filtra por
-    # schema_es_transaccional -- el admin es responsable de elegir un
-    # catálogo transaccional real.
-    "meta_schema_header" => %{etiqueta: "Catálogo (BC)", modulo: Header, campo_nombre: "schema_context_label"}
+    "meta_schema_sales_unit" => %{etiqueta: "Unidad de venta", modulo: MetadataApp.Autenticacion.SalesUnit, campo_nombre: "sales_unit_name"}
   }
 
   @doc "`%{etiqueta:, modulo:, campo_nombre:}` si `nombre` es una de las tablas de sistema referenciables, `nil` si es un catálogo BPB normal (o no existe)."
@@ -1520,14 +1513,6 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
           mostrar_sales_unit_en_tabla: header.mostrar_sales_unit_en_tabla,
           schema_es_transaccional: header.schema_es_transaccional,
           codigo_trn: header.codigo_trn,
-          # alcance_habilitado faltaba en el export (gap preexistente, no
-          # introducido acá) -- se vuelve consecuente ahora: requiere_folio
-          # exige alcance_habilitado a nivel de changeset (Header.
-          # validar_requiere_folio/1), así que sin esto un import fresco
-          # de un catálogo con folio activo rompía SIEMPRE (alcance_habilitado
-          # quedaba en el default false, contradiciendo requiere_folio: true).
-          alcance_habilitado: header.alcance_habilitado,
-          requiere_folio: header.requiere_folio,
           schema_encabezado_catalogo: nombre_encabezado(header.schema_encabezado_id),
           detalles: Enum.map(detalles, &serializar_detalle/1)
         },
