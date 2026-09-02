@@ -28,5 +28,9 @@ defmodule MetadataApp.Autenticacion.Rol do
     |> cast(attrs, [:empresa_id, :nombre, :descripcion])
     |> validate_required([:empresa_id, :nombre])
     |> unique_constraint([:empresa_id, :nombre])
+    |> unique_constraint(:nombre,
+      name: :meta_schema_rol_nombre_unico_index,
+      message: "ya existe un rol con este nombre en el sistema (aunque sea de otra empresa)"
+    )
   end
 end
