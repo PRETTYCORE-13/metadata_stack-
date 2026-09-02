@@ -347,7 +347,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
     campos_destino =
       props["catalogo"]
-      |> MetaSchemaContext.listar_detalles()
+      |> MetaSchemaContext.campos_seleccionables_de()
       |> Enum.filter(& &1.schema_context_properties["visible"])
       |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
 
@@ -360,7 +360,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
      assign(socket, :relacion_form, %{
        "campo" => campo,
        "catalogo_destino" => props["catalogo"],
-       "catalogo_destino_label" => MetaSchemaContext.obtener_header_por_nombre(props["catalogo"]).schema_context_label,
+       "catalogo_destino_label" => catalogo_destino_label(props["catalogo"]),
        "campos_destino" => campos_destino,
        "seleccionados" => props["campos_acompanamiento"] || [],
        "campos_propios" => campos_propios,
@@ -369,6 +369,20 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
        "registro_muestra" => registro_muestra_de(props["catalogo"]),
        "error" => nil
      })}
+  end
+
+  # Un "referencia" puede apuntar a un catálogo de sistema (ver
+  # MetaSchemaContext.catalogo_sistema/1, ej. "meta_schema_header" desde
+  # SPEC-SYS-0109202601) -- esos NO tienen fila propia en
+  # meta_schema_header (no son un BC generado), así que
+  # obtener_header_por_nombre/1 devuelve nil ahí. Mismo criterio ya
+  # aplicado en otros puntos de integración de "referencia"
+  # (listar_catalogos_referenciables/0, construir_propiedades/3).
+  defp catalogo_destino_label(catalogo) do
+    case MetaSchemaContext.catalogo_sistema(catalogo) do
+      %{etiqueta: etiqueta} -> etiqueta
+      nil -> MetaSchemaContext.obtener_header_por_nombre(catalogo).schema_context_label
+    end
   end
 
   def handle_event("cerrar_form_relacion", _params, socket) do

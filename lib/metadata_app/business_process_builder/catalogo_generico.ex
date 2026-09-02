@@ -301,10 +301,18 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     # todavía) hasta que alguien lo registre y conceda desde Permisos —
     # corregir esto sin ese paso antes rompe esos catálogos para todos,
     # incluido administrador.
+    # SPEC-SYS-0109202601 (design.md §1.2, 2026-09-01): TRN y Folio ya NO
+    # corren acá como paso suelto DESPUÉS del insert — se movieron DENTRO
+    # de la transacción/Multi de creación (`crear_simple/4` y
+    # `MetaStateEngine.ejecutar_nucleo_alta/4`), vía el único punto de
+    # entrada `MetadataApp.IdentificadoresTransaccionales.asignar/4`, para
+    # que folio+documento reviertan juntos (R7). `MetadataApp.TRN` sigue
+    # existiendo, solo cambió quién lo llama.
     resultado =
       case MetadataApp.MetaStateEngine.transicion_alta(catalogo) do
         nil ->
-          crear_simple(schema_mod, attrs, renglones_spec)
+          header = MetaSchemaContext.obtener_header_por_nombre(catalogo)
+          crear_simple(schema_mod, attrs, renglones_spec, header)
 
         transicion ->
           schema_mod
@@ -312,15 +320,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
           |> estampar_campos_alcance_post_insert(schema_mod, attrs)
       end
 
-    # PrettyCore TRN (Fase 1) — Regla #1: ninguna operación transaccional
-    # nace sin TRN. Corre DESPUÉS del insert (no en el mismo changeset)
-    # para no acoplar MetadataApp.MetaStateEngine —deliberadamente
-    # agnóstico del catálogo— a este concepto de negocio. Sin ventana
-    # observable desde afuera: crear/2 no devuelve el registro hasta que
-    # esto termina. No hace nada si el catálogo no es transaccional.
-    resultado
-    |> MetadataApp.TRN.asignar_si_transaccional()
-    |> auditar_alta(catalogo, contexto)
+    auditar_alta(resultado, catalogo, contexto)
   end
 
   ## Alcance de Datos en escritura (Fase 4b, 2026-08-11) — ver el moduledoc
@@ -593,7 +593,12 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # iniciales de ESTE registro (si tiene catálogos detalle) — mismo
   # aplanado de transacción anidada que ya describe el moduledoc de
   # `MetadataApp.Renglones`.
-  defp crear_simple(schema_mod, attrs, renglones_spec) do
+  # `header` (SPEC-SYS-0109202601, design.md §1.2): resuelto una sola vez
+  # por el caller (`crear_con_attrs_preparados/5`), se lo pasamos a
+  # `IdentificadoresTransaccionales.asignar/4` para TRN+Folio DENTRO de
+  # esta misma transacción — antes corrían como paso separado después de
+  # que esta función devolvía.
+  defp crear_simple(schema_mod, attrs, renglones_spec, header) do
     catalogo = schema_mod.__schema__(:source)
     estado_inicial = MetadataApp.MetaStateEngine.estado_inicial(catalogo)
 
@@ -608,15 +613,12 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
         |> MetadataApp.Renglones.preparar(catalogo, attrs)
         |> Repo.insert()
 
-      case resultado do
-        {:ok, registro} ->
-          case MetadataApp.Renglones.crear_todos(catalogo, registro.id, renglones_spec) do
-            {:ok, _renglones} -> registro
-            {:error, motivo} -> Repo.rollback(motivo)
-          end
-
-        {:error, changeset} ->
-          Repo.rollback(changeset)
+      with {:ok, registro} <- resultado,
+           {:ok, registro} <- MetadataApp.IdentificadoresTransaccionales.asignar(Repo, registro, header),
+           {:ok, _renglones} <- MetadataApp.Renglones.crear_todos(catalogo, registro.id, renglones_spec) do
+        registro
+      else
+        {:error, motivo} -> Repo.rollback(motivo)
       end
     end)
   end

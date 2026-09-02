@@ -26,12 +26,22 @@ defmodule MetadataApp.MetaFixtureAlcance do
     field :update_guid, :string
     field :delete_guid, :string
 
+    # SPEC-SYS-0109202601 (Administrador de Folios) -- ver migración
+    # agregar_trn_folio_a_meta_fixture_alcance. No forman parte del
+    # changeset (mismo criterio que estado_id): IdentificadoresTransaccionales
+    # los asigna aparte, después del insert, nunca por PATCH directo.
+    field :trn, :string
+    field :ulid, :string
+    field :folio_serie, :string
+    field :folio_numero, :integer
+    field :subtipo_transaccion, :integer
+
     timestamps(type: :utc_datetime)
   end
 
   def changeset(registro, attrs) do
     registro
-    |> cast(attrs, [:nombre, :creado_por_id, :branch_id, :sales_unit_id, :inventory_id])
+    |> cast(attrs, [:nombre, :creado_por_id, :branch_id, :sales_unit_id, :inventory_id, :subtipo_transaccion])
     |> validate_required([:nombre])
   end
 end

@@ -585,10 +585,16 @@ defmodule MetadataApp.MetaStateEngine do
     if changeset.valid?, do: {:ok, changeset}, else: {:error, changeset}
   end
 
+  # `header` (SPEC-SYS-0109202601, design.md §1.2): resuelto acá mismo vía
+  # `transicion.meta_schema_header_id` (ya lo trae, sin query extra por
+  # nombre) para pasárselo a `IdentificadoresTransaccionales.asignar/4` —
+  # TRN+Folio quedan DENTRO de este `Multi`, no como paso separado después
+  # de que `dar_de_alta/5` devuelve (R7: revierten junto con el registro).
   defp ejecutar_nucleo_alta(changeset, transicion, contexto, renglones_spec) do
     schema_mod = changeset.data.__struct__
     catalogo = schema_mod.__schema__(:source)
     changeset_final = Ecto.Changeset.change(changeset, %{estado_id: transicion.estado_destino_id})
+    header = Repo.get!(Header, transicion.meta_schema_header_id)
 
     multi =
       Multi.new()
@@ -599,6 +605,9 @@ defmodule MetadataApp.MetaStateEngine do
       |> agregar_postcondicion_multi(transicion, contexto)
       |> Multi.run(:renglones, fn _repo, %{registro: registro} ->
         MetadataApp.Renglones.crear_todos(catalogo, registro.id, renglones_spec)
+      end)
+      |> Multi.run(:identificadores, fn repo, %{registro: registro} ->
+        MetadataApp.IdentificadoresTransaccionales.asignar(repo, registro, header)
       end)
 
     case Repo.transaction(multi) do
@@ -612,6 +621,9 @@ defmodule MetadataApp.MetaStateEngine do
         {:error, changeset}
 
       {:error, :renglones, razon, _cambios} ->
+        {:error, razon}
+
+      {:error, :identificadores, razon, _cambios} ->
         {:error, razon}
 
       {:error, _paso, razon, _cambios} ->

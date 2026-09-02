@@ -29,6 +29,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
 
     transaccional? = Keyword.get(opts, :transaccional, false)
     codigo_trn = Keyword.get(opts, :codigo_trn)
+    folio? = Keyword.get(opts, :folio, false)
     detalle_de = Keyword.get(opts, :detalle_de)
     alcance? = Keyword.get(opts, :alcance, false)
 
@@ -49,6 +50,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
 
     trn_field_asts = trn_field_asts(transaccional?)
     trn_behaviour_ast = trn_behaviour_ast(transaccional?, codigo_trn)
+    folio_field_asts = folio_field_asts(folio?)
     detalle_field_asts = detalle_field_asts(detalle_de)
     alcance_field_asts = alcance_field_asts(alcance?)
 
@@ -78,9 +80,17 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
 
         # PrettyCore TRN (Fase 1, 2026-07-21) — deliberadamente fuera de
         # @campos, mismo criterio que estado_id: el único camino para
-        # asignarlos es MetadataApp.TRN.asignar_si_transaccional/1, nunca
-        # un PATCH. Solo existen si `transaccional: true`.
+        # asignarlos es MetadataApp.IdentificadoresTransaccionales.asignar/4,
+        # nunca un PATCH. Solo existen si `transaccional: true`.
         unquote_splicing(trn_field_asts)
+
+        # SPEC-SYS-0109202601 (Administrador de Folios, design.md §3.3) —
+        # deliberadamente fuera de @campos, mismo criterio que trn/ulid
+        # arriba: el único camino para asignarlos es
+        # MetadataApp.IdentificadoresTransaccionales.asignar/4. Solo
+        # existen si `folio: true` (que a su vez exige `transaccional:
+        # true`, ver Header.validar_requiere_folio/1).
+        unquote_splicing(folio_field_asts)
 
         # Catálogo Maestro-Detalle (Fase 1) — deliberadamente fuera de
         # @campos: el único camino para asignarlos es
@@ -129,6 +139,15 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
     [
       quote(do: field(:trn, :string)),
       quote(do: field(:ulid, :string))
+    ]
+  end
+
+  defp folio_field_asts(false), do: []
+
+  defp folio_field_asts(true) do
+    [
+      quote(do: field(:folio_serie, :string)),
+      quote(do: field(:folio_numero, :integer))
     ]
   end
 

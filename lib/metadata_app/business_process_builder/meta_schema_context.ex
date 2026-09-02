@@ -32,11 +32,60 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
       modulo: MetadataApp.Autenticacion.InventoryLocation,
       campo_nombre: "inventory_name"
     },
-    "meta_schema_sales_unit" => %{etiqueta: "Unidad de venta", modulo: MetadataApp.Autenticacion.SalesUnit, campo_nombre: "sales_unit_name"}
+    "meta_schema_sales_unit" => %{etiqueta: "Unidad de venta", modulo: MetadataApp.Autenticacion.SalesUnit, campo_nombre: "sales_unit_name"},
+    # SPEC-SYS-0109202601 (Administrador de Folios, design.md §6) —
+    # "Tipo de transacción" en el catálogo folio_perfiles apunta acá:
+    # cualquier catálogo BPB (Header) es potencialmente un tipo de
+    # transacción foliable, sin necesitar su propio meta_schema_header
+    # (sería recursivo). No filtra por schema_es_transaccional -- el
+    # administrador funcional es responsable de elegir un catálogo
+    # transaccional real.
+    "meta_schema_header" => %{etiqueta: "Catálogo (BC)", modulo: Header, campo_nombre: "schema_context_label"}
   }
 
   @doc "`%{etiqueta:, modulo:, campo_nombre:}` si `nombre` es una de las tablas de sistema referenciables, `nil` si es un catálogo BPB normal (o no existe)."
   def catalogo_sistema(nombre), do: Map.get(@catalogos_sistema, nombre)
+
+  @campos_sistema_excluidos ~w(id insert_guid update_guid delete_guid inserted_at updated_at)
+
+  @doc """
+  Campos reales de una tabla de sistema (ver `catalogo_sistema/1`), en el
+  mismo shape liviano que `%Detail{}` (`schema_context_field` +
+  `schema_context_properties`) para poder reusarse en cualquier lugar que
+  hoy espera una lista de `listar_detalles/1` -- ver `campos_seleccionables_de/1`.
+  El `campo_nombre` de la tabla siempre va primero (así queda como
+  default al elegir "campo_visualizacion"). `[]` si `nombre` no es una
+  tabla de sistema.
+  """
+  def campos_sistema(nombre) do
+    case catalogo_sistema(nombre) do
+      nil ->
+        []
+
+      %{modulo: modulo, campo_nombre: campo_nombre} ->
+        modulo.__schema__(:fields)
+        |> Enum.map(&Atom.to_string/1)
+        |> Enum.reject(&(&1 in @campos_sistema_excluidos))
+        |> Enum.sort_by(&(&1 != campo_nombre))
+        |> Enum.map(&%{schema_context_field: &1, schema_context_properties: %{"visible" => true, "tipo" => "string"}})
+    end
+  end
+
+  @doc """
+  Campos reales de `catalogo` para elegir como `campos_acompanamiento` o
+  `campo_visualizacion` de un campo "referencia" -- catálogo BPB normal
+  (`listar_detalles/1`, `%Detail{}` reales) o tabla de sistema
+  (`campos_sistema/1`, structs sintéticos del mismo shape). Antes solo
+  `listar_detalles/1` se usaba acá, dejando sin nada que elegir a
+  cualquier referencia hacia Empresa/Sucursal/Almacén/Unidad de venta/
+  Catálogo (BC) -- extendido a pedido explícito (2026-09-01).
+  """
+  def campos_seleccionables_de(catalogo) do
+    case catalogo_sistema(catalogo) do
+      nil -> listar_detalles(catalogo)
+      _sistema -> campos_sistema(catalogo)
+    end
+  end
 
   # order_by explícito a propósito: sin esto Postgres no garantiza el orden
   # de las filas devueltas, y mix meta.export terminaba produciendo diffs
@@ -1366,7 +1415,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     case Ecto.Changeset.get_field(changeset, :schema_context_properties) do
       %{"tipo" => "referencia", "catalogo" => catalogo, "campos_acompanamiento" => campos}
       when is_list(campos) and campos != [] ->
-        campos_reales = catalogo |> listar_detalles() |> Enum.map(& &1.schema_context_field)
+        campos_reales = catalogo |> campos_seleccionables_de() |> Enum.map(& &1.schema_context_field)
 
         case campos -- campos_reales do
           [] ->

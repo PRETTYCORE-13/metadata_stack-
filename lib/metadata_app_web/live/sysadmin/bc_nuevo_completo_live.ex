@@ -82,6 +82,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       "icono" => "",
       "visible" => true,
       "es_transaccional" => false,
+      "requiere_folio" => false,
       "encabezado_de" => ""
     })
     |> assign(:campos, [])
@@ -108,6 +109,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       |> Map.put("nombre", normalizar_identificador(contexto["nombre"]))
       |> Map.put("icono", normalizar_icono(contexto["icono"]))
       |> Map.put("es_transaccional", contexto["es_transaccional"] == "true")
+      |> Map.put("requiere_folio", contexto["requiere_folio"] == "true")
 
     nav = componer_nav(contexto["carpeta_padre"], contexto["nombre"])
 
@@ -465,6 +467,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     nombre_sistema = nombre_sistema_desde(contexto["nombre"])
     nav = componer_nav(contexto["carpeta_padre"], contexto["nombre"])
     es_transaccional? = contexto["es_transaccional"] == true
+    requiere_folio? = contexto["requiere_folio"] == true
 
     encabezado_id = encabezado_id_desde_nombre(contexto["encabezado_de"])
 
@@ -479,6 +482,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
             "schema_context_type" => 1,
             "schema_context_icono" => nil_si_vacio(contexto["icono"]),
             "schema_es_transaccional" => es_transaccional?,
+            "requiere_folio" => requiere_folio?,
             "schema_encabezado_id" => encabezado_id,
             "detalles" => Enum.map(socket.assigns.campos, &detalle_attrs/1)
           },
@@ -987,6 +991,15 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
             <input type="hidden" name="contexto[es_transaccional]" value="false" />
             <input type="checkbox" name="contexto[es_transaccional]" value="true" checked={@contexto["es_transaccional"] == true} class="accent-purple-600" />
             Es una operación transaccional (necesita TRN — Venta, Factura, Cobro, etc.)
+          </label>
+        </div>
+
+        <label class="font-medium text-gray-900 pt-1">Folio:</label>
+        <div>
+          <label class="flex items-center gap-1.5 font-medium text-gray-900 cursor-pointer select-none">
+            <input type="hidden" name="contexto[requiere_folio]" value="false" />
+            <input type="checkbox" name="contexto[requiere_folio]" value="true" checked={@contexto["requiere_folio"] == true} class="accent-purple-600" />
+            Necesita Serie + Folio (Administrador de Folios — requiere "Es una operación transaccional" tildado arriba)
           </label>
         </div>
 

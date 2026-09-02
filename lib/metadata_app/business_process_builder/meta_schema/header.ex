@@ -45,6 +45,13 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :schema_es_transaccional, :boolean, default: false
     field :codigo_trn, :string
 
+    # SPEC-SYS-0109202601 (Administrador de Folios, design.md §4) —
+    # separado a propósito de schema_es_transaccional (mismo criterio
+    # que ese campo respecto de schema_context_type): folio SIEMPRE
+    # viaja junto con TRN (design.md §1.2), pero un catálogo
+    # transaccional no necesariamente necesita folio.
+    field :requiere_folio, :boolean, default: false
+
     # Get View → columnas ESTRUCTURALES (bc_motor_live.ex, 2026-08-06) — a
     # diferencia de cargar_todos_por_default/filtro_default_fecha_* (qué
     # filas trae), esto es qué COLUMNAS de sistema muestra CatalogoLive:
@@ -134,6 +141,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
           :schema_profiles,
           :schema_es_transaccional,
           :codigo_trn,
+          :requiere_folio,
           :schema_encabezado_id,
           :orden,
           :cargar_todos_por_default,
@@ -155,6 +163,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     |> validate_required(@requeridos)
     |> update_change(:codigo_trn, &nil_si_vacio_o_mayusculas/1)
     |> validar_codigo_trn()
+    |> validar_requiere_folio()
     |> validar_encabezado()
     |> unique_constraint(:schema_context_name)
     |> unique_constraint(:codigo_trn, name: :meta_schema_header_codigo_trn_unico_index)
@@ -173,6 +182,17 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
       changeset
       |> validate_required(:codigo_trn, message: "es obligatorio para un catálogo transaccional")
       |> validate_format(:codigo_trn, ~r/^[A-Z0-9]{4}$/, message: "debe ser exactamente 4 letras/dígitos (ej. VENT)")
+    else
+      changeset
+    end
+  end
+
+  # SPEC-SYS-0109202601, design.md §4 — folio siempre viaja junto con
+  # TRN (design.md §1.2): no tiene sentido activarlo en un catálogo que
+  # no es transaccional.
+  defp validar_requiere_folio(changeset) do
+    if get_field(changeset, :requiere_folio) and not get_field(changeset, :schema_es_transaccional) do
+      add_error(changeset, :requiere_folio, "requiere que el catálogo sea transaccional (schema_es_transaccional)")
     else
       changeset
     end
