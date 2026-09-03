@@ -53,7 +53,6 @@ defmodule MetadataAppWeb.Sysadmin.AmbientesLiveTest do
           "host" => "10.0.0.5",
           "ssh_usuario" => "deploy",
           "ssh_password_nuevo" => "secreto123",
-          "docker_servicio" => "metadata_stack_app",
           "imagen_docker" => "ghcr.io/prettycore-13/metadata_stack:latest"
         }
       })
