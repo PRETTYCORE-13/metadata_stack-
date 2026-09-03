@@ -1,0 +1,3 @@
+defmodule MetadataApp.MetaBusinessProcess.Catalogos.PtyFolioPerfiles do
+  use MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico, tabla: "pty_folio_perfiles", campos: [{:documento, :integer, %{opcional: false, tabla_referenciada: "meta_schema_header", valor_default: nil}}, {:sucursal, :integer, %{opcional: true, tabla_referenciada: "meta_schema_branch", valor_default: nil}}, {:serie, :string, %{formato: nil, longitud: 4, longitud_minima: nil, opcional: false, transformacion: nil, valor_default: nil}}, {:numero_inicial, :integer, %{maximo: nil, minimo: nil, opcional: true, valor_default: "1"}}, {:pty_folio_perfiles_subtipos_transaccion, :integer, %{opcional: true, tabla_referenciada: "pty_subtipos_transaccion", valor_default: nil}}], alcance: true
+end

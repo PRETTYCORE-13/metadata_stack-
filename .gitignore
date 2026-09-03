@@ -51,6 +51,39 @@ priv/repo/catalogos/demo100_*.json
 priv/repo/migrations/*pty_*.exs
 priv/repo/migrations/*demo100_*.exs
 
+# Excepción real (2026-09-03): esta migración crea `pty_folio_perfiles`,
+# la tabla que `folio_historial` (motor de Folios, siempre migrada, NO
+# gitignorada) referencia con una FK dura -- sin comitearla, cualquier
+# pipeline que migre desde una base vacía (CI, un servidor nuevo) revienta
+# con "relation pty_folio_perfiles does not exist". A diferencia del resto
+# de los catálogos pty_* (generados/publicados por su cuenta vía el Motor
+# BC), esta tabla es dependencia dura de infraestructura core del motor,
+# no un catálogo opcional -- necesita vivir siempre en el repo. Mismo
+# motivo para las 2 migraciones de datos que registran pty_folio_perfiles
+# y pty_subtipos_transaccion como catálogos reales (meta_schema_header/
+# detail/estados/transiciones) -- normalmente eso lo arma `mix meta.import`
+# desde un .meta.json, pero el de estos dos NUNCA se comiteó (ni siquiera
+# existe localmente para pty_folio_perfiles) porque también cae bajo la
+# convención pty_* de más arriba. Sin el registro, IdentificadoresTransaccionales
+# (que sí es motor siempre-presente) no encuentra el catálogo
+# (Ecto.NoResultsError) en un checkout limpio, aunque las tablas físicas
+# ya existan.
+!priv/repo/migrations/20260901201800_crear_pty_subtipos_transaccion.exs
+!priv/repo/migrations/20260901201822_crear_pty_folio_perfiles_20260901201822.exs
+!priv/repo/migrations/20260903000000_registrar_catalogo_pty_folio_perfiles.exs
+!priv/repo/migrations/20260903000100_registrar_catalogo_pty_subtipos_transaccion.exs
+
+# `mix gen.catalogos` (ver lib/mix/tasks/gen.catalogos.ex) decide si un
+# catálogo YA está generado mirando si su archivo existe en este
+# directorio -- no si la tabla ya existe en Postgres. Sin comitear estos
+# dos .ex, un checkout limpio (donde la tabla YA existe por las
+# migraciones de arriba) hace que gen.catalogos intente generarla de
+# nuevo -- "la relación pty_folio_perfiles ya existe", encontrado real
+# reproduciendo el fix completo en un checkout simulado. Contenido
+# idéntico al que ya genera el motor -- nunca se edita a mano.
+!lib/metadata_app/meta_business_process/catalogos/pty_folio_perfiles.ex
+!lib/metadata_app/meta_business_process/catalogos/pty_subtipos_transaccion.ex
+
 # Bundle temporal de MetaPublicador.armar_bundle/1 -- se arma en la raíz
 # del proyecto (nombre relativo, para que tar nunca vea una ruta con
 # letra de unidad en Windows) y se mueve al temp dir del sistema al
