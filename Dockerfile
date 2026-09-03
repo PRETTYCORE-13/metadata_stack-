@@ -50,6 +50,18 @@ RUN mkdir config
 # to ensure any relevant config change will trigger the dependencies
 # to be re-compiled.
 COPY config/config.exs config/${MIX_ENV}.exs config/
+
+# CFLAGS: el NIF `enacl` (ver libsodium-dev más arriba) está sin
+# mantenimiento desde 2021 -- su C source (enacl_nif.c) pasa
+# `enacl_crypto_unload` (firma de "upgrade") donde ERL_NIF_INIT espera la
+# firma de "unload", algo que gcc siempre toleró como warning y que las
+# versiones más nuevas (las que trae este builder) tratan como error por
+# default. -Wno-error=incompatible-pointer-types lo vuelve a dejar como
+# warning nada más -- no cambia el binario resultante, solo el gate del
+# compilador. Encontrado real 2026-09-03: bloqueaba TODO el build de
+# producción (falla igual en OTP 27 y 28, no es un tema de versión de
+# OTP -- confirmado local con Docker antes de este fix).
+ENV CFLAGS="-Wno-error=incompatible-pointer-types"
 RUN mix deps.compile
 
 RUN mix assets.setup
