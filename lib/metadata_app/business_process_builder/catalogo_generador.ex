@@ -159,15 +159,24 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   No-op si el catálogo no tiene header en ESTE ambiente (ej. nunca se creó
   en producción) -- mismo criterio defensivo que `contar_filas_si_existe/1`.
   """
+  # obtener_id_por_nombre/1 (no obtener_header_por_nombre/1) y
+  # eliminar_header_por_id/1 (no eliminar_header/1) a propósito -- esta
+  # función corre desde migraciones (ej. un "eliminar_pty_*" restaurado
+  # de un bundle publicado), que pueden ejecutarse en producción en un
+  # punto de la historia donde una columna de meta_schema_header agregada
+  # DESPUÉS todavía no existe físicamente. Cargar el %Header{} completo
+  # (select *) revienta con "column does not exist" en ese caso, aunque
+  # acá solo haga falta el id -- bug real (2026-09-03), ver el comentario
+  # de obtener_id_por_nombre/1.
   def purgar_metadata_por_nombre(schema_context_name) do
-    case MetaSchemaContext.obtener_header_por_nombre(schema_context_name) do
+    case MetaSchemaContext.obtener_id_por_nombre(schema_context_name) do
       nil ->
         :ok
 
-      header ->
-        MetaEstadosAdmin.purgar_historial(header.id)
-        MetadataApp.TRN.purgar_registro_central(header.id)
-        :ok = MetaSchemaContext.eliminar_header(header)
+      id ->
+        MetaEstadosAdmin.purgar_historial(id)
+        MetadataApp.TRN.purgar_registro_central(id)
+        :ok = MetaSchemaContext.eliminar_header_por_id(id)
         :ok
     end
   end

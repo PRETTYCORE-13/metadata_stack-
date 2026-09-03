@@ -477,6 +477,22 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     )
   end
 
+  # Igual que obtener_header_por_nombre/1 pero trae SOLO el id -- para
+  # código que una migración vieja puede llamar en producción
+  # (CatalogoGenerador.purgar_metadata_por_nombre/1). obtener_header_por_nombre/1
+  # hace `select *` (todas las columnas del struct %Header{} ACTUAL, el
+  # de este deploy) — si esa migración corre en un punto de la historia
+  # donde una columna agregada DESPUÉS (ej. requiere_folio, 20260901170000)
+  # todavía no existe físicamente, revienta con "column does not exist"
+  # aunque no necesite esa columna para nada. Bug real (2026-09-03): un
+  # `eliminar_pty_*` restaurado de un bundle publicado reventó el deploy
+  # completo en k3s por esto mismo.
+  def obtener_id_por_nombre(schema_context_name) do
+    Repo.one(
+      from h in Header, where: h.schema_context_name == ^schema_context_name and is_nil(h.delete_guid), select: h.id
+    )
+  end
+
   @doc """
   Igual que `obtener_header_por_nombre/1` pero para varios nombres a la
   vez (`WHERE schema_context_name IN (...)`) — una sola query en vez de
@@ -1751,6 +1767,18 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
       {:ok, _header} -> :ok
       {:error, changeset} -> {:error, changeset}
     end
+  end
+
+  # Igual que eliminar_header/1 pero por id, sin necesitar el struct
+  # %Header{} completo cargado -- ver obtener_id_por_nombre/1 (mismo
+  # motivo: código que una migración vieja puede llamar en producción, no
+  # puede depender de que TODAS las columnas actuales existan todavía).
+  # Repo.delete_all/2 no arma un SELECT primero, así que nunca choca con
+  # eso -- el ON DELETE CASCADE de la FK hace el resto (Detalles/Estados/
+  # Transiciones/Reglas), igual que eliminar_header/1.
+  def eliminar_header_por_id(id) do
+    Repo.delete_all(from h in Header, where: h.id == ^id)
+    :ok
   end
 
   def serializar_detalle(%Detail{} = detalle) do
