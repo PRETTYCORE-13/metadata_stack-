@@ -19,6 +19,27 @@ defmodule MetadataApp.PanelControl.Github do
   -- es la única forma de fijar el bit de ejecución (100755) en
   `rel/overlays/bin/{server,migrate}` directo en el commit, sin pasar por
   ningún checkout local. Ver `PlantillasPhoenix` para el porqué de esto.
+  Confirmado real contra un repo de prueba (2026-09-03): el commit queda
+  con el modo correcto (100755 en los overlays, 100644 en el resto) y
+  GitHub lo acepta tal cual.
+
+  ## Credencial de GitHub -- scopes necesarios
+
+  La `Credencial` con `sistema_externo: "github"` necesita un Personal
+  Access Token con acceso a escribir contenido, workflows y secrets, y a
+  LEER el estado de las corridas de Actions (`esperar_run/5`).
+
+  - **PAT classic**: scopes `repo` + `workflow` alcanzan (el scope `repo`
+    ya cubre lectura de Actions).
+  - **PAT fine-grained**: OJO, hacen falta CUATRO permisos de repositorio,
+    no tres -- `Contents` (Read and write), `Workflows` (Read and write),
+    `Secrets` (Read and write), Y **`Actions` (Read)** -- este último es
+    fácil de olvidar porque no es obvio que `esperar_run/5` (un simple
+    `GET .../actions/runs`) necesite un permiso aparte de `Workflows`.
+    Sin él, todo el resto funciona (scaffold commiteado bien, secrets
+    cargados bien) y solo falla el último paso con HTTP 403 "Resource not
+    accessible by personal access token" -- encontrado real armando un
+    PAT fine-grained sin `Actions`, 2026-09-03.
   """
 
   require Logger
