@@ -64,6 +64,17 @@ jobs:
           key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
           restore-keys: ${{ runner.os }}-mix-
 
+      # libsodium-dev: MIX_ENV=prod (ver arriba) trae `enacl` a la jugada
+      # (only: :prod en mix.exs, NIF que usa MetadataApp.PanelControl.Github
+      # -- "Generar imagen desde repositorio"), y ese NIF compila contra
+      # libsodium del sistema vía rebar3/pc. El Dockerfile ya lo instala en
+      # su etapa builder (por eso ci.yml nunca lo sufre, compila adentro de
+      # Docker) -- acá compilamos directo en el runner bare, sin Docker
+      # todavía, así que hace falta instalarlo a mano. Encontrado real
+      # (2026-09-03): "fatal error: sodium.h: No such file or directory".
+      - name: Instalar libsodium (dependencia nativa de enacl/cloak)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsodium-dev
+
       # Compila (con el .ex del bundle ya en su lugar) ANTES de armar la
       # imagen -- si el BC no compila, el job falla acá, nunca llega a
       # publicar ni desplegar nada roto.
