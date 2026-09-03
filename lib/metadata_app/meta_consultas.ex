@@ -30,7 +30,7 @@ defmodule MetadataApp.MetaConsultas do
   alias MetadataApp.Autenticacion
   alias MetadataApp.Autenticacion.Scope
   alias MetadataApp.Permissions
-  alias MetadataApp.FiltrosDefault
+  alias MetadataApp.ParametrosCatalogo
 
   # Campos de control del CATALOGO_BASE ofrecibles como columnas
   # adicionales (2026-08-25) -- a diferencia de un campo de negocio
@@ -114,73 +114,36 @@ defmodule MetadataApp.MetaConsultas do
             "tipo" => nil,
             "orden" => offset + indice,
             "visible" => true,
-            "totalizar" => false
+            "agregacion_activa" => false,
+            "bloqueado" => false
           }
       end)
 
     actualizar_campos(consulta, sin_control ++ nuevos_control)
   end
 
-  # Tipos elegibles para "Parámetro" estándar (ver moduledoc de
-  # MetaSchema.Consulta) -- boolean/enum quedan afuera a propósito, siguen
-  # filtrables solo por el panel de filtros genérico de columna (mecanismo
-  # aparte, sin cambios). Elegible por TIPO no alcanza para ser parámetro:
-  # hace falta además que el admin lo marque explícito con
-  # "es_parametro" => true en Get Config -- no toda columna visible de
-  # tipo elegible es automáticamente un parámetro (corrección 2026-08-27,
-  # ver moduledoc de MetaSchema.Consulta).
-  @tipos_elegibles_fecha ~w(date)
-  @tipos_elegibles_string ~w(string referencia)
-  @tipos_elegibles_numerico ~w(integer decimal)
-
-  # branch/inventory_location/sales_unit (campos de CONTROL, ver
-  # sincronizar_campos_control/2) SIEMPRE se guardan con "tipo" => nil
-  # (no vienen de meta_schema_detail, no hay de dónde copiar un tipo real)
-  # -- pero conceptualmente SON una referencia (apuntan a
-  # meta_schema_branch/inventory_location/sales_unit, mismo espíritu que
-  # cualquier campo "referencia" de negocio). Bug real (2026-08-27):
-  # sin esto, tipo_efectivo/1 devolvía nil para los tres y quedaban
-  # afuera de toda elegibilidad de Parámetro -- "inventory_location y
-  # sales_unit no permiten filtrar" (branch tenía el mismo problema).
-  # "id"/"estado"/"trn" quedan afuera a propósito: no son conceptualmente
-  # una referencia.
-  @controles_referencia ~w(branch inventory_location sales_unit)
-  @catalogo_control_sistema %{
-    "branch" => "meta_schema_branch",
-    "inventory_location" => "meta_schema_inventory_location",
-    "sales_unit" => "meta_schema_sales_unit"
-  }
-
-  @doc """
-  Tipo REAL a efectos de elegibilidad/UI de Parámetro estándar -- igual a
-  `campo["tipo"]` salvo para los 3 campos de control que son
-  conceptualmente una referencia (ver comentario arriba), donde siempre
-  se resuelve a "referencia" aunque el campo tenga `"tipo" => nil`
-  guardado (se resuelve en LECTURA, no hace falta backfill de datos ya
-  guardados).
-  """
-  def tipo_efectivo(%{"control" => true, "campo" => clave}) when clave in @controles_referencia, do: "referencia"
-  def tipo_efectivo(campo), do: campo["tipo"]
-
-  @doc "Catálogo de sistema real de un campo de control branch/inventory_location/sales_unit -- nil para cualquier otra clave."
-  def catalogo_control_sistema(clave), do: Map.get(@catalogo_control_sistema, clave)
-
-  @doc "true si el tipo de campo es elegible para Parámetro estándar (cualquiera de los tres grupos)."
-  def tipo_elegible?(tipo), do: tipo in @tipos_elegibles_fecha ++ @tipos_elegibles_string ++ @tipos_elegibles_numerico
+  # SPEC-SYS-0209202601 (2026-09-02): el motor de "Parámetro" estándar
+  # (tipos elegibles, tipo_efectivo/1, campos_elegibles_*/1,
+  # aplicar_filtros_*_estandar) se mudó a `MetadataApp.ParametrosCatalogo`
+  # -- ya no atado a `%Consulta{}`, lo comparte un catálogo (BC) normal.
+  # Acá queda como adaptador fino: `consulta.campos` ya viene en el shape
+  # que ese módulo espera, sin transformar nada.
+  defdelegate tipo_efectivo(campo), to: ParametrosCatalogo
+  defdelegate catalogo_control_sistema(clave), to: ParametrosCatalogo
+  defdelegate tipo_elegible?(tipo), to: ParametrosCatalogo
+  defdelegate clave_campo(campo), to: ParametrosCatalogo
 
   @doc """
   Campos VISIBLES, de tipo fecha Y marcados "es_parametro" => true por el
   admin en Get Config -- ver moduledoc de `MetaSchema.Consulta`.
   """
-  def campos_elegibles_fecha(%Consulta{campos: campos}), do: Enum.filter(campos, &campo_parametro?(&1, @tipos_elegibles_fecha))
+  def campos_elegibles_fecha(%Consulta{campos: campos}), do: ParametrosCatalogo.campos_elegibles_fecha(campos)
 
   @doc "Campos VISIBLES, de tipo string/referencia Y marcados \"es_parametro\" => true."
-  def campos_elegibles_string(%Consulta{campos: campos}), do: Enum.filter(campos, &campo_parametro?(&1, @tipos_elegibles_string))
+  def campos_elegibles_string(%Consulta{campos: campos}), do: ParametrosCatalogo.campos_elegibles_string(campos)
 
   @doc "Campos VISIBLES, de tipo integer/decimal Y marcados \"es_parametro\" => true."
-  def campos_elegibles_numerico(%Consulta{campos: campos}), do: Enum.filter(campos, &campo_parametro?(&1, @tipos_elegibles_numerico))
-
-  defp campo_parametro?(campo, tipos), do: campo["visible"] == true and tipo_efectivo(campo) in tipos and campo["es_parametro"] == true
+  def campos_elegibles_numerico(%Consulta{campos: campos}), do: ParametrosCatalogo.campos_elegibles_numerico(campos)
 
   def obtener_por_header_id(header_id) do
     Repo.get_by(Consulta, meta_schema_header_id: header_id)
@@ -229,7 +192,8 @@ defmodule MetadataApp.MetaConsultas do
         "tipo" => Map.get(props, "tipo", "string"),
         "orden" => offset + indice,
         "visible" => true,
-        "totalizar" => false
+        "agregacion_activa" => false,
+        "bloqueado" => false
       }
     end)
   end
@@ -466,17 +430,6 @@ defmodule MetadataApp.MetaConsultas do
   end
 
   @doc """
-  Clave bajo la que aparece un campo en `filas`/`totales` — namespaced
-  con el catálogo dueño para que dos tablas con un campo del mismo
-  nombre (ej. ambas con "nombre") nunca choquen en el mapa resultado.
-  Con `String.to_atom/1` (no `to_existing_atom`) porque es un átomo
-  compuesto que nunca existió antes — seguro acá porque "catalogo"/
-  "campo" siempre vienen de catálogos ya dados de alta por un admin
-  (universo acotado), nunca de texto libre de un usuario final.
-  """
-  def clave_campo(%{"catalogo" => catalogo, "campo" => campo}), do: String.to_atom("#{catalogo}__#{campo}")
-
-  @doc """
   Nombres de campo utilizables como llave de unión para un catálogo: sus
   campos configurados en `meta_schema_detail` más `"id"` (que siempre
   existe pero nunca es un detail configurable, así que no aparece solo
@@ -561,7 +514,7 @@ defmodule MetadataApp.MetaConsultas do
 
     base
     |> select(^select_dinamico(visibles, alias_por_catalogo))
-    |> aplicar_filtros_parametro_estandar(consulta, alias_por_catalogo, overrides_dummy(consulta))
+    |> ParametrosCatalogo.aplicar_filtros_parametro_estandar(consulta.campos, alias_por_catalogo, overrides_dummy(consulta))
   end
 
   # Un valor placeholder POR CAMPO elegible que todavía no tiene default
@@ -633,114 +586,17 @@ defmodule MetadataApp.MetaConsultas do
     base
     |> aplicar_filtros(filtros, consulta.campos, alias_por_catalogo)
     |> aplicar_busqueda(busqueda, consulta.campos, alias_por_catalogo)
-    |> aplicar_filtros_parametro_estandar(consulta, alias_por_catalogo, overrides_parametro)
+    |> ParametrosCatalogo.aplicar_filtros_parametro_estandar(consulta.campos, alias_por_catalogo, overrides_parametro)
     |> aplicar_alcance_de_datos(consulta, alias_por_catalogo, scope)
     |> Repo.aggregate(:count)
   end
 
-  # Los tres tipos de Parámetro estándar (ver moduledoc de MetaSchema.Consulta)
-  # se resuelven directo contra SU catalogo+campo, nunca vía el mapa
-  # `filtros` genérico (que busca por nombre crudo y sería ambiguo si dos
-  # tablas unidas repiten nombre de columna -- ej. dos "fecha_registro").
-  #
-  # `overrides_parametro` -- `%{clave_campo_string => %{...}}` (ver
-  # `clave_campo/1`, mismo shape que el "defaults"/"acotado"/"tipo_filtro"
-  # de ese campo) -- para cuando el USUARIO FINAL cambia un parámetro
-  # desde la barra de la Consulta (CatalogoLive), sin pisar el default
-  # que configuró el admin en Get Config: vive SOLO en el socket de esa
-  # sesión (nunca se persiste acá), `%{}` es "usar el default de todos
-  # los campos tal cual están guardados".
-  defp aplicar_filtros_parametro_estandar(query, %Consulta{} = consulta, alias_por_catalogo, overrides_parametro) do
-    query
-    |> aplicar_filtros_fecha_estandar(consulta, alias_por_catalogo, overrides_parametro)
-    |> aplicar_filtros_string_estandar(consulta, alias_por_catalogo, overrides_parametro)
-    |> aplicar_filtros_numerico_estandar(consulta, alias_por_catalogo, overrides_parametro)
-  end
-
-  defp campo_efectivo(campo, overrides_parametro) do
-    override = Map.get(overrides_parametro, to_string(clave_campo(campo)), %{})
-    defaults = Map.merge(Map.get(campo, "defaults", %{}) || %{}, Map.get(override, "defaults", %{}) || %{})
-    campo |> Map.merge(Map.drop(override, ["defaults"])) |> Map.put("defaults", defaults)
-  end
-
-  # Fecha ACOTADA: rango de dos formulas/preset (mes_actual/mes_a_fecha/
-  # anio_actual/formula). Fecha SIN acotar: un solo valor -- se resuelve
-  # pasando el MISMO texto como "desde" y "hasta" de FiltrosDefault.
-  # rango_fecha/3 (que ya sabe devolver el día completo cuando ambos
-  # extremos caen en el mismo día), así el motor de fórmulas no necesita
-  # saber nada de "acotado".
-  defp aplicar_filtros_fecha_estandar(query, consulta, alias_por_catalogo, overrides_parametro) do
-    consulta
-    |> campos_elegibles_fecha()
-    |> Enum.reduce(query, fn campo, acc ->
-      efectivo = campo_efectivo(campo, overrides_parametro)
-      defaults = efectivo["defaults"] || %{}
-      valor_hasta = if efectivo["acotado"], do: defaults["valor_hasta"], else: defaults["valor"]
-
-      case FiltrosDefault.rango_fecha(defaults["modo"], defaults["valor"], valor_hasta) do
-        nil -> acc
-        {desde, hasta} -> aplicar_filtro_estandar(acc, alias_por_catalogo, campo, {:entre, {desde, hasta}})
-      end
-    end)
-  end
-
-  # "like"/"igual" -- un valor (puede ser texto libre o elegido de un
-  # catálogo referenciado, el filtro compara la misma columna real de
-  # texto en los dos casos, ver moduledoc). "multi" -- lista de valores,
-  # comportamiento OR (IN). "valor"/"valores" vacíos -- no acota (mismo
-  # criterio que Fecha "Sin acotar" ya no existe, pero acá SÍ hay
-  # escape: el admin puede dejar el default en blanco a propósito).
-  defp aplicar_filtros_string_estandar(query, consulta, alias_por_catalogo, overrides_parametro) do
-    consulta
-    |> campos_elegibles_string()
-    |> Enum.reduce(query, fn campo, acc ->
-      efectivo = campo_efectivo(campo, overrides_parametro)
-      defaults = efectivo["defaults"] || %{}
-
-      case efectivo["tipo_filtro"] || "like" do
-        "like" -> aplicar_si_presente(acc, alias_por_catalogo, campo, defaults["valor"], :ilike)
-        "igual" -> aplicar_si_presente(acc, alias_por_catalogo, campo, defaults["valor"], :igual)
-        "multi" -> aplicar_filtro_estandar(acc, alias_por_catalogo, campo, {:in, defaults["valores"] || []})
-        _ -> acc
-      end
-    end)
-  end
-
-  # "entre" -- dos límites (Acotado=CHECK). "mayor"/"menor"/"igual"/
-  # "diferente" -- un límite (comparación estricta: "mayor que" es `>`,
-  # no `>=` -- "igual" ya cubre el caso de límite inclusivo). "valor"
-  # vacío -- no acota.
-  defp aplicar_filtros_numerico_estandar(query, consulta, alias_por_catalogo, overrides_parametro) do
-    consulta
-    |> campos_elegibles_numerico()
-    |> Enum.reduce(query, fn campo, acc ->
-      efectivo = campo_efectivo(campo, overrides_parametro)
-      defaults = efectivo["defaults"] || %{}
-      tipo_filtro = if efectivo["acotado"], do: "entre", else: efectivo["tipo_filtro"] || "mayor"
-
-      case tipo_filtro do
-        "entre" -> aplicar_filtro_estandar(acc, alias_por_catalogo, campo, {:entre, {defaults["valor"], defaults["valor_hasta"]}})
-        "mayor" -> aplicar_si_presente(acc, alias_por_catalogo, campo, defaults["valor"], :mayor)
-        "menor" -> aplicar_si_presente(acc, alias_por_catalogo, campo, defaults["valor"], :menor)
-        "igual" -> aplicar_si_presente(acc, alias_por_catalogo, campo, defaults["valor"], :igual)
-        "diferente" -> aplicar_si_presente(acc, alias_por_catalogo, campo, defaults["valor"], :diferente)
-        _ -> acc
-      end
-    end)
-  end
-
-  defp aplicar_si_presente(query, _alias_por_catalogo, _campo, valor, _operador) when valor in [nil, ""], do: query
-
-  defp aplicar_si_presente(query, alias_por_catalogo, campo, valor, :ilike), do: aplicar_filtro_estandar(query, alias_por_catalogo, campo, {:ilike, valor})
-  defp aplicar_si_presente(query, alias_por_catalogo, campo, valor, :igual), do: aplicar_filtro_estandar(query, alias_por_catalogo, campo, valor)
-  defp aplicar_si_presente(query, alias_por_catalogo, campo, valor, :mayor), do: aplicar_filtro_estandar(query, alias_por_catalogo, campo, {:mayor, valor})
-  defp aplicar_si_presente(query, alias_por_catalogo, campo, valor, :menor), do: aplicar_filtro_estandar(query, alias_por_catalogo, campo, {:menor, valor})
-  defp aplicar_si_presente(query, alias_por_catalogo, campo, valor, :diferente), do: aplicar_filtro_estandar(query, alias_por_catalogo, campo, {:diferente, valor})
-
-  defp aplicar_filtro_estandar(query, alias_por_catalogo, campo, valor) do
-    alias_tabla = Map.fetch!(alias_por_catalogo, campo["catalogo"])
-    aplicar_filtro(query, alias_tabla, campo_atom_real(campo), valor)
-  end
+  # SPEC-SYS-0209202601: el motor de "Parámetro" estándar (los tres tipos,
+  # campo_efectivo/2, aplicar_filtro_estandar/4, aplicar_si_presente/5, el
+  # aplicar_filtro/4 de bajo nivel) se mudó entero a
+  # `MetadataApp.ParametrosCatalogo.aplicar_filtros_parametro_estandar/4`
+  # -- acá solo quedan los call sites, ver `contar/5`/`ejecutar/6`/
+  # `query_representativa_con_filtros/1`.
 
   @doc """
   `props` (shape `CatalogoGenerico.opciones_referencia/3`) para armar las
@@ -756,48 +612,7 @@ defmodule MetadataApp.MetaConsultas do
   `MetaSchemaContext.catalogo_sistema/1`. `nil` si no se puede resolver
   nada (campo/catálogo raro, no debería pasar desde la UI).
   """
-  def props_referenciado(%{"control" => true, "campo" => clave}, _detalles_por_catalogo) do
-    case catalogo_control_sistema(clave) do
-      nil -> nil
-      catalogo -> completar_campos_acompanamiento_sistema(%{"catalogo" => catalogo})
-    end
-  end
-
-  def props_referenciado(%{"tipo" => "referencia"} = campo, detalles_por_catalogo) do
-    detalles_por_catalogo
-    |> Map.get(campo["catalogo"], [])
-    |> Enum.find(&(&1.schema_context_field == campo["campo"]))
-    |> case do
-      nil -> nil
-      detalle -> completar_campos_acompanamiento_sistema(detalle.schema_context_properties)
-    end
-  end
-
-  def props_referenciado(%{"catalogo_referenciado" => catalogo}, _detalles_por_catalogo) when is_binary(catalogo) and catalogo != "" do
-    completar_campos_acompanamiento_sistema(%{"catalogo" => catalogo})
-  end
-
-  def props_referenciado(_campo, _detalles_por_catalogo), do: nil
-
-  # Los 3 catálogos de sistema (branch/inventory_location/sales_unit) no
-  # tienen fila en meta_schema_detail de la que copiar
-  # "campos_acompanamiento" -- sin esto, CatalogoGenerico.opciones_referencia/3
-  # etiqueta cada opción "#<id>" en vez del nombre real. Un campo
-  # "referencia" de negocio cualquiera SÍ puede traer su propio
-  # "campos_acompanamiento" ya configurado por el admin -- ese se
-  # respeta tal cual, nunca se pisa.
-  defp completar_campos_acompanamiento_sistema(%{"catalogo" => catalogo} = props) do
-    if Map.get(props, "campos_acompanamiento") in [nil, []] do
-      case MetaSchemaContext.catalogo_sistema(catalogo) do
-        %{campo_nombre: campo_nombre} -> Map.put(props, "campos_acompanamiento", [campo_nombre])
-        nil -> props
-      end
-    else
-      props
-    end
-  end
-
-  defp completar_campos_acompanamiento_sistema(props), do: props
+  defdelegate props_referenciado(campo, detalles_por_catalogo), to: ParametrosCatalogo
 
   # Alcance de Datos (mismo modelo que CatalogoGenerico.aplicar_alcance_de_datos/3,
   # ver ahí el moduledoc de Scope para el diseño completo) -- SOLO contra
@@ -887,10 +702,12 @@ defmodule MetadataApp.MetaConsultas do
   `scope` -- ver `contar/5`. `overrides_parametro` -- ver
   `aplicar_filtros_parametro_estandar/4`.
 
-  `totales` — suma de cada campo marcado `"totalizar": true`, sobre TODAS
-  las filas que matchean filtros/búsqueda/alcance (no solo la página
-  actual). Las claves de `filas`/`totales` son las de `clave_campo/1`, no
-  el nombre de campo crudo.
+  `totales` — suma de cada campo marcado `"agregacion_activa": true`
+  (SPEC-SYS-0209202601 -- mismo shape rico que ya usaba un catálogo BC,
+  antes un simple `"totalizar": true`), sobre TODAS las filas que
+  matchean filtros/búsqueda/alcance (no solo la página actual). Las
+  claves de `filas`/`totales` son las de `clave_campo/1`, no el nombre
+  de campo crudo.
   """
   def ejecutar(%Consulta{} = consulta, scope, filtros \\ %{}, opciones \\ [], busqueda \\ nil, overrides_parametro \\ %{}) do
     {base, alias_por_catalogo} = construir_query_base(consulta)
@@ -900,7 +717,7 @@ defmodule MetadataApp.MetaConsultas do
       base
       |> aplicar_filtros(filtros, consulta.campos, alias_por_catalogo)
       |> aplicar_busqueda(busqueda, consulta.campos, alias_por_catalogo)
-      |> aplicar_filtros_parametro_estandar(consulta, alias_por_catalogo, overrides_parametro)
+      |> ParametrosCatalogo.aplicar_filtros_parametro_estandar(consulta.campos, alias_por_catalogo, overrides_parametro)
       |> aplicar_alcance_de_datos(consulta, alias_por_catalogo, scope)
 
     total_filas = Repo.aggregate(query, :count)
@@ -1135,7 +952,7 @@ defmodule MetadataApp.MetaConsultas do
   end
 
   defp totales(query_filtrada, %Consulta{campos: campos}, alias_por_catalogo) do
-    campos_a_sumar = Enum.filter(campos, &(Map.get(&1, "totalizar") == true))
+    campos_a_sumar = Enum.filter(campos, &(Map.get(&1, "agregacion_activa") == true))
 
     case campos_a_sumar do
       [] ->

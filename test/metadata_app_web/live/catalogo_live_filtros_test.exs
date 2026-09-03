@@ -1,4 +1,12 @@
 defmodule MetadataAppWeb.CatalogoLiveFiltrosTest do
+  @moduledoc """
+  SPEC-SYS-0209202601, Grupo F -- el ícono de embudo por columna
+  (panel_filtros/1, fila_filtro_columna/1) se retiró. Un catálogo (BC)
+  normal filtra desde panel_parametros/1 -- el mismo widget "Parámetros"
+  que ya tenía una Consulta Ecto -- y solo para columnas que el admin
+  marcó "es_parametro" en Get Config (bc_motor_live.ex). Sin ese flag,
+  el panel ni aparece (ver campos_param_de_catalogo/2 en catalogo_live.ex).
+  """
   use MetadataAppWeb.ConnCase, async: true
 
   import Phoenix.LiveViewTest
@@ -6,14 +14,11 @@ defmodule MetadataAppWeb.CatalogoLiveFiltrosTest do
 
   alias MetadataApp.Repo
   alias MetadataApp.Autenticacion.{Empresa, Rol, UsuarioEmpresa}
+  alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaBusinessProcess.Catalogos.MetaFixtureCliente
+  alias MetadataApp.MetaConsultas
   alias MetadataApp.Permissions
 
-  # Catálogo normal (schema_context_type: 1, NO una consulta) — el panel
-  # de "Filtros" del usuario final (ver panel_filtros/1 en catalogo_live.ex),
-  # no el de agregaciones de bc_motor_live.ex. Mismo criterio de permisos
-  # que catalogo_live_consulta_test.exs: administrador ve cualquier
-  # permiso YA REGISTRADO, así que alcanza con registrar el "leer" acá.
   setup %{conn: conn} do
     usuario = usuario_fixture()
 
@@ -45,17 +50,40 @@ defmodule MetadataAppWeb.CatalogoLiveFiltrosTest do
     |> Repo.insert!()
   end
 
-  test "un filtro de texto acota la tabla a solo las filas que matchean", %{conn: conn} do
+  defp detalle(header, campo) do
+    Repo.get_by!(MetadataApp.BusinessProcessBuilder.MetaSchema.Detail, meta_schema_header_id: header.id, schema_context_field: campo)
+  end
+
+  # Mismo criterio que bc_motor_live_parametros_test.exs -- "visible" es
+  # requisito para poder ser Parámetro (misma barrera que Consultas).
+  defp marcar_parametro(header, campo, props_extra \\ %{}) do
+    d = detalle(header, campo)
+    props = Map.merge(d.schema_context_properties, Map.merge(%{"visible" => true, "es_parametro" => true}, props_extra))
+    {:ok, _} = MetaSchemaContext.actualizar_detalle(d, %{"schema_context_properties" => props})
+  end
+
+  defp clave(header, campo), do: to_string(MetaConsultas.clave_campo(%{"catalogo" => header.schema_context_name, "campo" => campo}))
+
+  test "un campo NO marcado Parámetro no ofrece ningún widget de filtro al usuario final", %{conn: conn} do
+    {:ok, _view, html} = live(conn, "/__test__/fixture-cliente")
+
+    refute html =~ "Parámetros"
+  end
+
+  test "un campo marcado Parámetro filtra la tabla contra datos reales", %{conn: conn} do
+    header = MetaSchemaContext.obtener_header_por_nombre("meta_fixture_cliente")
+    marcar_parametro(header, "meta_fixture_cliente_nombre")
+
     sufijo = unique()
 
-    ana_torres =
+    ana =
       fixture_cliente(%{
         meta_fixture_cliente_nombre: "Ana Torres #{sufijo}",
         meta_fixture_cliente_edad: 30,
         meta_fixture_cliente_venta: Decimal.new("1")
       })
 
-    beto_torres =
+    beto =
       fixture_cliente(%{
         meta_fixture_cliente_nombre: "Beto Torres #{sufijo}",
         meta_fixture_cliente_edad: 30,
@@ -64,135 +92,79 @@ defmodule MetadataAppWeb.CatalogoLiveFiltrosTest do
 
     {:ok, view, html} = live(conn, "/__test__/fixture-cliente")
 
+    assert html =~ "Parámetros"
     # Sin filtro/búsqueda todavía, la tabla no trae datos (carga diferida,
     # ver datos_solicitados?/1) — ninguno de los dos nombres aparece.
-    refute html =~ ana_torres.meta_fixture_cliente_nombre
-    refute html =~ beto_torres.meta_fixture_cliente_nombre
+    refute html =~ ana.meta_fixture_cliente_nombre
+    refute html =~ beto.meta_fixture_cliente_nombre
 
-    html_filtrado = render_change(view, "filtrar", %{"filtros" => %{"meta_fixture_cliente_nombre" => "Ana Torres #{sufijo}"}})
+    html_filtrado =
+      render_change(view, "cambiar_override_valor", %{"valor" => %{clave(header, "meta_fixture_cliente_nombre") => "Ana Torres #{sufijo}"}})
 
-    assert html_filtrado =~ ana_torres.meta_fixture_cliente_nombre
-    refute html_filtrado =~ beto_torres.meta_fixture_cliente_nombre
+    assert html_filtrado =~ ana.meta_fixture_cliente_nombre
+    refute html_filtrado =~ beto.meta_fixture_cliente_nombre
   end
 
-  test "dos filtros aplicados juntos se combinan con AND, no solo el último", %{conn: conn} do
-    sufijo = unique()
+  test "dos parámetros (texto + rango numérico) combinan con AND, no solo el último", %{conn: conn} do
+    header = MetaSchemaContext.obtener_header_por_nombre("meta_fixture_cliente")
+    marcar_parametro(header, "meta_fixture_cliente_nombre")
+    marcar_parametro(header, "meta_fixture_cliente_edad", %{"acotado" => true})
 
-    # Matchea AMBOS filtros (nombre "Ana<sufijo>" + edad 25-35).
+    sufijo = unique()
+    clave_nombre = clave(header, "meta_fixture_cliente_nombre")
+    clave_edad = clave(header, "meta_fixture_cliente_edad")
+
+    # Matchea AMBOS parámetros (nombre "Ana<sufijo>" + edad 25-35).
     coincide =
-      fixture_cliente(%{
-        meta_fixture_cliente_nombre: "Ana#{sufijo} Uno",
-        meta_fixture_cliente_edad: 30,
-        meta_fixture_cliente_venta: Decimal.new("1")
-      })
+      fixture_cliente(%{meta_fixture_cliente_nombre: "Ana#{sufijo} Uno", meta_fixture_cliente_edad: 30, meta_fixture_cliente_venta: Decimal.new("1")})
 
     # Nombre matchea, edad NO (45 fuera de 25-35).
     nombre_ok_edad_no =
-      fixture_cliente(%{
-        meta_fixture_cliente_nombre: "Ana#{sufijo} Dos",
-        meta_fixture_cliente_edad: 45,
-        meta_fixture_cliente_venta: Decimal.new("1")
-      })
+      fixture_cliente(%{meta_fixture_cliente_nombre: "Ana#{sufijo} Dos", meta_fixture_cliente_edad: 45, meta_fixture_cliente_venta: Decimal.new("1")})
 
     # Edad matchea, nombre NO ("Beto" no contiene "Ana").
     edad_ok_nombre_no =
-      fixture_cliente(%{
-        meta_fixture_cliente_nombre: "Beto#{sufijo} Tres",
-        meta_fixture_cliente_edad: 30,
-        meta_fixture_cliente_venta: Decimal.new("1")
-      })
+      fixture_cliente(%{meta_fixture_cliente_nombre: "Beto#{sufijo} Tres", meta_fixture_cliente_edad: 30, meta_fixture_cliente_venta: Decimal.new("1")})
 
     {:ok, view, _html} = live(conn, "/__test__/fixture-cliente")
 
-    html =
-      render_change(view, "filtrar", %{
-        "filtros" => %{
-          "meta_fixture_cliente_nombre" => "Ana#{sufijo}",
-          "meta_fixture_cliente_edad_desde" => "25",
-          "meta_fixture_cliente_edad_hasta" => "35"
-        }
-      })
+    render_change(view, "cambiar_override_valor", %{"valor" => %{clave_nombre => "Ana#{sufijo}"}})
+    render_change(view, "cambiar_override_valor", %{"valor" => %{clave_edad => "25"}})
+    html = render_change(view, "cambiar_override_valor_hasta", %{"valor_hasta" => %{clave_edad => "35"}})
 
     assert html =~ coincide.meta_fixture_cliente_nombre
     refute html =~ nombre_ok_edad_no.meta_fixture_cliente_nombre
     refute html =~ edad_ok_nombre_no.meta_fixture_cliente_nombre
-
-    # El botón "Filtros" refleja las DOS columnas con valor puesto (ver
-    # contar_filtros_activos/1) — no solo la última que se haya tocado.
-    assert html =~ ~r/bg-purple-600 text-white text-\[10px\] font-bold">\s*2\s*</
   end
 
-  test "vaciar un campo del filtro lo saca de la cuenta pero el otro sigue activo", %{conn: conn} do
+  test "limpiar el override de un parámetro lo saca del filtro pero el otro sigue activo", %{conn: conn} do
+    header = MetaSchemaContext.obtener_header_por_nombre("meta_fixture_cliente")
+    marcar_parametro(header, "meta_fixture_cliente_nombre")
+    marcar_parametro(header, "meta_fixture_cliente_edad", %{"acotado" => true})
+
     sufijo = unique()
+    clave_nombre = clave(header, "meta_fixture_cliente_nombre")
+    clave_edad = clave(header, "meta_fixture_cliente_edad")
 
     solo_nombre =
-      fixture_cliente(%{
-        meta_fixture_cliente_nombre: "Carla Ruiz #{sufijo}",
-        meta_fixture_cliente_edad: 99,
-        meta_fixture_cliente_venta: Decimal.new("1")
-      })
+      fixture_cliente(%{meta_fixture_cliente_nombre: "Carla Ruiz #{sufijo}", meta_fixture_cliente_edad: 99, meta_fixture_cliente_venta: Decimal.new("1")})
 
     otro =
-      fixture_cliente(%{
-        meta_fixture_cliente_nombre: "Dana Ruiz #{sufijo}",
-        meta_fixture_cliente_edad: 1,
-        meta_fixture_cliente_venta: Decimal.new("1")
-      })
+      fixture_cliente(%{meta_fixture_cliente_nombre: "Dana Ruiz #{sufijo}", meta_fixture_cliente_edad: 1, meta_fixture_cliente_venta: Decimal.new("1")})
 
     {:ok, view, _html} = live(conn, "/__test__/fixture-cliente")
 
-    render_change(view, "filtrar", %{
-      "filtros" => %{
-        "meta_fixture_cliente_nombre" => "Ruiz #{sufijo}",
-        "meta_fixture_cliente_edad_desde" => "90",
-        "meta_fixture_cliente_edad_hasta" => "100"
-      }
-    })
+    render_change(view, "cambiar_override_valor", %{"valor" => %{clave_nombre => "Ruiz #{sufijo}"}})
+    render_change(view, "cambiar_override_valor", %{"valor" => %{clave_edad => "90"}})
+    render_change(view, "cambiar_override_valor_hasta", %{"valor_hasta" => %{clave_edad => "100"}})
 
-    # Se borra SOLO el filtro de edad (deja el desde/hasta vacíos) — el de
+    # Se borra SOLO el rango de edad (vuelve a texto vacío) — el de
     # nombre queda intacto y sigue acotando la tabla.
     html =
-      render_change(view, "filtrar", %{
-        "filtros" => %{
-          "meta_fixture_cliente_nombre" => "Ruiz #{sufijo}",
-          "meta_fixture_cliente_edad_desde" => "",
-          "meta_fixture_cliente_edad_hasta" => ""
-        }
-      })
+      render_change(view, "cambiar_override_valor", %{"valor" => %{clave_edad => ""}})
+      |> then(fn _ -> render_change(view, "cambiar_override_valor_hasta", %{"valor_hasta" => %{clave_edad => ""}}) end)
 
     assert html =~ solo_nombre.meta_fixture_cliente_nombre
     assert html =~ otro.meta_fixture_cliente_nombre
-    assert html =~ ~r/bg-purple-600 text-white text-\[10px\] font-bold">\s*1\s*</
-  end
-
-  test "un campo activo en el popover Y en la fila fija del thead a la vez no se pisan entre sí", %{conn: conn} do
-    sufijo = unique()
-
-    ana = fixture_cliente(%{meta_fixture_cliente_nombre: "Ana#{sufijo}", meta_fixture_cliente_edad: 30, meta_fixture_cliente_venta: Decimal.new("1")})
-    beto = fixture_cliente(%{meta_fixture_cliente_nombre: "Beto#{sufijo}", meta_fixture_cliente_edad: 30, meta_fixture_cliente_venta: Decimal.new("1")})
-
-    {:ok, view, _html} = live(conn, "/__test__/fixture-cliente")
-
-    # La fila fija del thead (name "filtros[...]") ya trae un valor de una
-    # vuelta anterior — simula que el campo ya estaba filtrado antes de
-    # que el usuario lo agregara TAMBIÉN al popover ("Agregar filtro").
-    render_change(view, "filtrar", %{"filtros" => %{"meta_fixture_cliente_nombre" => "Beto#{sufijo}"}})
-
-    # El usuario cambia el valor DESDE EL POPOVER (name distinto,
-    # "filtros_popover[...]") — el submit manda las DOS copias del campo
-    # (la vieja "Beto..." de la fila fija + la nueva "Ana..." del popover)
-    # junto con "_target" apuntando a la que realmente cambió. Sin el
-    # merge por _target (merge_filtros_por_target/1), "filtros" pisaría a
-    # "filtros_popover" y el filtro seguiría buscando "Beto" — bug real
-    # que rompía el filtro de cualquier campo agregado a las dos UIs.
-    html =
-      render_change(view, "filtrar", %{
-        "filtros" => %{"meta_fixture_cliente_nombre" => "Beto#{sufijo}"},
-        "filtros_popover" => %{"meta_fixture_cliente_nombre" => "Ana#{sufijo}"},
-        "_target" => ["filtros_popover", "meta_fixture_cliente_nombre"]
-      })
-
-    assert html =~ ana.meta_fixture_cliente_nombre
-    refute html =~ beto.meta_fixture_cliente_nombre
   end
 end

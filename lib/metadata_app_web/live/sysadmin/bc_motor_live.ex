@@ -13,15 +13,19 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador, CatalogoGenerico}
   alias MetadataApp.MetaEstadosAdmin
+  alias MetadataApp.Repo
   alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaReglasCodigo
   alias MetadataApp.Permissions
+  alias MetadataApp.FiltrosDefault
+  alias MetadataApp.ParametrosCatalogo
   alias MetadataAppWeb.AdminNav
   alias MetadataAppWeb.Sysadmin.FieldDesignerComponents
   alias MetadataAppWeb.AuditoriaContexto
 
   import MetadataAppWeb.FiltrosDefaultComponents, only: [panel_filtros_default: 1]
   import MetadataAppWeb.EncabezadoBcComponents, only: [panel_encabezado: 1]
+  import MetadataAppWeb.ParametrosCatalogoComponents, only: [celdas_parametro: 1, toggle_es_parametro: 1, celda_totales: 1, identificador: 1]
 
   alias MetadataAppWeb.EncabezadoBcComponents
 
@@ -86,6 +90,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       |> assign(:catalogos_referenciables, MetaSchemaContext.listar_catalogos_referenciables())
       |> assign(:reglas_mensajes, %{"pre" => nil, "post" => nil})
       |> assign(:compilar_disponible, MetaReglasCodigo.compilar_disponible?())
+      |> assign(:selector_orden_resultados_abierto, false)
+      |> assign(:modos_fecha_rango, FiltrosDefault.modos_fecha_rango())
+      |> assign(:modos_fecha_simple, FiltrosDefault.modos_fecha_simple())
 
     {:ok, cargar_motor(socket)}
   end
@@ -118,8 +125,15 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     # detalle, no de cuál.
     maestro = header.schema_encabezado_id && MetaSchemaContext.obtener_header!(header.schema_encabezado_id)
 
+    campos = MetaSchemaContext.listar_detalles(header.schema_context_name)
+
     socket
-    |> assign(:campos, MetaSchemaContext.listar_detalles(header.schema_context_name))
+    |> assign(:campos, campos)
+    # SPEC-SYS-0209202601: ParametrosCatalogo.props_referenciado/2 busca acá
+    # (por "catalogo" == dueño del campo referencia) para leer
+    # "campos_acompanamiento" del campo real -- un BC solo tiene su propio
+    # catálogo, a diferencia de una Consulta con N tablas unidas.
+    |> assign(:detalles_por_catalogo, %{header.schema_context_name => campos})
     |> assign(:longitudes_columnas, CatalogoGenerador.info_longitud_columnas(header.schema_context_name))
     |> assign(:catalogos_detalle, catalogos_detalle)
     |> assign(:es_detalle?, header.schema_encabezado_id != nil)
@@ -731,29 +745,42 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # schema con @campos_requeridos actualizado (ver comentario en
   # CatalogoGenerador.generar/1 sobre por qué siempre regenera, no solo
   # cuando hay columnas nuevas).
+  # Atómico -- mismo motivo/criterio que actualizar_campo_y_regenerar/4 (ver
+  # su comentario): metadata + columna física + schema regenerado, los 3
+  # pasos o ninguno. Antes eran 3 pasos sueltos con su propio "se guardó,
+  # pero..." por cada uno que podía fallar — cualquiera de esos "pero"
+  # dejaba el catálogo en un estado a medias hasta que alguien lo pisara
+  # en otra pantalla.
   def handle_event("cambiar_obligatorio_campo", %{"campo" => campo, "obligatorio" => valor}, socket) do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
     props = Map.put(detalle.schema_context_properties, "opcional", valor != "true")
+    tabla = socket.assigns.header.schema_context_name
 
-    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
-      {:ok, _detalle} ->
-        tabla = socket.assigns.header.schema_context_name
-        resultado_columna = CatalogoGenerador.sincronizar_nulabilidad_campo(tabla, campo)
-
-        case CatalogoGenerador.generar(tabla) do
-          {:ok, _resultado} ->
-            socket = cargar_motor(socket)
-
-            case resultado_columna do
-              :ok -> {:noreply, socket}
-              {:error, motivo} -> {:noreply, put_flash(socket, :error, "La obligatoriedad se guardó, pero la columna física no se pudo actualizar: #{motivo}")}
+    resultado =
+      Repo.transaction(fn ->
+        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+          {:ok, detalle_actualizado} ->
+            with :ok <- CatalogoGenerador.sincronizar_nulabilidad_campo(tabla, campo),
+                 {:ok, _resultado} <- CatalogoGenerador.generar(tabla) do
+              detalle_actualizado
+            else
+              {:error, motivo} -> Repo.rollback({:generar, motivo})
             end
 
-          {:error, motivo} ->
-            {:noreply, socket |> cargar_motor() |> put_flash(:error, "Se guardó, pero no se pudo regenerar el catálogo: #{motivo}")}
+          {:error, changeset} ->
+            Repo.rollback({:changeset, changeset})
         end
+      end)
 
-      {:error, _changeset} ->
+    case resultado do
+      {:ok, _detalle_actualizado} ->
+        {:noreply, cargar_motor(socket)}
+
+      {:error, {:generar, motivo}} ->
+        {:noreply,
+         put_flash(socket, :error, "No se pudo actualizar la obligatoriedad, no se guardó ningún cambio: #{motivo}")}
+
+      {:error, {:changeset, _changeset}} ->
         {:noreply, put_flash(socket, :error, "No se pudo actualizar la obligatoriedad de \"#{campo}\".")}
     end
   end
@@ -830,97 +857,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     {:noreply, cargar_motor(socket)}
   end
 
-  # --- Filtros: qué campos calculan un total en la fila de Resumen del -------
-  # catálogo — sección aparte de la tabla de campos de arriba, "cantidad"
-  # (el campo real, con su Nombre/Etiqueta/Tipo/Visible) no tiene nada que
-  # ver con esto: acá solo se elige, de la lista de campos del catálogo,
-  # cuáles participan del Resumen. Arranca sin "Mín. Máx." (se prende
-  # aparte, en la tabla de abajo, y solo para numéricos — no tiene sentido
-  # pedirlo acá antes de saber si el campo elegido siquiera calificaría).
-  # Guardado inmediato, mismo criterio que cambiar_mostrar_en_tabla/2 arriba.
-  def handle_event("agregar_filtro_resumen", %{"campo" => campo}, socket) do
-    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
-
-    props =
-      detalle.schema_context_properties
-      |> Map.put("agregacion_activa", true)
-      |> Map.put("minmax_recomendado", false)
-
-    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
-      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
-      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo agregar el filtro de \"#{campo}\".")}
-    end
-  end
-
-  def handle_event("quitar_filtro_resumen", %{"campo" => campo}, socket) do
-    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
-
-    props =
-      detalle.schema_context_properties
-      |> Map.put("agregacion_activa", false)
-      |> Map.put("minmax_recomendado", false)
-      |> Map.put("total_pagina_activo", false)
-      |> Map.put("total_general_activo", false)
-      |> Map.delete("filtro_default_valor")
-      |> Map.delete("filtro_default_desde")
-      |> Map.delete("filtro_default_hasta")
-      |> Map.delete("filtro_default_bloqueado")
-
-    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
-      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
-      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo quitar el filtro de \"#{campo}\".")}
-    end
-  end
-
-  # "Valor por default" de un filtro ya agregado (campos boolean/string/
-  # enum, un solo valor) — CatalogoLive lo lee para pre-llenar Y aplicar
-  # ese filtro apenas se abre la tabla (ver filtros_default_desde_columnas/1
-  # ahí), no solo mostrar la fila vacía. "" borra el default (vuelve a
-  # "Cualquiera"/sin acotar).
-  def handle_event("cambiar_filtro_valor_default", %{"campo" => campo, "valor" => valor}, socket) do
-    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
-    props = Map.put(detalle.schema_context_properties, "filtro_default_valor", valor)
-
-    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
-      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
-      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar el valor por default de \"#{campo}\".")}
-    end
-  end
-
-  # Mismo concepto que arriba pero para integer/decimal/date (rango
-  # desde/hasta, dos inputs independientes) — "extremo" es "desde" o
-  # "hasta".
-  def handle_event("cambiar_filtro_rango_default", %{"campo" => campo, "extremo" => extremo, "valor" => valor}, socket) do
-    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
-    clave = if extremo == "desde", do: "filtro_default_desde", else: "filtro_default_hasta"
-    props = Map.put(detalle.schema_context_properties, clave, valor)
-
-    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
-      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
-      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar el valor por default de \"#{campo}\".")}
-    end
-  end
-
-  # "Bloqueado" — el usuario final ve este filtro ya puesto pero no puede
-  # tocarlo ni quitarlo (ver panel_filtros/1 y filtro_columna/1 en
-  # catalogo_live.ex, que lo dibujan como texto fijo + input oculto en vez
-  # del control editable normal) — solo puede AGREGAR otros filtros
-  # aparte. No afecta nada acá del lado del admin: "Quitar" de esta tabla
-  # sigue funcionando igual, esto es una restricción para el usuario
-  # final, no para quien configura el catálogo.
-  def handle_event("cambiar_filtro_bloqueado", %{"campo" => campo, "bloqueado" => bloqueado}, socket) do
-    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
-    props = Map.put(detalle.schema_context_properties, "filtro_default_bloqueado", bloqueado == "true")
-
-    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
-      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
-      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar el bloqueo de \"#{campo}\".")}
-    end
-  end
-
-  # "Todos por default" — a diferencia de los filtros de arriba (calculan
-  # Suma/Promedio/Conteo sobre un CAMPO), esto es a nivel de todo el
-  # catálogo: si está prendido, CatalogoLive trae todos los registros y
+  # "Todos por default" — a diferencia de Totales/Parámetro (que se
+  # eligen por CAMPO, ver celda_totales/celdas_parametro en la grilla de
+  # arriba), esto es a nivel de todo el catálogo: si está prendido,
+  # CatalogoLive trae todos los registros y
   # columnas apenas se abre la tabla, sin esperar que el usuario final
   # aplique un filtro/búsqueda primero (ver datos_solicitados?/1 en
   # catalogo_live.ex). Independiente de "Filtro de fecha" — apagar este no
@@ -1085,6 +1025,217 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       {:error, %Ecto.Changeset{} = changeset} ->
         {:noreply, put_flash(socket, :error, "No se pudo actualizar los campos de control: #{resumen_errores(changeset)}")}
     end
+  end
+
+  # --- Get View: Parámetro estándar por columna (SPEC-SYS-0209202601) ----
+  # Mismos nombres de evento y misma semántica que consulta_editor_live.ex
+  # (ver moduledoc de MetaSchema.Consulta para el shape completo de
+  # "acotado"/"tipo_filtro"/"origen"/"catalogo_referenciado"/"defaults")
+  # -- acá persisten contra meta_schema_detail (un campo = una fila) en
+  # vez de un array jsonb entero. `id` que llega en los eventos de
+  # celdas_parametro/toggle_es_parametro es el compuesto
+  # "catalogo::campo" de ParametrosCatalogoComponents.identificador/1 --
+  # como un BC solo tiene UN catálogo, alcanza con la mitad después de
+  # "::" para encontrar la fila real.
+  defp campo_desde_id(id), do: id |> String.split("::") |> List.last()
+
+  defp actualizar_props_por_id(socket, id, fun, mensaje_ok) do
+    campo_nombre = campo_desde_id(id)
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo_nombre))
+    props = fun.(detalle.schema_context_properties || %{})
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket) |> put_flash(:info, mensaje_ok)}
+      {:error, changeset} -> {:noreply, put_flash(socket, :error, "No se pudo guardar \"#{campo_nombre}\": #{resumen_errores(changeset)}")}
+    end
+  end
+
+  # Segunda barrera server-side (la primera es el botón disabled en
+  # toggle_es_parametro/1) -- solo bloquea PRENDER Parámetro en una
+  # columna no visible; apagarlo siempre se permite.
+  def handle_event("cambiar_es_parametro", %{"campo" => id}, socket) do
+    actualizar_props_por_id(
+      socket,
+      id,
+      fn props ->
+        if props["visible"] == true or props["es_parametro"] == true do
+          props |> Map.put("es_parametro", !props["es_parametro"]) |> Map.put("acotado", false) |> Map.put("tipo_filtro", nil) |> Map.put("origen", nil) |> Map.put("catalogo_referenciado", nil) |> Map.put("defaults", %{})
+        else
+          props
+        end
+      end,
+      "Parámetro actualizado."
+    )
+  end
+
+  def handle_event("cambiar_acotado", %{"campo" => id}, socket) do
+    actualizar_props_por_id(socket, id, fn props -> props |> Map.put("acotado", !props["acotado"]) |> Map.put("tipo_filtro", nil) |> Map.put("defaults", %{}) end, "Acotado actualizado.")
+  end
+
+  def handle_event("cambiar_tipo_filtro", %{"tipo_filtro" => mapa}, socket) do
+    {id, tipo_filtro} = mapa |> Map.to_list() |> List.first()
+
+    actualizar_props_por_id(
+      socket,
+      id,
+      fn props ->
+        origen =
+          case tipo_filtro do
+            "like" -> "libre"
+            "multi" -> "referenciado"
+            _ -> props["origen"] || "libre"
+          end
+
+        props |> Map.put("tipo_filtro", tipo_filtro) |> Map.put("origen", origen) |> Map.put("defaults", %{})
+      end,
+      "Tipo de filtro actualizado."
+    )
+  end
+
+  def handle_event("cambiar_origen", %{"campo" => id, "origen" => origen}, socket) do
+    actualizar_props_por_id(socket, id, fn props -> props |> Map.put("origen", origen) |> Map.put("defaults", %{}) |> Map.put("catalogo_referenciado", nil) end, "Origen actualizado.")
+  end
+
+  def handle_event("cambiar_catalogo_referenciado", %{"catalogo_referenciado" => mapa}, socket) do
+    {id, catalogo} = mapa |> Map.to_list() |> List.first()
+    actualizar_props_por_id(socket, id, fn props -> props |> Map.put("catalogo_referenciado", nil_si_vacio(catalogo)) |> Map.put("defaults", %{}) end, "Catálogo referenciado actualizado.")
+  end
+
+  def handle_event("cambiar_defaults_modo", %{"campo" => id, "modo" => modo}, socket) do
+    actualizar_props_por_id(socket, id, fn props -> Map.put(props, "defaults", %{"modo" => nil_si_vacio(modo)}) end, "Default actualizado.")
+  end
+
+  def handle_event("cambiar_defaults_valor", %{"defaults_valor" => mapa}, socket) do
+    {id, valor} = mapa |> Map.to_list() |> List.first()
+    actualizar_props_por_id(socket, id, fn props -> Map.put(props, "defaults", Map.put(props["defaults"] || %{}, "valor", nil_si_vacio(valor))) end, "Default actualizado.")
+  end
+
+  def handle_event("cambiar_defaults_valor_hasta", %{"defaults_valor_hasta" => mapa}, socket) do
+    {id, valor} = mapa |> Map.to_list() |> List.first()
+    actualizar_props_por_id(socket, id, fn props -> Map.put(props, "defaults", Map.put(props["defaults"] || %{}, "valor_hasta", nil_si_vacio(valor))) end, "Default actualizado.")
+  end
+
+  # Lookup multi (SelectorMultipleComponents) -- todos los checkboxes
+  # comparten el mismo `name`, el cliente manda SIEMPRE la lista completa
+  # de los que están tildados.
+  def handle_event("cambiar_defaults_valores", %{"valores" => mapa}, socket) do
+    {id, valores} = mapa |> Map.to_list() |> List.first()
+    valores = valores |> List.wrap() |> Enum.reject(&(&1 in [nil, ""]))
+    actualizar_props_por_id(socket, id, fn props -> Map.put(props, "defaults", Map.put(props["defaults"] || %{}, "valores", valores)) end, "Default actualizado.")
+  end
+
+  def handle_event("marcar_defaults_todos", %{"campo" => id, "valores" => csv}, socket) do
+    valores = csv |> String.split(",") |> Enum.reject(&(&1 == ""))
+    actualizar_props_por_id(socket, id, fn props -> Map.put(props, "defaults", Map.put(props["defaults"] || %{}, "valores", valores)) end, "Default actualizado.")
+  end
+
+  def handle_event("limpiar_defaults_valores", %{"campo" => id}, socket) do
+    actualizar_props_por_id(socket, id, fn props -> Map.put(props, "defaults", Map.put(props["defaults"] || %{}, "valores", [])) end, "Default actualizado.")
+  end
+
+  # --- Get View: Totales (unificados en la grilla, SPEC-SYS-0209202601) --
+  # cambiar_minmax_recomendado/cambiar_total_pagina/cambiar_total_general/
+  # cambiar_mascara YA existen más abajo (venían de panel_filtros_resumen,
+  # retirado) y funcionan sin cambios -- celda_totales/1 les manda el
+  # mismo `campo` (nombre de campo PLANO, no el compuesto de
+  # ParametrosCatalogoComponents.identificador/1, celda_totales es
+  # nuestro, no heredado de Consultas). Solo hace falta el toggle
+  # principal, que antes era "agregar/quitar de una lista" y ahora es un
+  # botón directo.
+  # Defensa en profundidad: celda_totales/1 solo pinta el toggle para
+  # integer/decimal, pero un evento mandado a mano no pasa por esa
+  # validación de render -- se revalida acá server-side.
+  def handle_event("cambiar_agregacion_activa", %{"campo" => campo, "activo" => activo}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+
+    if detalle.schema_context_properties["tipo"] in ~w(integer decimal) do
+      props = Map.put(detalle.schema_context_properties, "agregacion_activa", activo == "true")
+
+      case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+        {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+        {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar Totales de \"#{campo}\".")}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # --- Get View: "Orden de resultados" -----------------------------------
+  # Mismo mecanismo que Consultas (consulta_editor_live.ex,
+  # Header.orden_resultados acá en vez de Consulta.orden_por) -- lista
+  # ordenada por prioridad, guardada entera en cada cambio (agregar/
+  # quitar/mover/cambiar dirección), nunca un id propio por entrada. Solo
+  # campos de NEGOCIO son elegibles (a diferencia de Consultas, que
+  # también ofrece campos de control) -- alcance explícito, ver
+  # header.ex.
+
+  def handle_event("abrir_selector_orden_resultados", _params, socket) do
+    {:noreply, assign(socket, :selector_orden_resultados_abierto, true)}
+  end
+
+  def handle_event("cerrar_selector_orden_resultados", _params, socket) do
+    {:noreply, assign(socket, :selector_orden_resultados_abierto, false)}
+  end
+
+  def handle_event("agregar_orden_resultados", %{"campo" => campo}, socket) do
+    nuevo_orden = socket.assigns.header.orden_resultados ++ [%{"campo" => campo, "direccion" => "asc"}]
+    guardar_orden_resultados(socket, nuevo_orden, close: true)
+  end
+
+  def handle_event("quitar_orden_resultados", %{"indice" => indice}, socket) do
+    nuevo_orden = List.delete_at(socket.assigns.header.orden_resultados, String.to_integer(indice))
+    guardar_orden_resultados(socket, nuevo_orden, close: false)
+  end
+
+  def handle_event("cambiar_direccion_orden_resultados", %{"indice" => indice}, socket) do
+    nuevo_orden =
+      List.update_at(socket.assigns.header.orden_resultados, String.to_integer(indice), fn entrada ->
+        Map.put(entrada, "direccion", if(entrada["direccion"] == "desc", do: "asc", else: "desc"))
+      end)
+
+    guardar_orden_resultados(socket, nuevo_orden, close: false)
+  end
+
+  def handle_event("mover_orden_resultados", %{"indice" => indice, "direccion" => direccion}, socket) do
+    indice = String.to_integer(indice)
+    orden_actual = socket.assigns.header.orden_resultados
+    destino = if direccion == "arriba", do: indice - 1, else: indice + 1
+
+    if destino >= 0 and destino < length(orden_actual) do
+      actual = Enum.at(orden_actual, indice)
+      vecino = Enum.at(orden_actual, destino)
+      nuevo_orden = orden_actual |> List.replace_at(indice, vecino) |> List.replace_at(destino, actual)
+      guardar_orden_resultados(socket, nuevo_orden, close: false)
+    else
+      {:noreply, socket}
+    end
+  end
+
+  defp guardar_orden_resultados(socket, nuevo_orden, opciones) do
+    case MetaSchemaContext.actualizar_header(socket.assigns.header, %{"orden_resultados" => nuevo_orden}) do
+      {:ok, header} ->
+        socket = assign(socket, :header, header)
+        socket = if opciones[:close], do: assign(socket, :selector_orden_resultados_abierto, false), else: socket
+        {:noreply, socket}
+
+      {:error, changeset} ->
+        {:noreply, put_flash(socket, :error, "No se pudo guardar el orden: #{resumen_errores(changeset)}")}
+    end
+  end
+
+  defp etiqueta_orden_resultados(campos, campo) do
+    case Enum.find(campos, &(&1.schema_context_field == campo)) do
+      nil -> "#{campo} (columna eliminada)"
+      detalle -> Map.get(detalle.schema_context_properties, "etiqueta") || campo
+    end
+  end
+
+  defp campos_disponibles_orden_resultados(campos, orden_resultados) do
+    ya_usados = MapSet.new(orden_resultados, & &1["campo"])
+
+    campos
+    |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
+    |> Enum.reject(&MapSet.member?(ya_usados, &1.schema_context_field))
   end
 
   # --- Estados: agregar/editar/eliminar ----------------------------------------
@@ -1522,40 +1673,78 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # (a diferencia de cambiar_etiqueta_campo/2 y similares) porque tocan
   # @campos_requeridos/@campos_meta del schema compilado, no solo un dato
   # de presentación.
+  #
+  # Atómico (2026-09-03, bug real: pty_gasto_diariov2_valor_pagado quedó en
+  # meta_schema_detail sin que el .ex se regenerara -- binary_to_existing_atom
+  # reventó semanas después, en un lugar sin relación, la primera vez que
+  # alguien tocó ese catálogo). Antes esto guardaba el detalle y RECIÉN
+  # DESPUÉS intentaba regenerar — si esto último fallaba (o el proceso
+  # moría en el medio), quedaba guardado un campo que el motor no conoce,
+  # sin nada que lo detecte hasta que alguien pise esa grieta en otra
+  # pantalla. Envolver los dos pasos en la misma transacción de Postgres
+  # hace que "se guardó pero no se pudo regenerar" ya no sea un estado
+  # posible: si CatalogoGenerador.generar/1 falla, Repo.rollback/1 deshace
+  # también el cambio de metadata.
   defp actualizar_campo_y_regenerar(socket, detalle, props, etiqueta_error) do
-    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
-      {:ok, _detalle} ->
-        case CatalogoGenerador.generar(socket.assigns.header.schema_context_name) do
-          {:ok, _resultado} ->
-            {:noreply, cargar_motor(socket)}
+    resultado =
+      Repo.transaction(fn ->
+        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+          {:ok, detalle_actualizado} ->
+            case CatalogoGenerador.generar(socket.assigns.header.schema_context_name) do
+              {:ok, _resultado} -> detalle_actualizado
+              {:error, motivo} -> Repo.rollback({:generar, motivo})
+            end
 
-          {:error, motivo} ->
-            {:noreply,
-             socket |> cargar_motor() |> put_flash(:error, "Se guardó, pero no se pudo regenerar el catálogo: #{motivo}")}
+          {:error, changeset} ->
+            Repo.rollback({:changeset, changeset})
         end
+      end)
 
-      {:error, _changeset} ->
+    case resultado do
+      {:ok, _detalle_actualizado} ->
+        {:noreply, cargar_motor(socket)}
+
+      {:error, {:generar, motivo}} ->
+        {:noreply,
+         put_flash(socket, :error, "No se pudo regenerar el catálogo, no se guardó ningún cambio: #{motivo}")}
+
+      {:error, {:changeset, _changeset}} ->
         {:noreply, put_flash(socket, :error, "No se pudo actualizar #{etiqueta_error} de \"#{detalle.schema_context_field}\".")}
     end
   end
 
+  # Atómico -- mismo motivo/criterio que actualizar_campo_y_regenerar/4 de
+  # abajo (ver su comentario): si CatalogoGenerador.generar/1 falla, el
+  # campo recién agregado a meta_schema_detail se deshace también, nunca
+  # queda a medias.
   defp guardar_campo_y_generar(socket, header, nombre, propiedades) do
-    case MetaSchemaContext.agregar_detalle(header, %{"schema_context_field" => nombre, "schema_context_properties" => propiedades}) do
-      {:ok, _detalle} ->
-        case CatalogoGenerador.generar(header.schema_context_name) do
-          {:ok, _resultado} ->
-            {:noreply,
-             socket
-             |> assign(:campo_form, nil)
-             |> put_flash(:info, "Campo \"#{nombre}\" agregado.")
-             |> cargar_motor()}
+    resultado =
+      Repo.transaction(fn ->
+        case MetaSchemaContext.agregar_detalle(header, %{"schema_context_field" => nombre, "schema_context_properties" => propiedades}) do
+          {:ok, detalle} ->
+            case CatalogoGenerador.generar(header.schema_context_name) do
+              {:ok, _resultado} -> detalle
+              {:error, motivo} -> Repo.rollback({:generar, motivo})
+            end
 
-          {:error, motivo} ->
-            {:noreply,
-             update(socket, :campo_form, &Map.put(&1, "error", "Campo guardado pero no se pudo generar la columna: #{motivo}"))}
+          {:error, changeset} ->
+            Repo.rollback({:changeset, changeset})
         end
+      end)
 
-      {:error, changeset} ->
+    case resultado do
+      {:ok, _detalle} ->
+        {:noreply,
+         socket
+         |> assign(:campo_form, nil)
+         |> put_flash(:info, "Campo \"#{nombre}\" agregado.")
+         |> cargar_motor()}
+
+      {:error, {:generar, motivo}} ->
+        {:noreply,
+         update(socket, :campo_form, &Map.put(&1, "error", "No se pudo generar la columna, nada se guardó: #{motivo}"))}
+
+      {:error, {:changeset, changeset}} ->
         {:noreply, update(socket, :campo_form, &Map.put(&1, "error", resumen_errores(changeset)))}
     end
   end
@@ -1829,8 +2018,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       </div>
 
       <div id="motor-panel-getview" class="hidden">
-        <.panel_get_view campos={@campos} header={@header} />
-        <.panel_filtros_resumen campos={@campos} />
+        <.panel_get_view campos={@campos} header={@header} selector_orden_resultados_abierto={@selector_orden_resultados_abierto}
+          modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple}
+          catalogos_referenciables={@catalogos_referenciables} detalles_por_catalogo={@detalles_por_catalogo} />
         <.panel_campos_default header={@header} />
         <.panel_filtros_default header={@header} />
       </div>
@@ -2322,20 +2512,34 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # filas_get_view/2) — aparte del "orden" propio de cada campo de
   # negocio (schema_context_properties), que sigue intacto para la
   # pestaña Campos/Ficha/contrato de API.
+  attr :selector_orden_resultados_abierto, :boolean, required: true
+  attr :modos_fecha_rango, :list, required: true
+  attr :modos_fecha_simple, :list, required: true
+  attr :catalogos_referenciables, :list, required: true
+  attr :detalles_por_catalogo, :map, required: true
+
   defp panel_get_view(assigns) do
     assigns = assign(assigns, :filas, filas_get_view(assigns.campos, assigns.header))
 
     ~H"""
-    <div class="border border-gray-200 rounded-lg">
-      <div class="px-1.5 ml-2 -mb-2 relative">
-        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-900">VISUALIZACIÓN DE CAMPOS</span>
-      </div>
-      <div class="p-3 pt-4 overflow-x-auto">
+    <div class="flex flex-col gap-4">
+      <%!-- Las secciones de Get Config son acordeones (mismo patrón que
+      consulta_editor_live.ex/panel_get_config -- <details>/<summary>
+      nativo + el hook RecordarSeccion, recuerda open/closed en
+      localStorage por id, sin round-trip al servidor). Empiezan cerradas
+      la primera vez. --%>
+      <details id="get-view-columnas" phx-hook="RecordarSeccion" class="group bg-white border border-gray-200 rounded-2xl shadow-sm">
+        <summary class="px-4 py-3 text-[11px] font-bold uppercase tracking-wide text-gray-400 flex items-center gap-1.5 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+          <span class="material-symbols-outlined text-gray-400 transition-transform group-open:rotate-90" style="font-size: 15px">chevron_right</span>
+          <span class="material-symbols-outlined" style="font-size: 15px">view_column</span>
+          Columnas del GET (orden, visibilidad)
+        </summary>
+
         <%= if @filas == [] do %>
-          <p class="text-gray-400">Este catálogo todavía no tiene campos.</p>
+          <p class="text-gray-400 px-4 pb-4">Este catálogo todavía no tiene campos.</p>
         <% else %>
           <form id="get-view-form" phx-submit="guardar_get_view">
-            <div class="flex items-center justify-between gap-2 mb-2">
+            <div class="flex items-center justify-between gap-2 px-4 mt-2 mb-2">
               <div class="flex gap-2">
                 <button type="button"
                   onclick="this.closest('form').querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true)"
@@ -2349,52 +2553,140 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                   Deseleccionar todos
                 </button>
               </div>
-              <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
-                Guardar Get View
+            </div>
+            <div class="overflow-x-auto">
+              <table class="min-w-full">
+                <thead class="bg-gray-50">
+                  <tr>
+                    <th class="px-1.5 py-1 border-b border-gray-200"></th>
+                    <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
+                    <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Nombre</th>
+                    <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Etiqueta</th>
+                    <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo de dato</th>
+                    <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Vis.</th>
+                    <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tot.</th>
+                    <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Param</th>
+                    <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
+                    <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Acot.</th>
+                    <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Default</th>
+                  </tr>
+                </thead>
+                <tbody id="tabla-get-view-ordenable" phx-hook="ListaOrdenable" data-grupo="campos-catalogo-getview-unificado" data-contenedor-id="columnas-get-view">
+                  <%= for fila <- @filas do %>
+                    <tr id={"getview-row-#{fila.clave}"} class="border-b border-gray-100 hover:bg-gray-50" data-id={fila.clave}>
+                      <td class="px-1.5 py-1 text-gray-300 jal-manija cursor-grab" title="Arrastrar para reordenar">
+                        <span class="material-symbols-outlined" style="font-size: 16px">drag_indicator</span>
+                      </td>
+                      <td class="px-1.5 py-1">
+                        <span class={[
+                          "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide",
+                          if(fila.tipo_columna == :control, do: "bg-gray-100 text-gray-600", else: "bg-purple-50 text-purple-700")
+                        ]}>
+                          {if fila.tipo_columna == :control, do: "Control", else: "Negocio"}
+                        </span>
+                      </td>
+                      <td class="px-1.5 py-1 text-gray-900 font-mono">{fila.clave}</td>
+                      <td class="px-1.5 py-1 text-gray-700">{fila.etiqueta}</td>
+                      <td class="px-1.5 py-1 text-gray-600">{fila.tipo_dato || "—"}</td>
+                      <td class="px-1.5 py-1 text-center">
+                        <input type="checkbox"
+                          name={if fila.flag_header?, do: "visibles_control[]", else: "visibles[]"}
+                          value={fila.clave}
+                          checked={fila.visible?} class="accent-purple-600" />
+                      </td>
+                      <%= if fila.campo_param do %>
+                        <td class="px-1.5 py-1"><.celda_totales campo={fila.campo_param} id={fila.clave} form_id="get-view-form" tipo_efectivo={fila.campo_param["tipo"]} /></td>
+                        <td class="px-1.5 py-1 text-center">
+                          <.toggle_es_parametro :if={ParametrosCatalogo.tipo_elegible?(fila.campo_param["tipo"])} campo={fila.campo_param} id={identificador(fila.campo_param)} />
+                          <span :if={!ParametrosCatalogo.tipo_elegible?(fila.campo_param["tipo"])} class="text-[10px] text-gray-300" title="Tipo sin parámetro estándar">—</span>
+                        </td>
+                        <.celdas_parametro campo={fila.campo_param} tipo_efectivo={fila.campo_param["tipo"]} form_id="get-view-form"
+                          modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple}
+                          catalogos_referenciables={@catalogos_referenciables} detalles_por_catalogo={@detalles_por_catalogo} />
+                      <% else %>
+                        <td class="px-1.5 py-1"><span class="text-gray-300 text-[11px]">—</span></td>
+                        <td colspan="4" class="px-1.5 py-1 text-center text-gray-300 text-[11px]">—</td>
+                      <% end %>
+                    </tr>
+                  <% end %>
+                </tbody>
+              </table>
+            </div>
+            <div class="px-4 py-3 border-t border-gray-200 flex justify-end">
+              <button type="submit" class="px-4 py-2 rounded-lg bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700">
+                Guardar columnas
               </button>
             </div>
-            <table class="min-w-full mb-2">
-              <thead class="bg-gray-50">
-                <tr>
-                  <th class="px-1.5 py-1 border-b border-gray-200"></th>
-                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
-                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Nombre</th>
-                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Etiqueta</th>
-                  <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo de dato</th>
-                  <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Visible al usuario</th>
-                </tr>
-              </thead>
-              <tbody id="tabla-get-view-ordenable" phx-hook="ListaOrdenable" data-grupo="campos-catalogo-getview-unificado" data-contenedor-id="columnas-get-view">
-                <%= for fila <- @filas do %>
-                  <tr id={"getview-row-#{fila.clave}"} class="border-b border-gray-100 hover:bg-gray-50" data-id={fila.clave}>
-                    <td class="px-1.5 py-1 text-gray-300 jal-manija cursor-grab" title="Arrastrar para reordenar">
-                      <span class="material-symbols-outlined" style="font-size: 16px">drag_indicator</span>
-                    </td>
-                    <td class="px-1.5 py-1">
-                      <span class={[
-                        "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide",
-                        if(fila.tipo_columna == :control, do: "bg-gray-100 text-gray-600", else: "bg-purple-50 text-purple-700")
-                      ]}>
-                        {if fila.tipo_columna == :control, do: "Control", else: "Negocio"}
-                      </span>
-                    </td>
-                    <td class="px-1.5 py-1 text-gray-900 font-mono">{fila.clave}</td>
-                    <td class="px-1.5 py-1 text-gray-700">{fila.etiqueta}</td>
-                    <td class="px-1.5 py-1 text-gray-600">{fila.tipo_dato || "—"}</td>
-                    <td class="px-1.5 py-1 text-center">
-                      <input type="checkbox"
-                        name={if fila.flag_header?, do: "visibles_control[]", else: "visibles[]"}
-                        value={fila.clave}
-                        checked={fila.visible?} class="accent-purple-600" />
-                    </td>
-                  </tr>
-                <% end %>
-              </tbody>
-            </table>
           </form>
         <% end %>
-      </div>
+      </details>
+
+      <.panel_orden_resultados campos={@campos} header={@header} selector_abierto={@selector_orden_resultados_abierto} />
     </div>
+    """
+  end
+
+  attr :campos, :list, required: true
+  attr :header, :any, required: true
+  attr :selector_abierto, :boolean, required: true
+
+  # "Orden de resultados" (2026-09-02) -- default de sort para
+  # CatalogoLive, mismo patrón visual y de datos que
+  # consulta_editor_live.ex/panel_get_config (sección "Orden de
+  # resultados" ahí) pero sobre Header.orden_resultados en vez de
+  # Consulta.orden_por, y solo campos de negocio (ver header.ex).
+  defp panel_orden_resultados(assigns) do
+    ~H"""
+    <details id="get-view-orden" phx-hook="RecordarSeccion" class="group bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
+      <summary class="text-[11px] font-bold uppercase tracking-wide text-gray-400 flex items-center gap-1.5 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+        <span class="material-symbols-outlined text-gray-400 transition-transform group-open:rotate-90" style="font-size: 15px">chevron_right</span>
+        <span class="material-symbols-outlined" style="font-size: 15px">sort</span>
+        Orden de resultados
+      </summary>
+      <p class="text-xs text-gray-400 mb-3 mt-2">
+        Define en qué orden salen las filas de este catálogo por default para el usuario final —
+        la primera columna manda, las siguientes desempatan. El usuario lo puede seguir cambiando desde la tabla.
+      </p>
+
+      <ul :if={@header.orden_resultados != []} class="flex flex-col gap-1.5 mb-3">
+        <li :for={{entrada, indice} <- Enum.with_index(@header.orden_resultados)} class="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
+          <span class="text-gray-400 font-mono w-4 text-center flex-shrink-0">{indice + 1}</span>
+          <span class="flex-1 min-w-0 text-gray-900 truncate">{etiqueta_orden_resultados(@campos, entrada["campo"])}</span>
+          <button type="button" phx-click="cambiar_direccion_orden_resultados" phx-value-indice={indice}
+            class={[
+              "px-2 py-0.5 rounded text-[11px] font-semibold flex-shrink-0",
+              entrada["direccion"] == "desc" && "bg-purple-100 text-purple-700",
+              entrada["direccion"] != "desc" && "bg-gray-100 text-gray-600"
+            ]}>
+            {if entrada["direccion"] == "desc", do: "Descendente", else: "Ascendente"}
+          </button>
+          <button type="button" phx-click="mover_orden_resultados" phx-value-indice={indice} phx-value-direccion="arriba" disabled={indice == 0}
+            class="w-6 h-6 rounded border border-gray-300 text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0" title="Subir prioridad">↑</button>
+          <button type="button" phx-click="mover_orden_resultados" phx-value-indice={indice} phx-value-direccion="abajo" disabled={indice == length(@header.orden_resultados) - 1}
+            class="w-6 h-6 rounded border border-gray-300 text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0" title="Bajar prioridad">↓</button>
+          <button type="button" phx-click="quitar_orden_resultados" phx-value-indice={indice}
+            class="w-6 h-6 rounded border border-gray-300 text-red-600 hover:bg-red-50 flex-shrink-0" title="Quitar del orden">×</button>
+        </li>
+      </ul>
+      <p :if={@header.orden_resultados == []} class="text-xs text-gray-400 mb-3">Sin orden configurado — sale por id, el de siempre.</p>
+
+      <div class="relative inline-block">
+        <button type="button" phx-click="abrir_selector_orden_resultados" class="text-purple-700 hover:text-purple-900 font-semibold text-sm">
+          + Agregar columna de orden
+        </button>
+        <%= if @selector_abierto do %>
+          <div class="fixed inset-0 z-40" phx-click="cerrar_selector_orden_resultados"></div>
+          <div class="absolute left-0 bottom-full mb-1 w-64 max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-1">
+            <button :for={c <- campos_disponibles_orden_resultados(@campos, @header.orden_resultados)} type="button"
+              phx-click="agregar_orden_resultados" phx-value-campo={c.schema_context_field}
+              class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-purple-50 hover:text-purple-700 text-xs">
+              {Map.get(c.schema_context_properties, "etiqueta") || c.schema_context_field}
+            </button>
+            <p :if={campos_disponibles_orden_resultados(@campos, @header.orden_resultados) == []} class="px-3 py-2 text-gray-400 text-xs">Ya agregaste todas las columnas.</p>
+          </div>
+        <% end %>
+      </div>
+    </details>
     """
   end
 
@@ -2411,12 +2703,13 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       @campos_control
       |> Enum.reject(&(&1.requiere_alcance? and not header.alcance_habilitado))
       |> Enum.map(fn %{clave: clave, etiqueta: etiqueta, visible_key: visible_key} ->
-        %{clave: clave, etiqueta: etiqueta, tipo_dato: nil, tipo_columna: :control, flag_header?: true, visible?: Map.fetch!(header, visible_key)}
+        %{clave: clave, etiqueta: etiqueta, tipo_dato: nil, tipo_columna: :control, flag_header?: true, visible?: Map.fetch!(header, visible_key), campo_param: nil}
       end)
 
     negocio =
       Enum.map(campos, fn c ->
         props = c.schema_context_properties || %{}
+        es_negocio? = c.schema_context_field != "fecha_registro"
 
         %{
           clave: c.schema_context_field,
@@ -2431,9 +2724,16 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           # NO en un booleano de Header como el resto de campos_control —
           # ver guardar_get_view/2, que por eso decide el name="visibles[]"
           # del checkbox por flag_header?, no por tipo_columna).
-          tipo_columna: if(c.schema_context_field == "fecha_registro", do: :control, else: :negocio),
+          tipo_columna: if(es_negocio?, do: :negocio, else: :control),
           flag_header?: false,
-          visible?: Map.get(props, "visible") == true
+          visible?: Map.get(props, "visible") == true,
+          # SPEC-SYS-0209202601: shape que espera ParametrosCatalogoComponents
+          # (celdas_parametro/celda_totales) -- mismo campo["catalogo"]/
+          # campo["campo"] que ya usa Consulta.campos, armado acá desde
+          # schema_context_properties. nil para "fecha_registro" (es de
+          # control, sin Parámetro/Totales -- mismo alcance que ya tenía
+          # panel_filtros_resumen).
+          campo_param: if(es_negocio?, do: Map.merge(props, %{"catalogo" => header.schema_context_name, "campo" => c.schema_context_field}))
         }
       end)
 
@@ -2454,244 +2754,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # "Filtros": qué campos participan de la fila de Resumen de CatalogoLive
-  # (Suma/Promedio/Conteo si son numéricos, Conteo si no) — sección aparte
-  # de la tabla de Get View de arriba, a propósito: un campo real (ej.
-  # "cantidad", con su Nombre/Etiqueta/Tipo/Visible) es simplemente un
-  # dato de la tabla, no tiene nada que ver con esto. Acá se arma una
-  # lista aparte: de TODOS los campos del catálogo (dinámico, según
-  # existan — "referencia" queda afuera porque en la fila el valor real
-  # es un id de otra tabla, no algo que sumar/contar de forma útil),
-  # cuáles participan del Resumen ("+ Agregar filtro") y cuáles de esos
-  # además muestran mínimo/máximo ("Mín. Máx.") — CatalogoLive decide qué
-  # funciones ofrecer según el tipo real de cada uno (ver celdas_resumen/1
-  # ahí).
-  attr :campos, :list, required: true
-
-  defp panel_filtros_resumen(assigns) do
-    agregables =
-      assigns.campos
-      |> Enum.filter(&(get_in(&1.schema_context_properties, ["tipo"]) != "referencia"))
-      |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
-    activos = Enum.filter(agregables, &(get_in(&1.schema_context_properties, ["agregacion_activa"]) == true))
-    disponibles = agregables -- activos
-
-    assigns =
-      assigns
-      |> assign(:filtros_activos, activos)
-      |> assign(:campos_disponibles, disponibles)
-      |> assign(:hay_numericos?, Enum.any?(activos, &(get_in(&1.schema_context_properties, ["tipo"]) in ["integer", "decimal"])))
-
-    ~H"""
-    <div class="border border-gray-200 rounded-lg mt-4">
-      <div class="px-1.5 ml-2 -mb-2 relative">
-        <span class="bg-white px-1.5 font-bold uppercase tracking-wide text-[11px] text-gray-900">Filtros</span>
-      </div>
-      <div class="p-3 pt-4 overflow-x-auto">
-        <p class="text-gray-500 mb-2">
-          Qué campos calculan un total en la fila de Resumen del catálogo — Suma/Promedio/Conteo si el campo es numérico, Conteo si no. "Mín. Máx.", "Total 25", "Totalizado" y "Máscara" solo aplican a campos numéricos (integer/decimal).
-        </p>
-
-        <%= if @filtros_activos == [] do %>
-          <p class="text-gray-400 mb-2">Todavía no agregaste ningún filtro.</p>
-        <% else %>
-          <table class="min-w-full mb-3">
-            <thead class="bg-gray-50">
-              <tr>
-                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campo</th>
-                <th :if={@hay_numericos?} class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Mín. Máx.</th>
-                <th :if={@hay_numericos?} class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Total 25</th>
-                <th :if={@hay_numericos?} class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Totalizado</th>
-                <th :if={@hay_numericos?} class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Máscara</th>
-                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Valor por default</th>
-                <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Bloqueado</th>
-                <th class="px-1.5 py-1 border-b border-gray-200"></th>
-              </tr>
-            </thead>
-            <tbody>
-              <%= for c <- @filtros_activos do %>
-                <% props = c.schema_context_properties || %{} %>
-                <% recomendado? = Map.get(props, "minmax_recomendado") == true %>
-                <% tipo = Map.get(props, "tipo") %>
-                <% numerico? = tipo in ["integer", "decimal"] %>
-                <% total_pagina? = Map.get(props, "total_pagina_activo") == true %>
-                <% total_general? = Map.get(props, "total_general_activo") == true %>
-                <% bloqueado? = Map.get(props, "filtro_default_bloqueado") == true %>
-                <tr class="border-b border-gray-100 hover:bg-gray-50">
-                  <td class="px-1.5 py-1 text-gray-900">{Map.get(props, "etiqueta") || c.schema_context_field}</td>
-                  <td :if={@hay_numericos?} class="px-1.5 py-1 text-center">
-                    <%= if numerico? do %>
-                      <button type="button"
-                        phx-click="cambiar_minmax_recomendado"
-                        phx-value-campo={c.schema_context_field}
-                        phx-value-recomendado={to_string(!recomendado?)}
-                        title="Mostrar siempre el mínimo y el máximo en la fila de Resumen del catálogo"
-                        class={[
-                          "text-[9px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 transition-colors",
-                          if(recomendado?, do: "bg-green-600 text-white", else: "bg-red-100 text-red-700 hover:bg-red-200")
-                        ]}
-                      >
-                        Mín. Máx.
-                      </button>
-                    <% else %>
-                      <span class="text-gray-300 text-[11px]">—</span>
-                    <% end %>
-                  </td>
-                  <td :if={@hay_numericos?} class="px-1.5 py-1 text-center">
-                    <%= if numerico? do %>
-                      <button type="button"
-                        phx-click="cambiar_total_pagina"
-                        phx-value-campo={c.schema_context_field}
-                        phx-value-activo={to_string(!total_pagina?)}
-                        title="Mostrar la suma de SOLO los registros de la página actual (25) en la fila de Resumen"
-                        class={[
-                          "text-[9px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 transition-colors",
-                          if(total_pagina?, do: "bg-green-600 text-white", else: "bg-red-100 text-red-700 hover:bg-red-200")
-                        ]}
-                      >
-                        Total 25
-                      </button>
-                    <% else %>
-                      <span class="text-gray-300 text-[11px]">—</span>
-                    <% end %>
-                  </td>
-                  <td :if={@hay_numericos?} class="px-1.5 py-1 text-center">
-                    <%= if numerico? do %>
-                      <button type="button"
-                        phx-click="cambiar_total_general"
-                        phx-value-campo={c.schema_context_field}
-                        phx-value-activo={to_string(!total_general?)}
-                        title="Mostrar la suma de TODOS los registros que matchean el filtro/búsqueda actual, no solo la página"
-                        class={[
-                          "text-[9px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 transition-colors",
-                          if(total_general?, do: "bg-green-600 text-white", else: "bg-red-100 text-red-700 hover:bg-red-200")
-                        ]}
-                      >
-                        Totalizado
-                      </button>
-                    <% else %>
-                      <span class="text-gray-300 text-[11px]">—</span>
-                    <% end %>
-                  </td>
-                  <td :if={@hay_numericos?} class="px-1.5 py-1 text-center">
-                    <%= if numerico? do %>
-                      <form phx-change="cambiar_mascara" class="flex items-center justify-center gap-0.5">
-                        <input type="hidden" name="campo" value={c.schema_context_field} />
-                        <select name="separador" title="Separador de miles" class="text-[11px] border border-gray-300 rounded px-1 py-0.5">
-                          <option value="," selected={Map.get(props, "mascara_separador", ",") == ","}>1,234.56</option>
-                          <option value="." selected={Map.get(props, "mascara_separador", ",") == "."}>1.234,56</option>
-                        </select>
-                        <select name="simbolo" title="Símbolo" class="text-[11px] border border-gray-300 rounded px-1 py-0.5">
-                          <option value="" selected={Map.get(props, "mascara_simbolo", "") == ""}>Sin $</option>
-                          <option value="$" selected={Map.get(props, "mascara_simbolo", "") == "$"}>$</option>
-                        </select>
-                      </form>
-                    <% else %>
-                      <span class="text-gray-300 text-[11px]">—</span>
-                    <% end %>
-                  </td>
-                  <td class="px-1.5 py-1">
-                    <%= if tipo == "boolean" do %>
-                      <form phx-change="cambiar_filtro_valor_default">
-                        <input type="hidden" name="campo" value={c.schema_context_field} />
-                        <select name="valor" class="text-[11px] border border-gray-300 rounded px-1.5 py-1">
-                          <option value="" selected={Map.get(props, "filtro_default_valor", "") == ""}>Cualquiera</option>
-                          <option value="true" selected={Map.get(props, "filtro_default_valor") == "true"}>Sí</option>
-                          <option value="false" selected={Map.get(props, "filtro_default_valor") == "false"}>No</option>
-                        </select>
-                      </form>
-                    <% else %>
-                      <%= if tipo in ["integer", "decimal", "date"] do %>
-                        <div class="flex items-center gap-1">
-                          <form phx-change="cambiar_filtro_rango_default">
-                            <input type="hidden" name="campo" value={c.schema_context_field} />
-                            <input type="hidden" name="extremo" value="desde" />
-                            <input
-                              type={if tipo == "date", do: "date", else: "number"}
-                              name="valor"
-                              placeholder="Desde"
-                              value={Map.get(props, "filtro_default_desde")}
-                              class="w-24 text-[11px] border border-gray-300 rounded px-1.5 py-1"
-                            />
-                          </form>
-                          <span class="text-gray-300">–</span>
-                          <form phx-change="cambiar_filtro_rango_default">
-                            <input type="hidden" name="campo" value={c.schema_context_field} />
-                            <input type="hidden" name="extremo" value="hasta" />
-                            <input
-                              type={if tipo == "date", do: "date", else: "number"}
-                              name="valor"
-                              placeholder="Hasta"
-                              value={Map.get(props, "filtro_default_hasta")}
-                              class="w-24 text-[11px] border border-gray-300 rounded px-1.5 py-1"
-                            />
-                          </form>
-                        </div>
-                      <% else %>
-                        <form phx-change="cambiar_filtro_valor_default">
-                          <input type="hidden" name="campo" value={c.schema_context_field} />
-                          <input
-                            type="text"
-                            name="valor"
-                            placeholder="Cualquiera"
-                            value={Map.get(props, "filtro_default_valor")}
-                            class="text-[11px] border border-gray-300 rounded px-1.5 py-1 w-full"
-                          />
-                        </form>
-                      <% end %>
-                    <% end %>
-                  </td>
-                  <td class="px-1.5 py-1 text-center">
-                    <button type="button"
-                      phx-click="cambiar_filtro_bloqueado"
-                      phx-value-campo={c.schema_context_field}
-                      phx-value-bloqueado={to_string(!bloqueado?)}
-                      title="El usuario final no puede cambiar ni quitar este filtro — solo agregar otros aparte"
-                      class={[
-                        "text-[9px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 transition-colors",
-                        if(bloqueado?, do: "bg-red-600 text-white", else: "bg-gray-100 text-gray-500 hover:bg-gray-200")
-                      ]}
-                    >
-                      <%= if bloqueado?, do: "🔒 Bloqueado", else: "Bloquear" %>
-                    </button>
-                  </td>
-                  <td class="px-1.5 py-1 text-center">
-                    <button type="button"
-                      phx-click="quitar_filtro_resumen"
-                      phx-value-campo={c.schema_context_field}
-                      class="text-red-600 hover:text-red-800 text-[11px] font-semibold"
-                    >
-                      Quitar
-                    </button>
-                  </td>
-                </tr>
-              <% end %>
-            </tbody>
-          </table>
-        <% end %>
-
-        <%= if @campos_disponibles != [] do %>
-          <form phx-submit="agregar_filtro_resumen" class="flex items-center gap-2">
-            <select name="campo" class="border border-gray-300 rounded-lg px-2 py-1.5">
-              <%= for c <- @campos_disponibles do %>
-                <option value={c.schema_context_field}>{Map.get(c.schema_context_properties, "etiqueta") || c.schema_context_field}</option>
-              <% end %>
-            </select>
-            <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
-              + Agregar filtro
-            </button>
-          </form>
-        <% else %>
-          <p :if={@filtros_activos != []} class="text-gray-400">Ya agregaste todos los campos numéricos disponibles.</p>
-        <% end %>
-      </div>
-    </div>
-    """
-  end
-
   # "Filtros por default": qué ve el usuario final apenas ABRE la tabla
-  # del catálogo, antes de elegir nada — aparte de "Filtros" de arriba
-  # (que calcula Suma/Promedio/Conteo, no filtra filas). Dos opciones
+  # del catálogo, antes de elegir nada — aparte de Totales (Suma/Promedio/
+  # Conteo, ver celda_totales/1 en la grilla de arriba, no filtra filas).
+  # Dos opciones
   # INDEPENDIENTES entre sí (una no depende de la otra prendida, cada una
   # se puede usar sola o las dos juntas), cada una en su propia caja:
   #   - "Campos por default": trae TODOS los registros y columnas sin

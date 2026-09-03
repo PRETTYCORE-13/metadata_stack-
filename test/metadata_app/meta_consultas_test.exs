@@ -285,7 +285,7 @@ defmodule MetadataApp.MetaConsultasTest do
       campos =
         Enum.map(consulta.campos, fn c ->
           if c["catalogo"] == "meta_fixture_cliente" and c["campo"] == "meta_fixture_cliente_edad" do
-            Map.put(c, "totalizar", true)
+            Map.put(c, "agregacion_activa", true)
           else
             c
           end

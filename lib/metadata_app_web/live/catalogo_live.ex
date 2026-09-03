@@ -7,6 +7,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerico
   alias MetadataApp.MetaStateEngine
   alias MetadataApp.MetaConsultas
+  alias MetadataApp.ParametrosCatalogo
   alias MetadataApp.FiltrosDefault
   alias MetadataApp.Permissions
   alias MetadataApp.Autenticacion.Scope
@@ -18,22 +19,11 @@ defmodule MetadataAppWeb.CatalogoLive do
   alias MetadataApp.MetaAuditoria
   alias MetadataApp.MetaImportacionDatos
   alias MetadataAppWeb.AdminNav
-  alias MetadataAppWeb.CampoInputComponents
   import MetadataAppWeb.SelectorMultipleComponents, only: [selector_multiple: 1]
   import Ecto.Query
 
   @por_pagina 25
 
-  # Filtro por columna de control (Estado/Sucursal/Almacén/Unidad de
-  # venta) en la tabla normal del catálogo (2026-08-28, mismo pedido que
-  # el ícono+popover de columnas de negocio) — mapea la `clave` de
-  # construir_columnas_render/3 al campo REAL del schema (ej. "branch" es
-  # solo la etiqueta de columna, el FK real es :branch_id). "id"/"trn"/
-  # "empresa"/"creado_por" quedan afuera a propósito: no fueron parte del
-  # pedido y no tienen un catálogo de opciones razonable para un <select>.
-  @campos_filtro_control %{"estado" => :estado_id, "branch" => :branch_id, "inventory_location" => :inventory_id, "sales_unit" => :sales_unit_id}
-  @campo_acompanamiento_control %{"branch" => "branch_name", "inventory_location" => "inventory_name", "sales_unit" => "sales_unit_name"}
-  @claves_filtro_control Map.keys(@campos_filtro_control)
 
   # Get View unificado (ver panel_get_view/1 en BcMotorLive) — mismas 8
   # claves de control que allá, en el mismo orden de siempre (para
@@ -117,8 +107,18 @@ defmodule MetadataAppWeb.CatalogoLive do
 
     columnas = construir_columnas(header.schema_context_name)
 
+    # SPEC-SYS-0209202601: mismo mecanismo de "Parámetros" que ya usaba
+    # solo una Consulta (montar_consulta/2 abajo) -- acá armado desde
+    # meta_schema_detail en vez de consulta.campos.
+    todos_los_detalles = MetaSchemaContext.listar_detalles(header.schema_context_name)
+    detalles_por_catalogo = %{header.schema_context_name => todos_los_detalles}
+    campos_param = campos_param_de_catalogo(header, todos_los_detalles)
+    scope = socket.assigns[:current_scope]
+    {parametros_string, parametros_numerico, parametros_fecha} = parametros_de_campos(campos_param, detalles_por_catalogo, scope)
+    overrides_parametro = overrides_parametro_default(parametros_string, scope, detalles_por_catalogo)
+
     estados_por_id = MetaStateEngine.mapa_nombres_estados(header.schema_context_name)
-    filtros = Map.merge(filtros_default_desde_columnas(columnas), filtros_por_default(header))
+    filtros = filtros_por_default(header)
 
     mostrar_id? = header.mostrar_id_en_tabla
     mostrar_estado? = estados_por_id != %{} and header.mostrar_estado_en_tabla
@@ -164,6 +164,14 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:header, header)
      |> assign(:es_detalle?, es_detalle?)
      |> assign(:campos_alta, campos_alta)
+     |> assign(:campos_param, campos_param)
+     |> assign(:detalles_por_catalogo, detalles_por_catalogo)
+     |> assign(:parametros_string, parametros_string)
+     |> assign(:parametros_numerico, parametros_numerico)
+     |> assign(:parametros_fecha, parametros_fecha)
+     |> assign(:overrides_parametro, overrides_parametro)
+     |> assign(:modos_fecha_rango, FiltrosDefault.modos_fecha_rango())
+     |> assign(:modos_fecha_simple, FiltrosDefault.modos_fecha_simple())
      # Botón "Importar" de la barra de acciones — solo visible con al menos
      # una plantilla ACTIVA (ver MetaImportacionDatos.listar_activas/1), a
      # pedido explícito: no saturar la barra de catálogos que no configuraron
@@ -176,11 +184,7 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:estados_por_id, estados_por_id)
      |> assign(:pagina, 1)
      |> assign(:filtros, filtros)
-     |> assign(:filtros_activos, campos_con_agregacion_activa(columnas))
-     |> assign(:selector_campo_abierto, false)
-     |> assign(:busqueda_campo_filtro, "")
      |> assign(:busqueda_general, "")
-     |> assign(:mostrar_filtros, false)
      |> assign(:agregaciones, %{})
      |> assign(:agregaciones_valores, %{})
      |> assign(:minmax_valores, %{})
@@ -251,48 +255,6 @@ defmodule MetadataAppWeb.CatalogoLive do
     |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
   end
 
-  # Get View → "Filtros" (bc_motor_live.ex, panel_filtros_resumen/1) — los
-  # campos que el admin agregó ahí (participan del Resumen) arrancan como
-  # filas YA VISIBLES en el popover de Filtros del usuario final
-  # (panel_filtros/1 acá abajo), sin que tenga que buscarlos a mano con
-  # "+ Agregar filtro". La fila arranca vacía salvo que el admin también
-  # haya puesto un "Valor por default" (ver filtros_default_desde_columnas/1
-  # abajo) — ahí sí arranca con ese valor puesto Y aplicado de una.
-  defp campos_con_agregacion_activa(columnas) do
-    columnas
-    |> Enum.filter(&get_in(&1, [:schema_context_properties, "agregacion_activa"]))
-    |> Enum.map(& &1.schema_context_field)
-  end
-
-  # "Valor por default" de un filtro (bc_motor_live.ex, mismo panel que
-  # arriba) — a diferencia de "Filtros por default" (filtros_por_default/1,
-  # una sola fecha de ALTA global), esto es por CAMPO: boolean/string/enum
-  # guardan un solo valor ("filtro_default_valor", mismo formato que
-  # @filtros[campo] ya espera), integer/decimal/date guardan un rango
-  # ("filtro_default_desde"/"_hasta", formato "#{campo}_desde"/"_hasta").
-  # El resultado se mergea directo en @filtros inicial — no es una fila
-  # vacía esperando que alguien tipee, ya arranca filtrando de verdad.
-  defp filtros_default_desde_columnas(columnas) do
-    Enum.reduce(columnas, %{}, fn columna, acc ->
-      props = columna.schema_context_properties
-      campo = columna.schema_context_field
-
-      case props["tipo"] do
-        tipo when tipo in ["integer", "decimal", "date"] ->
-          acc
-          |> poner_si_hay_valor("#{campo}_desde", props["filtro_default_desde"])
-          |> poner_si_hay_valor("#{campo}_hasta", props["filtro_default_hasta"])
-
-        _tipo ->
-          poner_si_hay_valor(acc, campo, props["filtro_default_valor"])
-      end
-    end)
-  end
-
-  defp poner_si_hay_valor(acc, _clave, nil), do: acc
-  defp poner_si_hay_valor(acc, _clave, ""), do: acc
-  defp poner_si_hay_valor(acc, clave, valor), do: Map.put(acc, clave, valor)
-
   # Get View → "Filtros por default" (bc_motor_live.ex): "Agregar todos
   # los registros" + acotar por fecha de alta — arma el @filtros INICIAL
   # de la tabla, en vez de arrancar vacía. Filtra directo sobre la
@@ -327,7 +289,7 @@ defmodule MetadataAppWeb.CatalogoLive do
       |> Enum.sort_by(&Map.get(&1, "orden", 0))
       |> Enum.map(&columna_desde_campo_consulta(&1, detalles_por_catalogo))
 
-    {parametros_string, parametros_numerico, parametros_fecha} = parametros_de_consulta(consulta, detalles_por_catalogo, scope)
+    {parametros_string, parametros_numerico, parametros_fecha} = parametros_de_campos(consulta.campos, detalles_por_catalogo, scope)
     overrides_parametro = overrides_parametro_default(parametros_string, scope, detalles_por_catalogo)
 
     {:ok,
@@ -348,12 +310,7 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:orden_usuario, nil)
      |> assign(:pagina, 1)
      |> assign(:filtros, %{})
-     |> assign(:filtros_activos, [])
-     |> assign(:selector_campo_abierto, false)
-     |> assign(:busqueda_campo_filtro, "")
      |> assign(:busqueda_general, "")
-     |> assign(:mostrar_filtros, false)
-     |> assign(:totales, %{})
      |> assign(:agregaciones, %{})
      |> assign(:agregaciones_valores, %{})
      |> assign(:minmax_valores, %{})
@@ -362,28 +319,31 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> cargar_filas()}
   end
 
-  # "Parámetros" (rediseño 2026-08-27, ver moduledoc de MetaSchema.Consulta):
+  # "Parámetros" (rediseño 2026-08-27, ampliado a BC en SPEC-SYS-0209202601):
   # TODO campo visible de tipo date/string/referencia/integer/decimal es
   # automáticamente un parámetro del reporte -- ya no hay un flag
   # "parametro" que el admin prenda/apague por columna, la elegibilidad
-  # se deriva sola de tipo+visible (MetaConsultas.campos_elegibles_*/1).
+  # se deriva sola de tipo+visible (ParametrosCatalogo.campos_elegibles_*/1).
   # Fecha puede ser VARIAS columnas (cada una con su propio acotado/modo/
-  # rango) -- van aparte del resto.
-  defp parametros_de_consulta(consulta, detalles_por_catalogo, scope) do
-    parametros_string = consulta |> MetaConsultas.campos_elegibles_string() |> Enum.map(&descriptor_parametro_string(&1, detalles_por_catalogo, scope))
-    parametros_numerico = MetaConsultas.campos_elegibles_numerico(consulta)
-    parametros_fecha = MetaConsultas.campos_elegibles_fecha(consulta)
+  # rango) -- van aparte del resto. `campos` es una lista de mapas planos
+  # (mismo shape que `consulta.campos`, ver moduledoc de MetaSchema.Consulta)
+  # -- para una Consulta es literal eso, para un catálogo (BC) se arma
+  # desde meta_schema_detail (ver campos_param_de_catalogo/2).
+  defp parametros_de_campos(campos, detalles_por_catalogo, scope) do
+    parametros_string = campos |> ParametrosCatalogo.campos_elegibles_string() |> Enum.map(&descriptor_parametro_string(&1, detalles_por_catalogo, scope))
+    parametros_numerico = ParametrosCatalogo.campos_elegibles_numerico(campos)
+    parametros_fecha = ParametrosCatalogo.campos_elegibles_fecha(campos)
 
     {parametros_string, parametros_numerico, parametros_fecha}
   end
 
   defp descriptor_parametro_string(campo, detalles_por_catalogo, scope) do
     tipo_filtro = campo["tipo_filtro"] || "like"
-    origen = if MetaConsultas.tipo_efectivo(campo) == "referencia", do: "referenciado", else: campo["origen"] || "libre"
+    origen = if ParametrosCatalogo.tipo_efectivo(campo) == "referencia", do: "referenciado", else: campo["origen"] || "libre"
 
     opciones =
       if origen == "referenciado" do
-        case MetaConsultas.props_referenciado(campo, detalles_por_catalogo) do
+        case ParametrosCatalogo.props_referenciado(campo, detalles_por_catalogo) do
           nil -> []
           props -> CatalogoGenerico.opciones_referencia(props, %{}, scope)
         end
@@ -392,6 +352,18 @@ defmodule MetadataAppWeb.CatalogoLive do
       end
 
     %{campo: campo, etiqueta: campo["etiqueta"], tipo_filtro: tipo_filtro, origen: origen, multiple?: tipo_filtro == "multi", opciones: opciones}
+  end
+
+  # SPEC-SYS-0209202601: shape que espera ParametrosCatalogo (mismo que
+  # ya usa consulta.campos) armado desde meta_schema_detail -- "catalogo"
+  # es siempre el propio catálogo (un BC no tiene N tablas unidas como
+  # una Consulta). "fecha_registro" queda afuera -- es de control (ver
+  # mismo criterio en bc_motor_live.ex/filas_get_view, Get Config no le
+  # ofrece "Parámetro" tampoco).
+  defp campos_param_de_catalogo(header, detalles) do
+    detalles
+    |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
+    |> Enum.map(fn d -> Map.merge(d.schema_context_properties || %{}, %{"catalogo" => header.schema_context_name, "campo" => d.schema_context_field}) end)
   end
 
   # Caso 1 del pedido original: Sucursal/Almacén/Unidad de venta
@@ -436,11 +408,26 @@ defmodule MetadataAppWeb.CatalogoLive do
   defp valor_default_catalogo_sistema("meta_schema_sales_unit", %Scope{sales_unit_activo: %{id: id}}), do: id
   defp valor_default_catalogo_sistema(_catalogo, _scope), do: nil
 
+  # Totales (SPEC-SYS-0209202601, unificado con BC): "agregacion_activa"/
+  # "minmax_recomendado"/"total_pagina_activo"/"total_general_activo"/
+  # "mascara_separador"/"mascara_simbolo" viven en consulta.campos (Get
+  # Config los guarda ahí, ver ParametrosCatalogoComponents.celda_totales/1),
+  # no en meta_schema_detail -- hay que copiarlos a mano acá, igual que
+  # "etiqueta"/"tipo", porque propiedades_reales_consulta/2 solo trae las
+  # propiedades REALES del catálogo dueño del campo (para "catalogo"/
+  # "valores" de un tipo referencia), nunca la config propia de ESTA
+  # Consulta.
+  @claves_totales_consulta ~w(agregacion_activa minmax_recomendado total_pagina_activo total_general_activo mascara_separador mascara_simbolo)
+
   defp columna_desde_campo_consulta(campo, detalles_por_catalogo) do
+    props_totales = Map.take(campo, @claves_totales_consulta)
+
     %{
       schema_context_field: campo["campo"],
-      schema_context_properties: Map.merge(propiedades_reales_consulta(campo, detalles_por_catalogo), %{"etiqueta" => campo["etiqueta"], "tipo" => campo["tipo"] || "string"}),
-      totalizar: campo["totalizar"] == true,
+      schema_context_properties:
+        propiedades_reales_consulta(campo, detalles_por_catalogo)
+        |> Map.merge(props_totales)
+        |> Map.merge(%{"etiqueta" => campo["etiqueta"], "tipo" => campo["tipo"] || "string"}),
       catalogo: campo["catalogo"],
       # `schema_context_field` (crudo) sigue siendo lo que arman los
       # filtros/búsqueda (MetaConsultas.aplicar_filtros/4 lo resuelve
@@ -568,22 +555,6 @@ defmodule MetadataAppWeb.CatalogoLive do
     {:noreply, socket |> assign(:pagina, socket.assigns.pagina + 1) |> cargar_filas()}
   end
 
-  # Cualquier cambio en la barra de filtros vuelve a la página 1 — si no,
-  # podrías quedar parado en una página que ya ni existe con el resultado
-  # filtrado.
-  def handle_event("filtrar", params, socket) do
-    filtros = merge_filtros_por_target(params)
-    {:noreply, socket |> assign(:filtros, filtros) |> assign(:pagina, 1) |> cargar_filas()}
-  end
-
-  # Un filtro "Bloqueado" (bc_motor_live.ex) sobrevive a "Limpiar filtros"
-  # — el usuario final puede vaciar TODO lo que agregó a mano, pero no lo
-  # que el admin dejó fijo.
-  def handle_event("limpiar_filtros", _params, socket) do
-    filtros = preservar_filtros_bloqueados(socket.assigns.filtros, socket.assigns.columnas)
-    {:noreply, socket |> assign(:filtros, filtros) |> assign(:pagina, 1) |> cargar_filas()}
-  end
-
   # Clic en un encabezado de Consulta Ecto (R2, usuario final) -- ciclo de
   # 3 estados en la MISMA columna (asc -> desc -> vuelve al "Orden de
   # resultados" del admin), clic en OTRA columna arranca de nuevo en asc.
@@ -636,57 +607,6 @@ defmodule MetadataAppWeb.CatalogoLive do
     aplicar_override_defaults_completo(socket, clave, %{"modo" => valor_no_vacio(modo)})
   end
 
-  def handle_event("abrir_filtros", _params, socket) do
-    {:noreply, assign(socket, :mostrar_filtros, true)}
-  end
-
-  def handle_event("cerrar_filtros", _params, socket) do
-    {:noreply, socket |> assign(:mostrar_filtros, false) |> assign(:selector_campo_abierto, false)}
-  end
-
-  def handle_event("abrir_selector_campo", _params, socket) do
-    {:noreply, socket |> assign(:selector_campo_abierto, true) |> assign(:busqueda_campo_filtro, "")}
-  end
-
-  def handle_event("cerrar_selector_campo", _params, socket) do
-    {:noreply, assign(socket, :selector_campo_abierto, false)}
-  end
-
-  def handle_event("buscar_campo_filtro", %{"value" => valor}, socket) do
-    {:noreply, assign(socket, :busqueda_campo_filtro, valor)}
-  end
-
-  # Agregar un campo al panel no lo filtra todavía (no tiene valor) — solo lo
-  # hace visible como fila de filtro. cargar_filas/1 no se llama acá porque
-  # @filtros no cambió.
-  def handle_event("agregar_filtro_campo", %{"campo" => campo}, socket) do
-    activos = Enum.uniq(socket.assigns.filtros_activos ++ [campo])
-
-    {:noreply,
-     socket
-     |> assign(:filtros_activos, activos)
-     |> assign(:selector_campo_abierto, false)}
-  end
-
-  # Quitar la fila también borra su(s) valor(es) de @filtros — si no, el
-  # filtro seguiría aplicándose "invisible" (el usuario ya no lo ve en el
-  # panel pero la query seguiría acotada por él). No-op si el campo está
-  # "Bloqueado" (bc_motor_live.ex) — el botón "Quitar" ni se muestra para
-  # esos en el popover, pero este guard cubre igual un evento disparado a
-  # mano (ej. devtools).
-  def handle_event("quitar_filtro_campo", %{"campo" => campo}, socket) do
-    if campo_bloqueado?(socket.assigns.columnas, campo) do
-      {:noreply, socket}
-    else
-      {:noreply,
-       socket
-       |> assign(:filtros_activos, List.delete(socket.assigns.filtros_activos, campo))
-       |> assign(:filtros, quitar_valores_filtro(socket.assigns.filtros, campo))
-       |> assign(:pagina, 1)
-       |> cargar_filas()}
-    end
-  end
-
   # "Resumen" (fila de pie de tabla, ver celdas_resumen/1) — funcion=""
   # (opción "—" del <select>) quita la columna del resumen en
   # vez de guardar una función vacía. Recalcula TODAS las agregaciones
@@ -729,9 +649,8 @@ defmodule MetadataAppWeb.CatalogoLive do
   defp datos_solicitados?(socket) do
     socket.assigns.cargar_todos_por_default? or
       Map.has_key?(socket.assigns.filtros, "__fecha_registro__") or
-      contar_filtros_activos(socket.assigns.filtros) > 0 or
       String.trim(socket.assigns.busqueda_general) != "" or
-      (socket.assigns[:es_consulta?] == true and parametros_activos?(socket))
+      parametros_activos?(socket)
   end
 
   # Mismo espíritu que "__fecha_registro__" arriba, pero para la barra de
@@ -904,6 +823,23 @@ defmodule MetadataAppWeb.CatalogoLive do
     |> assign(:fin, min(offset + @por_pagina, total_filas))
   end
 
+  # "Orden de resultados" (Get Config, BC Motor, 2026-09-02) --
+  # header.orden_resultados es [%{"campo" =>, "direccion" =>}, ...]
+  # (jsonb, strings) -- acá se convierte a lo que
+  # CatalogoGenerico.aplicar_orden/2 espera: [{campo_atom, :asc|:desc}].
+  # Una entrada cuyo "campo" ya no es una columna real del schema (campo
+  # borrado después de configurar el orden) se ignora en silencio, mismo
+  # criterio que MetaConsultas.aplicar_orden/3 para orden_por.
+  defp orden_desde_header(header, modulo) do
+    campos_reales = modulo.__schema__(:fields) |> Enum.map(&Atom.to_string/1) |> MapSet.new()
+
+    header.orden_resultados
+    |> Enum.filter(&MapSet.member?(campos_reales, &1["campo"]))
+    |> Enum.map(fn %{"campo" => campo, "direccion" => direccion} ->
+      {String.to_existing_atom(campo), if(direccion == "desc", do: :desc, else: :asc)}
+    end)
+  end
+
   defp cargar_filas_catalogo(socket) do
     %{
       modulo: modulo,
@@ -911,21 +847,34 @@ defmodule MetadataAppWeb.CatalogoLive do
       estados_por_id: estados_por_id,
       columnas: columnas,
       filtros: filtros,
-      busqueda_general: busqueda_general
+      busqueda_general: busqueda_general,
+      campos_param: campos_param,
+      overrides_parametro: overrides_parametro
     } = socket.assigns
 
     if modulo do
       filtros_ecto = construir_filtros_ecto(filtros, columnas)
       campos_busqueda = Enum.map(columnas, & &1.schema_context_field)
       busqueda = {busqueda_general, campos_busqueda}
+      parametros = {campos_param, %{catalogo => :t0}, overrides_parametro}
 
-      total_filas = CatalogoGenerico.contar(modulo, socket.assigns[:current_scope], filtros_ecto, busqueda)
+      total_filas = CatalogoGenerico.contar(modulo, socket.assigns[:current_scope], filtros_ecto, busqueda, parametros)
       total_paginas = max(ceil(total_filas / @por_pagina), 1)
       pagina = socket.assigns.pagina |> max(1) |> min(total_paginas)
       offset = (pagina - 1) * @por_pagina
 
+      orden = orden_desde_header(socket.assigns.header, modulo)
+
       registros =
-        CatalogoGenerico.listar(modulo, socket.assigns[:current_scope], filtros_ecto, [limit: @por_pagina, offset: offset], busqueda)
+        CatalogoGenerico.listar(
+          modulo,
+          socket.assigns[:current_scope],
+          filtros_ecto,
+          [limit: @por_pagina, offset: offset, orden: orden],
+          busqueda,
+          parametros
+        )
+
       acompanamiento = CatalogoGenerico.mapa_acompanamiento(catalogo, registros)
 
       filas =
@@ -1015,32 +964,6 @@ defmodule MetadataAppWeb.CatalogoLive do
     Enum.map(filas, &Map.put(&1, :creado_por, Map.get(creadores, Map.get(&1, campo))))
   end
 
-  # El popover ("filtros_popover[campo]", ver filtro_columna/1) y la fila
-  # fija del thead ("filtros[campo]", ver fila_filtro_columna/1) pueden
-  # mostrar el MISMO campo a la vez si el usuario lo agregó también al
-  # popover — dos controles distintos para un solo campo lógico, ambos
-  # asociados al mismo <form> (form="form-filtros"). Si tuvieran el mismo
-  # `name`, el submit los pisaría entre sí (Plug.Conn.Query se queda con
-  # el último del body, no con "el que realmente cambió" — bug real
-  # encontrado probando el filtro de un campo "referencia" agregado a
-  # las dos UIs a la vez: elegir algo en el popover no hacía nada, el
-  # valor vacío de la fila fija lo pisaba). Por eso van con nombres
-  # separados: "filtros[...]" ya trae el estado completo y correcto de
-  # TODOS los campos (la fila fija cubre TODAS las columnas siempre), así
-  # que alcanza como base — excepto para el campo puntual que disparó el
-  # cambio, si ese campo vino del popover (`_target`, que LiveView ya
-  # manda solo), en cuyo caso ESE valor hay que tomarlo de
-  # "filtros_popover[...]" en vez de la copia vieja que trajo "filtros".
-  defp merge_filtros_por_target(params) do
-    base = Map.get(params, "filtros", %{})
-    popover = Map.get(params, "filtros_popover", %{})
-
-    case Map.get(params, "_target") do
-      ["filtros_popover", campo] -> Map.put(base, campo, Map.get(popover, campo))
-      _ -> base
-    end
-  end
-
   # A partir de los valores crudos de la barra de filtros (todo strings,
   # como llega cualquier form) arma el mapa de filtros que entiende
   # CatalogoGenerico.listar/contar — el tipo de cada columna (guardado en
@@ -1055,14 +978,6 @@ defmodule MetadataAppWeb.CatalogoLive do
         campo = columna.schema_context_field
         tipo = columna.schema_context_properties["tipo"]
         agregar_filtro_ecto(acc, campo, tipo, filtros)
-      end)
-
-    base =
-      Enum.reduce(@campos_filtro_control, base, fn {clave, campo_real}, acc ->
-        case Map.get(filtros, clave) |> valor_no_vacio() |> convertir("referencia") do
-          nil -> acc
-          valor -> Map.put(acc, campo_real, valor)
-        end
       end)
 
     # "__fecha_registro__" (ver filtros_por_default/1) — mismo campo real
@@ -1134,65 +1049,6 @@ defmodule MetadataAppWeb.CatalogoLive do
     {:noreply, socket |> assign(:overrides_parametro, override) |> assign(:pagina, 1) |> cargar_filas()}
   end
 
-  # Borra tanto la forma simple (filtros["campo"]) como la de rango
-  # (filtros["campo_desde"] / filtros["campo_hasta"]) — un campo removido del
-  # panel no sabe de antemano cuál de las dos formas tenía.
-  defp quitar_valores_filtro(filtros, campo) do
-    Map.drop(filtros, [campo, "#{campo}_desde", "#{campo}_hasta"])
-  end
-
-  defp campo_bloqueado?(columnas, campo) do
-    case Enum.find(columnas, &(&1.schema_context_field == campo)) do
-      nil -> false
-      columna -> columna.schema_context_properties["filtro_default_bloqueado"] == true
-    end
-  end
-
-  # "Limpiar filtros" vacía @filtros por completo salvo las claves que
-  # pertenecen a un campo "Bloqueado" — esas se copian tal cual del estado
-  # actual (nunca cambiaron, porque su input es un <input type="hidden">,
-  # ver filtro_columna/1).
-  defp preservar_filtros_bloqueados(filtros, columnas) do
-    campos_bloqueados =
-      columnas
-      |> Enum.filter(&(&1.schema_context_properties["filtro_default_bloqueado"] == true))
-      |> Enum.map(& &1.schema_context_field)
-
-    Enum.reduce(filtros, %{}, fn {clave, valor}, acc ->
-      campo_base = clave |> String.replace_trailing("_desde", "") |> String.replace_trailing("_hasta", "")
-      if campo_base in campos_bloqueados, do: Map.put(acc, clave, valor), else: acc
-    end)
-  end
-
-  # Cuenta campos con un valor realmente puesto (no solo agregados al panel
-  # pero todavía vacíos) — un rango cuenta una sola vez aunque tenga
-  # _desde/_hasta. Usado para el badge del botón "Filtros". Ignora claves
-  # internas tipo "__fecha_registro__" (filtro por default de fecha, ver
-  # filtros_por_default/1) — no es una fila real del panel, no debe sumar
-  # al contador que ve el usuario final.
-  defp contar_filtros_activos(filtros) do
-    filtros
-    |> Enum.reject(fn {campo, valor} -> valor in [nil, ""] or String.starts_with?(campo, "__") end)
-    |> Enum.map(fn {campo, _valor} -> String.replace_trailing(campo, "_desde", "") |> String.replace_trailing("_hasta", "") end)
-    |> Enum.uniq()
-    |> length()
-  end
-
-  # Columnas que todavía no están agregadas como fila de filtro, filtradas
-  # por el buscador del selector — así elegir un campo entre 30 no es
-  # desplazarse por una lista larga.
-  defp columnas_disponibles(columnas, activos, busqueda) do
-    texto = String.downcase(busqueda)
-
-    columnas
-    |> Enum.reject(&(&1.schema_context_field in activos))
-    |> Enum.filter(fn columna ->
-      texto == "" or
-        String.contains?(String.downcase(columna.schema_context_properties["etiqueta"] || ""), texto) or
-        String.contains?(String.downcase(columna.schema_context_field), texto)
-    end)
-  end
-
   defp convertir(nil, _tipo), do: nil
   defp convertir(v, "integer"), do: parsear(fn -> String.to_integer(v) end)
   defp convertir(v, "decimal"), do: parsear(fn -> Decimal.new(v) end)
@@ -1220,13 +1076,11 @@ defmodule MetadataAppWeb.CatalogoLive do
     ~H"""
     <div class="p-6">
       <div class="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
-        <%!-- Título + contador + Filtros/Campos, todo en una sola fila
-        (2026-08-27, a pedido explícito -- "ajusta botón filtro y botón
-        campos más arriba... la banda más angosta para tener más
-        espacio"): antes eran 2 filas separadas (la de abajo vivía sola
-        para dejarle lugar a la caja de búsqueda general, que ya se quitó
-        acá -- ver el otro render/1 más abajo para el catálogo normal,
-        que sigue con las 2 filas). --%>
+        <%!-- Título + contador + Campos, todo en una sola fila (2026-08-27,
+        a pedido explícito): el botón "Filtros" por columna se retiró
+        (SPEC-SYS-0209202601) -- panel_parametros abajo es ahora el único
+        widget de filtrado del usuario final, mismo criterio para BC y
+        Consulta. --%>
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
           <div class="flex items-center gap-2">
             <span class="material-symbols-outlined text-purple-600" title="Consulta Ecto (solo lectura)">search</span>
@@ -1237,45 +1091,9 @@ defmodule MetadataAppWeb.CatalogoLive do
             <span class="text-xs font-medium text-gray-500 bg-gray-100 rounded-full px-3 py-1 whitespace-nowrap">
               {@inicio}-{@fin} de {@total_filas}
             </span>
-
-            <div class="relative">
-              <button
-                type="button"
-                phx-click="abrir_filtros"
-                class={[
-                  "flex items-center justify-center gap-1.5 border rounded-lg px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors",
-                  if(contar_filtros_activos(@filtros) > 0,
-                    do: "border-purple-600 bg-purple-50 text-purple-700",
-                    else: "border-gray-300 text-gray-600 hover:bg-gray-50"
-                  )
-                ]}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-                </svg>
-                Filtros
-                <%= if contar_filtros_activos(@filtros) > 0 do %>
-                  <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-600 text-white text-[10px] font-bold">
-                    {contar_filtros_activos(@filtros)}
-                  </span>
-                <% end %>
-              </button>
-
-              <.panel_filtros
-                mostrar={@mostrar_filtros}
-                columnas={@columnas}
-                filtros={@filtros}
-                filtros_activos={@filtros_activos}
-                selector_campo_abierto={@selector_campo_abierto}
-                busqueda_campo_filtro={@busqueda_campo_filtro}
-                scope={@current_scope}
-              />
-            </div>
             <.panel_campos campos={campos_selector(@columnas)} tabla_id="tabla-catalogo" />
           </div>
         </div>
-
-        <form id="form-filtros" phx-change="filtrar" class="hidden" aria-hidden="true"></form>
 
         <.panel_parametros :if={@parametros_string != [] or @parametros_numerico != [] or @parametros_fecha != []}
           id_seccion={"panel-parametros-#{@current_page}"}
@@ -1286,46 +1104,19 @@ defmodule MetadataAppWeb.CatalogoLive do
           <table id="tabla-catalogo" class="min-w-full divide-y divide-gray-200 text-xs">
             <thead class="bg-gray-50">
               <tr>
-                <%!-- Filtro por columna: ícono + popover (2026-08-27, a
-                pedido explícito -- "aprovechamos más espacio y da
-                usabilidad UIX") reemplaza la fila fija que vivía SIEMPRE
-                visible debajo del encabezado (una fila entera de altura,
-                aunque nadie estuviera filtrando). Reusa fila_filtro_columna/1
-                tal cual (ya devuelve solo el widget, sin <td>/<th> propio)
-                -- ahora vive DENTRO del popover en vez de en una celda
-                fija de una fila aparte. --%>
                 <%= for columna <- @columnas do %>
-                  <% bloqueado? = columna.schema_context_properties["filtro_default_bloqueado"] == true %>
                   <th
                     data-col={col_key(columna)}
                     title={if @consulta.joins != [], do: "De: #{columna.catalogo}"}
-                    class={["relative px-2 py-3 sm:px-4 text-[10px] font-semibold text-black uppercase tracking-wide whitespace-nowrap", alineacion_columna(columna)]}
+                    class={["px-2 py-3 sm:px-4 text-[10px] font-semibold text-black uppercase tracking-wide whitespace-nowrap", alineacion_columna(columna)]}
                   >
-                    <span class="inline-flex items-center gap-1">
-                      <button type="button" phx-click="ordenar_por_columna" phx-value-catalogo={columna.catalogo} phx-value-campo={columna.schema_context_field}
-                        class="inline-flex items-center gap-0.5 hover:text-purple-700" title="Ordenar por esta columna">
-                        {columna.schema_context_properties["etiqueta"]}
-                        <span :if={orden_activo_en?(@orden_usuario, columna)} class="text-purple-600 text-[9px]">
-                          {if @orden_usuario["direccion"] == "desc", do: "▼", else: "▲"}
-                        </span>
-                      </button>
-                      <button type="button" phx-click={JS.toggle(to: "#filtro-popover-#{col_key(columna)}")}
-                        class={[
-                          "flex items-center justify-center rounded p-0.5 hover:bg-gray-200",
-                          filtro_columna_activo?(columna, @filtros) && "text-purple-600",
-                          !filtro_columna_activo?(columna, @filtros) && "text-gray-400"
-                        ]}
-                        aria-label={"Filtrar por #{columna.schema_context_properties["etiqueta"]}"}
-                      >
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-                        </svg>
-                      </button>
-                    </span>
-
-                    <div id={"filtro-popover-#{col_key(columna)}"} class="hidden absolute z-50 top-full left-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-xl p-2 normal-case" phx-click-away={JS.hide()}>
-                      <.fila_filtro_columna columna={columna} valores={@filtros} bloqueado?={bloqueado?} scope={@current_scope} />
-                    </div>
+                    <button type="button" phx-click="ordenar_por_columna" phx-value-catalogo={columna.catalogo} phx-value-campo={columna.schema_context_field}
+                      class="inline-flex items-center gap-0.5 hover:text-purple-700" title="Ordenar por esta columna">
+                      {columna.schema_context_properties["etiqueta"]}
+                      <span :if={orden_activo_en?(@orden_usuario, columna)} class="text-purple-600 text-[9px]">
+                        {if @orden_usuario["direccion"] == "desc", do: "▼", else: "▲"}
+                      </span>
+                    </button>
                   </th>
                 <% end %>
               </tr>
@@ -1356,17 +1147,12 @@ defmodule MetadataAppWeb.CatalogoLive do
                 </tr>
               <% end %>
             </tbody>
-            <tfoot :if={@totales != %{}} class="bg-purple-50 border-t-2 border-purple-200 font-bold">
-              <tr>
-                <%= for columna <- @columnas do %>
-                  <td data-col={col_key(columna)} class={["px-4 py-2 text-[10px] text-purple-900", alineacion_columna(columna)]}>
-                    <%= if Map.get(columna, :totalizar) do %>
-                      {formatear_celda(Map.get(@totales, columna.clave), columna.schema_context_properties)}
-                    <% end %>
-                  </td>
-                <% end %>
-              </tr>
-            </tfoot>
+            <%!-- SPEC-SYS-0209202601: el tfoot "Totales" simple de acá
+            (gateado por columna.totalizar, la clave vieja de
+            consulta.campos antes de Grupo E) se retiró -- Totales ahora
+            es rico y unificado con BC (celdas_resumen abajo, Total
+            general = @totales_generales, mismo criterio que
+            total_general_activo en el catálogo normal). --%>
             <tfoot class="bg-gray-50 border-t-2 border-gray-300">
               <tr>
                 <.celdas_resumen
@@ -1449,8 +1235,6 @@ defmodule MetadataAppWeb.CatalogoLive do
           </div>
         </div>
 
-        <form id="form-filtros" phx-change="filtrar" class="hidden" aria-hidden="true"></form>
-
         <div class="flex flex-col gap-2 mb-4 sm:flex-row sm:items-center">
           <div class="relative sm:flex-1">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
@@ -1466,39 +1250,6 @@ defmodule MetadataAppWeb.CatalogoLive do
             />
           </div>
           <div class="flex items-center gap-2">
-            <div class="relative flex-1 sm:flex-none">
-              <button
-                type="button"
-                phx-click="abrir_filtros"
-                class={[
-                  "flex items-center justify-center gap-1.5 border rounded-lg px-3 py-2 text-sm font-semibold whitespace-nowrap transition-colors w-full sm:w-auto",
-                  if(contar_filtros_activos(@filtros) > 0,
-                    do: "border-purple-600 bg-purple-50 text-purple-700",
-                    else: "border-gray-300 text-gray-600 hover:bg-gray-50"
-                  )
-                ]}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-                </svg>
-                Filtros
-                <%= if contar_filtros_activos(@filtros) > 0 do %>
-                  <span class="inline-flex items-center justify-center w-4 h-4 rounded-full bg-purple-600 text-white text-[10px] font-bold">
-                    {contar_filtros_activos(@filtros)}
-                  </span>
-                <% end %>
-              </button>
-
-              <.panel_filtros
-                mostrar={@mostrar_filtros}
-                columnas={@columnas}
-                filtros={@filtros}
-                filtros_activos={@filtros_activos}
-                selector_campo_abierto={@selector_campo_abierto}
-                busqueda_campo_filtro={@busqueda_campo_filtro}
-                scope={@current_scope}
-              />
-            </div>
             <.panel_campos campos={campos_selector_render(@columnas_render)} tabla_id="tabla-catalogo" />
           </div>
         </div>
@@ -1510,11 +1261,16 @@ defmodule MetadataAppWeb.CatalogoLive do
           {@filtro_default_fecha_descripcion}
         </div>
 
+        <.panel_parametros :if={@parametros_string != [] or @parametros_numerico != [] or @parametros_fecha != []}
+          id_seccion={"panel-parametros-#{@current_page}"}
+          parametros_string={@parametros_string} parametros_numerico={@parametros_numerico} parametros_fecha={@parametros_fecha}
+          overrides_parametro={@overrides_parametro} modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple} />
+
         <div class="overflow-x-auto rounded-xl border border-gray-200">
           <table id="tabla-catalogo" class="min-w-full divide-y divide-gray-200 text-xs">
             <thead class="bg-gray-50">
               <tr>
-                <.celda_encabezado :for={col <- @columnas_render} col={col} filtros={@filtros} scope={@current_scope} estados_por_id={@estados_por_id} />
+                <.celda_encabezado :for={col <- @columnas_render} col={col} />
                 <th class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"></th>
               </tr>
             </thead>
@@ -1705,31 +1461,23 @@ defmodule MetadataAppWeb.CatalogoLive do
   # construir_columnas_render/3) — una por cada fila de la tabla (título,
   # dato, resumen), SIEMPRE en el mismo orden (@columnas_render), para que
   # las 3 sigan alineadas verticalmente sin importar qué tan mezclados
-  # queden campos de control y de negocio. El filtro por columna ya no es
-  # una fila propia (ver celda_encabezado/1, ahora incluye su propio
-  # ícono + popover de filtro).
+  # queden campos de control y de negocio.
   #
-  # Filtro por columna: ícono + popover (2026-08-28, a pedido explícito --
-  # "aplica los cambios que ya hiciste en la Consulta Ecto") reemplaza acá
-  # también la fila fija que vivía SIEMPRE visible debajo del encabezado
-  # (ver celda_filtro/1, ahora eliminada) -- mismo patrón exacto que
-  # panel_get_config del reporte Consulta Ecto (2026-08-27), reusando
-  # fila_filtro_columna/1 tal cual, ahora dentro del popover en vez de en
-  # una celda de una fila aparte. También se sacó el ícono de arrastrar
-  # (mismo pedido) -- reordenar columnas sigue disponible desde "Campos"
-  # (panel_campos/1), que ya tiene su propia manija de drag.
+  # SPEC-SYS-0209202601: el ícono de embudo + popover por columna
+  # (fila_filtro_columna/1, "Estado/Sucursal/Almacén/Unidad de venta" con
+  # su propio <select>, panel_filtros/1) se RETIRÓ -- el usuario final
+  # filtra desde panel_parametros/1 (arriba de la tabla) en vez de por
+  # columna, mismo widget que ya tenía una Consulta Ecto. Los campos de
+  # control (estado/sucursal/almacén/unidad de venta) no tienen equivalente
+  # en panel_parametros todavía -- mismo criterio que Get Config
+  # (bc_motor_live.ex, filas_get_view/2 no les ofrece "Parámetro" tampoco,
+  # campo_param: nil) -- pierden su filtro sin reemplazo por ahora.
   attr :col, :map, required: true
-  attr :filtros, :map, required: true
-  attr :scope, :any, required: true
-  attr :estados_por_id, :map, required: true
 
   defp celda_encabezado(%{col: %{tipo_columna: :negocio}} = assigns) do
-    bloqueado? = assigns.col.columna.schema_context_properties["filtro_default_bloqueado"] == true
-    assigns = assign(assigns, :bloqueado?, bloqueado?)
-
     ~H"""
     <th data-col={@col.clave} class={[
-      "relative px-2 py-3 sm:px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide",
+      "px-2 py-3 sm:px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide",
       alineacion_columna(@col.columna)
     ]}>
       <span class="inline-flex items-center gap-1">
@@ -1737,60 +1485,7 @@ defmodule MetadataAppWeb.CatalogoLive do
         <%= if @col.columna.schema_context_properties["tipo"] == "referencia" do %>
           <span class="material-symbols-outlined text-blue-500" style="font-size: 13px" title={"Relación con #{@col.columna.schema_context_properties["catalogo"]}"}>link</span>
         <% end %>
-        <button type="button" phx-click={JS.toggle(to: "#filtro-popover-#{@col.clave}")}
-          class={[
-            "flex items-center justify-center rounded p-0.5 hover:bg-gray-200",
-            filtro_columna_activo?(@col.columna, @filtros) && "text-purple-600",
-            !filtro_columna_activo?(@col.columna, @filtros) && "text-gray-400"
-          ]}
-          aria-label={"Filtrar por #{@col.columna.schema_context_properties["etiqueta"]}"}
-        >
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-          </svg>
-        </button>
       </span>
-
-      <div id={"filtro-popover-#{@col.clave}"} class="hidden absolute z-50 top-full left-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-xl p-2 normal-case" phx-click-away={JS.hide()}>
-        <.fila_filtro_columna columna={@col.columna} valores={@filtros} bloqueado?={@bloqueado?} scope={@scope} />
-      </div>
-    </th>
-    """
-  end
-
-  # Estado/Sucursal/Almacén/Unidad de venta (2026-08-28, mismo pedido que
-  # el ícono+popover de arriba) — mismo patrón visual, pero la opciones
-  # salen de opciones_para_control/3 (estados del automaton del catálogo
-  # o catálogo de sistema vía CatalogoGenerico.opciones_referencia/3, ver
-  # ahí) en vez de fila_filtro_columna/1 (que exige un struct
-  # meta_schema_detail real, que estas columnas de control no tienen).
-  defp celda_encabezado(%{col: %{clave: clave}} = assigns) when clave in @claves_filtro_control do
-    assigns = assign(assigns, :opciones, opciones_para_control(clave, assigns.scope, assigns.estados_por_id))
-
-    ~H"""
-    <th data-col={@col.clave} class="relative px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
-      <span class="inline-flex items-center gap-1">
-        {@col.etiqueta}
-        <button type="button" phx-click={JS.toggle(to: "#filtro-popover-#{@col.clave}")}
-          class={[
-            "flex items-center justify-center rounded p-0.5 hover:bg-gray-200",
-            filtro_control_activo?(@col.clave, @filtros) && "text-purple-600",
-            !filtro_control_activo?(@col.clave, @filtros) && "text-gray-400"
-          ]}
-          aria-label={"Filtrar por #{@col.etiqueta}"}
-        >
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-          </svg>
-        </button>
-      </span>
-
-      <div id={"filtro-popover-#{@col.clave}"} class="hidden absolute z-50 top-full left-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-xl p-2 normal-case" phx-click-away={JS.hide()}>
-        <select form="form-filtros" name={"filtros[#{@col.clave}]"} class="w-full border border-gray-300 rounded text-gray-900 text-[10px] px-1.5 py-1">
-          <option value="" selected={@filtros[@col.clave] in [nil, ""]}>Todos</option>
-          <option :for={{valor, etiqueta} <- @opciones} value={valor} selected={to_string(@filtros[@col.clave]) == to_string(valor)}>{etiqueta}</option>
-        </select>
-      </div>
     </th>
     """
   end
@@ -1802,17 +1497,6 @@ defmodule MetadataAppWeb.CatalogoLive do
     </th>
     """
   end
-
-  defp opciones_para_control("estado", _scope, estados_por_id) do
-    estados_por_id |> Enum.map(fn {id, nombre} -> {id, nombre} end) |> Enum.sort_by(&elem(&1, 1))
-  end
-
-  defp opciones_para_control(clave, scope, _estados_por_id) do
-    props = %{"catalogo" => MetaConsultas.catalogo_control_sistema(clave), "campos_acompanamiento" => [Map.fetch!(@campo_acompanamiento_control, clave)]}
-    CatalogoGenerico.opciones_referencia(props, %{}, scope)
-  end
-
-  defp filtro_control_activo?(clave, filtros), do: Map.get(filtros, clave) not in [nil, ""]
 
   attr :col, :map, required: true
   attr :fila, :map, required: true
@@ -1947,18 +1631,6 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   defp orden_activo_en?(orden_usuario, columna),
     do: orden_usuario["catalogo"] == columna.catalogo and orden_usuario["campo"] == columna.schema_context_field
-
-  # Resalta el ícono de filtro por columna (2026-08-27) -- true si hay
-  # algo tipeado/elegido para ESA columna en @filtros, ya sea un valor
-  # exacto (campo) o un rango (campo_desde/campo_hasta, ver
-  # fila_filtro_columna/1 para integer/decimal/date).
-  defp filtro_columna_activo?(columna, filtros) do
-    campo = columna.schema_context_field
-
-    Map.get(filtros, campo) not in [nil, ""] or
-      Map.get(filtros, "#{campo}_desde") not in [nil, ""] or
-      Map.get(filtros, "#{campo}_hasta") not in [nil, ""]
-  end
 
   # Lista %{clave:, etiqueta:} para el selector de campos (panel_campos/1)
   # — SOLO los campos de negocio (meta_schema_detail). La variante /3 le
@@ -2284,451 +1956,6 @@ defmodule MetadataAppWeb.CatalogoLive do
     """
   end
 
-  # Popover compacto anclado al botón "Filtros" (en vez del drawer de
-  # pantalla completa de antes, que se sentía como una ventana aparte para
-  # apenas 2-3 campos). El div fixed transparente de atrás solo sirve para
-  # cerrar al hacer clic afuera — el popover en sí es "absolute" respecto al
-  # contenedor relative del botón, así que aparece pegado a él. El form
-  # sigue mandando "filtrar" con phx-change así que los filtros se aplican
-  # en vivo aunque el popover siga abierto.
-  attr :mostrar, :boolean, required: true
-  attr :columnas, :list, required: true
-  attr :filtros, :map, required: true
-  attr :filtros_activos, :list, required: true
-  attr :selector_campo_abierto, :boolean, required: true
-  attr :busqueda_campo_filtro, :string, required: true
-  attr :scope, :any, required: true
-
-  defp panel_filtros(%{mostrar: false} = assigns), do: ~H""
-
-  defp panel_filtros(assigns) do
-    assigns =
-      assign(
-        assigns,
-        :columnas_disponibles,
-        columnas_disponibles(assigns.columnas, assigns.filtros_activos, assigns.busqueda_campo_filtro)
-      )
-
-    ~H"""
-    <div class="fixed inset-0 z-40" phx-click="cerrar_filtros"></div>
-    <div class="fixed inset-x-4 top-24 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 w-auto sm:w-80 max-h-[70vh] bg-white rounded-xl shadow-xl border border-gray-200 z-50 flex flex-col">
-      <div class="flex items-center justify-between px-4 py-2.5 border-b border-gray-200">
-        <h2 class="text-sm font-bold text-gray-900">Filtros</h2>
-        <button
-          type="button"
-          phx-click="cerrar_filtros"
-          aria-label="Cerrar filtros"
-          class="w-6 h-6 flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
-      </div>
-
-      <div class="relative border-b border-gray-200">
-        <button
-          type="button"
-          phx-click="abrir_selector_campo"
-          class="w-full flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold text-purple-700 hover:bg-purple-50"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          Agregar filtro
-        </button>
-
-        <%= if @selector_campo_abierto do %>
-          <div class="fixed inset-0 z-40" phx-click="cerrar_selector_campo"></div>
-          <div class="absolute left-0 right-0 top-full bg-white border border-gray-200 rounded-lg shadow-lg z-50 mx-2 mb-2">
-            <input
-              type="text"
-              value={@busqueda_campo_filtro}
-              phx-keyup="buscar_campo_filtro"
-              phx-debounce="150"
-              autofocus
-              placeholder="Buscar campo..."
-              class="w-full border-b border-gray-200 px-3 py-2 text-xs text-gray-900 focus:outline-none rounded-t-lg"
-            />
-            <div class="max-h-48 overflow-y-auto py-1">
-              <%= for columna <- @columnas_disponibles do %>
-                <button
-                  type="button"
-                  phx-click="agregar_filtro_campo"
-                  phx-value-campo={columna.schema_context_field}
-                  class="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-purple-50 hover:text-purple-700"
-                >
-                  {columna.schema_context_properties["etiqueta"]}
-                </button>
-              <% end %>
-              <%= if @columnas_disponibles == [] do %>
-                <p class="px-3 py-2 text-xs text-gray-400">
-                  {if @columnas == [], do: "No hay campos.", else: "Todos los campos ya están agregados."}
-                </p>
-              <% end %>
-            </div>
-          </div>
-        <% end %>
-      </div>
-
-      <div class="overflow-y-auto px-4 py-3 flex flex-col gap-3">
-        <%= if @filtros_activos == [] do %>
-          <p class="text-xs text-gray-400 text-center py-4">
-            Sin filtros agregados — usa "Agregar filtro" para elegir un campo.
-          </p>
-        <% end %>
-        <%= for campo <- @filtros_activos, columna = Enum.find(@columnas, &(&1.schema_context_field == campo)), columna do %>
-          <% bloqueado? = columna.schema_context_properties["filtro_default_bloqueado"] == true %>
-          <div class="flex items-start gap-1">
-            <div class="flex-1">
-              <.filtro_columna columna={columna} valores={@filtros} bloqueado?={bloqueado?} scope={@scope} />
-            </div>
-            <div
-              :if={bloqueado?}
-              class="mt-5 w-5 h-5 flex-shrink-0 flex items-center justify-center text-gray-300"
-              title="Este filtro está bloqueado — no se puede cambiar ni quitar"
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
-              </svg>
-            </div>
-            <button
-              :if={!bloqueado?}
-              type="button"
-              phx-click="quitar_filtro_campo"
-              phx-value-campo={campo}
-              aria-label={"Quitar filtro de #{columna.schema_context_properties["etiqueta"]}"}
-              class="mt-5 w-5 h-5 flex-shrink-0 flex items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-700"
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
-        <% end %>
-      </div>
-
-      <div class="px-4 py-2.5 border-t border-gray-200 flex justify-between items-center">
-        <button
-          type="button"
-          phx-click="limpiar_filtros"
-          class="text-xs font-semibold text-gray-500 hover:text-gray-800 px-2 py-1"
-        >
-          Limpiar filtros
-        </button>
-        <button
-          type="button"
-          phx-click="cerrar_filtros"
-          class="px-3 py-1.5 rounded bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700"
-        >
-          Aplicar
-        </button>
-      </div>
-    </div>
-    """
-  end
-
-  # Opciones del <select> de un filtro "enum"/"referencia" — usado tanto por
-  # filtro_columna/1 (popover) como por fila_filtro_columna/1 (fila fija en
-  # el thead), para que las dos UIs filtren el mismo campo con la misma
-  # semántica (coincidencia exacta, no ILIKE).
-  #
-  # `scope` (2026-08-26): antes esto SIEMPRE traía el catálogo destino
-  # ENTERO, sin importar sesión -- un filtro de "Sucursal" ofrecía todas
-  # las sucursales del sistema aunque el usuario solo pudiera operar
-  # una. `CatalogoGenerico.opciones_referencia/3` (la variante con scope,
-  # ya usada por los formularios de alta) acota Branch/SalesUnit/
-  # InventoryLocation al alcance real de la sesión -- acá se enchufa lo
-  # mismo para que el FILTRO respete el mismo alcance que ya respeta la
-  # fila.
-  defp opciones_para_columna(%{schema_context_properties: %{"tipo" => "enum"} = props}, _scope),
-    do: CampoInputComponents.opciones_enum(props["valores"])
-
-  defp opciones_para_columna(%{schema_context_properties: %{"tipo" => "referencia"} = props}, scope),
-    do: CatalogoGenerico.opciones_referencia(props, %{}, scope)
-
-  # Etiqueta legible del valor actualmente elegido (para la rama
-  # "bloqueado" de un filtro enum/referencia) — sin esto se mostraría el
-  # código del enum o el id numérico crudo en vez de algo legible.
-  defp etiqueta_seleccionada(opciones, valor) do
-    case Enum.find(opciones, fn {v, _etiqueta} -> to_string(v) == to_string(valor) end) do
-      {_v, etiqueta} -> etiqueta
-      nil -> valor
-    end
-  end
-
-  # Un widget de filtro distinto según el tipo de la columna (guardado en
-  # meta_schema_detail) — así un catálogo nuevo sale con filtros
-  # funcionando sin escribir nada a mano por catálogo.
-  #
-  # `bloqueado?` (bc_motor_live.ex, "Bloqueado" en panel_filtros_resumen/1):
-  # el usuario final ve el valor pero no lo puede tocar — en vez del
-  # control editable normal, dibuja el valor como texto fijo + un
-  # `<input type="hidden">` con el mismo `name` para que el submit del
-  # form ("filtrar") lo siga mandando igual (un input con `disabled` NO se
-  # manda en absoluto, por eso hidden en vez de eso).
-  #
-  # `form="form-filtros"`: este popover ya no es un <form> en sí (ver
-  # panel_filtros/1) — el <form phx-change="filtrar"> real vive SIEMPRE
-  # montado más arriba en el render (id="form-filtros"), aunque el popover
-  # esté cerrado, para que la fila fija del thead (fila_filtro_columna/1)
-  # tenga algo a que asociarse por `form=""` incluso sin abrir "Filtros".
-  # Los inputs de acá se asocian al mismo form por el mismo mecanismo.
-  #
-  # Nombres "filtros_popover[campo]" (NO "filtros[campo]", a propósito):
-  # un campo puede estar activo acá Y en la fila fija del thead al mismo
-  # tiempo — si compartieran `name`, el submit los pisaría entre sí (bug
-  # real: elegir un valor acá no hacía nada, el valor viejo de la fila
-  # fija lo pisaba). merge_filtros_por_target/1 en el handle_event
-  # "filtrar" es quien reconcilia los dos namespaces usando `_target`.
-  attr :columna, :map, required: true
-  attr :valores, :map, required: true
-  attr :bloqueado?, :boolean, default: false
-  attr :scope, :any, required: true
-
-  defp filtro_columna(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
-    campo = assigns.columna.schema_context_field
-    assigns = assign(assigns, :campo, campo)
-
-    ~H"""
-    <div class="flex flex-col gap-1">
-      <label class="text-[11px] font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
-      <%= if @bloqueado? do %>
-        <input type="hidden" form="form-filtros" name={"filtros_popover[#{@campo}]"} value={@valores[@campo]} />
-        <div class="w-full border border-gray-200 rounded bg-gray-50 text-gray-500 text-xs px-2 py-1.5">
-          {texto_filtro_boolean(@valores[@campo])}
-        </div>
-      <% else %>
-        <select form="form-filtros" name={"filtros_popover[#{@campo}]"} class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5">
-          <option value="" selected={@valores[@campo] in [nil, ""]}>Todos</option>
-          <option value="true" selected={@valores[@campo] == "true"}>Sí</option>
-          <option value="false" selected={@valores[@campo] == "false"}>No</option>
-        </select>
-      <% end %>
-    </div>
-    """
-  end
-
-  defp filtro_columna(%{columna: %{schema_context_properties: %{"tipo" => tipo}}} = assigns)
-       when tipo in ["integer", "decimal", "date"] do
-    campo = assigns.columna.schema_context_field
-    tipo_input = if tipo == "date", do: "date", else: "number"
-    assigns = assigns |> assign(:campo, campo) |> assign(:tipo_input, tipo_input)
-
-    ~H"""
-    <div class="flex flex-col gap-1">
-      <label class="text-[11px] font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
-      <%= if @bloqueado? do %>
-        <input type="hidden" form="form-filtros" name={"filtros_popover[#{@campo}_desde]"} value={@valores["#{@campo}_desde"]} />
-        <input type="hidden" form="form-filtros" name={"filtros_popover[#{@campo}_hasta]"} value={@valores["#{@campo}_hasta"]} />
-        <div class="w-full border border-gray-200 rounded bg-gray-50 text-gray-500 text-xs px-2 py-1.5">
-          {@valores["#{@campo}_desde"] || "…"} – {@valores["#{@campo}_hasta"] || "…"}
-        </div>
-      <% else %>
-        <div class="flex items-center gap-1">
-          <input
-            type={@tipo_input}
-            form="form-filtros"
-            name={"filtros_popover[#{@campo}_desde]"}
-            value={@valores["#{@campo}_desde"]}
-            placeholder="Desde"
-            phx-debounce="400"
-            class="w-0 flex-1 min-w-0 border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5"
-          />
-          <span class="text-gray-400 text-xs">–</span>
-          <input
-            type={@tipo_input}
-            form="form-filtros"
-            name={"filtros_popover[#{@campo}_hasta]"}
-            value={@valores["#{@campo}_hasta"]}
-            placeholder="Hasta"
-            phx-debounce="400"
-            class="w-0 flex-1 min-w-0 border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5"
-          />
-        </div>
-      <% end %>
-    </div>
-    """
-  end
-
-  defp filtro_columna(%{columna: %{schema_context_properties: %{"tipo" => tipo}}} = assigns)
-       when tipo in ["enum", "referencia"] do
-    campo = assigns.columna.schema_context_field
-    opciones = opciones_para_columna(assigns.columna, assigns.scope)
-    assigns = assigns |> assign(:campo, campo) |> assign(:opciones, opciones)
-
-    ~H"""
-    <div class="flex flex-col gap-1">
-      <label class="text-[11px] font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
-      <%= if @bloqueado? do %>
-        <input type="hidden" form="form-filtros" name={"filtros_popover[#{@campo}]"} value={@valores[@campo]} />
-        <div class="w-full border border-gray-200 rounded bg-gray-50 text-gray-500 text-xs px-2 py-1.5">
-          {etiqueta_seleccionada(@opciones, @valores[@campo])}
-        </div>
-      <% else %>
-        <select form="form-filtros" name={"filtros_popover[#{@campo}]"} class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5">
-          <option value="" selected={@valores[@campo] in [nil, ""]}>Todos</option>
-          <option :for={{valor, etiqueta} <- @opciones} value={valor} selected={to_string(@valores[@campo]) == to_string(valor)}>
-            {etiqueta}
-          </option>
-        </select>
-      <% end %>
-    </div>
-    """
-  end
-
-  defp filtro_columna(assigns) do
-    campo = assigns.columna.schema_context_field
-    assigns = assign(assigns, :campo, campo)
-
-    ~H"""
-    <div class="flex flex-col gap-1">
-      <label class="text-[11px] font-semibold text-gray-500">{@columna.schema_context_properties["etiqueta"]}</label>
-      <%= if @bloqueado? do %>
-        <input type="hidden" form="form-filtros" name={"filtros_popover[#{@campo}]"} value={@valores[@campo]} />
-        <div class="w-full border border-gray-200 rounded bg-gray-50 text-gray-500 text-xs px-2 py-1.5">
-          {@valores[@campo]}
-        </div>
-      <% else %>
-        <input
-          type="text"
-          form="form-filtros"
-          name={"filtros_popover[#{@campo}]"}
-          value={@valores[@campo]}
-          placeholder="Buscar..."
-          phx-debounce="400"
-          class="w-full border border-gray-300 rounded text-gray-900 text-xs px-2 py-1.5"
-        />
-      <% end %>
-    </div>
-    """
-  end
-
-  defp texto_filtro_boolean("true"), do: "Sí"
-  defp texto_filtro_boolean("false"), do: "No"
-  defp texto_filtro_boolean(_valor), do: "Todos"
-
-  # Fila de filtros SIEMPRE visible, pegada al encabezado de columna (thead)
-  # — misma idea que filtro_columna/1 (popover "Filtros") y mismo despacho
-  # por tipo, pero compacta (sin <label>, el nombre de columna ya está en
-  # el <th> de arriba) y pensada para vivir en una celda angosta.
-  #
-  # `form="form-filtros"` en cada control: estos inputs viven en el thead
-  # de la tabla, fuera del <form phx-change="filtrar" id="form-filtros">
-  # (montado siempre, ver el bloque justo antes de la barra de búsqueda en
-  # render/1 — TIENE que estar siempre en el DOM, no solo cuando el
-  # popover de Filtros está abierto, si no `form=""` no tiene a qué
-  # asociarse). El atributo `form` los asocia igual estando afuera
-  # (estándar HTML5, ver Form.elements/FormData), así un solo submit
-  # ("filtrar") junta los valores de las dos UIs sin pisarse.
-  attr :columna, :map, required: true
-  attr :valores, :map, required: true
-  attr :bloqueado?, :boolean, default: false
-  attr :scope, :any, required: true
-
-  defp fila_filtro_columna(%{columna: %{schema_context_properties: %{"tipo" => "boolean"}}} = assigns) do
-    campo = assigns.columna.schema_context_field
-    assigns = assign(assigns, :campo, campo)
-
-    ~H"""
-    <%= if @bloqueado? do %>
-      <input type="hidden" form="form-filtros" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
-      <span class="block truncate text-[10px] text-gray-400" title={texto_filtro_boolean(@valores[@campo])}>
-        {texto_filtro_boolean(@valores[@campo])}
-      </span>
-    <% else %>
-      <select form="form-filtros" name={"filtros[#{@campo}]"} class="w-full border border-gray-300 rounded text-gray-900 text-[10px] px-1.5 py-1">
-        <option value="" selected={@valores[@campo] in [nil, ""]}>Todos</option>
-        <option value="true" selected={@valores[@campo] == "true"}>Sí</option>
-        <option value="false" selected={@valores[@campo] == "false"}>No</option>
-      </select>
-    <% end %>
-    """
-  end
-
-  defp fila_filtro_columna(%{columna: %{schema_context_properties: %{"tipo" => tipo}}} = assigns)
-       when tipo in ["integer", "decimal", "date"] do
-    campo = assigns.columna.schema_context_field
-    tipo_input = if tipo == "date", do: "date", else: "number"
-    assigns = assigns |> assign(:campo, campo) |> assign(:tipo_input, tipo_input)
-
-    ~H"""
-    <%= if @bloqueado? do %>
-      <input type="hidden" form="form-filtros" name={"filtros[#{@campo}_desde]"} value={@valores["#{@campo}_desde"]} />
-      <input type="hidden" form="form-filtros" name={"filtros[#{@campo}_hasta]"} value={@valores["#{@campo}_hasta"]} />
-      <span class="block truncate text-[10px] text-gray-400">
-        {@valores["#{@campo}_desde"] || "…"} – {@valores["#{@campo}_hasta"] || "…"}
-      </span>
-    <% else %>
-      <div class="flex items-center gap-0.5">
-        <input
-          type={@tipo_input}
-          form="form-filtros"
-          name={"filtros[#{@campo}_desde]"}
-          value={@valores["#{@campo}_desde"]}
-          placeholder="Desde"
-          phx-debounce="400"
-          class="w-0 flex-1 min-w-0 border border-gray-300 rounded text-gray-900 text-[10px] px-1.5 py-1"
-        />
-        <input
-          type={@tipo_input}
-          form="form-filtros"
-          name={"filtros[#{@campo}_hasta]"}
-          value={@valores["#{@campo}_hasta"]}
-          placeholder="Hasta"
-          phx-debounce="400"
-          class="w-0 flex-1 min-w-0 border border-gray-300 rounded text-gray-900 text-[10px] px-1.5 py-1"
-        />
-      </div>
-    <% end %>
-    """
-  end
-
-  defp fila_filtro_columna(%{columna: %{schema_context_properties: %{"tipo" => tipo}}} = assigns)
-       when tipo in ["enum", "referencia"] do
-    campo = assigns.columna.schema_context_field
-    opciones = opciones_para_columna(assigns.columna, assigns.scope)
-    assigns = assigns |> assign(:campo, campo) |> assign(:opciones, opciones)
-
-    ~H"""
-    <%= if @bloqueado? do %>
-      <input type="hidden" form="form-filtros" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
-      <span class="block truncate text-[10px] text-gray-400" title={etiqueta_seleccionada(@opciones, @valores[@campo])}>
-        {etiqueta_seleccionada(@opciones, @valores[@campo])}
-      </span>
-    <% else %>
-      <select form="form-filtros" name={"filtros[#{@campo}]"} class="w-full border border-gray-300 rounded text-gray-900 text-[10px] px-1.5 py-1">
-        <option value="" selected={@valores[@campo] in [nil, ""]}>Todos</option>
-        <option :for={{valor, etiqueta} <- @opciones} value={valor} selected={to_string(@valores[@campo]) == to_string(valor)}>
-          {etiqueta}
-        </option>
-      </select>
-    <% end %>
-    """
-  end
-
-  defp fila_filtro_columna(assigns) do
-    campo = assigns.columna.schema_context_field
-    assigns = assign(assigns, :campo, campo)
-
-    ~H"""
-    <%= if @bloqueado? do %>
-      <input type="hidden" form="form-filtros" name={"filtros[#{@campo}]"} value={@valores[@campo]} />
-      <span class="block truncate text-[10px] text-gray-400" title={@valores[@campo]}>{@valores[@campo]}</span>
-    <% else %>
-      <input
-        type="text"
-        form="form-filtros"
-        name={"filtros[#{@campo}]"}
-        value={@valores[@campo]}
-        placeholder="Buscar..."
-        phx-debounce="400"
-        class="w-full border border-gray-300 rounded text-gray-900 text-[10px] px-1.5 py-1"
-      />
-    <% end %>
-    """
-  end
-
   attr :id_seccion, :string, required: true, doc: "único por Consulta -- llave de localStorage vía el hook RecordarSeccion"
   attr :parametros_string, :list, required: true
   attr :parametros_numerico, :list, required: true
@@ -2737,14 +1964,14 @@ defmodule MetadataAppWeb.CatalogoLive do
   attr :modos_fecha_rango, :list, required: true
   attr :modos_fecha_simple, :list, required: true
 
-  # Atajo de filtros rápidos (rediseño 2026-08-27, ver moduledoc de
+  # Único widget de filtrado del usuario final (rediseño 2026-08-27,
+  # ampliado a BC en SPEC-SYS-0209202601 -- ver moduledoc de
   # MetaSchema.Consulta) -- TODO campo elegible (visible + tipo
-  # date/string/referencia/integer/decimal) aparece acá solo, sin que el
-  # admin tenga que marcar nada aparte, además del popover de Filtros
-  # genérico de siempre (que sigue disponible para cualquier otra
-  # columna). Los "Referenciado" son `<select multiple>`/`<select>`
-  # nativo -- las opciones ya vienen acotadas al alcance real del usuario
-  # (ver descriptor_parametro_string/3), nunca el catálogo entero.
+  # date/string/referencia/integer/decimal Y marcado "Parámetro" en Get
+  # Config) aparece acá solo, sin ícono de embudo por columna (retirado).
+  # Los "Referenciado" son `<select multiple>`/`<select>` nativo -- las
+  # opciones ya vienen acotadas al alcance real del usuario (ver
+  # descriptor_parametro_string/3), nunca el catálogo entero.
   #
   # Colapsable con un pin (2026-08-27, a pedido explícito -- "tener más
   # espacio en la consulta") -- <details>/<summary> nativo + el hook

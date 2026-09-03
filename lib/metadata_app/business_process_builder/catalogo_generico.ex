@@ -3,6 +3,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   alias MetadataApp.Permissions
   alias MetadataApp.Autenticacion.Scope
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
+  alias MetadataApp.ParametrosCatalogo
   import Ecto.Query
 
   # Fase 5 del modelo de Alcance de Datos (2026-08-11) — tipos compartidos
@@ -50,24 +51,56 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # silencio. Ver aplicar_alcance_de_datos/3 más abajo -- no-op si el
   # catálogo nunca activó alcance_habilitado, así que pasar el Scope real
   # acá es siempre seguro, nunca sobre-filtra un catálogo que no lo pidió.
-  @spec listar(module(), Scope.t_ou_sistema(), map(), keyword(), busqueda()) :: [struct()]
-  def listar(schema_mod, scope, filtros \\ %{}, opciones \\ [], busqueda \\ nil) do
-    from(r in schema_mod, where: is_nil(r.delete_guid), order_by: [asc: r.id])
+  # `parametros` (SPEC-SYS-0209202601, opcional -- nil preserva el
+  # comportamiento de siempre para todo caller que no lo pase, ej.
+  # MetaBcApi/CatalogoController): `{campos_param, alias_por_catalogo,
+  # overrides_parametro}`, mismos 3 insumos que ya arma CatalogoLive para
+  # el panel_parametros de un catálogo BC (ver montar_catalogo/2),
+  # aplicados con el MISMO motor que ya usa MetaConsultas.ejecutar/6
+  # (ParametrosCatalogo.aplicar_filtros_parametro_estandar/4) -- de ahí el
+  # `as: :t0` en el from base, el binding nombrado que esa función espera.
+  @typep parametros_opcional :: nil | {[map()], %{String.t() => atom()}, map()}
+
+  @spec listar(module(), Scope.t_ou_sistema(), map(), keyword(), busqueda(), parametros_opcional()) :: [struct()]
+  def listar(schema_mod, scope, filtros \\ %{}, opciones \\ [], busqueda \\ nil, parametros \\ nil) do
+    from(r in schema_mod, as: :t0, where: is_nil(r.delete_guid))
     |> aplicar_alcance_de_datos(scope, schema_mod)
     |> aplicar_filtros(filtros)
     |> aplicar_busqueda(busqueda)
+    |> aplicar_parametros(parametros)
+    |> aplicar_orden(Keyword.get(opciones, :orden, []))
     |> aplicar_paginacion(opciones)
     |> Repo.all()
   end
 
+  # "Orden de resultados" (Get Config, BC Motor, 2026-09-02) -- `orden` es
+  # `[{campo_atom, :asc | :desc}, ...]`, ya resuelto por el caller (hoy
+  # solo CatalogoLive, desde Header.orden_resultados -- ver
+  # orden_desde_header/1 ahí) contra columnas REALES del schema, en
+  # prioridad: el primero manda, los siguientes desempatan. `:id` SIEMPRE
+  # va último y siempre asc -- mismo motivo que el order_by incondicional
+  # de siempre (comentario de arriba): sin un desempate estable la
+  # paginación puede repetir/saltear filas entre páginas. `[]` (default,
+  # todo caller que no pase :orden -- API, reglas de negocio, etc.) es
+  # IDÉNTICO al comportamiento de siempre, cero cambio de conducta ahí.
+  defp aplicar_orden(query, []), do: order_by(query, [r], asc: r.id)
+
+  defp aplicar_orden(query, orden) do
+    Enum.reduce(orden, query, fn {campo, direccion}, acc ->
+      order_by(acc, [r], [{^direccion, field(r, ^campo)}])
+    end)
+    |> order_by([r], asc: r.id)
+  end
+
   # Total de filas para los mismos filtros/búsqueda, sin paginar — para
   # calcular total_paginas en la respuesta HTTP.
-  @spec contar(module(), Scope.t_ou_sistema(), map(), busqueda()) :: non_neg_integer()
-  def contar(schema_mod, scope, filtros \\ %{}, busqueda \\ nil) do
-    from(r in schema_mod, where: is_nil(r.delete_guid))
+  @spec contar(module(), Scope.t_ou_sistema(), map(), busqueda(), parametros_opcional()) :: non_neg_integer()
+  def contar(schema_mod, scope, filtros \\ %{}, busqueda \\ nil, parametros \\ nil) do
+    from(r in schema_mod, as: :t0, where: is_nil(r.delete_guid))
     |> aplicar_alcance_de_datos(scope, schema_mod)
     |> aplicar_filtros(filtros)
     |> aplicar_busqueda(busqueda)
+    |> aplicar_parametros(parametros)
     |> Repo.aggregate(:count)
   end
 
@@ -124,6 +157,12 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
 
   defp aplicar_filtro(query, campo, valor) do
     from(r in query, where: field(r, ^campo) == ^valor)
+  end
+
+  defp aplicar_parametros(query, nil), do: query
+
+  defp aplicar_parametros(query, {campos_param, alias_por_catalogo, overrides_parametro}) do
+    ParametrosCatalogo.aplicar_filtros_parametro_estandar(query, campos_param, alias_por_catalogo, overrides_parametro)
   end
 
   def aplicar_busqueda(query, nil), do: query

@@ -100,6 +100,18 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # contrato de API) — es aparte, específico de esta grilla.
     field :orden_columnas_tabla, {:array, :string}, default: []
 
+    # "Orden de resultados" del Get Config (BC Motor, 2026-09-02) -- mismo
+    # concepto que Consulta.orden_por (ver meta_schema/consulta.ex), pero
+    # sin "catalogo": un BC normal es una sola tabla, no hace falta
+    # desambiguar. [%{"campo" =>, "direccion" => "asc"|"desc"}, ...],
+    # prioridad por posición -- la primera manda, las siguientes
+    # desempatan. [] = sin orden configurado, CatalogoGenerico.listar/5
+    # cae al `order_by: [asc: :id]` de siempre (ver aplicar_orden_default/2
+    # ahí). Cualquier campo de negocio real sirve; no incluye campos de
+    # control (id/estado/trn/...) por ahora -- alcance explícito, no todos
+    # tienen una columna física con el mismo nombre que su clave lógica.
+    field :orden_resultados, {:array, :map}, default: []
+
     # Catálogo Maestro-Detalle (ver docs/catalogo-maestro-detalle-requerimientos.md,
     # R1/R16) — no nulo implica "este catálogo es detalle de otro". No se
     # reusó schema_context_type (ya usa 2 para "carpeta", otra dimensión)
@@ -157,7 +169,8 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
           :mostrar_inventory_location_en_tabla,
           :mostrar_sales_unit_en_tabla,
           :mostrar_creado_por_en_tabla,
-          :orden_columnas_tabla
+          :orden_columnas_tabla,
+          :orden_resultados
         ]
     )
     |> validate_required(@requeridos)

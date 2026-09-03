@@ -376,12 +376,22 @@ const AbrirCalendario = {
 // recuerda esa elección entre visitas. Clave por id de nodo (único
 // dentro de la plantilla) -- el evento "toggle" es nativo de <details>.
 const RecordarSeccion = {
-  mounted() {
-    const llave = `pc-seccion-${this.el.id}`
-    const guardado = localStorage.getItem(llave)
+  aplicarGuardado() {
+    const guardado = localStorage.getItem(this.llave)
     if (guardado !== null) this.el.open = guardado === "true"
-
-    this.el.addEventListener("toggle", () => localStorage.setItem(llave, this.el.open))
+  },
+  mounted() {
+    this.llave = `pc-seccion-${this.el.id}`
+    this.aplicarGuardado()
+    this.el.addEventListener("toggle", () => localStorage.setItem(this.llave, this.el.open))
+  },
+  // Bug real (2026-09-02): cualquier phx-change/phx-click DENTRO de la
+  // sección (ej. tipear en la grilla de Get Config) parchea este <details>
+  // -- el HTML del servidor nunca manda `open` (es 100% cliente), así que
+  // morphdom lo borraba del DOM en cada patch y la sección se cerraba sola.
+  // Reaplicar acá lo mismo que mounted() evita que el patch pise el estado.
+  updated() {
+    this.aplicarGuardado()
   },
 }
 

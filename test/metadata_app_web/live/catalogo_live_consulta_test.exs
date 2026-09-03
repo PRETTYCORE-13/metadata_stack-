@@ -83,7 +83,14 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
         meta_fixture_cliente_venta: Decimal.new("250.00")
       })
 
-    {_header, _consulta, nav} = criar_consulta_sobre_fixture()
+    {_header, consulta, nav} = criar_consulta_sobre_fixture()
+
+    campos =
+      Enum.map(consulta.campos, fn c ->
+        if c["campo"] == "meta_fixture_cliente_nombre", do: Map.put(c, "es_parametro", true), else: c
+      end)
+
+    {:ok, consulta} = MetaConsultas.actualizar_campos(consulta, campos)
 
     {:ok, view, html} = live(conn, nav)
 
@@ -91,9 +98,11 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
     refute html =~ cliente_dos.meta_fixture_cliente_nombre
     refute html =~ "Cliente Uno"
 
+    clave = to_string(MetaConsultas.clave_campo(Enum.find(consulta.campos, &(&1["campo"] == "meta_fixture_cliente_nombre"))))
+
     html_filtrado =
       view
-      |> render_change("filtrar", %{"filtros" => %{"meta_fixture_cliente_nombre" => cliente_dos.meta_fixture_cliente_nombre}})
+      |> render_change("cambiar_override_valor", %{"valor" => %{clave => cliente_dos.meta_fixture_cliente_nombre}})
 
     assert html_filtrado =~ cliente_dos.meta_fixture_cliente_nombre
     refute html_filtrado =~ "Cliente Uno"
@@ -103,15 +112,21 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
   # visible reventaba con ArgumentError al montar la página --
   # columna_desde_campo_consulta/1 solo copiaba "etiqueta"/"tipo" a
   # schema_context_properties, sin "catalogo" (el destino real de la
-  # referencia). fila_filtro_columna/1 (la fila fija de filtros, SIEMPRE
-  # se computa al montar, no solo cuando se abre el panel) llama
-  # CatalogoGenerico.opciones_referencia/1, que terminaba comparando
-  # "schema_context_name == nil" en Ecto -- prohibido, ArgumentError.
-  # meta_fixture_cliente_sucursal_id (referencia a meta_schema_branch,
-  # catálogo de sistema) es el campo agregado a propósito para poder
-  # reproducir esto con un fixture real.
+  # referencia). El widget de "Parámetros" (panel_parametros/1) llama
+  # CatalogoGenerico.opciones_referencia/1 para un campo "referenciado",
+  # que terminaba comparando "schema_context_name == nil" en Ecto --
+  # prohibido, ArgumentError. meta_fixture_cliente_sucursal_id (referencia
+  # a meta_schema_branch, catálogo de sistema) es el campo agregado a
+  # propósito para poder reproducir esto con un fixture real.
   test "una columna tipo referencia no revienta al montar (resuelve el catálogo destino real)", %{conn: conn} do
-    {_header, _consulta, nav} = criar_consulta_sobre_fixture()
+    {_header, consulta, nav} = criar_consulta_sobre_fixture()
+
+    campos =
+      Enum.map(consulta.campos, fn c ->
+        if c["campo"] == "meta_fixture_cliente_sucursal_id", do: Map.put(c, "es_parametro", true), else: c
+      end)
+
+    {:ok, _} = MetaConsultas.actualizar_campos(consulta, campos)
 
     {:ok, _view, html} = live(conn, nav)
 
@@ -127,7 +142,9 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
 
     campos =
       Enum.map(consulta.campos, fn c ->
-        if c["campo"] == "meta_fixture_cliente_edad", do: Map.put(c, "totalizar", true), else: c
+        if c["campo"] == "meta_fixture_cliente_edad",
+          do: Map.merge(c, %{"agregacion_activa" => true, "total_general_activo" => true}),
+          else: c
       end)
 
     {:ok, _} = MetaConsultas.actualizar_campos(consulta, campos)
@@ -136,7 +153,7 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
 
     html = view |> render_change("buscar_general", %{"value" => "A"})
 
-    assert html =~ ~r/<tfoot.*?>.*?10.*?<\/tfoot>/s
+    assert html =~ "Totalizado: 10"
   end
 
   # Barra de "Parámetros" (rediseño 2026-08-27, corregido el mismo día --

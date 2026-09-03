@@ -83,7 +83,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.ConsultaControllerTest do
       fixture_cliente(%{meta_fixture_cliente_edad: 10})
       fixture_cliente(%{meta_fixture_cliente_edad: 25})
 
-      campos = Enum.map(consulta.campos, fn c -> if c["campo"] == "meta_fixture_cliente_edad", do: Map.put(c, "totalizar", true), else: c end)
+      campos = Enum.map(consulta.campos, fn c -> if c["campo"] == "meta_fixture_cliente_edad", do: Map.put(c, "agregacion_activa", true), else: c end)
       {:ok, _consulta} = MetaConsultas.actualizar_campos(consulta, campos)
 
       conn = get(conn, ~p"/api/#{header.schema_context_name}")

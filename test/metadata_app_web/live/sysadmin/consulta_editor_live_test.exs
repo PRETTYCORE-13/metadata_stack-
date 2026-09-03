@@ -53,7 +53,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
   # Config" → Columnas) viven en dos forms/eventos separados desde el
   # rediseño en tabs (2026-08-25) -- antes era un solo form/evento
   # "guardar_campos" que hacía las tres cosas juntas.
-  test "cambia etiqueta (Configuración) y visibilidad/totalizar (Get Config) de un campo", %{conn: conn} do
+  test "cambia etiqueta (Configuración) y visibilidad/agregacion_activa (Get Config) de un campo", %{conn: conn} do
     {header, _consulta} = criar_consulta()
 
     {:ok, view, html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
@@ -64,13 +64,14 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
 
     html_columnas =
       view
-      |> form("form[phx-submit=guardar_columnas]", %{
-        "visibles" => ["meta_fixture_cliente::meta_fixture_cliente_nombre"],
-        "totalizar" => ["meta_fixture_cliente::meta_fixture_cliente_edad"]
-      })
+      |> form("form[phx-submit=guardar_columnas]", %{"visibles" => ["meta_fixture_cliente::meta_fixture_cliente_nombre"]})
       |> render_submit()
 
     assert html_columnas =~ "Columnas actualizadas."
+
+    # Totales (SPEC-SYS-0209202601) -- ya no es un checkbox del form de
+    # arriba, es un toggle inmediato (celda_totales/1).
+    render_click(view, "cambiar_agregacion_activa", %{"campo" => "meta_fixture_cliente::meta_fixture_cliente_edad", "activo" => "true"})
 
     render_click(view, "cambiar_tab", %{"tab" => "configuracion"})
 
@@ -89,7 +90,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
     campo_venta = Enum.find(consulta_actualizada.campos, &(&1["campo"] == "meta_fixture_cliente_venta"))
 
     assert campo_edad["etiqueta"] == "Edad del cliente"
-    assert campo_edad["totalizar"] == true
+    assert campo_edad["agregacion_activa"] == true
     assert campo_nombre["visible"] == true
     assert campo_venta["visible"] == false
   end
@@ -182,7 +183,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
       "tipo" => "date",
       "orden" => 99,
       "visible" => true,
-      "totalizar" => false,
+      "agregacion_activa" => false,
       "es_parametro" => false
     }
 
@@ -231,33 +232,30 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
     end
   end
 
-  test "el checkbox de totalizar viene disabled para un campo no numérico", %{conn: conn} do
+  test "celda_totales no ofrece el toggle para un campo no numérico (string)", %{conn: conn} do
     {header, _consulta} = criar_consulta()
 
     {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
     html = render_click(view, "cambiar_tab", %{"tab" => "get_config"})
 
-    assert html =~
-             ~r/name="totalizar\[\]" value="meta_fixture_cliente::meta_fixture_cliente_nombre"\s+disabled/
+    refute html =~ ~s(phx-click="cambiar_agregacion_activa" phx-value-campo="meta_fixture_cliente::meta_fixture_cliente_nombre")
   end
 
-  # Defensa en profundidad: aunque el checkbox venga disabled en el HTML
-  # (un navegador real nunca mandaría este valor), el submit real
-  # (render_submit(view, evento, params)) no pasa por la validación de
-  # LiveViewTest contra el DOM — simula un cliente manipulado mandando el
-  # evento directo, y confirma que guardar_columnas/2 igual lo descarta
-  # server-side por el tipo del campo.
-  test "guardar_columnas ignora totalizar para un campo no numérico aunque llegue en el evento", %{conn: conn} do
+  # Defensa en profundidad: aunque celda_totales/1 no pinte el toggle
+  # para un campo no numérico, un cliente manipulado podría mandar el
+  # evento igual (render_click no pasa por la validación de LiveViewTest
+  # contra el DOM) -- confirma que el handler lo descarta server-side.
+  test "cambiar_agregacion_activa ignora un campo no numérico aunque llegue el evento", %{conn: conn} do
     {header, _consulta} = criar_consulta()
 
     {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
 
-    render_submit(view, "guardar_columnas", %{"totalizar" => ["meta_fixture_cliente::meta_fixture_cliente_nombre"]})
+    render_click(view, "cambiar_agregacion_activa", %{"campo" => "meta_fixture_cliente::meta_fixture_cliente_nombre", "activo" => "true"})
 
     consulta_actualizada = MetaConsultas.obtener_por_header_id(header.id)
     campo_nombre = Enum.find(consulta_actualizada.campos, &(&1["campo"] == "meta_fixture_cliente_nombre"))
 
-    assert campo_nombre["totalizar"] == false
+    assert campo_nombre["agregacion_activa"] != true
   end
 
   # Drag-and-drop (hook ListaOrdenable, mismo componente que BcMotorLive
@@ -297,7 +295,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
       "tipo" => "date",
       "orden" => 99,
       "visible" => true,
-      "totalizar" => false,
+      "agregacion_activa" => false,
       "es_parametro" => true
     }
 
@@ -308,7 +306,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
       "tipo" => "date",
       "orden" => 100,
       "visible" => true,
-      "totalizar" => false,
+      "agregacion_activa" => false,
       "es_parametro" => true
     }
 
@@ -356,7 +354,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
       "tipo" => "date",
       "orden" => 99,
       "visible" => true,
-      "totalizar" => false,
+      "agregacion_activa" => false,
       "es_parametro" => true,
       "acotado" => true,
       "defaults" => %{"modo" => "formula"}

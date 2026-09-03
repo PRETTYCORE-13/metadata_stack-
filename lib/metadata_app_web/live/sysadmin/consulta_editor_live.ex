@@ -33,12 +33,11 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
   on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "editar"}}
 
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
-  alias MetadataApp.BusinessProcessBuilder.CatalogoGenerico
   alias MetadataApp.MetaConsultas
   alias MetadataApp.FiltrosDefault
   alias MetadataAppWeb.AdminNav
 
-  import MetadataAppWeb.SelectorMultipleComponents, only: [selector_multiple: 1]
+  import MetadataAppWeb.ParametrosCatalogoComponents, only: [celdas_parametro: 1, toggle_es_parametro: 1, celda_totales: 1]
 
   import MetadataAppWeb.EncabezadoBcComponents, only: [panel_encabezado: 1]
 
@@ -65,12 +64,6 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     {"sql", "SQL"}
   ]
 
-  # Solo estos dos tipos soportan SUM() en SQL (ver totales/2 en
-  # MetaConsultas) — "totalizar" ni se ofrece para el resto, para no dejar
-  # marcar algo que reventaría la query de la banda de totales al ejecutar
-  # el reporte.
-  @tipos_totalizables ~w(integer decimal)
-
   def mount(%{"nombre" => nombre}, _session, socket) do
     socket =
       socket
@@ -80,7 +73,6 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
       |> assign(:show_programacion_children, false)
       |> assign(:show_clientes_children, false)
       |> assign(:show_prettycore_children, false)
-      |> assign(:tipos_totalizables, @tipos_totalizables)
       |> assign(:tabs, @tabs)
       |> assign(:tab, "configuracion")
       |> assign(:subtab_sql, "sql")
@@ -192,16 +184,10 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
 
   def handle_event("guardar_columnas", params, socket) do
     visibles = params |> Map.get("visibles", []) |> List.wrap() |> MapSet.new()
-    totalizar = params |> Map.get("totalizar", []) |> List.wrap() |> MapSet.new()
 
     campos =
       Enum.map(socket.assigns.campos, fn campo ->
-        id = identificador(campo)
-        tipo = campo["tipo"]
-
-        campo
-        |> Map.put("visible", id in visibles)
-        |> Map.put("totalizar", tipo in @tipos_totalizables and id in totalizar)
+        Map.put(campo, "visible", identificador(campo) in visibles)
       end)
 
     guardar_campos(socket, campos, "Columnas actualizadas.")
@@ -386,6 +372,49 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     guardar_campos(socket, campos, "Default actualizado.")
   end
 
+  # --- Get Config: Totales (SPEC-SYS-0209202601, sube a la par de BC) ---
+  # "totalizar" (simple booleano) se retira -- reemplazado por el mismo
+  # shape rico que ya usaba `pty_gasto_diariov2` en BC (Mín./Máx., Total
+  # página, Total general, Máscara), vía celda_totales/1 (mismo
+  # componente compartido). Guardado inmediato, mismo criterio que
+  # Parámetro estándar arriba -- no forma parte de "Guardar columnas".
+  # Defensa en profundidad: celda_totales/1 solo pinta el toggle para
+  # integer/decimal (igual criterio que toggle_es_parametro/1 con
+  # "visible"), pero un evento mandado a mano (cliente manipulado) no
+  # pasa por esa validación de render -- se revalida acá server-side.
+  def handle_event("cambiar_agregacion_activa", %{"campo" => id, "activo" => activo}, socket) do
+    campos =
+      mapear_campo(socket, id, fn campo ->
+        if MetaConsultas.tipo_efectivo(campo) in ~w(integer decimal) do
+          Map.put(campo, "agregacion_activa", activo == "true")
+        else
+          campo
+        end
+      end)
+
+    guardar_campos(socket, campos, "Totales actualizado.")
+  end
+
+  def handle_event("cambiar_minmax_recomendado", %{"campo" => id, "recomendado" => recomendado}, socket) do
+    campos = mapear_campo(socket, id, fn campo -> Map.put(campo, "minmax_recomendado", recomendado == "true") end)
+    guardar_campos(socket, campos, "Mín. Máx. actualizado.")
+  end
+
+  def handle_event("cambiar_total_pagina", %{"campo" => id, "activo" => activo}, socket) do
+    campos = mapear_campo(socket, id, fn campo -> Map.put(campo, "total_pagina_activo", activo == "true") end)
+    guardar_campos(socket, campos, "Total página actualizado.")
+  end
+
+  def handle_event("cambiar_total_general", %{"campo" => id, "activo" => activo}, socket) do
+    campos = mapear_campo(socket, id, fn campo -> Map.put(campo, "total_general_activo", activo == "true") end)
+    guardar_campos(socket, campos, "Total general actualizado.")
+  end
+
+  def handle_event("cambiar_mascara", %{"campo" => id, "separador" => separador, "simbolo" => simbolo}, socket) do
+    campos = mapear_campo(socket, id, fn campo -> campo |> Map.put("mascara_separador", separador) |> Map.put("mascara_simbolo", simbolo) end)
+    guardar_campos(socket, campos, "Máscara actualizada.")
+  end
+
   # --- Configuración: SOLO etiqueta ------------------------------------
 
   def handle_event("guardar_etiquetas", params, socket) do
@@ -474,7 +503,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
       </div>
 
       <.panel_get_config :if={@tab == "get_config"} campos={@campos}
-        multi_tabla?={@multi_tabla?} tipos_totalizables={@tipos_totalizables}
+        multi_tabla?={@multi_tabla?}
         claves_control_disponibles={@claves_control_disponibles} claves_control_actuales={@claves_control_actuales}
         etiquetas_control={@etiquetas_control} consulta={@consulta} detalles_por_catalogo={@detalles_por_catalogo}
         modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple} catalogos_referenciables={@catalogos_referenciables}
@@ -490,7 +519,6 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
 
   attr :campos, :list, required: true
   attr :multi_tabla?, :boolean, required: true
-  attr :tipos_totalizables, :list, required: true
   attr :claves_control_disponibles, :list, required: true
   attr :claves_control_actuales, :any, required: true
   attr :etiquetas_control, :map, required: true
@@ -563,17 +591,12 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
                 <td class="px-1.5 py-1.5 text-center">
                   <input type="checkbox" form="form-guardar-columnas" name="visibles[]" value={identificador(campo)} checked={campo["visible"]} class="accent-purple-600" />
                 </td>
-                <td class="px-1.5 py-1.5 text-center">
-                  <input type="checkbox" form="form-guardar-columnas" name="totalizar[]" value={identificador(campo)} checked={campo["totalizar"]}
-                    disabled={campo["tipo"] not in @tipos_totalizables}
-                    title={if campo["tipo"] not in @tipos_totalizables, do: "Solo campos numéricos se pueden totalizar"}
-                    class="accent-purple-600 disabled:opacity-20" />
-                </td>
+                <td class="px-1.5 py-1.5"><.celda_totales campo={campo} id={identificador(campo)} form_id="form-guardar-columnas" tipo_efectivo={MetaConsultas.tipo_efectivo(campo)} /></td>
                 <td class="px-1.5 py-1.5 text-center">
                   <.toggle_es_parametro :if={MetaConsultas.tipo_elegible?(MetaConsultas.tipo_efectivo(campo))} campo={campo} id={identificador(campo)} />
                   <span :if={!MetaConsultas.tipo_elegible?(MetaConsultas.tipo_efectivo(campo))} class="text-[10px] text-gray-300" title="Tipo sin parámetro estándar">—</span>
                 </td>
-                <.celdas_parametro campo={campo} tipo_efectivo={MetaConsultas.tipo_efectivo(campo)} modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple}
+                <.celdas_parametro campo={campo} tipo_efectivo={MetaConsultas.tipo_efectivo(campo)} form_id="form-guardar-columnas" modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple}
                   catalogos_referenciables={@catalogos_referenciables} detalles_por_catalogo={@detalles_por_catalogo} />
               </tr>
               <tr :if={@campos == []}>
@@ -700,325 +723,6 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     end
   end
 
-  # --- Get Config: 4 celdas de Parámetro (Tipo/Es acotado/Parámetro/
-  # Defaults), una por fila, dispatched por tipo (ver moduledoc de
-  # MetaSchema.Consulta para el shape completo). Un campo NO visible o de
-  # tipo no elegible (boolean/enum/nil) cae en el fallback: 4 celdas
-  # apagadas, nada configurable -- MetaConsultas.tipo_elegible?/1 es la
-  # MISMA regla que usa el motor para decidir si un campo participa de
-  # Parámetro estándar, así la grilla nunca puede mostrar interactivo algo
-  # que el motor de todos modos va a ignorar.
-  attr :campo, :map, required: true
-  attr :tipo_efectivo, :any, required: true, doc: "MetaConsultas.tipo_efectivo/1 -- branch/inventory_location/sales_unit (campos de control) son \"referencia\" aunque campo[\"tipo\"] guardado sea nil"
-  attr :modos_fecha_rango, :list, required: true
-  attr :modos_fecha_simple, :list, required: true
-  attr :catalogos_referenciables, :list, required: true
-  attr :detalles_por_catalogo, :map, required: true
-
-  defp celdas_parametro(%{campo: %{"visible" => true, "es_parametro" => true}, tipo_efectivo: "date"} = assigns) do
-    id = identificador(assigns.campo)
-    assigns = assign(assigns, :id, id)
-
-    ~H"""
-    <td class="px-1.5 py-1.5 text-gray-500">Fecha</td>
-    <td class="px-1.5 py-1.5 text-center"><.toggle_acotado campo={@campo} id={@id} /></td>
-    <td class="px-1.5 py-1.5"><.defaults_fecha campo={@campo} id={@id} modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple} /></td>
-    """
-  end
-
-  # "Origen" (libre vs. catálogo referenciado) se sacó de columna propia
-  # (2026-08-28, a pedido explícito -- "no aporta valor" como columna
-  # aparte) y se juntó dentro de la celda de "Defaults", justo arriba del
-  # valor por default -- están acopladas de todos modos (defaults_string/1
-  # YA rama por `origen` para "igual", ver abajo), tenerlas separadas en
-  # columnas distintas no sumaba nada, solo hacía la tabla más ancha.
-  defp celdas_parametro(%{campo: %{"visible" => true, "es_parametro" => true}, tipo_efectivo: tipo} = assigns) when tipo in ~w(string referencia) do
-    id = identificador(assigns.campo)
-    tipo_filtro = assigns.campo["tipo_filtro"] || "like"
-    origen = if tipo == "referencia", do: "referenciado", else: assigns.campo["origen"] || "libre"
-    assigns = assigns |> assign(:id, id) |> assign(:tipo_filtro, tipo_filtro) |> assign(:origen, origen) |> assign(:es_referencia_real?, tipo == "referencia")
-
-    ~H"""
-    <td class="px-1.5 py-1.5">
-      <.selector_tipo_filtro id={@id} valor={@tipo_filtro} opciones={[{"like", "Contiene"}, {"igual", "Igual"}, {"multi", "Múltiple"}]} />
-    </td>
-    <td class="px-1.5 py-1.5 text-center text-[10px] text-gray-300" title="String nunca es acotado">No</td>
-    <td class="px-1.5 py-1.5">
-      <.origen_string campo={@campo} id={@id} tipo_filtro={@tipo_filtro} origen={@origen} es_referencia_real?={@es_referencia_real?} catalogos_referenciables={@catalogos_referenciables} />
-      <.defaults_string campo={@campo} id={@id} tipo_filtro={@tipo_filtro} origen={@origen} detalles_por_catalogo={@detalles_por_catalogo} />
-    </td>
-    """
-  end
-
-  defp celdas_parametro(%{campo: %{"visible" => true, "es_parametro" => true}, tipo_efectivo: tipo} = assigns) when tipo in ~w(integer decimal) do
-    id = identificador(assigns.campo)
-    acotado = assigns.campo["acotado"] || false
-    tipo_filtro = if acotado, do: "entre", else: assigns.campo["tipo_filtro"] || "mayor"
-    assigns = assigns |> assign(:id, id) |> assign(:acotado, acotado) |> assign(:tipo_filtro, tipo_filtro)
-
-    ~H"""
-    <td class="px-1.5 py-1.5">
-      <span :if={@acotado} class="text-[10px] text-gray-500">Entre</span>
-      <.selector_tipo_filtro :if={!@acotado} id={@id} valor={@tipo_filtro} opciones={[{"mayor", "Mayor que"}, {"menor", "Menor que"}, {"igual", "Igual"}, {"diferente", "Diferente de"}]} />
-    </td>
-    <td class="px-1.5 py-1.5 text-center"><.toggle_acotado campo={@campo} id={@id} /></td>
-    <td class="px-1.5 py-1.5"><.defaults_numerico campo={@campo} id={@id} acotado={@acotado} /></td>
-    """
-  end
-
-  defp celdas_parametro(assigns) do
-    ~H"""
-    <td colspan="3" class="px-1.5 py-1.5 text-center text-gray-300" title="No visible o tipo sin parámetro estándar">—</td>
-    """
-  end
-
-  attr :campo, :map, required: true
-  attr :id, :string, required: true
-
-  # Gate explícito: un campo elegible por tipo NO es parámetro del
-  # reporte hasta que el admin lo prenda acá a propósito (corrección
-  # 2026-08-27 -- "no todas las columnas llevan parámetro, solo las que
-  # indico que llevan"). Ver MetaConsultas.campos_elegibles_fecha/1 y
-  # análogas, que exigen este flag además de tipo+visible.
-  #
-  # Bug real 2026-08-27: este botón no chequeaba "visible", así que se
-  # podía prender Parámetro en una columna todavía NO visible -- quedaba
-  # es_parametro:true + visible:false persistido, una combinación que
-  # celdas_parametro/1 nunca renderiza como interactivo (esa exige
-  # "visible" => true en su guard, ver el clause de arriba), así que
-  # "Acotado" no aparecía nunca aunque Parámetro ya dijera "Sí" --
-  # confuso, parecía roto. "Visible" se guarda recién al tocar "Guardar
-  # columnas" (form aparte, ver arriba) -- por eso el mensaje le dice al
-  # admin exactamente qué hacer primero, no solo que está deshabilitado.
-  defp toggle_es_parametro(assigns) do
-    ~H"""
-    <button type="button" phx-click="cambiar_es_parametro" phx-value-campo={@id}
-      disabled={@campo["visible"] != true}
-      title={if @campo["visible"] != true, do: "Primero marcá \"Visible\" y guardá columnas -- Parámetro exige que la columna sea visible"}
-      class={[
-        "text-[10px] font-semibold rounded-full px-2 py-1",
-        @campo["es_parametro"] && "bg-purple-600 text-white",
-        !@campo["es_parametro"] && "bg-gray-100 text-gray-500 hover:bg-gray-200",
-        @campo["visible"] != true && "opacity-40 cursor-not-allowed"
-      ]}>
-      {if @campo["es_parametro"], do: "Sí", else: "No"}
-    </button>
-    """
-  end
-
-  attr :id, :string, required: true
-  attr :valor, :string, required: true
-  attr :opciones, :list, required: true
-
-  # Lookup compacto (2026-08-27) -- reemplaza la fila de botones "Tipo":
-  # con 3-4 opciones se amontonaba/enrollaba en la columna angosta de la
-  # grilla. Un <select> ya es de una sola línea de por sí, no hace falta
-  # el popover con checkboxes (SelectorMultipleComponents) -- acá es
-  # elección única, no múltiple.
-  defp selector_tipo_filtro(assigns) do
-    ~H"""
-    <select phx-change="cambiar_tipo_filtro" form="form-guardar-columnas" name={"tipo_filtro[#{@id}]"}
-      class="border border-gray-300 rounded-lg text-[11px] px-2 py-1">
-      <option :for={{valor, etiqueta} <- @opciones} value={valor} selected={valor == @valor}>{etiqueta}</option>
-    </select>
-    """
-  end
-
-  defp toggle_acotado(assigns) do
-    ~H"""
-    <button type="button" phx-click="cambiar_acotado" phx-value-campo={@id}
-      class={[
-        "text-[10px] font-semibold rounded-full px-2 py-1",
-        @campo["acotado"] && "bg-purple-600 text-white",
-        !@campo["acotado"] && "bg-gray-100 text-gray-500 hover:bg-gray-200"
-      ]}>
-      {if @campo["acotado"], do: "Sí", else: "No"}
-    </button>
-    """
-  end
-
-  attr :campo, :map, required: true
-  attr :id, :string, required: true
-  attr :modos_fecha_rango, :list, required: true
-  attr :modos_fecha_simple, :list, required: true
-
-  defp defaults_fecha(assigns) do
-    modos = if assigns.campo["acotado"], do: assigns.modos_fecha_rango, else: assigns.modos_fecha_simple
-    defaults = assigns.campo["defaults"] || %{}
-    assigns = assigns |> assign(:modos, modos) |> assign(:defaults, defaults)
-
-    ~H"""
-    <div class="flex flex-col gap-1">
-      <div class="flex items-center gap-1 flex-wrap">
-        <button :for={{modo, etiqueta} <- @modos} type="button"
-          phx-click="cambiar_defaults_modo" phx-value-campo={@id} phx-value-modo={modo}
-          class={[
-            "text-[10px] font-semibold rounded-full px-2 py-1 whitespace-nowrap",
-            (@defaults["modo"] || "") == modo && "bg-purple-600 text-white",
-            (@defaults["modo"] || "") != modo && "bg-purple-50 text-purple-700 hover:bg-purple-100"
-          ]}>
-          {etiqueta}
-        </button>
-      </div>
-
-      <div :if={@defaults["modo"] == "formula" && @campo["acotado"]} class="flex items-center gap-1 mt-1">
-        <input type="text" value={@defaults["valor"]} placeholder="primer_dia_mes"
-          phx-change="cambiar_defaults_valor" form="form-guardar-columnas" name={"defaults_valor[#{@id}]"}
-          class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-20" />
-        <span class="text-gray-400 text-[10px]">–</span>
-        <input type="text" value={@defaults["valor_hasta"]} placeholder="actual"
-          phx-change="cambiar_defaults_valor_hasta" form="form-guardar-columnas" name={"defaults_valor_hasta[#{@id}]"}
-          class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-20" />
-      </div>
-
-      <input :if={@defaults["modo"] == "formula" && !@campo["acotado"]} type="text" value={@defaults["valor"]} placeholder="ej. actual - 3 meses"
-        phx-change="cambiar_defaults_valor" form="form-guardar-columnas" name={"defaults_valor[#{@id}]"}
-        class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-full mt-1" />
-    </div>
-    """
-  end
-
-  attr :campo, :map, required: true
-  attr :id, :string, required: true
-  attr :tipo_filtro, :string, required: true
-  attr :origen, :string, required: true
-  attr :es_referencia_real?, :boolean, required: true
-  attr :catalogos_referenciables, :list, required: true
-
-  defp origen_string(%{es_referencia_real?: true} = assigns) do
-    ~H"""
-    <span class="text-[10px] text-gray-500">Referenciado</span>
-    """
-  end
-
-  defp origen_string(%{tipo_filtro: "like"} = assigns) do
-    ~H"""
-    <span class="text-[10px] text-gray-500">Libre</span>
-    """
-  end
-
-  defp origen_string(%{tipo_filtro: "multi"} = assigns) do
-    ~H"""
-    <div class="flex flex-col gap-1">
-      <span class="text-[10px] text-gray-500">Referenciado</span>
-      <.selector_catalogo id={@id} valor={@campo["catalogo_referenciado"]} catalogos_referenciables={@catalogos_referenciables} />
-    </div>
-    """
-  end
-
-  defp origen_string(%{tipo_filtro: "igual"} = assigns) do
-    ~H"""
-    <div class="flex flex-col gap-1">
-      <div class="flex gap-1">
-        <button :for={{valor, etiqueta} <- [{"libre", "Libre"}, {"referenciado", "Referenciado"}]} type="button"
-          phx-click="cambiar_origen" phx-value-campo={@id} phx-value-origen={valor}
-          class={[
-            "text-[10px] font-semibold rounded-full px-2 py-1",
-            @origen == valor && "bg-purple-600 text-white",
-            @origen != valor && "bg-purple-50 text-purple-700 hover:bg-purple-100"
-          ]}>
-          {etiqueta}
-        </button>
-      </div>
-      <.selector_catalogo :if={@origen == "referenciado"} id={@id} valor={@campo["catalogo_referenciado"]} catalogos_referenciables={@catalogos_referenciables} />
-    </div>
-    """
-  end
-
-  attr :id, :string, required: true
-  attr :valor, :any, required: true
-  attr :catalogos_referenciables, :list, required: true
-
-  defp selector_catalogo(assigns) do
-    ~H"""
-    <select phx-change="cambiar_catalogo_referenciado" form="form-guardar-columnas" name={"catalogo_referenciado[#{@id}]"}
-      class="border border-gray-300 rounded text-[10px] px-1.5 py-0.5">
-      <option value="" selected={@valor in [nil, ""]}>— elegir catálogo —</option>
-      <option :for={c <- @catalogos_referenciables} value={c.nombre} selected={c.nombre == @valor}>{c.etiqueta}</option>
-    </select>
-    """
-  end
-
-  attr :campo, :map, required: true
-  attr :id, :string, required: true
-  attr :tipo_filtro, :string, required: true
-  attr :origen, :string, required: true
-  attr :detalles_por_catalogo, :map, required: true
-
-  # "like" y "igual"+libre -- caja de texto para un default fijo.
-  defp defaults_string(%{tipo_filtro: tipo_filtro, origen: origen} = assigns) when tipo_filtro == "like" or (tipo_filtro == "igual" and origen == "libre") do
-    defaults = assigns.campo["defaults"] || %{}
-    assigns = assign(assigns, :valor, defaults["valor"])
-
-    ~H"""
-    <input type="text" value={@valor} placeholder="Default (opcional)"
-      phx-change="cambiar_defaults_valor" form="form-guardar-columnas" name={"defaults_valor[#{@id}]"}
-      class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-full" />
-    """
-  end
-
-  # "igual"+referenciado (incluye tipo "referencia" real) -- un <select>
-  # con los valores reales del catálogo, no una caja de texto libre.
-  defp defaults_string(%{tipo_filtro: "igual"} = assigns) do
-    opciones = opciones_catalogo_referenciado(assigns.campo, assigns.detalles_por_catalogo)
-    defaults = assigns.campo["defaults"] || %{}
-    assigns = assigns |> assign(:opciones, opciones) |> assign(:valor, defaults["valor"])
-
-    ~H"""
-    <select phx-change="cambiar_defaults_valor" form="form-guardar-columnas" name={"defaults_valor[#{@id}]"}
-      class="border border-gray-300 rounded text-[11px] px-1.5 py-0.5 w-full">
-      <option value="" selected={@valor in [nil, ""]}>— sin default —</option>
-      <option :for={{val, etiqueta} <- @opciones} value={val} selected={to_string(val) == to_string(@valor)}>{etiqueta}</option>
-    </select>
-    """
-  end
-
-  # "multi" -- lookup con checkbox a la izquierda (MetadataAppWeb.SelectorMultipleComponents),
-  # reemplaza el <select multiple> nativo (2026-08-27, a pedido explícito
-  # -- ctrl/cmd+click no es discoverable).
-  defp defaults_string(%{tipo_filtro: "multi"} = assigns) do
-    opciones = opciones_catalogo_referenciado(assigns.campo, assigns.detalles_por_catalogo)
-    defaults = assigns.campo["defaults"] || %{}
-    valores = Enum.map(defaults["valores"] || [], &to_string/1)
-    assigns = assigns |> assign(:opciones, opciones) |> assign(:valores, valores)
-
-    ~H"""
-    <.selector_multiple id={"defaults-#{@id}"} form_id="form-guardar-columnas"
-      evento="cambiar_defaults_valores" evento_todos="marcar_defaults_todos" evento_ninguno="limpiar_defaults_valores"
-      campo_clave={@id} opciones={@opciones} seleccionados={@valores} />
-    """
-  end
-
-  defp opciones_catalogo_referenciado(campo, detalles_por_catalogo) do
-    case MetaConsultas.props_referenciado(campo, detalles_por_catalogo) do
-      nil -> []
-      props -> CatalogoGenerico.opciones_referencia(props, %{}, nil)
-    end
-  end
-
-  attr :campo, :map, required: true
-  attr :id, :string, required: true
-  attr :acotado, :boolean, required: true
-
-  defp defaults_numerico(assigns) do
-    defaults = assigns.campo["defaults"] || %{}
-    assigns = assign(assigns, :defaults, defaults)
-
-    ~H"""
-    <div :if={@acotado} class="flex items-center gap-1">
-      <input type="number" step="any" value={@defaults["valor"]} placeholder="Desde"
-        phx-change="cambiar_defaults_valor" form="form-guardar-columnas" name={"defaults_valor[#{@id}]"}
-        class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-20" />
-      <span class="text-gray-400 text-[10px]">–</span>
-      <input type="number" step="any" value={@defaults["valor_hasta"]} placeholder="Hasta"
-        phx-change="cambiar_defaults_valor_hasta" form="form-guardar-columnas" name={"defaults_valor_hasta[#{@id}]"}
-        class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-20" />
-    </div>
-    <input :if={!@acotado} type="number" step="any" value={@defaults["valor"]} placeholder="Default (opcional)"
-      phx-change="cambiar_defaults_valor" form="form-guardar-columnas" name={"defaults_valor[#{@id}]"}
-      class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] w-full" />
-    """
-  end
 
   attr :campos, :list, required: true
   attr :multi_tabla?, :boolean, required: true
