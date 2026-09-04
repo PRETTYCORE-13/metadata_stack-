@@ -27,12 +27,20 @@ defmodule MetadataAppWeb.Router do
   # SPEC-API-0409202601 (design.md §1.2) -- autenticación por Bearer token,
   # NO por cookie de sesión (a diferencia de :api de arriba) -- para la app
   # Flutter, que no puede participar de una sesión de navegador.
+  #
+  # MetadataAppWeb.CorsMovil primero en las dos: sin CORS, un cliente
+  # corriendo en un navegador (ej. `flutter run -d chrome` para probar la
+  # app) no puede llamar esta API -- encontrado real probando la app
+  # Flutter, 2026-09-04. No hace falta para apps nativas (el target real),
+  # pero no está de más y desbloquea probar/correr una build web.
   pipeline :api_movil do
     plug :accepts, ["json"]
+    plug MetadataAppWeb.CorsMovil
   end
 
   pipeline :api_movil_auth do
     plug :accepts, ["json"]
+    plug MetadataAppWeb.CorsMovil
     plug MetadataAppWeb.ApiMovilAuth
   end
 
@@ -42,6 +50,16 @@ defmodule MetadataAppWeb.Router do
   # literales antes de los comodines.
   scope "/api/movil", MetadataAppWeb.Api.Movil do
     pipe_through :api_movil
+
+    # El preflight OPTIONS que manda el navegador antes de cada POST/
+    # DELETE real necesita su propia ruta -- Phoenix matchea por método,
+    # así que sin esto un OPTIONS nunca llega ni al pipeline (404 antes
+    # de que MetadataAppWeb.CorsMovil pueda responderlo). SesionController
+    # nunca corre de verdad acá: CorsMovil ya respondió y hizo halt/1.
+    options "/verificar", SesionController, :verificar
+    options "/login", SesionController, :create
+    options "/token/refrescar", SesionController, :refrescar
+    options "/sesion", SesionController, :delete
 
     post "/verificar", SesionController, :verificar
     post "/login", SesionController, :create
