@@ -54,6 +54,35 @@ defmodule MetadataApp.TRN do
   # ante una colisión de verdad improbable (aleatorio + mismo segundo)
   # simplemente se regenera con un aleatorio nuevo, no hace falta lockear
   # nada de antemano.
+  #
+  # Bug real (encontrado en CI, 2026-09-04, reproducido después local con
+  # `mix test --seed` repetido): con muchas altas concurrentes del mismo
+  # catálogo en el mismo segundo, el espacio de 10.000 valores del
+  # aleatorio de generar_trn/1 colisiona con probabilidad real (paradoja
+  # del cumpleaños). Dos causas, no una:
+  #
+  # 1) insertar_registro_central/4 hacía un Repo.insert! crudo, sin
+  #    unique_constraint, contra el índice único de
+  #    meta_schema_transaction_registry (compartido por TODOS los
+  #    catálogos, a diferencia del índice de la tabla propia que sí se
+  #    validaba) — una colisión ahí tiraba Ecto.ConstraintError sin
+  #    capturar. Ya corregido arriba con los unique_constraint de esa
+  #    función.
+  #
+  # 2) Corregir (1) no alcanzaba: `Repo.update()`/`Repo.insert()` DENTRO
+  #    de una transacción ya abierta (este `asignar/3` corre dentro del
+  #    `Repo.transaction(fn -> ... end)` de asignar_si_transaccional/1)
+  #    necesitan `mode: :savepoint` explícito para que Ecto pueda
+  #    traducir una violación de constraint a `{:error, changeset}` SIN
+  #    dejar la transacción entera abortada (Postgres aborda TODA la
+  #    transacción ante cualquier error no protegido por un SAVEPOINT,
+  #    seguir emitiendo comandos después tira
+  #    `25P02 in_failed_sql_transaction` — ver moduledoc de
+  #    `Ecto.Repo.transact/2`). Esto estaba roto en producción desde
+  #    siempre; en test pasaba desapercibido porque
+  #    Ecto.Adapters.SQL.Sandbox agrega savepoints automáticos en
+  #    ciertos casos, no todos — de ahí que el test de concurrencia
+  #    fallara solo a veces.
   defp asignar(registro, header, intento) do
     trn = generar_trn(header.codigo_trn)
     ulid = Ulid.generate()
@@ -63,11 +92,16 @@ defmodule MetadataApp.TRN do
       |> Ecto.Changeset.change(%{trn: trn, ulid: ulid})
       |> Ecto.Changeset.unique_constraint(:trn, name: nombre_indice(header.schema_context_name, "trn"))
       |> Ecto.Changeset.unique_constraint(:ulid, name: nombre_indice(header.schema_context_name, "ulid"))
-      |> Repo.update()
+      |> Repo.update(mode: :savepoint)
+
+    resultado =
+      case resultado do
+        {:ok, actualizado} -> insertar_registro_central(actualizado, header, trn, ulid)
+        {:error, _changeset} = error -> error
+      end
 
     case resultado do
       {:ok, actualizado} ->
-        insertar_registro_central(actualizado, header, trn, ulid)
         actualizado
 
       {:error, %Ecto.Changeset{errors: errores} = changeset} ->
@@ -87,7 +121,13 @@ defmodule MetadataApp.TRN do
       meta_schema_header_id: header.id,
       entity_id: registro.id
     })
-    |> Repo.insert!()
+    |> Ecto.Changeset.unique_constraint(:trn, name: "meta_schema_transaction_registry_trn_unico_index")
+    |> Ecto.Changeset.unique_constraint(:ulid, name: "meta_schema_transaction_registry_ulid_unico_index")
+    |> Repo.insert(mode: :savepoint)
+    |> case do
+      {:ok, _historial} -> {:ok, registro}
+      {:error, changeset} -> {:error, changeset}
+    end
   end
 
   # Paso 1-4: código de módulo + timestamp UTC + aleatorio de 4 dígitos.
