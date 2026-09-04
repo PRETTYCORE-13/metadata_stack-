@@ -57,3 +57,8 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
 - [`SPEC-SYS-0109202601-administrador-folios/`](SPEC-SYS-0109202601-administrador-folios/) —
   motor de folios de negocio para documentos transaccionales
   (implementado, Grupos A-G completos).
+- [`SPEC-API-0409202601-autenticacion-movil/`](SPEC-API-0409202601-autenticacion-movil/) —
+  autenticación por token (access+refresh) para que la app Flutter
+  autentique contra los mismos usuarios de metadata_stack, sin cookie
+  de sesión web (implementado, Grupos A-G completos; `design.md` §4 es
+  el contrato de API para el cliente Flutter).

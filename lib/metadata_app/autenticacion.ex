@@ -19,7 +19,8 @@ defmodule MetadataApp.Autenticacion do
     InventoryLocation,
     UsuarioBranch,
     UsuarioSalesUnit,
-    UsuarioInventoryLocation
+    UsuarioInventoryLocation,
+    SesionMovil
   }
 
   ## Empresas (tenant) del usuario — un usuario puede tener varias; la que
@@ -972,6 +973,104 @@ defmodule MetadataApp.Autenticacion do
   def get_usuario_by_session_token(token) do
     {:ok, query} = UsuarioToken.verify_session_token_query(token)
     Repo.one(query)
+  end
+
+  ## Sesiones móviles (SPEC-API-0409202601, design.md) -- mismo patrón
+  ## que las funciones de sesión web de arriba (el módulo construye,
+  ## este contexto persiste), pero con SesionMovil/meta_schema_usuario_
+  ## sesion_movil en vez de UsuarioToken -- ver ese schema para el
+  ## porqué de la tabla aparte.
+
+  @doc "Crea una sesión móvil nueva -- devuelve {refresh_token_crudo, %SesionMovil{}}."
+  def crear_sesion_movil(%Usuario{} = usuario, etiqueta_dispositivo) do
+    {token, sesion} = SesionMovil.build(usuario, etiqueta_dispositivo)
+    {token, Repo.insert!(sesion)}
+  end
+
+  @doc "Busca una sesión móvil por su refresh token crudo -- {:ok, sesion} si existe y no venció (60 días), :error si no."
+  def obtener_sesion_movil_valida(refresh_token_crudo) do
+    with {:ok, query} <- SesionMovil.verify_refresh_token_query(refresh_token_crudo),
+         %SesionMovil{} = sesion <- Repo.one(query) do
+      {:ok, sesion}
+    else
+      _ -> :error
+    end
+  end
+
+  @doc "Actualiza ultimo_uso_en de una sesión móvil -- llamado solo al renovar (R3), no en cada request con access token (ver design.md §1.3)."
+  def tocar_sesion_movil(%SesionMovil{} = sesion) do
+    sesion
+    |> Ecto.Changeset.change(ultimo_uso_en: DateTime.utc_now() |> DateTime.truncate(:second))
+    |> Repo.update!()
+  end
+
+  @doc "Revoca (borra) una sesión móvil ya cargada -- para la pantalla de Sysadmin (R7), que ya tiene el struct."
+  def revocar_sesion_movil(%SesionMovil{} = sesion), do: Repo.delete(sesion)
+
+  @doc "Revoca una sesión móvil por su refresh token crudo -- para el logout de la API (R8). Idempotente: si no existe (ya revocada, vencida, o nunca existió), igual :ok."
+  def revocar_sesion_movil_por_token(refresh_token_crudo) do
+    with {:ok, query} <- SesionMovil.buscar_por_token_query(refresh_token_crudo),
+         %SesionMovil{} = sesion <- Repo.one(query) do
+      Repo.delete(sesion)
+    end
+
+    :ok
+  end
+
+  @doc "Todas las sesiones móviles de un usuario, más recientemente usadas primero -- para la pantalla de Sysadmin (R7)."
+  def listar_sesiones_movil(%Usuario{} = usuario) do
+    from(s in SesionMovil, where: s.usuario_id == ^usuario.id, order_by: [desc_nulls_last: s.ultimo_uso_en, desc: s.inserted_at])
+    |> Repo.all()
+  end
+
+  @doc """
+  Resuelve la empresa con la que un login móvil arranca (R9) -- mismo
+  criterio que ya usa el login web (`UsuarioAuth.log_in_usuario/2`):
+  0 empresas → nil, 1 sola → esa, 2+ → la marcada default si sigue
+  siendo válida. A diferencia de la web, acá NO hay pantalla de
+  selector si tiene 2+ sin default -- ese caso también devuelve nil (el
+  login igual sucede, sin empresa activa) en vez de bloquear, mismo
+  espíritu que el login web nunca bloquea por esto.
+  """
+  def empresa_resuelta_para_login_movil(usuario_id) do
+    case empresas_de_usuario(usuario_id) do
+      [] -> nil
+      [unica] -> unica
+      _varias -> empresa_default_de_usuario(usuario_id)
+    end
+  end
+
+  @access_token_context "movil access"
+  @access_token_max_age_seconds 7_200
+
+  @doc "Vigencia del access token en segundos -- para que el controller la incluya en la respuesta de /login y /token/refrescar sin repetir el número."
+  def access_token_max_age_seconds, do: @access_token_max_age_seconds
+
+  @doc "Firma un access token para una sesión móvil ya creada -- design.md §1.1."
+  def emitir_access_token(%SesionMovil{} = sesion) do
+    Phoenix.Token.sign(MetadataAppWeb.Endpoint, @access_token_context, %{
+      usuario_id: sesion.usuario_id,
+      sesion_movil_id: sesion.id
+    })
+  end
+
+  @doc """
+  Verifica un access token: firma+expiración (`Phoenix.Token.verify/4`,
+  #{@access_token_max_age_seconds}s) Y que la `SesionMovil` de la que
+  salió siga existiendo (revocación instantánea, design.md §1.1) — si
+  cualquiera de las dos falla, `:error`. Si es válido, devuelve el
+  `Usuario` (no arma el Scope acá -- eso es responsabilidad de
+  `MetadataAppWeb.ApiMovilAuth`, que también resuelve empresa_activa).
+  """
+  def verificar_access_token(token) do
+    with {:ok, %{usuario_id: usuario_id, sesion_movil_id: sesion_movil_id}} <-
+           Phoenix.Token.verify(MetadataAppWeb.Endpoint, @access_token_context, token, max_age: @access_token_max_age_seconds),
+         %SesionMovil{} <- Repo.get(SesionMovil, sesion_movil_id),
+         %Usuario{} = usuario <- Repo.get(Usuario, usuario_id) do
+      {:ok, usuario}
+    else
+      _ -> :error
+    end
   end
 
   @doc """

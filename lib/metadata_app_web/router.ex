@@ -24,6 +24,31 @@ defmodule MetadataAppWeb.Router do
     plug :fetch_current_scope_for_usuario
   end
 
+  # SPEC-API-0409202601 (design.md §1.2) -- autenticación por Bearer token,
+  # NO por cookie de sesión (a diferencia de :api de arriba) -- para la app
+  # Flutter, que no puede participar de una sesión de navegador.
+  pipeline :api_movil do
+    plug :accepts, ["json"]
+  end
+
+  pipeline :api_movil_auth do
+    plug :accepts, ["json"]
+    plug MetadataAppWeb.ApiMovilAuth
+  end
+
+  # Va ANTES del scope "/api" de abajo (que tiene "/:tabla" genérico,
+  # matchearía "movil" como si fuera un catálogo) -- mismo motivo que ya
+  # documentan meta_schema_estados/roles/permisos más abajo: rutas
+  # literales antes de los comodines.
+  scope "/api/movil", MetadataAppWeb.Api.Movil do
+    pipe_through :api_movil
+
+    post "/verificar", SesionController, :verificar
+    post "/login", SesionController, :create
+    post "/token/refrescar", SesionController, :refrescar
+    delete "/sesion", SesionController, :delete
+  end
+
   # Va antes del scope "/" browser: el catch-all "/*ruta" de más abajo matchea
   # cualquier GET (incluido "/api/..."), así que /api tiene que resolverse
   # primero o esas rutas GET nunca llegarían a la API.
@@ -190,6 +215,7 @@ defmodule MetadataAppWeb.Router do
       live "/sysadmin/credenciales", Sysadmin.CredencialesLive
       live "/sysadmin/ambientes", Sysadmin.AmbientesLive
       live "/sysadmin/panel-control", Sysadmin.PanelControlLive
+      live "/sysadmin/sesiones-movil", Sysadmin.SesionesMovilLive
       live "/sysadmin/acciones-externas", Sysadmin.AccionesExternasLive
       live "/sysadmin/jerarquia", Sysadmin.JerarquiaOrganizacionalLive
       live "/sysadmin/catalogos/permisos", Sysadmin.CatalogoPermisosLive
