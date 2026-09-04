@@ -113,14 +113,24 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # (Fase 4a) -- sin esto, un usuario acotado seguiría viendo la suma/
   # conteo VERDADERO (sin filtrar) en el pie de la tabla aunque las filas
   # sí estén filtradas, un leak real vía agregación.
-  @spec agregar(module(), Scope.t_ou_sistema(), atom() | String.t(), atom(), map(), busqueda()) :: number() | nil
-  def agregar(schema_mod, scope, campo, funcion, filtros \\ %{}, busqueda \\ nil) do
+  #
+  # `parametros` (bug real 2026-09-04, "Suma"/"Totalizado" de Gastos
+  # mostrando la suma de TODOS los meses en vez de solo el filtrado por
+  # el parámetro Fecha "Mes actual completo"): faltaba acá desde que
+  # existe el parámetro de Fecha -- `listar/6` y `contar/5` sí lo aplican
+  # (aplicar_parametros/2), pero esta función seguía agregando sobre la
+  # tabla entera. Mismo `as: :t0` que el from base de listar/contar --
+  # aplicar_parametros/2 lo necesita para el binding nombrado.
+  @spec agregar(module(), Scope.t_ou_sistema(), atom() | String.t(), atom(), map(), busqueda(), parametros_opcional()) ::
+          number() | nil
+  def agregar(schema_mod, scope, campo, funcion, filtros \\ %{}, busqueda \\ nil, parametros \\ nil) do
     campo_atom = String.to_existing_atom(to_string(campo))
 
-    from(r in schema_mod, where: is_nil(r.delete_guid))
+    from(r in schema_mod, as: :t0, where: is_nil(r.delete_guid))
     |> aplicar_alcance_de_datos(scope, schema_mod)
     |> aplicar_filtros(filtros)
     |> aplicar_busqueda(busqueda)
+    |> aplicar_parametros(parametros)
     |> Repo.aggregate(funcion, campo_atom)
   end
 
