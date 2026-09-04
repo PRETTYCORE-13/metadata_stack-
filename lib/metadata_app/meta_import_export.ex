@@ -66,6 +66,10 @@ defmodule MetadataApp.MetaImportExport do
                 [] -> nil
                 campos -> "obligatoriedad actualizada: #{Enum.join(campos, ", ")}"
               end,
+              case sincronizar_parametros_y_totales(existente, contexto["detalles"] || []) do
+                [] -> nil
+                campos -> "parámetro(s)/total(es) actualizado(s): #{Enum.join(campos, ", ")}"
+              end,
               if(sincronizar_cargar_todos_por_default(existente, contexto["cargar_todos_por_default"]),
                 do: "\"traer todo por default\" actualizado"
               ),
@@ -313,6 +317,56 @@ defmodule MetadataApp.MetaImportExport do
         end
       else
         []
+      end
+    end)
+  end
+
+  # "Parámetros y Totales" (SPEC-SYS-0209202601, commit 426347b): es_parametro/
+  # defaults/acotado/agregacion_activa/total_general_activo/total_pagina_activo
+  # de un campo YA existente nunca se sincronizaban -- mismo bug que ya se
+  # corrigió para columnas estructurales/ícono: republicar un catálogo que ya
+  # estaba en producción, agregando estas propiedades a un campo viejo, las
+  # dejaba mudas en meta_schema_detail (Frontend seguía viendo la config
+  # vieja aunque el deploy "pasara bien"). Mismo criterio que
+  # sincronizar_columnas_estructurales/2: son flags de presentación/
+  # comportamiento del Get/UI, nunca tocan la columna física, seguro
+  # sobreescribirlos a ciegas con lo que traiga el bundle. Usa Map.has_key?
+  # en vez de comparar contra nil -- son booleanos legítimamente `false`
+  # (mismo gotcha ya documentado arriba en columnas estructurales).
+  @propiedades_parametros_totales ~w(acotado agregacion_activa defaults es_parametro total_general_activo total_pagina_activo)
+
+  defp sincronizar_parametros_y_totales(header, detalles_json) do
+    existentes =
+      header.schema_context_name
+      |> MetaSchemaContext.listar_detalles()
+      |> Map.new(&{&1.schema_context_field, &1})
+
+    detalles_json
+    |> Enum.filter(&Map.has_key?(existentes, &1["schema_context_field"]))
+    |> Enum.flat_map(fn detalle_json ->
+      detalle = Map.fetch!(existentes, detalle_json["schema_context_field"])
+      props_nuevas = detalle_json["schema_context_properties"] || %{}
+
+      cambios =
+        @propiedades_parametros_totales
+        |> Enum.filter(&Map.has_key?(props_nuevas, &1))
+        |> Enum.filter(&(Map.get(props_nuevas, &1) != Map.get(detalle.schema_context_properties, &1)))
+
+      if cambios == [] do
+        []
+      else
+        props =
+          Enum.reduce(cambios, detalle.schema_context_properties, fn campo, acc ->
+            Map.put(acc, campo, Map.get(props_nuevas, campo))
+          end)
+
+        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+          {:ok, _detalle} ->
+            [detalle.schema_context_field]
+
+          {:error, changeset} ->
+            raise "Error sincronizando parámetros/totales de \"#{detalle.schema_context_field}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+        end
       end
     end)
   end
