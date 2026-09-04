@@ -981,14 +981,20 @@ defmodule MetadataApp.MetaConsultas do
   end
 
   @doc """
-  Igual que `CatalogoGenerico.agregar/5`, pero para una Consulta con JOIN
+  Igual que `CatalogoGenerico.agregar/6`, pero para una Consulta con JOIN
   — `campo_clave` es la clave namespaced (ver `clave_campo/1`, como
   string) porque acá puede haber más de una tabla y el campo crudo solo
   identifica la columna dentro de SU catálogo, no en toda la consulta.
   `funcion` es uno de :sum/:avg/:min/:max/:count. nil si `campo_clave` no
   existe en la consulta (defensivo — no debería pasar desde la UI).
+
+  `overrides_parametro` (bug real 2026-09-04, mismo que
+  `CatalogoGenerico.agregar/7`): faltaba acá desde que existe el
+  parámetro de Fecha -- `contar/5`/`ejecutar/6` sí lo aplican
+  (`ParametrosCatalogo.aplicar_filtros_parametro_estandar/4`), esta
+  función seguía agregando sobre TODAS las filas de la consulta.
   """
-  def agregar(%Consulta{} = consulta, campo_clave, funcion, filtros \\ %{}, busqueda \\ nil) do
+  def agregar(%Consulta{} = consulta, campo_clave, funcion, filtros \\ %{}, busqueda \\ nil, overrides_parametro \\ %{}) do
     case Enum.find(consulta.campos, &(to_string(clave_campo(&1)) == campo_clave)) do
       nil ->
         nil
@@ -1002,6 +1008,7 @@ defmodule MetadataApp.MetaConsultas do
         base
         |> aplicar_filtros(filtros, consulta.campos, alias_por_catalogo)
         |> aplicar_busqueda(busqueda, consulta.campos, alias_por_catalogo)
+        |> ParametrosCatalogo.aplicar_filtros_parametro_estandar(consulta.campos, alias_por_catalogo, overrides_parametro)
         |> exclude(:order_by)
         |> select(^aplicar_funcion_agregada(funcion, expr))
         |> Repo.one()

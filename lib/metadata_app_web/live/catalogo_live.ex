@@ -761,14 +761,47 @@ defmodule MetadataAppWeb.CatalogoLive do
     assign(socket, :totales_generales, valores)
   end
 
-  defp calcular_agregacion(%{assigns: %{es_consulta?: true, consulta: consulta}}, campo, funcion, filtros_ecto, busqueda) do
-    MetaConsultas.agregar(consulta, campo, funcion_agregada(funcion), filtros_ecto, busqueda)
+  defp calcular_agregacion(
+         %{assigns: %{es_consulta?: true, consulta: consulta, overrides_parametro: overrides_parametro}},
+         campo,
+         funcion,
+         filtros_ecto,
+         busqueda
+       ) do
+    MetaConsultas.agregar(consulta, campo, funcion_agregada(funcion), filtros_ecto, busqueda, overrides_parametro)
   end
 
   defp calcular_agregacion(%{assigns: %{modulo: nil}}, _campo, _funcion, _filtros_ecto, _busqueda), do: nil
 
-  defp calcular_agregacion(%{assigns: %{modulo: modulo} = assigns}, campo, funcion, filtros_ecto, busqueda) do
-    CatalogoGenerico.agregar(modulo, assigns[:current_scope], campo, funcion_agregada(funcion), filtros_ecto, busqueda)
+  # `parametros` con la misma forma que cargar_filas_catalogo/1 -- sin
+  # esto, "Suma"/"Totalizado" ignoraban el parámetro Fecha (ej. "Mes
+  # actual completo") y sumaban TODAS las filas de la tabla, no solo las
+  # que la tabla efectivamente muestra (bug real 2026-09-04).
+  defp calcular_agregacion(
+         %{
+           assigns: %{
+             modulo: modulo,
+             current_page: catalogo,
+             campos_param: campos_param,
+             overrides_parametro: overrides_parametro
+           } = assigns
+         },
+         campo,
+         funcion,
+         filtros_ecto,
+         busqueda
+       ) do
+    parametros = {campos_param, %{catalogo => :t0}, overrides_parametro}
+
+    CatalogoGenerico.agregar(
+      modulo,
+      assigns[:current_scope],
+      campo,
+      funcion_agregada(funcion),
+      filtros_ecto,
+      busqueda,
+      parametros
+    )
   end
 
   defp funcion_agregada("suma"), do: :sum

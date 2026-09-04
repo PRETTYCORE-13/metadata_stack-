@@ -127,7 +127,11 @@ jobs:
             echo "Esperando a que el rollout converja..."
             sudo k3s kubectl rollout status deployment/metadata-stack-app -n metadata-stack --timeout=120s
 
-            POD=$(sudo k3s kubectl get pod -n metadata-stack -l app=metadata-stack-app -o jsonpath='{.items[0].metadata.name}')
+            # Mismo fix que ci.yml (ver ahí el comentario largo, 2026-09-03):
+            # items[0] sin ordenar podía agarrar el pod viejo Terminating
+            # en vez del nuevo -- ordenar por creationTimestamp y tomar el
+            # último siempre da el pod recién creado por este rollout.
+            POD=$(sudo k3s kubectl get pod -n metadata-stack -l app=metadata-stack-app --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[*].metadata.name}' | awk '{print $NF}')
             if [ -z "$POD" ]; then
               echo "No se encontró el pod de metadata-stack-app, no se pudo migrar"
               exit 1

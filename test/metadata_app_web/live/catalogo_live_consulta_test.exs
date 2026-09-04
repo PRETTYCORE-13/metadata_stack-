@@ -156,6 +156,38 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
     assert html =~ "Totalizado: 10"
   end
 
+  # Mismo bug real que la prueba de arriba, pero vía el widget de
+  # Parámetros (overrides_parametro) en vez de la búsqueda general —
+  # MetaConsultas.agregar/5 no aplicaba ParametrosCatalogo.
+  # aplicar_filtros_parametro_estandar/4 aunque contar/5 y ejecutar/6 sí
+  # lo hacían, así que "Totalizado" sumaba las filas de TODA la consulta.
+  test "la banda de totales respeta un parámetro activo, no solo la búsqueda general", %{conn: conn} do
+    fixture_cliente(%{meta_fixture_cliente_nombre: "Gina Vega #{unique()}", meta_fixture_cliente_edad: 10, meta_fixture_cliente_venta: Decimal.new("1")})
+    fixture_cliente(%{meta_fixture_cliente_nombre: "Hugo Vega #{unique()}", meta_fixture_cliente_edad: 20, meta_fixture_cliente_venta: Decimal.new("1")})
+
+    {_header, consulta, nav} = criar_consulta_sobre_fixture()
+
+    campos =
+      Enum.map(consulta.campos, fn c ->
+        cond do
+          c["campo"] == "meta_fixture_cliente_edad" -> Map.merge(c, %{"agregacion_activa" => true, "total_general_activo" => true})
+          c["campo"] == "meta_fixture_cliente_nombre" -> Map.put(c, "es_parametro", true)
+          true -> c
+        end
+      end)
+
+    {:ok, consulta} = MetaConsultas.actualizar_campos(consulta, campos)
+
+    {:ok, view, _html} = live(conn, nav)
+
+    clave = to_string(MetaConsultas.clave_campo(Enum.find(consulta.campos, &(&1["campo"] == "meta_fixture_cliente_nombre"))))
+
+    html = render_change(view, "cambiar_override_valor", %{"valor" => %{clave => "Gina Vega"}})
+
+    assert html =~ "Totalizado: 10"
+    refute html =~ "Totalizado: 30"
+  end
+
   # Barra de "Parámetros" (rediseño 2026-08-27, corregido el mismo día --
   # ver moduledoc de MetaSchema.Consulta) -- opt-in: el admin tiene que
   # marcar "es_parametro" => true a propósito por columna en Get Config,

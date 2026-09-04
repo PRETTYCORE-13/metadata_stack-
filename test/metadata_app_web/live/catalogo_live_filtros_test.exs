@@ -167,4 +167,36 @@ defmodule MetadataAppWeb.CatalogoLiveFiltrosTest do
     assert html =~ solo_nombre.meta_fixture_cliente_nombre
     assert html =~ otro.meta_fixture_cliente_nombre
   end
+
+  # Bug real (2026-09-04, encontrado en producción con "Gastos"): "Suma"/
+  # "Totalizado" sumaban TODAS las filas del catálogo, ignorando el
+  # parámetro activo (ej. Fecha "Mes actual completo") — CatalogoGenerico.
+  # agregar/6 no aplicaba `parametros` aunque listar/6 y contar/5 sí lo
+  # hacían. Acá el parámetro es el nombre (texto), pero el mecanismo es
+  # el mismo que un parámetro de Fecha.
+  test "Totalizado suma solo las filas que matchean el parámetro activo, no la tabla entera", %{conn: conn} do
+    header = MetaSchemaContext.obtener_header_por_nombre("meta_fixture_cliente")
+    marcar_parametro(header, "meta_fixture_cliente_nombre")
+
+    d_edad = detalle(header, "meta_fixture_cliente_edad")
+
+    props_edad =
+      Map.merge(d_edad.schema_context_properties, %{"agregacion_activa" => true, "total_general_activo" => true})
+
+    {:ok, _} = MetaSchemaContext.actualizar_detalle(d_edad, %{"schema_context_properties" => props_edad})
+
+    sufijo = unique()
+
+    incluida =
+      fixture_cliente(%{meta_fixture_cliente_nombre: "Elena Soto #{sufijo}", meta_fixture_cliente_edad: 10, meta_fixture_cliente_venta: Decimal.new("1")})
+
+    fixture_cliente(%{meta_fixture_cliente_nombre: "Fabio Diaz #{sufijo}", meta_fixture_cliente_edad: 20, meta_fixture_cliente_venta: Decimal.new("1")})
+
+    {:ok, view, _html} = live(conn, "/__test__/fixture-cliente")
+
+    html = render_change(view, "cambiar_override_valor", %{"valor" => %{clave(header, "meta_fixture_cliente_nombre") => incluida.meta_fixture_cliente_nombre}})
+
+    assert html =~ "Totalizado: 10"
+    refute html =~ "Totalizado: 30"
+  end
 end

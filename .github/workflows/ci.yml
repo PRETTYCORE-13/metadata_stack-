@@ -201,7 +201,17 @@ jobs:
             echo "Esperando a que el rollout converja..."
             sudo k3s kubectl rollout status deployment/metadata-stack-app -n metadata-stack --timeout=120s
 
-            POD=$(sudo k3s kubectl get pod -n metadata-stack -l app=metadata-stack-app -o jsonpath='{.items[0].metadata.name}')
+            # items[0] agarraba el PRIMERO que devolviera la API, sin ordenar
+            # -- durante la ventana en que el pod viejo todavía está
+            # Terminating (su `status.phase` sigue en "Running" hasta que
+            # Kubernetes lo borra del todo, no hay field-selector que lo
+            # excluya de forma confiable) podía ser el viejo en vez del
+            # nuevo, y el exec fallaba con "container not found" aunque el
+            # rollout ya hubiera convergido (encontrado real 2026-09-03).
+            # Ordenar por creationTimestamp y tomar el último (--sort-by
+            # deja el jsonpath en orden ascendente, awk agarra el final)
+            # siempre da el pod recién creado por este rollout.
+            POD=$(sudo k3s kubectl get pod -n metadata-stack -l app=metadata-stack-app --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[*].metadata.name}' | awk '{print $NF}')
             if [ -z "$POD" ]; then
               echo "No se encontró el pod de metadata-stack-app, no se pudo migrar"
               exit 1
