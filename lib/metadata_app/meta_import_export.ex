@@ -19,18 +19,110 @@ defmodule MetadataApp.MetaImportExport do
 
   @doc "Importa cada `*.meta.json` de `dir` — crea el Header+Detalles si el catálogo no existe todavía; si ya existe, sincroniza campos nuevos que no tenía."
   def importar_meta(dir \\ "priv/repo/catalogos") do
-    # Maestros antes que detalles: un detalle trae "schema_encabezado_catalogo"
-    # (el NOMBRE de su maestro, ver MetaSchemaContext.exportar_header/2) que
-    # hay que resolver a un id local -- si el maestro todavía no se importó
-    # (ej. orden alfabético del directorio, donde "..._det" < "..._enc"),
-    # no hay id que resolver todavía. Sin multinivel (un detalle nunca es
-    # maestro de otro), dos pasadas alcanzan.
-    {sin_maestro, con_maestro} =
-      dir
-      |> leer_json(".meta.json")
-      |> Enum.split_with(&is_nil(&1["schema_encabezado_catalogo"]))
+    dir
+    |> leer_json(".meta.json")
+    |> ordenar_por_dependencias()
+    |> Enum.map(&importar_contexto_tolerante/1)
+  end
 
-    Enum.map(sin_maestro ++ con_maestro, &importar_contexto/1)
+  # Encontrado real (2026-09-04, auditoría de replay desde cero): un
+  # catálogo puede tener un campo "referencia" describiendo un campo de
+  # su PROPIO detalle (ej. pty_dsd_empleados -> un campo de
+  # pty_dsd_empleadosdet) -- un ciclo real de validación, no solo de
+  # orden, que ordenar_por_dependencias/1 no puede resolver (el detalle
+  # estructuralmente no puede importarse antes que su maestro). Antes,
+  # un solo catálogo así tumbaba el import ENTERO (Enum.map corta ante la
+  # primera excepción) -- ahora cada catálogo es independiente, mismo
+  # criterio que ya usa Release.setup/0 un nivel más arriba (un catálogo
+  # roto no puede bloquear el resto).
+  defp importar_contexto_tolerante(contexto) do
+    importar_contexto(contexto)
+  rescue
+    error -> "! #{contexto["schema_context_name"]}: #{Exception.message(error)}"
+  end
+
+  # Orden topológico (Kahn) sobre DOS relaciones de dependencia -- un
+  # catálogo se importa después de su maestro (trae
+  # "schema_encabezado_catalogo" con el NOMBRE del maestro, ver
+  # MetaSchemaContext.exportar_header/2) Y después de cualquier catálogo
+  # que referencia vía un campo "tipo": "referencia" (mismo criterio que
+  # MetaSchemaContext.ordenar_por_dependencias/1, que hace esto mismo
+  # pero DESPUÉS de que ya está en la base -- acá no hay nada en la base
+  # todavía, así que arma el grafo directo desde el JSON crudo).
+  # Encontrado real (2026-09-04, auditoría de replay desde cero): el viejo
+  # criterio de "maestro antes que detalle" no alcanzaba -- un catálogo
+  # SIN maestro puede igual referenciar a otro catálogo sin maestro (ej.
+  # pty_dsd_cs_clientes -> pty_dsd_dsd_fac_rfc), y el orden alfabético del
+  # directorio los procesaba al revés, tumbando el import de TODO lo que
+  # viniera después en la lista (Enum.map corta entero ante la primera
+  # excepción).
+  defp ordenar_por_dependencias(contextos) do
+    nombres_set = contextos |> Enum.map(& &1["schema_context_name"]) |> MapSet.new()
+    por_nombre = Map.new(contextos, &{&1["schema_context_name"], &1})
+
+    # Maestro y referencia se guardan SEPARADOS a propósito -- el de
+    # maestro es estructuralmente obligatorio (un detalle nunca puede
+    # importarse antes que su maestro) y, por regla de la app ("sin
+    # multinivel", ver moduledoc de MetaSchemaContext.ordenar_por_dependencias/1),
+    # nunca puede formar un ciclo entre sí. El de referencia es una
+    # dependencia más blanda (mejora el orden, evita el error de
+    # "campo inexistente" si el catálogo referenciado importa después) --
+    # SÍ puede formar ciclos genuinos (ej. pty_dsd_empleados <->
+    # pty_dsd_empleadosdet, encontrado real 2026-09-04), y ante un ciclo
+    # se puede ignorar sin romper nada (mismo comportamiento que el
+    # código viejo, que nunca la consideraba).
+    {maestros, referencias} =
+      Map.new(contextos, fn contexto ->
+        maestro =
+          contexto["schema_encabezado_catalogo"]
+          |> List.wrap()
+          |> Enum.filter(&MapSet.member?(nombres_set, &1))
+
+        referencia =
+          (contexto["detalles"] || [])
+          |> Enum.filter(&(get_in(&1, ["schema_context_properties", "tipo"]) == "referencia"))
+          |> Enum.map(&get_in(&1, ["schema_context_properties", "catalogo"]))
+          |> Enum.filter(&MapSet.member?(nombres_set, &1))
+          |> Enum.uniq()
+
+        {contexto["schema_context_name"], {maestro, referencia}}
+      end)
+      |> Enum.reduce({%{}, %{}}, fn {nombre, {maestro, referencia}}, {ms, rs} ->
+        {Map.put(ms, nombre, maestro), Map.put(rs, nombre, referencia)}
+      end)
+
+    maestros
+    |> Map.new(fn {nombre, deps} -> {nombre, deps ++ Map.fetch!(referencias, nombre)} end)
+    |> ordenar_topologico([], maestros)
+    |> Enum.map(&Map.fetch!(por_nombre, &1))
+  end
+
+  defp ordenar_topologico(pendientes, hechos, _maestros) when map_size(pendientes) == 0, do: Enum.reverse(hechos)
+
+  defp ordenar_topologico(pendientes, hechos, maestros) do
+    hechos_set = MapSet.new(hechos)
+
+    {listos, resto} =
+      Enum.split_with(pendientes, fn {_nombre, deps} ->
+        Enum.all?(deps, &MapSet.member?(hechos_set, &1))
+      end)
+
+    if listos == [] do
+      # Trabado por un ciclo -- reintenta el mismo lote ignorando SOLO las
+      # dependencias de referencia (deja las de maestro, que nunca son la
+      # causa de un ciclo real). Esto siempre puede avanzar: el grafo de
+      # solo-maestros es un DAG por construcción.
+      {listos2, resto2} =
+        Enum.split_with(pendientes, fn {nombre, _deps} ->
+          Enum.all?(Map.fetch!(maestros, nombre), &MapSet.member?(hechos_set, &1))
+        end)
+
+      nombres_listos = Enum.map(listos2, fn {nombre, _deps} -> nombre end)
+      ordenar_topologico(Map.new(resto2), Enum.reverse(nombres_listos) ++ hechos, maestros)
+    else
+      nombres_listos = Enum.map(listos, fn {nombre, _deps} -> nombre end)
+      ordenar_topologico(Map.new(resto), Enum.reverse(nombres_listos) ++ hechos, maestros)
+    end
   end
 
   defp importar_contexto(contexto) do

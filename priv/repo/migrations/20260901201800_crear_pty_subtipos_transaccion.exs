@@ -21,5 +21,13 @@ defmodule MetadataApp.Repo.Migrations.CrearPtySubtiposTransaccion do
 
       add :fecha_registro, :utc_datetime, null: true
     end
+
+    # Agregado (2026-09-04, auditoría de replay desde cero): faltaba acá
+    # -- la migración real generada por el BPB
+    # (20260901231458_crear_pty_subtipos_transaccion_20260901231458.exs)
+    # SÍ la tenía, y es parte del shape final real (verificado \d contra
+    # dev). Sin esto, esa migración duplicada fallaba con "already exists"
+    # en un replay desde cero antes de llegar a crear el índice.
+    create unique_index(:pty_subtipos_transaccion, [:tipo_transaccion, :descripcion], name: :pty_subtipos_transaccion_unico_index)
   end
 end

@@ -1,4 +1,4 @@
-# The directory Mix will write compiled artifacts to.
+por # The directory Mix will write compiled artifacts to.
 /_build/
 
 # If you run "mix test --cover", coverage assets end up here.
@@ -83,6 +83,26 @@ priv/repo/migrations/*demo100_*.exs
 # idéntico al que ya genera el motor -- nunca se edita a mano.
 !lib/metadata_app/meta_business_process/catalogos/pty_folio_perfiles.ex
 !lib/metadata_app/meta_business_process/catalogos/pty_subtipos_transaccion.ex
+
+# Excepción real (2026-09-04, SPEC-SYS-0309202601, auditoría de replay
+# desde cero): estas migraciones caen bajo el patrón pty_* de más arriba,
+# pero no son catálogos opcionales de ADN -- son arreglos de ORDEN de
+# migración, necesarios para que CUALQUIER sistema nuevo (`mix
+# motor.alta`, o un checkout limpio en CI) pueda migrar desde una base
+# 100% vacía sin romperse. Sin comitearlas, el arreglo solo existe en el
+# checkout de quien lo hizo -- ni CI, ni producción, ni un sistema nuevo
+# real lo ven. Contenido real de cada una documentado en
+# docs/specs/SPEC-SYS-0309202601-alta-sistema-nuevo/tasks.md, tarea 10.
+!priv/repo/migrations/20260804192531_agregar_trn_a_pty_gasto_diario.exs
+!priv/repo/migrations/20260817201540_crear_pty_dsd_empleados_20260817201540.exs
+!priv/repo/migrations/20260817224628_crear_pty_dsd_empleadosdet_20260817224628.exs
+!priv/repo/migrations/20260817224749_agregar_campos_a_pty_dsd_empleados_20260817224749.exs
+!priv/repo/migrations/20260901231458_crear_pty_subtipos_transaccion_20260901231458.exs
+!priv/repo/migrations/20260902004611_quitar_subtipo_transaccion_de_pty_folio_perfiles_20260902004611.exs
+!priv/repo/migrations/20260902004634_agregar_campos_a_pty_folio_perfiles_20260902004634.exs
+!priv/repo/migrations/20260812235934081_crear_pty_gasto_diariov2_20260812235934081.exs
+!priv/repo/migrations/20260903013358_agregar_campos_a_pty_gasto_diariov2_20260903013358.exs
+!priv/repo/migrations/20260813230955463_crear_pty_aly_marcas_20260813230955463.exs
 
 # Bundle temporal de MetaPublicador.armar_bundle/1 -- se arma en la raíz
 # del proyecto (nombre relativo, para que tar nunca vea una ruta con
