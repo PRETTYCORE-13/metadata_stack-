@@ -22,8 +22,7 @@ defmodule Mix.Tasks.Motor.Alta do
   Stable"), hasta que exista Stable de verdad (Grupo F) y tenga sentido
   derivarla sola.
 
-  **Estado actual (Grupo B, tarea 10): pasos 1-4 implementados.** El paso
-  5 (registrar en priv/sistemas.json) se agrega en la tarea siguiente.
+  **Estado actual (Grupo B, tarea 11): los 5 pasos de §4 implementados.**
   """
 
   def run(args) do
@@ -61,10 +60,16 @@ defmodule Mix.Tasks.Motor.Alta do
             with {:ok, salida_db} <- MotorAlta.crear_base(ambiente, sistema),
                  _ <- Mix.shell().info(salida_db),
                  _ <- Mix.shell().info("== aplicando manifiestos de k3s + bin/setup =="),
-                 {:ok, salida_k3s} <- MotorAlta.aplicar_manifiestos(ambiente, sistema, imagen) do
-              Mix.shell().info(salida_k3s)
+                 {:ok, salida_k3s} <- MotorAlta.aplicar_manifiestos(ambiente, sistema, imagen),
+                 _ <- Mix.shell().info(salida_k3s),
+                 _ <- Mix.shell().info("== registrando en priv/sistemas.json =="),
+                 {:ok, resultado_registro} <- MotorAlta.registrar_sistema(sistema) do
+              case resultado_registro do
+                :canal -> Mix.shell().info("(no se registra -- \"#{sistema}\" es un canal, no un cliente)")
+                :registrado -> Mix.shell().info("registrado, comiteado y pusheado.")
+              end
+
               Mix.shell().info("\"#{sistema}\" está de alta y arrancado -- listo para el wizard de primer arranque.")
-              Mix.shell().info("(paso 5 -- registrar en priv/sistemas.json -- todavía no implementado)")
             else
               {:error, mensaje} -> Mix.raise("Alta de \"#{sistema}\" falló:\n#{mensaje}")
             end

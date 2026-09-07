@@ -145,8 +145,13 @@ que ya existía sin datos de valor.
       `pty_dsd_pedidos` (migración de HOY la borra a nivel de tabla, pero
       nunca se limpiaron los archivos) -- no bloquea `bin/setup` (que no
       usa `gen.catalogos`), pendiente aparte.
-11. [ ] Paso 5 (§4) — registrar en `priv/sistemas.json` (commit + push),
-   salvo que `<sistema>` sea un canal (§4 corregido).
+11. [x] Paso 5 (§4) — `MotorAlta.registrar_sistema/2`: agrega la entrada
+    (`dominio`/`alta`) a `priv/sistemas.json`, comitea y pushea — salvo
+    que `sistema` sea un canal (`MotorAlta.canales/0`), que se salta
+    entero sin tocar el archivo. Mix task encadena los 5 pasos completos.
+    3 tests nuevos: canal no toca nada, cliente se registra de verdad
+    contra un repo git temporal (bare + working copy, push real
+    verificado del lado del "remoto").
 12. [ ] Idempotencia (§6, mitigación de "alta parcial") — correr
     `mix motor.alta` dos veces seguidas con el mismo nombre no falla ni
     duplica nada; verificar cada paso por separado.

@@ -285,4 +285,50 @@ defmodule MetadataApp.MotorAlta do
       {:error, _} = error -> error
     end
   end
+
+  @doc "Los tres canales de plataforma (design.md §3) -- nunca entran a priv/sistemas.json."
+  def canales, do: ["unstable", "testing", "stable"]
+
+  @doc """
+  Paso 5 (§4): agrega `sistema` a `priv/sistemas.json`, comitea y pushea
+  -- último paso del alta, sin esto se considera incompleta (R4). Si
+  `sistema` es un canal (`canales/0`), se salta entero -- los canales
+  nunca se registran ahí (§3, ese archivo es solo para clientes de ADN).
+
+  `{:ok, :canal}` | `{:ok, :registrado}` | `{:error, mensaje}`.
+  """
+  def registrar_sistema(sistema, path \\ ruta_sistemas())
+
+  def registrar_sistema(sistema, _path) when sistema in ~w[unstable testing stable], do: {:ok, :canal}
+
+  def registrar_sistema(sistema, path) do
+    nuevo_mapa =
+      leer_sistemas(path)
+      |> Map.put(sistema, %{
+        "dominio" => "#{sistema}.ventaenruta.com.mx",
+        "alta" => Date.to_iso8601(Date.utc_today())
+      })
+
+    File.write!(path, Jason.encode!(nuevo_mapa, pretty: true) <> "\n")
+
+    case comitear_y_pushear(path, sistema) do
+      :ok -> {:ok, :registrado}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp comitear_y_pushear(path, sistema) do
+    dir = Path.dirname(path)
+    mensaje = "Alta: registrar sistema \"#{sistema}\" en priv/sistemas.json"
+
+    with {_, 0} <- System.cmd("git", ["add", Path.basename(path)], cd: dir, stderr_to_stdout: true),
+         {_, 0} <- System.cmd("git", ["commit", "-m", mensaje], cd: dir, stderr_to_stdout: true),
+         {_, 0} <- System.cmd("git", ["push"], cd: dir, stderr_to_stdout: true) do
+      :ok
+    else
+      {salida, _codigo} -> {:error, "git add/commit/push de priv/sistemas.json falló:\n#{salida}"}
+    end
+  rescue
+    e in ErlangError -> {:error, "No se pudo ejecutar git: #{Exception.message(e)} -- ¿está instalado y en el PATH?"}
+  end
 end

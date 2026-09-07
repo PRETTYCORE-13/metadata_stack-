@@ -79,7 +79,7 @@ defmodule MetadataApp.MotorAltaTest do
 
     test "los 4 recursos usan el nombre derivado de <sistema>, nada hardcodeado", %{yaml: yaml} do
       assert yaml =~ "name: metadata-direem-env"
-      assert yaml =~ "name: metadata-direem\n"
+      assert yaml =~ ~r/name: metadata-direem\r?\n/
       assert yaml =~ "name: metadata-direem-ingress"
       assert yaml =~ "host: direem.ventaenruta.com.mx"
       assert yaml =~ ~s(DB_NAME_PSQL: "db_direem")
@@ -103,6 +103,56 @@ defmodule MetadataApp.MotorAltaTest do
       [clave_b] = Regex.run(~r/SECRET_KEY_BASE: "([^"]+)"/, yaml_b, capture: :all_but_first)
 
       refute clave_a == clave_b
+    end
+  end
+
+  describe "canales/0 y registrar_sistema/2" do
+    test "los 3 canales están fijos" do
+      assert MotorAlta.canales() == ["unstable", "testing", "stable"]
+    end
+
+    test "un canal nunca se registra -- ni toca el archivo ni git" do
+      path = Path.join(System.tmp_dir!(), "sistemas_canal_#{System.unique_integer([:positive])}.json")
+      refute File.exists?(path)
+
+      assert {:ok, :canal} = MotorAlta.registrar_sistema("unstable", path)
+      assert {:ok, :canal} = MotorAlta.registrar_sistema("testing", path)
+      assert {:ok, :canal} = MotorAlta.registrar_sistema("stable", path)
+
+      refute File.exists?(path)
+    end
+
+    test "un cliente se agrega al archivo, comitea y pushea a un remoto real" do
+      # Repo + "remoto" son los dos carpetas temporales de verdad (bare +
+      # working copy) -- prueba el ciclo completo git add/commit/push
+      # sin tocar el repo real de este proyecto.
+      sufijo = System.unique_integer([:positive])
+      remoto = Path.join(System.tmp_dir!(), "motor_alta_remoto_#{sufijo}")
+      repo = Path.join(System.tmp_dir!(), "motor_alta_repo_#{sufijo}")
+      on_exit(fn -> File.rm_rf!(remoto); File.rm_rf!(repo) end)
+
+      {_, 0} = System.cmd("git", ["init", "--bare", "-b", "main", remoto])
+      {_, 0} = System.cmd("git", ["init", "-b", "main", repo])
+      {_, 0} = System.cmd("git", ["remote", "add", "origin", remoto], cd: repo)
+      {_, 0} = System.cmd("git", ["config", "user.email", "test@test.local"], cd: repo)
+      {_, 0} = System.cmd("git", ["config", "user.name", "Test"], cd: repo)
+
+      path = Path.join(repo, "sistemas.json")
+      File.write!(path, "{}")
+      {_, 0} = System.cmd("git", ["add", "."], cd: repo)
+      {_, 0} = System.cmd("git", ["commit", "-m", "inicial"], cd: repo)
+      {_, 0} = System.cmd("git", ["push", "-u", "origin", "main"], cd: repo)
+
+      assert {:ok, :registrado} = MotorAlta.registrar_sistema("direem", path)
+
+      assert MotorAlta.sistema_registrado?("direem", path)
+      mapa = MotorAlta.leer_sistemas(path)
+      assert mapa["direem"]["dominio"] == "direem.ventaenruta.com.mx"
+
+      # El "remoto" (bare) tiene el commit -- de verdad se pusheó, no
+      # solo se comiteó local.
+      {log, 0} = System.cmd("git", ["log", "--oneline", "main"], cd: remoto)
+      assert log =~ "direem"
     end
   end
 end
