@@ -379,13 +379,33 @@ ellos está probada. Falta Grupo G: un cliente real de punta a punta.
 
 ## Grupo G — Cierre
 
-29. [ ] Dar de alta un sistema de cliente real de punta a punta (`mix
-    motor.alta`, completar el wizard, `mix motor.actualizar` con una
-    imagen que venga de `metadata-stable`) — la prueba de que todo el
-    mecanismo funciona junto, no solo cada pieza por separado. Elegir un
-    nombre que no choque con nada ya expuesto en el Caddyfile (la
-    validación de la tarea 24 lo rechaza solo, pero conviene no
-    depender de eso para elegir el nombre en primer lugar).
+29. [x] **Cliente real dado de alta de punta a punta (2026-09-07): "ennova"**
+    (`ennova.ventaenruta.com.mx`). `mix motor.alta Metadata ennova
+    ghcr.io/prettycore-13/metadata_stack:latest` (misma imagen que corre
+    hoy en `metadata-stable`, R6) -- verificado real: DB creada, pod
+    migrado, DNS + Caddy expuestos, HTTPS válido, redirige a
+    `/primer-arranque`. Registrado de verdad en `priv/sistemas.json`
+    (commiteado y pusheado). El wizard de primer arranque queda para que
+    el usuario lo complete desde el navegador con credenciales reales de
+    sysadmin -- no es algo que este mecanismo deba automatizar.
+
+    `mix motor.actualizar ennova <imagen-de-stable>` probado dos veces
+    contra `actualizar-sistema.yml` real: con la imagen correcta, el gate
+    de cliente (que hasta ahora solo se había visto SALTEADO para
+    unstable/testing, nunca corrido de verdad) pasó y actualizó
+    `metadata-ennova`; con una imagen inventada, el gate lo RECHAZÓ antes
+    de tocar el Deployment -- primera verificación real de que ese
+    control de seguridad funciona.
+
+    **Hallazgo operativo nuevo**: `MotorAlta.registrar_sistema/2` (el
+    `git push` de `priv/sistemas.json`) no funciona corriendo `mix
+    motor.alta` desde el devcontainer -- no tiene credenciales de git
+    configuradas para el remoto HTTPS (`fatal: could not read Username`).
+    El commit local se arma bien (limpio, solo ese archivo); hubo que
+    empujarlo a mano desde la laptop de Dev. Mismo tipo de gap que "gh no
+    instalado en el devcontainer" (tarea 28) -- pendiente de resolver
+    antes de que ADN pueda dar de alta un cliente sin depender de que Dev
+    haga el push a mano.
 30. [ ] `docs/onboarding-nuevo-sistema.md` actualizado — ya no está
     completo/vigente después de este spec, dejarlo reflejando el mecanismo
     nuevo en vez del checklist manual de 12 pasos.
