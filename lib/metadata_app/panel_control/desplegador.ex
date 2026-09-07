@@ -25,7 +25,6 @@ defmodule MetadataApp.PanelControl.Desplegador do
   alias MetadataApp.PanelControl.{App, Cloudflare}
 
   @namespace "panel-control"
-  @caddyfile_remoto "/home/elixir/caddy/Caddyfile"
 
   @doc "Punto de entrada: DNS -> deploy -> Caddy -> guarda el resultado en `app`. Siempre devuelve {:ok, %App{}} (con estado \"activo\" o \"error\")."
   def crear_app(%App{} = app) do
@@ -123,53 +122,16 @@ defmodule MetadataApp.PanelControl.Desplegador do
     "          env:\n#{entradas}\n"
   end
 
-  # Reescribe el archivo completo con `cat > ... <<EOF` (trunca el mismo
-  # inodo) en vez de `sed -i` (crea un archivo nuevo y lo renombra encima)
-  # -- encontrado real migrando Chatwoot/metadata_stack a k3s: el bind
-  # mount de Caddy es de un archivo suelto, no un directorio, así que
-  # `sed -i` deja al contenedor viendo el contenido VIEJO a través de un
-  # mount roto (el nuevo inodo nunca le llega) hasta reiniciarlo. `cat >`
-  # escribe en el inodo existente, el próximo `caddy reload` lo ve bien.
+  # Extraído a MetadataApp.Caddy (2026-09-07, SPEC-SYS-0309202601 Grupo
+  # F) -- MotorAlta necesitaba exactamente la misma lógica de
+  # agregar/reemplazar un bloque, sin duplicar el regex de reemplazo (ver
+  # el moduledoc de Caddy).
   defp agregar_a_caddy(ambiente, app, nodeport) do
-    with {:ok, 0, actual} <- MetadataApp.Ssh.ejecutar(ambiente, "cat #{@caddyfile_remoto}") do
-      host = "#{app.subdominio}.#{app.dominio_base}"
+    host = "#{app.subdominio}.#{app.dominio_base}"
 
-      bloque_nuevo = """
-
-      #{host} {
-          reverse_proxy 172.17.0.1:#{nodeport}
-      }
-      """
-
-      # Reemplaza un bloque previo para el MISMO host en vez de agregar
-      # uno nuevo al lado -- sin esto, reintentar una app cuyo bloque ya
-      # había quedado escrito (ej. un intento anterior que llegó hasta acá
-      # pero falló/se cortó en un paso posterior) deja DOS bloques para el
-      # mismo hostname, y Caddy rechaza el archivo entero con "ambiguous
-      # site definition" (encontrado real reintentando la primera app de
-      # prueba). Asume el formato simple que este mismo código siempre
-      # escribe (sin llaves anidadas dentro del bloque).
-      contenido_sin_bloque_previo =
-        Regex.replace(~r/\n*#{Regex.escape(host)}\s*\{[^}]*\}\n?/, actual, "")
-
-      nuevo_contenido = String.trim_trailing(contenido_sin_bloque_previo) <> "\n" <> bloque_nuevo
-
-      comando = """
-      set -e
-      cat > #{@caddyfile_remoto} <<'PANEL_CONTROL_CADDYFILE_EOF'
-      #{nuevo_contenido}
-      PANEL_CONTROL_CADDYFILE_EOF
-      docker exec caddy caddy reload --config /etc/caddy/Caddyfile
-      """
-
-      case MetadataApp.Ssh.ejecutar(ambiente, comando) do
-        {:ok, 0, _salida} -> :ok
-        {:ok, codigo, salida} -> {:error, "No se pudo actualizar/recargar Caddy (código #{codigo}):\n#{salida}"}
-        {:error, mensaje} -> {:error, mensaje}
-      end
-    else
-      {:ok, codigo, salida} -> {:error, "No se pudo leer el Caddyfile remoto (código #{codigo}):\n#{salida}"}
-      {:error, mensaje} -> {:error, mensaje}
+    case MetadataApp.Caddy.exponer(ambiente, host, nodeport) do
+      {:ok, :agregado} -> :ok
+      {:error, _} = error -> error
     end
   end
 end

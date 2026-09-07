@@ -54,14 +54,19 @@ defmodule Mix.Tasks.Motor.Alta do
             Mix.raise("No existe ningún ambiente \"#{nombre_ambiente}\".")
 
           ambiente ->
-            Mix.shell().info("\"#{sistema}\" es un nombre válido y todavía no está de alta.")
-            Mix.shell().info("== creando db_#{sistema} en \"#{ambiente.nombre}\" ==")
+            Mix.shell().info("\"#{sistema}\" es un nombre válido -- verificando contra el servidor...")
 
-            with {:ok, salida_db} <- MotorAlta.crear_base(ambiente, sistema),
+            with {:ok, _sistema} <- MotorAlta.validar_no_existe_en_servidor(ambiente, sistema),
+                 _ <- Mix.shell().info("todavía no está de alta."),
+                 _ <- Mix.shell().info("== creando db_#{sistema} en \"#{ambiente.nombre}\" =="),
+                 {:ok, salida_db} <- MotorAlta.crear_base(ambiente, sistema),
                  _ <- Mix.shell().info(salida_db),
                  _ <- Mix.shell().info("== aplicando manifiestos de k3s + bin/setup =="),
-                 {:ok, salida_k3s} <- MotorAlta.aplicar_manifiestos(ambiente, sistema, imagen),
+                 {:ok, nodeport, salida_k3s} <- MotorAlta.aplicar_manifiestos(ambiente, sistema, imagen),
                  _ <- Mix.shell().info(salida_k3s),
+                 _ <- Mix.shell().info("== exponiendo #{sistema}.ventaenruta.com.mx (DNS + Caddy) =="),
+                 {:ok, salida_dominio} <- MotorAlta.exponer_dominio(ambiente, sistema, nodeport),
+                 _ <- Mix.shell().info(salida_dominio),
                  _ <- Mix.shell().info("== registrando en priv/sistemas.json =="),
                  {:ok, resultado_registro} <- MotorAlta.registrar_sistema(sistema) do
               case resultado_registro do

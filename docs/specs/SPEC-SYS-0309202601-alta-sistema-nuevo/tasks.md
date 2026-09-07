@@ -288,28 +288,65 @@ es Grupo F, no código nuevo.
 
 ## Grupo F — Acciones reales sobre el servidor (última, requiere cuidado)
 
-24. [ ] Dar de alta `metadata-unstable`/`metadata-testing`/`metadata-stable`
-    contra el servidor real, vía `mix motor.alta` ya probado en los grupos
-    anteriores — reemplaza a `metadata-stack-app` (sin datos que
-    preservar, confirmado por el usuario).
-25. [ ] Confirmar que `metadata.ventaenruta.com.mx` deja de responder (o se
+24. [x] **Corrección real de diseño, ANTES de tocar producción (2026-09-07).**
+    Recon en vivo del servidor (namespaces, `ingressclass`, `cert-manager`,
+    bases en `aws-postgres`, Caddyfile remoto) encontró que el plan
+    original (Ingress de k3s + cert-manager + Secret TLS wildcard) nunca
+    hubiera funcionado -- el clúster no tiene ingress controller ni
+    cert-manager. El mecanismo real ya en producción (desde 2026-08-26,
+    probado a fondo por `MetadataApp.PanelControl` desde 2026-08-31) es
+    Caddy (fuera de k3s, único front-door 80/443) + Cloudflare (DNS).
+    También encontró un sistema `crm` real (Panel Control, no
+    `metadata_stack`) ya ocupando `crm.ventaenruta.com.mx` -- ninguna de
+    las validaciones existentes lo detectaba. Corregido:
+    - `design.md` §1/§4/§6 actualizados (Service `NodePort` en vez de
+      Ingress, ejemplo `acme` en vez de `crm`, riesgo de TLS reescrito).
+    - `MetadataApp.Caddy` (nuevo) — extrae la lógica de
+      `PanelControl.Desplegador.agregar_a_caddy/3` (leer/reemplazar
+      bloque/reescribir/`caddy reload`) a un módulo compartido; Panel
+      Control pasa a llamarlo en vez de duplicar el regex.
+    - `MotorAlta.manifiestos_k3s/2` — Service a `NodePort`, sin recurso
+      `Ingress`.
+    - `MotorAlta.validar_no_existe_en_servidor/2` (nuevo) — la "segunda
+      fuente" que design.md §4/§6 pedía desde Grupo B y nunca se había
+      implementado, más una tercera (Caddyfile) por el hallazgo de `crm`.
+    - `MotorAlta.exponer_dominio/3` (nuevo) — DNS (Cloudflare) + Caddy,
+      llamado por `mix motor.alta` entre "aplicar manifiestos" y
+      "registrar en sistemas.json".
+    Cobertura: `MetadataApp.CaddyTest` (la parte pura,
+    `contenido_con_bloque/3`, sin SSH); `manifiestos_k3s/2` re-testeado
+    sin Ingress; `validar_no_existe_en_servidor/2`/`exponer_dominio/3`
+    sin test automático (SSH real, mismo criterio que `crear_base`/
+    `aplicar_manifiestos`). `mix test` completo antes de seguir.
+25. [ ] Dar de alta `metadata-unstable`/`metadata-testing`/`metadata-stable`
+    contra el servidor real, vía `mix motor.alta` ya corregido arriba —
+    reemplaza a `metadata-stack-app` (sin datos que preservar, confirmado
+    por el usuario). **Hallazgo del recon (2026-09-07)**: hoy
+    `metadata-stack-app` usa un Deployment/Service/Secret Postgres PROPIO
+    (`metadata-stack-postgres`/`metadata-stack-pg-env`), NO `aws-postgres`
+    -- decidir en el momento si ese Deployment viejo se borra junto con
+    `metadata-stack-app` (nada de valor que preservar, mismo criterio ya
+    aprobado) o se deja huérfano un tiempo por las dudas.
+26. [ ] Confirmar que `metadata.ventaenruta.com.mx` deja de responder (o se
     redirige) y `unstable.ventaenruta.com.mx` sirve lo mismo que servía
-    antes.
-26. [ ] Certificado TLS wildcard (`*.ventaenruta.com.mx`) — cert-manager +
-    DNS-01, un solo Secret TLS para los tres canales (y para cualquier
-    cliente futuro).
+    antes, con HTTPS válido (certificado automático de Caddy, sin
+    intervención manual -- ver tarea 24, ya no hace falta wildcard).
 27. [ ] Push de prueba a `main` — confirmar que `ci.yml` despliega solo a
     `metadata-unstable`, nadie más se entera.
-28. [ ] `mix motor.promover unstable testing` y `testing stable` — probar
-    la cadena completa una vez, a mano, antes de confiar en ella para un
-    cliente real.
+28. [ ] `mix motor.promover <ambiente> unstable testing` y
+    `mix motor.promover <ambiente> testing stable` — probar la cadena
+    completa una vez, a mano, antes de confiar en ella para un cliente
+    real.
 
 ## Grupo G — Cierre
 
 29. [ ] Dar de alta un sistema de cliente real de punta a punta (`mix
     motor.alta`, completar el wizard, `mix motor.actualizar` con una
     imagen que venga de `metadata-stable`) — la prueba de que todo el
-    mecanismo funciona junto, no solo cada pieza por separado.
+    mecanismo funciona junto, no solo cada pieza por separado. Elegir un
+    nombre que no choque con nada ya expuesto en el Caddyfile (la
+    validación de la tarea 24 lo rechaza solo, pero conviene no
+    depender de eso para elegir el nombre en primer lugar).
 30. [ ] `docs/onboarding-nuevo-sistema.md` actualizado — ya no está
     completo/vigente después de este spec, dejarlo reflejando el mecanismo
     nuevo en vez del checklist manual de 12 pasos.

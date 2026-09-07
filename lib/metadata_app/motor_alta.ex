@@ -4,11 +4,15 @@ defmodule MetadataApp.MotorAlta do
   compartida con `mix motor.alta` — el task es solo la interfaz de línea
   de comandos.
 
-  Grupo B, tarea 7 (`docs/specs/SPEC-SYS-0309202601-alta-sistema-nuevo/tasks.md`):
-  solo el paso de validación (design.md §4 punto 1) — charset del nombre y
-  que no exista ya en `priv/sistemas.json`. El chequeo contra k3s directo
-  (segunda fuente que pide design.md §4/§6) se agrega en una tarea
-  posterior, cuando exista la parte que sí toca SSH.
+  `validar_nombre/2` — charset + que no exista ya en `priv/sistemas.json`
+  (rápido, sin SSH). `validar_no_existe_en_servidor/2` — la segunda (y
+  tercera) fuente que pide design.md §4/§6: k3s directo (¿ya existe un
+  Deployment `metadata-<sistema>`?) y el Caddyfile remoto (¿ya hay un
+  bloque para `<sistema>.ventaenruta.com.mx`, de OTRO mecanismo -- ej.
+  Panel Control? Grupo F, 2026-09-07: encontrado real un sistema `crm` de
+  otra feature ocupando ese dominio, sin estar en `sistemas.json` ni en
+  el namespace `metadata-stack`). Dos fuentes NO alcanzan si el archivo
+  puede desincronizarse de la realidad del clúster/dominio.
   """
 
   @doc """
@@ -76,6 +80,43 @@ defmodule MetadataApp.MotorAlta do
   end
 
   @doc """
+  Segunda validación (§4/§6) -- SSH contra `ambiente`, chequea DOS fuentes
+  más que `priv/sistemas.json` no puede cubrir por sí solo:
+
+  - k3s directo: ¿ya existe un Deployment `metadata-<sistema>`? Cubre los
+    canales (nunca están en `sistemas.json`) y cualquier desincronización
+    entre el archivo y la realidad del clúster.
+  - El Caddyfile remoto: ¿ya hay un bloque para
+    `<sistema>.ventaenruta.com.mx`? Cubre un dominio ya tomado por OTRO
+    mecanismo que tampoco registra nada en `sistemas.json` ni en el
+    namespace `metadata-stack` (encontrado real, Grupo F: un sistema
+    `crm` de Panel Control) -- sin este chequeo, dar de alta un sistema
+    con ese nombre le robaría el dominio al que ya lo tenía.
+
+  `{:ok, sistema}` | `{:error, mensaje}`.
+  """
+  def validar_no_existe_en_servidor(ambiente, sistema) do
+    comando = "sudo k3s kubectl get deployment metadata-#{sistema} -n metadata-stack"
+
+    case MetadataApp.Ssh.ejecutar(ambiente, comando) do
+      {:ok, 0, _salida} ->
+        {:error, "\"metadata-#{sistema}\" ya existe como Deployment en k3s -- \"#{sistema}\" no está libre."}
+
+      {:ok, _codigo, _salida} ->
+        host = "#{sistema}.ventaenruta.com.mx"
+
+        case MetadataApp.Caddy.host_expuesto?(ambiente, host) do
+          true -> {:error, "\"#{host}\" ya tiene un bloque en el Caddyfile (de otro sistema/mecanismo) -- \"#{sistema}\" no está libre."}
+          false -> {:ok, sistema}
+          {:error, _} = error -> error
+        end
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  @doc """
   Crea `db_<sistema>` dentro de "aws-postgres" (design.md §2) -- por SSH
   contra `ambiente` (`%MetadataApp.Ambientes.Ambiente{}`, mismo mecanismo
   que ya usa `mix motor.desplegar`, ver `MetadataApp.Ssh`), corriendo
@@ -120,10 +161,20 @@ defmodule MetadataApp.MotorAlta do
   end
 
   @doc """
-  Genera el YAML de los 4 recursos de k3s para `sistema` (design.md §1/§4
+  Genera el YAML de los 3 recursos de k3s para `sistema` (design.md §1/§4
   paso 3) -- Secret propio (solo lo que NO se puede compartir: claves +
-  lo que varía por sistema), Deployment, Service, Ingress. NO los aplica
-  (`kubectl apply` es la tarea siguiente, paso 4).
+  lo que varía por sistema), Deployment, Service (`type: NodePort`). NO
+  los aplica (`kubectl apply` es la tarea siguiente, paso 4).
+
+  **Sin `Ingress` (corregido 2026-09-07, recon real de Grupo F antes de
+  tocar producción)**: el plan original de este mecanismo asumía un
+  ingress controller + cert-manager en k3s -- verificado real que el
+  clúster no tiene ninguno de los dos (`kubectl get ingressclass` vacío).
+  El TLS/ruteo real de producción es Caddy (fuera de k3s, único
+  front-door en 80/443) -- por eso `Service` acá es `NodePort`: expone un
+  puerto directo del nodo para que Caddy pueda apuntarle
+  (`MetadataApp.Caddy.exponer/3`, paso siguiente de §4), igual que ya
+  hace para Chatwoot y para cualquier app de Panel Control.
 
   `imagen` -- el tag completo (`ghcr.io/.../metadata_stack:<tag>`), nunca
   default a `:latest`: un sistema de cliente nuevo arranca en la imagen
@@ -141,8 +192,6 @@ defmodule MetadataApp.MotorAlta do
   - `smtp-compartido` (SMTP_RELAY/USERNAME/PASSWORD/PORT) -- **todavía NO
     existe, hace falta crearlo una sola vez** (no es parte de este
     mecanismo -- son credenciales reales de correo, no algo que generar).
-  - `wildcard-ventaenruta-tls` (Secret TLS) -- tampoco existe todavía,
-    tarea del Grupo F (cert-manager).
   """
   def manifiestos_k3s(sistema, imagen) do
     secret_key_base = generar_clave_base64()
@@ -169,6 +218,7 @@ defmodule MetadataApp.MotorAlta do
       name: metadata-#{sistema}
       namespace: metadata-stack
     spec:
+      type: NodePort
       selector:
         app: metadata-#{sistema}
       ports:
@@ -235,28 +285,6 @@ defmodule MetadataApp.MotorAlta do
                       key: SMTP_PORT
               ports:
                 - containerPort: 4000
-    ---
-    apiVersion: networking.k8s.io/v1
-    kind: Ingress
-    metadata:
-      name: metadata-#{sistema}-ingress
-      namespace: metadata-stack
-    spec:
-      tls:
-        - hosts:
-            - #{sistema}.ventaenruta.com.mx
-          secretName: wildcard-ventaenruta-tls
-      rules:
-        - host: #{sistema}.ventaenruta.com.mx
-          http:
-            paths:
-              - path: /
-                pathType: Prefix
-                backend:
-                  service:
-                    name: metadata-#{sistema}
-                    port:
-                      number: 4000
     """
   end
 
@@ -281,17 +309,54 @@ defmodule MetadataApp.MotorAlta do
   def aplicar_manifiestos(ambiente, sistema, imagen) do
     yaml_b64 = manifiestos_k3s(sistema, imagen) |> Base.encode64()
 
+    # Última línea de salida = el nodePort que k3s le asignó solo al
+    # Service (nunca fijado a mano en el manifiesto -- ver
+    # manifiestos_k3s/2) -- lo necesita el paso siguiente (exponer_dominio/3)
+    # para apuntarle Caddy, mismo patrón ya probado en
+    # PanelControl.Desplegador.desplegar_en_k8s/2.
     comando = """
     echo #{yaml_b64} | base64 -d | sudo k3s kubectl apply -f - && \
     sudo k3s kubectl rollout status deployment/metadata-#{sistema} -n metadata-stack --timeout=120s && \
     POD=$(sudo k3s kubectl get pod -n metadata-stack -l app=metadata-#{sistema} --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[*].metadata.name}' | awk '{print $NF}') && \
-    sudo k3s kubectl exec -n metadata-stack "$POD" -- /app/bin/setup
+    sudo k3s kubectl exec -n metadata-stack "$POD" -- /app/bin/setup && \
+    sudo k3s kubectl get svc metadata-#{sistema} -n metadata-stack -o jsonpath='{.spec.ports[0].nodePort}'
     """
     |> String.trim()
 
     case MetadataApp.Ssh.ejecutar(ambiente, comando) do
-      {:ok, 0, salida} -> {:ok, salida}
-      {:ok, _codigo, salida} -> {:error, salida}
+      {:ok, 0, salida} ->
+        case salida |> String.trim() |> String.split("\n") |> List.last() |> Integer.parse() do
+          {nodeport, _resto} -> {:ok, nodeport, salida}
+          :error -> {:error, "Se aplicaron los manifiestos pero no se pudo leer el nodePort de la salida:\n#{salida}"}
+        end
+
+      {:ok, _codigo, salida} ->
+        {:error, salida}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  @doc """
+  Paso 4->5 de §4: expone `<sistema>.ventaenruta.com.mx` de verdad --
+  registro DNS tipo A en Cloudflare (`PanelControl.Cloudflare`, misma
+  credencial ya usada por Panel Control) + bloque en el Caddyfile remoto
+  apuntando al `nodeport` de `aplicar_manifiestos/3` (`MetadataApp.Caddy`).
+  Mismos DOS pasos, mismo orden, que ya usa
+  `PanelControl.Desplegador.crear_app/1` -- sin reinventar un mecanismo
+  nuevo (corregido 2026-09-07, ver design.md §3/§4: el clúster no tiene
+  ingress controller ni cert-manager, Caddy es el front-door real).
+
+  `{:ok, mensaje}` | `{:error, mensaje}`.
+  """
+  def exponer_dominio(ambiente, sistema, nodeport) do
+    host = "#{sistema}.ventaenruta.com.mx"
+
+    with :ok <- MetadataApp.PanelControl.Cloudflare.crear_registro_a("ventaenruta.com.mx", sistema, ambiente.host),
+         {:ok, :agregado} <- MetadataApp.Caddy.exponer(ambiente, host, nodeport) do
+      {:ok, "#{host} -> 172.17.0.1:#{nodeport} (DNS + Caddy listos)"}
+    else
       {:error, _} = error -> error
     end
   end

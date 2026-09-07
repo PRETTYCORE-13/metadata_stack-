@@ -77,12 +77,21 @@ defmodule MetadataApp.MotorAltaTest do
       {:ok, yaml: MotorAlta.manifiestos_k3s("direem", "ghcr.io/prettycore-13/metadata_stack:bc-abc-42")}
     end
 
-    test "los 4 recursos usan el nombre derivado de <sistema>, nada hardcodeado", %{yaml: yaml} do
+    test "los 3 recursos usan el nombre derivado de <sistema>, nada hardcodeado", %{yaml: yaml} do
       assert yaml =~ "name: metadata-direem-env"
       assert yaml =~ ~r/name: metadata-direem\r?\n/
-      assert yaml =~ "name: metadata-direem-ingress"
-      assert yaml =~ "host: direem.ventaenruta.com.mx"
       assert yaml =~ ~s(DB_NAME_PSQL: "db_direem")
+    end
+
+    # Corregido 2026-09-07 (Grupo F): el clúster no tiene ingress
+    # controller ni cert-manager -- el TLS/ruteo real es Caddy (fuera de
+    # k3s, MetadataApp.Caddy.exponer/3), por eso el Service es NodePort y
+    # ya no se genera ningún recurso Ingress.
+    test "el Service es NodePort, sin ningún recurso Ingress", %{yaml: yaml} do
+      assert yaml =~ "kind: Service"
+      assert yaml =~ "type: NodePort"
+      refute yaml =~ "kind: Ingress"
+      refute yaml =~ "wildcard-ventaenruta-tls"
     end
 
     test "la imagen pasada se usa tal cual, nunca :latest por default", %{yaml: yaml} do

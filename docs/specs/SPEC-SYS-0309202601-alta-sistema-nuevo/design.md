@@ -16,18 +16,44 @@ válido, se valida una sola vez al dar de alta):
 
 | Recurso | Nombre |
 |---|---|
-| Deployment / Service (k3s) | `metadata-<sistema>` |
+| Deployment / Service (k3s, `type: NodePort`) | `metadata-<sistema>` |
 | Base de datos (Postgres) | `db_<sistema>` |
 | Secret con credenciales de conexión + claves de la app | `metadata-<sistema>-env` |
-| Ingress | `metadata-<sistema>-ingress`, host `<sistema>.ventaenruta.com.mx` |
+| Registro DNS (Cloudflare, tipo A) | `<sistema>.ventaenruta.com.mx` -> IP del `Ambiente` |
+| Bloque en el Caddyfile remoto | `<sistema>.ventaenruta.com.mx { reverse_proxy 172.17.0.1:<nodeport> }` |
 | Imagen (compartida, sin cambio) | `ghcr.io/prettycore-13/metadata_stack:latest`, pull vía `ghcr-pull-secret` (ya existe, compartido) |
-| Certificado TLS (compartido, wildcard) | `*.ventaenruta.com.mx`, un solo Secret TLS referenciado por todos los Ingress |
+
+**Corregido 2026-09-07 (recon real de Grupo F, antes de tocar producción)**:
+la fila "Ingress" + "Certificado TLS wildcard" de la versión original de
+esta tabla NUNCA hubiera funcionado — verificado en vivo que el clúster
+no tiene ningún ingress controller ni cert-manager instalado (`kubectl
+get ingressclass` vacío). El mecanismo real de TLS/ruteo en producción es
+otro, ya construido y probado (2026-08-26 en adelante): un contenedor
+Caddy fuera de k3s (`/home/elixir/caddy/Caddyfile`, único front-door en
+80/443) con HTTPS automático POR DOMINIO (no wildcard), y DNS real vía
+Cloudflare (`MetadataApp.PanelControl.Cloudflare`, no un Secret TLS). Ver
+§4 y §6 para el mecanismo corregido, que reusa exactamente ese patrón
+(`MetadataApp.PanelControl.Desplegador.agregar_a_caddy/3`) en vez de
+reinventar uno nuevo con Ingress.
+
+**Nota aparte, mismo recon**: existe un sistema real `crm` en
+`ventaenruta.com.mx` (namespace k3s `panel-control`, de otra feature ya
+en producción, `MetadataApp.PanelControl` — DNS/deploy/Caddy genérico
+para cualquier app, no específico de `metadata_stack`). Confirmado que
+NO es un cliente de esta spec: su imagen es
+`ghcr.io/prettycore-13/imagen-docker:latest` (un repo Phoenix aparte,
+armado a mano 2026-08-31 como primera prueba real de Panel Control), no
+`metadata_stack`, y no toca `aws-postgres` ni `priv/sistemas.json`. Sin
+conflicto de código, pero SÍ de nombre/dominio -- por eso el ejemplo de
+abajo usa `acme`, no `crm` (`crm.ventaenruta.com.mx` ya está tomado por
+ese otro sistema; dar de alta un `crm` de metadata_stack HOY le robaría
+el dominio, ver mitigación nueva en §6).
 
 `priv/sistemas.json` guarda solo lo que no se puede derivar del nombre:
 
 ```jsonc
 {
-  "crm": { "dominio": "crm.ventaenruta.com.mx", "alta": "2026-09-03" },
+  "acme": { "dominio": "acme.ventaenruta.com.mx", "alta": "2026-09-03" },
   "direem": { "dominio": "direem.ventaenruta.com.mx", "alta": "2026-09-10" }
 }
 ```
@@ -152,24 +178,39 @@ el proceso `ssh.exe` de Windows, no del código de este mecanismo. Andando
 bien y rápido desde Linux, mismo ambiente que ya usa CI.
 
 1. Valida `<sistema>` — charset válido (mismo que un label de k3s / un
-   segmento de subdominio) y que NO exista ya, chequeando DOS fuentes:
-   `priv/sistemas.json` (si es un cliente) Y k3s directo (¿ya existe un
-   Deployment `metadata-<sistema>`? — cubre los canales, que nunca están
-   en `sistemas.json`, y cualquier desincronización entre el archivo y la
-   realidad del clúster, ver §6). Alta duplicada se rechaza si CUALQUIERA
-   de las dos dice que ya existe.
+   segmento de subdominio) y que NO exista ya, chequeando TRES fuentes
+   (`MotorAlta.validar_nombre/2` + `validar_no_existe_en_servidor/2`,
+   agregada Grupo F 2026-09-07): `priv/sistemas.json` (si es un cliente),
+   k3s directo (¿ya existe un Deployment `metadata-<sistema>`? — cubre
+   los canales, que nunca están en `sistemas.json`) Y el Caddyfile remoto
+   (¿ya hay un bloque para `<sistema>.ventaenruta.com.mx`? — cubre un
+   dominio tomado por OTRO mecanismo que tampoco pasa por
+   `sistemas.json` ni por el namespace `metadata-stack`, ver la nota de
+   `crm`/Panel Control en §1). Alta duplicada se rechaza si CUALQUIERA de
+   las tres dice que ya existe (ver §6).
 2. SSH al servidor: crea la base `db_<sistema>` en el Postgres de
    producción (hoy el contenedor Docker suelto; el día que sea RDS, mismo
    comando contra el host de RDS — nada de esto cambia).
-3. SSH al servidor: aplica los manifiestos de k3s — Deployment + Service +
+3. SSH al servidor: aplica los manifiestos de k3s — Deployment + Service
+   (`type: NodePort`, sin `Ingress` — corregido 2026-09-07, ver §1) +
    Secret `metadata-<sistema>-env` (credenciales de conexión a
-   `db_<sistema>` + claves de la app) + Ingress con host
-   `<sistema>.ventaenruta.com.mx` — templados a partir de `<sistema>`
+   `db_<sistema>` + claves de la app) — templados a partir de `<sistema>`
    (§1).
 4. SSH al servidor: `kubectl exec` sobre el pod recién creado, corre
    `/app/bin/setup` (R3 — migra las tablas `meta_*`, deja el sistema listo
-   para el wizard de primer arranque).
-5. Si `<sistema>` es un CLIENTE (no un canal): edita `priv/sistemas.json`
+   para el wizard de primer arranque). Mismo comando SSH que el paso 3
+   (`MotorAlta.aplicar_manifiestos/3`, una sola conexión) — termina
+   leyendo el `nodePort` que k3s le asignó solo al Service, lo necesita
+   el paso siguiente.
+5. **Nuevo (Grupo F, 2026-09-07)** — `MotorAlta.exponer_dominio/3`:
+   registro DNS tipo A en Cloudflare para `<sistema>.ventaenruta.com.mx`
+   (`MetadataApp.PanelControl.Cloudflare`, misma credencial que ya usa
+   Panel Control) + bloque en el Caddyfile remoto apuntando al `nodePort`
+   del paso 4 (`MetadataApp.Caddy.exponer/3`) — mismos dos pasos, mismo
+   orden, que `PanelControl.Desplegador.crear_app/1` ya prueba en
+   producción real desde 2026-08-31. Sin esto el sistema queda corriendo
+   pero inalcanzable por dominio (solo por IP+nodePort directo).
+6. Si `<sistema>` es un CLIENTE (no un canal): edita `priv/sistemas.json`
    localmente, agrega la entrada nueva, commitea y pushea (R4 — último
    paso; sin esto el alta se considera incompleta). Si `<sistema>` es
    `unstable`/`testing`/`stable`, este paso se salta — los canales nunca
@@ -177,7 +218,7 @@ bien y rápido desde Linux, mismo ambiente que ya usa CI.
 
 ## 5. R9 — corrección de timing: depende del wizard, no del mix task
 
-`mix motor.alta` termina en el paso 4 de arriba, ANTES de que exista
+`mix motor.alta` termina en el paso 4/5 de arriba, ANTES de que exista
 ninguna Empresa en el sistema nuevo — y Branch/SalesUnit/InventoryLocation
 requieren todos un `empresa_id` (los dos últimos también `branch_id`). Por
 lo tanto **R9 no puede ejecutarse dentro de `mix motor.alta`** — se ejecuta
@@ -225,19 +266,26 @@ Puntos concretos y su mitigación:
 
 - **Colisión de nombre con un sistema existente.** Validar `<sistema>`
   solo contra `priv/sistemas.json` (§4 paso 1) no alcanza si ese archivo
-  quedó desincronizado de la realidad del clúster (ver próximo punto). El
-  paso 1 tiene que chequear TAMBIÉN contra k3s directo (¿ya existe un
-  Deployment `metadata-<sistema>`?) antes de crear nada — dos fuentes
-  tienen que coincidir en "no existe", no alcanza con una.
-- **Alta parcial — pasos 1-5 no son una transacción.** Si el proceso corta
-  a mitad (ej. falla el paso 4 o alguien lo interrumpe antes del paso 5),
-  queda un sistema con recursos reales en k3s (DB, Deployment, Ingress)
-  pero SIN registrar en `sistemas.json` — huérfano: no aparece como válido
-  para `motor.publicar`/`motor.actualizar` (R5 ya lo protege ahí), pero
-  tampoco queda evidencia fácil de que hay que terminarlo o limpiarlo.
-  Mitigación: cada paso debe ser re-ejecutable sin duplicar (crear DB/
-  aplicar manifiestos son idempotentes por naturaleza si se escriben con
-  `IF NOT EXISTS`/`kubectl apply`), así correr `mix motor.alta` de nuevo
+  quedó desincronizado de la realidad del clúster O del dominio -- **caso
+  real encontrado, Grupo F 2026-09-07**: `crm.ventaenruta.com.mx` ya
+  estaba tomado por un sistema de Panel Control (otra feature, sin
+  relación con `metadata_stack`) que no aparece ni en `sistemas.json` ni
+  como Deployment `metadata-<sistema>` -- dos fuentes NO alcanzaban.
+  Mitigación ya implementada: `validar_no_existe_en_servidor/2` chequea
+  TRES fuentes antes de crear nada -- `sistemas.json`, k3s directo (¿ya
+  existe `metadata-<sistema>`?) Y el Caddyfile remoto (¿ya hay un bloque
+  para `<sistema>.ventaenruta.com.mx`?).
+- **Alta parcial — pasos 1-6 no son una transacción.** Si el proceso corta
+  a mitad (ej. falla el paso 4 o alguien lo interrumpe antes del paso 6),
+  queda un sistema con recursos reales en k3s (DB, Deployment, Service) y
+  quizás DNS/Caddy ya apuntando, pero SIN registrar en `sistemas.json` —
+  huérfano: no aparece como válido para `motor.publicar`/`motor.actualizar`
+  (R5 ya lo protege ahí), pero tampoco queda evidencia fácil de que hay
+  que terminarlo o limpiarlo. Mitigación: cada paso debe ser re-ejecutable
+  sin duplicar (crear DB/aplicar manifiestos son idempotentes por
+  naturaleza si se escriben con `IF NOT EXISTS`/`kubectl apply`; el
+  Caddyfile se reescribe reemplazando el bloque del mismo host en vez de
+  duplicarlo, `MetadataApp.Caddy`), así correr `mix motor.alta` de nuevo
   con el mismo nombre retoma donde cortó en vez de fallar o duplicar.
 - **`metadata-stack-app` se recrea desde cero como `metadata-unstable`,
   a propósito** (decidido 2026-09-03 — no tiene nada de valor todavía, se
@@ -257,13 +305,20 @@ Puntos concretos y su mitigación:
   OTRO. Mitigación: sin defaults en ningún input (ya establecido en R5/R6),
   y probar la interpolación contra un sistema de prueba antes de que
   cualquiera de estos workflows quede escribiendo en producción real.
-- **Certificado TLS wildcard — un solo punto de falla compartido.** Todos
-  los Ingress dependen del mismo Secret TLS. Si vence o queda mal
-  configurado, los 10 sistemas pierden HTTPS al mismo tiempo, no uno.
-  Mitigación: renovación automática (cert-manager + DNS-01 contra
-  `*.ventaenruta.com.mx`), no un recordatorio manual — un solo certificado
-  compartido exige que la renovación nunca dependa de que alguien se
-  acuerde.
+- **Caddy — un solo punto de falla compartido, para MÁS que esta spec.**
+  Corregido 2026-09-07 (no hay Ingress ni Secret TLS wildcard, ver §1/§4):
+  el front-door real es un único contenedor Caddy en 80/443, y no es
+  exclusivo de `metadata_stack` -- también sirve Chatwoot y cualquier app
+  de Panel Control. Si ese contenedor cae o el Caddyfile queda mal
+  formado, TODO pierde HTTPS a la vez, no solo los sistemas de esta spec.
+  Certificados por dominio son automáticos (Caddy los renueva solo, sin
+  cert-manager ni intervención manual) -- el riesgo real es de escritura:
+  `MetadataApp.Caddy.exponer/3` reescribe el archivo COMPLETO en cada
+  alta. Mitigación: reemplaza el bloque del host por nombre exacto (regex
+  ya probado en producción desde Panel Control) en vez de tocar el resto
+  del archivo a mano, y el propio `caddy reload` valida sintaxis antes de
+  aplicar -- un Caddyfile roto por otro motivo (edición manual, por
+  ejemplo) sigue siendo un riesgo fuera del alcance de este mecanismo.
 - **Postgres sigue siendo una sola instancia** (decisión ya tomada, §3 de
   `requirements.md`) — cada alta nueva agrega una base más a la misma
   instancia compartida. No es un riesgo nuevo de este spec, pero cada
