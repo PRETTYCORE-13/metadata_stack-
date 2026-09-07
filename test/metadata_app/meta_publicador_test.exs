@@ -35,11 +35,11 @@ defmodule MetadataApp.MetaPublicadorTest do
       assert mensaje =~ ~s(No se pudo ejecutar "gh")
     end
 
-    test "disparar_deploy/2 devuelve error legible y limpia los archivos temporales" do
+    test "disparar_deploy/3 devuelve error legible y limpia los archivos temporales" do
       bundle_path = Path.join(System.tmp_dir!(), "meta-publicador-test-#{System.unique_integer([:positive])}.tar.gz")
       File.write!(bundle_path, "contenido de prueba")
 
-      assert {:error, mensaje} = MetaPublicador.disparar_deploy(["catalogo_x"], bundle_path)
+      assert {:error, mensaje} = MetaPublicador.disparar_deploy("crm", ["catalogo_x"], bundle_path)
       assert mensaje =~ ~s(No se pudo ejecutar "gh")
       refute File.exists?(bundle_path)
       refute File.exists?(bundle_path <> ".b64")

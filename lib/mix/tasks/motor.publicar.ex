@@ -5,12 +5,19 @@ defmodule Mix.Tasks.Motor.Publicar do
   @shortdoc "Empaqueta uno o más BC (schema+migraciones+autómata+reglas) y los despliega directo a producción"
 
   @moduledoc """
-  Uso: mix motor.publicar <catalogo> [<catalogo2> ...]
+  Uso: mix motor.publicar --sistema=<sistema> <catalogo> [<catalogo2> ...]
 
   Lleva uno o más Business Context (BC) construidos localmente con el BPB
   a Linux Trixie (producción) — **sin** pasar por el repo compartido
   `metadata_stack-` (ningún `pty_*` va a git, ver docs/roadmap.md
   #7 y la memoria de proyecto `project_git_cicd_pty_cleanup`).
+
+  `--sistema=` es OBLIGATORIO, sin default (SPEC-SYS-0309202601, R5) — con
+  varios sistemas de cliente en el mismo clúster, un default silencioso es
+  la forma más fácil de mandarle una actualización al cliente equivocado.
+  Se valida contra `priv/sistemas.json` (`MetadataApp.MotorAlta.sistema_registrado?/1`)
+  antes de tocar nada — un nombre que no está de alta se rechaza acá,
+  nunca llega a armar ni disparar nada.
 
   Pasos (la lógica vive en `MetadataApp.MetaPublicador`, compartida con el
   futuro wizard de publicación en BC List — este task es solo la interfaz
@@ -38,7 +45,7 @@ defmodule Mix.Tasks.Motor.Publicar do
        en alcance: su schema, sus migraciones, su `.meta.json`
        (+ `.motor.json` si tiene autómata propio — un detalle no), y su
        carpeta de reglas de negocio si existe.
-    5. `MetaPublicador.disparar_deploy/2` — dispara
+    5. `MetaPublicador.disparar_deploy/3` — dispara
        `.github/workflows/bc-deploy.yml` (GitHub Actions) vía
        `gh workflow run`, mandando el bundle en base64 como input — ese
        workflow extrae el bundle SOBRE un checkout efímero de `main`,
@@ -54,11 +61,28 @@ defmodule Mix.Tasks.Motor.Publicar do
   de GitHub Actions.
   """
 
-  def run([]), do: Mix.raise("Uso: mix motor.publicar <catalogo> [<catalogo2> ...]")
-
-  def run(nombres) do
+  def run(args) do
     Mix.Task.run("app.config")
 
+    {switches, nombres, _} = OptionParser.parse(args, strict: [sistema: :string])
+    sistema = switches[:sistema]
+
+    cond do
+      is_nil(sistema) ->
+        Mix.raise("Falta --sistema=<sistema>, obligatorio. Uso: mix motor.publicar --sistema=<sistema> <catalogo> [<catalogo2> ...]")
+
+      nombres == [] ->
+        Mix.raise("Uso: mix motor.publicar --sistema=<sistema> <catalogo> [<catalogo2> ...]")
+
+      not MetadataApp.MotorAlta.sistema_registrado?(sistema) ->
+        Mix.raise("\"#{sistema}\" no está de alta (no aparece en priv/sistemas.json) -- no se puede publicar ahí.")
+
+      true ->
+        publicar(sistema, nombres)
+    end
+  end
+
+  defp publicar(sistema, nombres) do
     Mix.shell().info("== validando #{Enum.join(nombres, ", ")} ==")
 
     {:ok, resultado, _apps} =
@@ -90,11 +114,11 @@ defmodule Mix.Tasks.Motor.Publicar do
         Mix.Task.rerun("motor.export")
 
         Mix.shell().info("\n== armando bundle ==")
-        armar_y_desplegar(nombres, catalogos)
+        armar_y_desplegar(sistema, nombres, catalogos)
     end
   end
 
-  defp armar_y_desplegar(nombres, catalogos) do
+  defp armar_y_desplegar(sistema, nombres, catalogos) do
     case MetaPublicador.armar_bundle(catalogos) do
       {:error, mensaje} ->
         Mix.raise(mensaje)
@@ -109,14 +133,14 @@ defmodule Mix.Tasks.Motor.Publicar do
 
           {:ok, tags} ->
             Mix.shell().info("  #{Enum.join(tags, ", ")}")
-            Mix.shell().info("\n== disparando BC Deploy en GitHub Actions ==")
+            Mix.shell().info("\n== disparando BC Deploy en GitHub Actions para \"#{sistema}\" ==")
 
-            case MetaPublicador.disparar_deploy(nombres, bundle_path) do
+            case MetaPublicador.disparar_deploy(sistema, nombres, bundle_path) do
               {:ok, salida} ->
                 Mix.shell().info(salida)
 
                 Mix.shell().info(
-                  "Disparado — #{Enum.join(nombres, ", ")} va(n) camino a producción. " <>
+                  "Disparado — #{Enum.join(nombres, ", ")} va(n) camino a \"#{sistema}\". " <>
                     "Seguí el progreso con \"gh run list\" / \"gh run watch\"."
                 )
 

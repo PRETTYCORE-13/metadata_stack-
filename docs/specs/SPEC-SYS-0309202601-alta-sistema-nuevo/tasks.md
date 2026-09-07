@@ -226,9 +226,23 @@ verificados reales, incluida la idempotencia.**
 
 ## Grupo E — CI/CD: tres canales + workflows nuevos (§3)
 
-18. [ ] `bc-deploy.yml` — agrega input obligatorio `sistema`, el paso SSH
+18. [x] `bc-deploy.yml` — agrega input obligatorio `sistema`, el paso SSH
     calcula namespace/deployment desde ahí en vez de los valores fijos de
-    hoy.
+    hoy. **Ripple obligado (R5/R6):** con `sistema` ahora requerido en el
+    workflow, cada disparador tenía que empezar a mandarlo — se tocaron
+    `MetaPublicador.disparar_deploy/3` (antes `/2`), `mix motor.publicar`
+    y `mix motor.despublicar` (ambos con `--sistema=` obligatorio,
+    validado contra `priv/sistemas.json` antes de armar nada), y el
+    wizard de BC List (`bc_list_live.ex`): selector `<select>` de sistema
+    en los modales de publicar/despublicar, botón de confirmar
+    deshabilitado hasta elegir uno. Cobertura: `mix test` completo (498
+    tests, 0 failures) + revisión directa; se intentó cubrir el selector
+    del wizard con 2 tests de LiveView nuevos pero se descartaron — el
+    checkbox de selección de catálogo en el árbol depende de
+    `MetaEstadosAdmin.puede_desplegar?/1` (catálogo completo: campos +
+    estados + transición inicial), que ningún fixture de este archivo de
+    test arma hoy; construir uno solo para esto era una inversión fuera
+    de alcance de esta tarea.
 19. [ ] `actualizar-sistema.yml` (nuevo) — SSH + `kubectl set image` +
     `rollout` + `bin/setup`, inputs `sistema` + `imagen`, ambos
     obligatorios sin default.

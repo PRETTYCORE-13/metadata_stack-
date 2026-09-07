@@ -6,7 +6,11 @@ defmodule Mix.Tasks.Motor.Despublicar do
   @shortdoc "Lleva a producción el borrado de un catálogo pty_* ya eliminado en dev"
 
   @moduledoc """
-  Uso: mix motor.despublicar <catalogo>
+  Uso: mix motor.despublicar --sistema=<sistema> <catalogo>
+
+  `--sistema=` obligatorio, sin default, mismo criterio que
+  `mix motor.publicar` (SPEC-SYS-0309202601, R5) — se valida contra
+  `priv/sistemas.json` antes de tocar nada.
 
   Contraparte de `mix motor.publicar` para el caso que ese task no cubre:
   un catálogo `pty_*` que ya se borró LOCAL (vía "Eliminar" en BC List,
@@ -32,12 +36,28 @@ defmodule Mix.Tasks.Motor.Despublicar do
   -- no-op si ya corrió) en vez de recrear el catálogo.
   """
 
-  def run([]), do: Mix.raise("Uso: mix motor.despublicar <catalogo>")
-  def run([_ | _] = varios) when length(varios) > 1, do: Mix.raise("Uso: mix motor.despublicar <catalogo> (uno solo por vez)")
-
-  def run([catalogo]) do
+  def run(args) do
     Mix.Task.run("app.config")
 
+    {switches, catalogos, _} = OptionParser.parse(args, strict: [sistema: :string])
+    sistema = switches[:sistema]
+
+    cond do
+      is_nil(sistema) ->
+        Mix.raise("Falta --sistema=<sistema>, obligatorio. Uso: mix motor.despublicar --sistema=<sistema> <catalogo>")
+
+      length(catalogos) != 1 ->
+        Mix.raise("Uso: mix motor.despublicar --sistema=<sistema> <catalogo> (uno solo por vez)")
+
+      not MetadataApp.MotorAlta.sistema_registrado?(sistema) ->
+        Mix.raise("\"#{sistema}\" no está de alta (no aparece en priv/sistemas.json) -- no se puede despublicar ahí.")
+
+      true ->
+        despublicar(sistema, hd(catalogos))
+    end
+  end
+
+  defp despublicar(sistema, catalogo) do
     {:ok, existe?, _apps} =
       Ecto.Migrator.with_repo(MetadataApp.Repo, fn _repo ->
         MetaSchemaContext.obtener_header_por_nombre(catalogo) != nil
@@ -62,10 +82,10 @@ defmodule Mix.Tasks.Motor.Despublicar do
     Mix.shell().info("== armando bundle de borrado para #{catalogo} ==")
     Mix.shell().info("  migración: #{Enum.join(migraciones, ", ")}")
 
-    armar_y_desplegar(catalogo)
+    armar_y_desplegar(sistema, catalogo)
   end
 
-  defp armar_y_desplegar(catalogo) do
+  defp armar_y_desplegar(sistema, catalogo) do
     case MetaPublicador.armar_bundle([catalogo]) do
       {:error, mensaje} ->
         Mix.raise(mensaje)
@@ -80,12 +100,12 @@ defmodule Mix.Tasks.Motor.Despublicar do
 
           {:ok, tags} ->
             Mix.shell().info("  #{Enum.join(tags, ", ")}")
-            Mix.shell().info("\n== disparando BC Deploy para aplicar el borrado en producción ahora ==")
+            Mix.shell().info("\n== disparando BC Deploy para aplicar el borrado en \"#{sistema}\" ahora ==")
 
-            case MetaPublicador.disparar_deploy([catalogo], bundle_path) do
+            case MetaPublicador.disparar_deploy(sistema, [catalogo], bundle_path) do
               {:ok, salida} ->
                 Mix.shell().info(salida)
-                Mix.shell().info("Disparado — el borrado de #{catalogo} va camino a producción. Seguí con \"gh run list\" / \"gh run watch\".")
+                Mix.shell().info("Disparado — el borrado de #{catalogo} va camino a \"#{sistema}\". Seguí con \"gh run list\" / \"gh run watch\".")
 
               {:error, mensaje} ->
                 Mix.raise(mensaje)

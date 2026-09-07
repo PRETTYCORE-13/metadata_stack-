@@ -193,12 +193,14 @@ defmodule MetadataApp.MetaPublicador do
   end
 
   @doc """
-  Dispara bc-deploy.yml con el bundle ya armado. `nombres_raiz` es solo
-  para la etiqueta legible del run (image tag / mensaje) — el contenido
-  real del bundle ya tiene todo el paquete completo adentro.
+  Dispara bc-deploy.yml con el bundle ya armado, dirigido a `sistema`
+  (SPEC-SYS-0309202601, R5/R6 — obligatorio, sin default, ya validado por
+  el caller contra `priv/sistemas.json`). `nombres_raiz` es solo para la
+  etiqueta legible del run (image tag / mensaje) — el contenido real del
+  bundle ya tiene todo el paquete completo adentro.
   {:ok, mensaje} | {:error, mensaje}
   """
-  def disparar_deploy(nombres_raiz, bundle_path) do
+  def disparar_deploy(sistema, nombres_raiz, bundle_path) do
     b64_path = bundle_path <> ".b64"
     File.write!(b64_path, Base.encode64(File.read!(bundle_path)))
 
@@ -218,6 +220,8 @@ defmodule MetadataApp.MetaPublicador do
       "workflow",
       "run",
       "bc-deploy.yml",
+      "-f",
+      "sistema=#{sistema}",
       "-f",
       "catalogo=#{etiqueta}",
       "-F",

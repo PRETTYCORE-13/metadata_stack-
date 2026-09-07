@@ -217,13 +217,22 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # armar_bundle/1 encuentra es la migración de DROP, que es justo lo que
   # tiene que viajar. start_async/3 por el mismo motivo que publicar_paquete:
   # tarda unos segundos de verdad (tar, red), no bloquear el proceso LiveView.
+  def handle_event("elegir_sistema_despublicar", %{"sistema" => sistema}, socket) do
+    {:noreply, update(socket, :accion_eliminar, &Map.put(&1, :sistema, if(sistema == "", do: nil, else: sistema)))}
+  end
+
+  # Defensa en profundidad, mismo criterio que "confirmar_publicar" sin
+  # sistema.
+  def handle_event("confirmar_despublicar", _params, %{assigns: %{accion_eliminar: %{sistema: nil}}} = socket),
+    do: {:noreply, socket}
+
   def handle_event("confirmar_despublicar", _params, socket) do
-    %{tabla: tabla} = socket.assigns.accion_eliminar
+    %{tabla: tabla, sistema: sistema} = socket.assigns.accion_eliminar
 
     socket =
       socket
       |> update(:accion_eliminar, &Map.merge(&1, %{procesando?: true, error: nil}))
-      |> start_async(:despublicar_catalogo, fn -> despublicar_catalogo(tabla) end)
+      |> start_async(:despublicar_catalogo, fn -> despublicar_catalogo(sistema, tabla) end)
 
     {:noreply, socket}
   end
@@ -389,7 +398,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # siempre -- no necesita este paso.
   defp siguiente_paso_tras_eliminar(tabla, label) do
     if String.starts_with?(tabla, "pty_") or String.starts_with?(tabla, "demo100_") do
-      %{tipo: :despublicar, tabla: tabla, label: label, procesando?: false, error: nil}
+      %{tipo: :despublicar, tabla: tabla, label: label, sistema: nil, procesando?: false, error: nil}
     end
   end
 
@@ -429,6 +438,10 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
            seleccionados: nombres,
            catalogos: catalogos,
            problemas: problemas,
+           # SPEC-SYS-0309202601, R5: sin sistema elegido no hay a quién
+           # publicarle -- nil a propósito, sin default, el botón
+           # "Publicar" queda deshabilitado hasta que se elija uno.
+           sistema: nil,
            error: nil,
            procesando?: false
          })}
@@ -436,6 +449,10 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       {:error, mensaje} ->
         {:noreply, put_flash(socket, :error, mensaje)}
     end
+  end
+
+  def handle_event("elegir_sistema_publicar", %{"sistema" => sistema}, socket) do
+    {:noreply, update(socket, :wizard_publicar, &Map.put(&1, :sistema, if(sistema == "", do: nil, else: sistema)))}
   end
 
   # Ignorado mientras se está publicando (defensa en profundidad — el botón
@@ -465,13 +482,18 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # SEGUNDO publish. Con start_async/3 el primer click marca
   # procesando?:true y repinta el modal (spinner, sin botones) ANTES de
   # que arranque el trabajo lento, así ya no hay botón que doble-clickear.
+  # Defensa en profundidad -- el botón ya queda deshabilitado en el modal
+  # sin sistema elegido, esto cubre un phx-click que haya quedado en cola.
+  def handle_event("confirmar_publicar", _params, %{assigns: %{wizard_publicar: %{sistema: nil}}} = socket),
+    do: {:noreply, socket}
+
   def handle_event("confirmar_publicar", _params, socket) do
-    %{seleccionados: seleccionados, catalogos: catalogos} = socket.assigns.wizard_publicar
+    %{seleccionados: seleccionados, catalogos: catalogos, sistema: sistema} = socket.assigns.wizard_publicar
 
     socket =
       socket
       |> update(:wizard_publicar, &Map.merge(&1, %{procesando?: true, error: nil}))
-      |> start_async(:publicar_paquete, fn -> publicar_paquete(seleccionados, catalogos) end)
+      |> start_async(:publicar_paquete, fn -> publicar_paquete(sistema, seleccionados, catalogos) end)
 
     {:noreply, socket}
   end
@@ -992,7 +1014,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # capturada) — sin esta cláusula, ESE caso dejaría el modal colgado en
   # "Procesando…" para siempre.
   def handle_async(:publicar_paquete, {:ok, {:ok, _salida}}, socket) do
-    seleccionados = socket.assigns.wizard_publicar.seleccionados
+    %{seleccionados: seleccionados, sistema: sistema} = socket.assigns.wizard_publicar
 
     {:noreply,
      socket
@@ -1000,7 +1022,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:seleccionados, MapSet.new())
      |> put_flash(
        :info,
-       "Publicado — #{Enum.join(seleccionados, ", ")} va(n) camino a producción. Seguí el progreso con \"gh run watch\" o \"gh run list\"."
+       "Publicado — #{Enum.join(seleccionados, ", ")} va(n) camino a \"#{sistema}\". Seguí el progreso con \"gh run watch\" o \"gh run list\"."
      )
      |> cargar_headers()}
   end
@@ -1015,14 +1037,14 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   end
 
   def handle_async(:despublicar_catalogo, {:ok, {:ok, _salida}}, socket) do
-    tabla = socket.assigns.accion_eliminar.tabla
+    %{tabla: tabla, sistema: sistema} = socket.assigns.accion_eliminar
 
     {:noreply,
      socket
      |> assign(:accion_eliminar, nil)
      |> put_flash(
        :info,
-       "Despublicado — el borrado de #{tabla} va camino a producción. Seguí el progreso con \"gh run watch\" o \"gh run list\"."
+       "Despublicado — el borrado de #{tabla} va camino a \"#{sistema}\". Seguí el progreso con \"gh run watch\" o \"gh run list\"."
      )}
   end
 
@@ -1035,15 +1057,20 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      update(socket, :accion_eliminar, &Map.merge(&1, %{error: "Error inesperado: #{inspect(razon)}", procesando?: false}))}
   end
 
+  # SPEC-SYS-0309202601, R5 -- lista de sistemas válidos para el selector
+  # de los dos modales (publicar/despublicar). Ordenados, para que el
+  # <select> no cambie de orden entre renders.
+  defp sistemas_disponibles, do: MetadataApp.MotorAlta.leer_sistemas() |> Map.keys() |> Enum.sort()
+
   # Espejo de MetadataApp.MetaPublicador (armar_bundle/1's rutas_de/1): con
   # el .ex/meta/motor/reglas ya borrados por Eliminar, lo único que queda
   # en disco para este catálogo es la migración de DROP -- el bundle se
   # arma solo con eso, sin código de empaquetado nuevo (mismo camino que
   # "mix motor.despublicar", ver lib/mix/tasks/motor.despublicar.ex).
-  defp despublicar_catalogo(tabla) do
+  defp despublicar_catalogo(sistema, tabla) do
     with {:ok, bundle_path} <- MetaPublicador.armar_bundle([tabla]),
          {:ok, _tags} <- MetaPublicador.persistir_bundle([tabla], bundle_path),
-         {:ok, salida} <- MetaPublicador.disparar_deploy([tabla], bundle_path) do
+         {:ok, salida} <- MetaPublicador.disparar_deploy(sistema, [tabla], bundle_path) do
       {:ok, salida}
     end
   end
@@ -1052,12 +1079,12 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # Mix.Task (a diferencia de "mix motor.publicar", que sí puede) — esto
   # corre dentro de la app ya viva bajo supervisión, así que llama
   # MetaSchemaContext.exportar_header/1 directo en vez de "mix meta.export".
-  defp publicar_paquete(seleccionados, catalogos) do
+  defp publicar_paquete(sistema, seleccionados, catalogos) do
     with :ok <- regenerar_paquete(catalogos),
          :ok <- exportar_paquete(catalogos),
          {:ok, bundle_path} <- MetaPublicador.armar_bundle(catalogos),
          {:ok, _tags} <- MetaPublicador.persistir_bundle(seleccionados, bundle_path),
-         {:ok, salida} <- MetaPublicador.disparar_deploy(seleccionados, bundle_path) do
+         {:ok, salida} <- MetaPublicador.disparar_deploy(sistema, seleccionados, bundle_path) do
       {:ok, salida}
     end
   end
@@ -2042,6 +2069,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # el catálogo ya está borrado acá, solo pospone la sincronización con
   # producción para hacerla después con "mix motor.despublicar" a mano.
   defp modal_eliminar(%{accion: %{tipo: :despublicar}} = assigns) do
+    assigns = assign(assigns, :sistemas_disponibles, sistemas_disponibles())
+
     ~H"""
     <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
@@ -2055,15 +2084,29 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             </svg>
             <p class="text-sm font-semibold text-gray-700">Procesando…</p>
             <p class="text-xs text-gray-500 text-center max-w-xs">
-              No cierres esta ventana — se está armando el paquete y disparando el deploy a producción.
+              No cierres esta ventana — se está armando el paquete y disparando el deploy a "{@accion.sistema}".
             </p>
           </div>
         <% else %>
           <p class="text-sm text-gray-700 mb-4">
             <strong>{@accion.label}</strong> ({@accion.tabla}) ya se borró acá, pero es un catálogo
             <span class="font-mono">pty_*</span> — nunca pasa por git, así que <code>commit</code>/<code>push</code>
-            no alcanza. Producción todavía lo tiene.
+            no alcanza. El sistema elegido todavía lo tiene.
           </p>
+
+          <div class="mb-4">
+            <label class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1.5 block">
+              Sistema destino
+            </label>
+            <form phx-change="elegir_sistema_despublicar">
+              <select name="sistema" class="select select-bordered w-full text-sm">
+                <option value="" selected={is_nil(@accion.sistema)}>Elegí un sistema…</option>
+                <option :for={sistema <- @sistemas_disponibles} value={sistema} selected={@accion.sistema == sistema}>
+                  {sistema}
+                </option>
+              </select>
+            </form>
+          </div>
 
           <div :if={@accion.error} class="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2">
             {@accion.error}
@@ -2080,7 +2123,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             <button
               type="button"
               phx-click="confirmar_despublicar"
-              class="px-4 py-2 rounded bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700"
+              disabled={is_nil(@accion.sistema)}
+              class="px-4 py-2 rounded bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700 disabled:opacity-60"
             >
               Despublicar de producción
             </button>
@@ -2185,7 +2229,10 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   defp modal_publicar(%{wizard: nil} = assigns), do: ~H""
 
   defp modal_publicar(assigns) do
-    assigns = assign(assigns, :automaticos, assigns.wizard.catalogos -- assigns.wizard.seleccionados)
+    assigns =
+      assigns
+      |> assign(:automaticos, assigns.wizard.catalogos -- assigns.wizard.seleccionados)
+      |> assign(:sistemas_disponibles, sistemas_disponibles())
 
     ~H"""
     <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
@@ -2200,13 +2247,33 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             </svg>
             <p class="text-sm font-semibold text-gray-700">Procesando…</p>
             <p class="text-xs text-gray-500 text-center max-w-xs">
-              No cierres esta ventana — se está armando el paquete y disparando el deploy a producción.
+              No cierres esta ventana — se está armando el paquete y disparando el deploy a "{@wizard.sistema}".
             </p>
           </div>
         <% else %>
           <p class="text-sm text-gray-600 mb-4">
-            Se va a armar un paquete con {length(@wizard.catalogos)} catálogo(s) y disparar el deploy a producción.
+            Se va a armar un paquete con {length(@wizard.catalogos)} catálogo(s) y disparar el deploy al sistema elegido.
           </p>
+
+          <div class="mb-4">
+            <label class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1.5 block">
+              Sistema destino
+            </label>
+            <form phx-change="elegir_sistema_publicar">
+              <select
+                name="sistema"
+                class="select select-bordered w-full text-sm"
+              >
+                <option value="" selected={is_nil(@wizard.sistema)}>Elegí un sistema…</option>
+                <option :for={sistema <- @sistemas_disponibles} value={sistema} selected={@wizard.sistema == sistema}>
+                  {sistema}
+                </option>
+              </select>
+            </form>
+            <p :if={@sistemas_disponibles == []} class="text-xs text-red-600 mt-1">
+              No hay ningún sistema de alta todavía (priv/sistemas.json vacío).
+            </p>
+          </div>
 
           <div :if={@wizard.error} class="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2">
             {@wizard.error}
@@ -2251,6 +2318,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               type="button"
               phx-click="confirmar_publicar"
               phx-disable-with="Procesando…"
+              disabled={is_nil(@wizard.sistema)}
               class="px-4 py-2 rounded bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700 disabled:opacity-60"
             >
               Publicar
