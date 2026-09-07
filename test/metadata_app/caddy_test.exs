@@ -46,5 +46,19 @@ defmodule MetadataApp.CaddyTest do
       assert nuevo =~ "unstable-2.ventaenruta.com.mx {\n    reverse_proxy 172.17.0.1:30111\n}"
       assert nuevo =~ "unstable.ventaenruta.com.mx {\n    reverse_proxy 172.17.0.1:30222\n}"
     end
+
+    # Bug real (Grupo F, 2026-09-07): "stable.ventaenruta.com.mx" es
+    # substring literal de "unstable.ventaenruta.com.mx" -- sin anclar a
+    # inicio de línea, agregar "stable" cortaba a mitad el bloque de
+    # "unstable" ya existente y dejaba un "un" huérfano colgando.
+    test "un host que es SUFIJO de otro no se confunde (stable vs unstable)" do
+      actual = "unstable.ventaenruta.com.mx {\n    reverse_proxy 172.17.0.1:30314\n}\n"
+
+      nuevo = Caddy.contenido_con_bloque(actual, "stable.ventaenruta.com.mx", 30500)
+
+      refute nuevo =~ ~r/^un\s*$/m
+      assert nuevo =~ "unstable.ventaenruta.com.mx {\n    reverse_proxy 172.17.0.1:30314\n}"
+      assert nuevo =~ "stable.ventaenruta.com.mx {\n    reverse_proxy 172.17.0.1:30500\n}"
+    end
   end
 end

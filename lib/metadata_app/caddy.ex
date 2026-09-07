@@ -75,7 +75,15 @@ defmodule MetadataApp.Caddy do
     String.trim_trailing(contenido_sin_bloque_previo) <> "\n" <> bloque_nuevo
   end
 
-  defp patron_bloque(host), do: ~r/\n*#{Regex.escape(host)}\s*\{[^}]*\}\n?/
+  # Ancla a INICIO DE LÍNEA (/m + ^) -- sin esto, "stable.ventaenruta.com.mx"
+  # matchea como substring dentro de "unstable.ventaenruta.com.mx" (un
+  # host es sufijo literal del otro). Encontrado real dando de alta
+  # "stable" con "unstable" ya expuesto (Grupo F, 2026-09-07): el chequeo
+  # de colisión lo frenó antes de escribir nada, pero sin el ancla
+  # `Regex.replace` habría cortado "stable.ventaenruta.com.mx {...}" a
+  # mitad del bloque de "unstable" y dejado un "un" huérfano colgando en
+  # el Caddyfile.
+  defp patron_bloque(host), do: ~r/^\n*#{Regex.escape(host)}\s*\{[^}]*\}\n?/m
 
   # Reescribe el archivo completo con `cat > ... <<EOF` (trunca el mismo
   # inodo) en vez de `sed -i` (crea un archivo nuevo y lo renombra encima)
