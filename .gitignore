@@ -104,6 +104,23 @@ priv/repo/migrations/*demo100_*.exs
 !priv/repo/migrations/20260903013358_agregar_campos_a_pty_gasto_diariov2_20260903013358.exs
 !priv/repo/migrations/20260813230955463_crear_pty_aly_marcas_20260813230955463.exs
 
+# Excepción real (2026-09-07, SPEC-SYS-0309202601, Grupo F -- primer alta
+# real de un canal): la auditoría de 2026-09-04 fixeó
+# 20260817201540_crear_pty_dsd_empleados (agrega la columna
+# pty_dsd_empleados_dsd_empleados_funcion) y 20260817224749_agregar_campos
+# (la vuelve a agregar) sin comitear las DOS migraciones intermedias que
+# la quitan/reponen entre esas dos -- CI (`mix ecto.migrate` desde cero)
+# corre 201540 (crea la columna) directo seguido de 224749 (la vuelve a
+# "agregar") y explota con "column already exists" (encontrado real:
+# `mix motor.alta` contra el servidor, y las últimas 5 corridas de CI
+# fallando en el mismo punto sin que nadie lo notara). 224902 es la otra
+# mitad -- la columna real que SÍ sobrevive al final
+# (pty_dsd_empleados_dsd_empleadosdet, no _funcion, verificado contra un
+# `mix ecto.migrate` 100% desde cero).
+!priv/repo/migrations/20260817224315_quitar_pty_dsd_empleados_dsd_empleados_funcion_de_pty_dsd_empleados_20260817224315.exs
+!priv/repo/migrations/20260817224821_quitar_pty_dsd_empleados_dsd_empleados_funcion_de_pty_dsd_empleados_20260817224821.exs
+!priv/repo/migrations/20260817224902_agregar_campos_a_pty_dsd_empleados_20260817224902.exs
+
 # Bundle temporal de MetaPublicador.armar_bundle/1 -- se arma en la raíz
 # del proyecto (nombre relativo, para que tar nunca vea una ruta con
 # letra de unidad en Windows) y se mueve al temp dir del sistema al
