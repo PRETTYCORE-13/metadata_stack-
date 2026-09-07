@@ -46,6 +46,13 @@ defmodule Mix.Tasks.Motor.Alta do
         # para no levantar también el Endpoint.
         {:ok, _pid} = MetadataApp.Vault.start_link([])
 
+        # exponer_dominio/3 (paso 5, más abajo) usa Req (PanelControl.Cloudflare)
+        # -- sin app.start, el pool Req.Finch nunca arranca solo.
+        # Encontrado real dando de alta "stable": "unknown registry:
+        # Req.Finch". Liviano (no levanta Endpoint ni nada de Phoenix),
+        # a diferencia de "app.start" completo.
+        {:ok, _} = Application.ensure_all_started(:req)
+
         {:ok, ambiente, _apps} =
           Ecto.Migrator.with_repo(MetadataApp.Repo, fn _repo -> Ambientes.obtener_ambiente_por_nombre(nombre_ambiente) end)
 
