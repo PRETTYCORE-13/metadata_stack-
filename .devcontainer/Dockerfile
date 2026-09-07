@@ -9,9 +9,15 @@ ARG DEBIAN_VERSION=trixie-20260610-slim
 
 FROM docker.io/hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}
 
+# gh -- mix motor.publicar/motor.actualizar/motor.promover lo necesitan
+# para disparar workflows (`gh workflow run`), y el registro de un alta
+# nueva en priv/sistemas.json necesita `git push` -- por eso también
+# `gh auth setup-git` como parte del setup de cada dev (ver
+# docs/onboarding-nuevo-sistema.md §6), no algo que se pueda hornear acá
+# (depende de la identidad de GitHub de cada uno).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-     build-essential git inotify-tools postgresql-client curl ca-certificates \
+     build-essential git inotify-tools postgresql-client curl ca-certificates gh \
   && rm -rf /var/lib/apt/lists/*
 
 RUN mix local.hex --force \

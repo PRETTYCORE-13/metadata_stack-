@@ -122,23 +122,34 @@ siempre requieren un comando explícito.
   zona `ventaenruta.com.mx`) -- la usa `MetadataApp.PanelControl.Cloudflare`,
   compartida con Panel Control.
 
-## 6. Gaps operativos conocidos (2026-09-07, sin resolver todavía)
+## 6. Setup de `gh` en el devcontainer (una sola vez por dev)
 
-- **`gh` no está instalado en el devcontainer.** `mix motor.actualizar`/
-  `mix motor.promover`/`mix motor.publicar` disparan workflows vía `gh
-  workflow run` -- desde el devcontainer fallan con `:enoent` en ese
-  paso. Mientras tanto: correr el comando igual (el resto de la
-  validación SÍ corre), y cuando falle en el paso de `gh`, disparar el
-  workflow a mano desde una terminal que sí tenga `gh` autenticado
-  (`gh workflow run actualizar-sistema.yml -f sistema=... -f imagen=...`),
-  usando la imagen que el comando ya imprimió.
-- **El devcontainer no tiene credenciales de git para pushear por
-  HTTPS.** El paso final de `mix motor.alta` (registrar el sistema en
-  `priv/sistemas.json`) arma el commit bien, pero el `git push` falla con
-  `could not read Username for 'https://github.com'`. Mientras tanto:
-  después de un alta, `git log` en el devcontainer para confirmar que el
-  commit quedó armado, y pushearlo a mano desde una terminal con
-  credenciales configuradas.
+`mix motor.actualizar`/`mix motor.promover`/`mix motor.publicar` (disparan
+workflows vía `gh workflow run`) y el paso final de `mix motor.alta`
+(`git push` de `priv/sistemas.json`) necesitan `gh` instalado Y
+autenticado dentro del devcontainer. **Resuelto (2026-09-07)**:
+
+- `gh` ya viene instalado en la imagen del devcontainer
+  (`.devcontainer/Dockerfile`, paquete `gh` de Debian trixie) -- nada que
+  hacer para un devcontainer construido después de esta fecha.
+- La autenticación SÍ es por dev (depende de la identidad de GitHub de
+  cada uno, no se puede hornear en la imagen) -- una sola vez por
+  devcontainer:
+  ```
+  gh auth login --hostname github.com --git-protocol https --web
+  gh auth setup-git
+  ```
+  El primer comando imprime un código de un solo uso + una URL
+  (`https://github.com/login/device`) -- completarlo en el navegador con
+  la cuenta de GitHub real, después el proceso termina solo. El segundo
+  configura `git` para usar `gh` como credential helper -- soluciona
+  TANTO `gh workflow run` como `git push` con el mismo login, un solo
+  paso. Verificar con `gh auth status` y `git push --dry-run`.
+
+  Si el devcontainer se recrea desde cero (no solo se reinicia), hay que
+  repetir el login -- la sesión de `gh` vive en `~/.config/gh/`, que no
+  está en ninguno de los volúmenes persistentes de
+  `.devcontainer/docker-compose.yml` hoy.
 
 ## 7. Fuera de alcance (todavía)
 

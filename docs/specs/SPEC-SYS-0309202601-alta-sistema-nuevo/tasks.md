@@ -425,9 +425,15 @@ alta→publicar→actualizar→promover probada de punta a punta -- incluido
 el gate de seguridad "solo Stable puede ir a un cliente" verificado en
 ambos sentidos (acepta la imagen correcta, rechaza una que no lo es).
 
-Quedan 2 gaps operativos sin resolver (documentados en la tarea 29 y en
-`docs/onboarding-nuevo-sistema.md` §6): `gh` no instalado en el
-devcontainer, y sin credenciales de git para pushear por HTTPS desde
-ahí -- ninguno de los dos bloquea el mecanismo, pero obligan a un paso
-manual extra (disparar el workflow o el push a mano) hasta que se
-resuelvan.
+**Los 2 gaps operativos (`gh` faltante + sin credenciales de git en el
+devcontainer) se resolvieron el mismo día**: `gh` agregado a
+`.devcontainer/Dockerfile` (paquete `gh` de Debian trixie, persiste para
+cualquier devcontainer nuevo) + `gh auth login --web` / `gh auth
+setup-git` corridos una vez en el devcontainer actual (login interactivo
+del usuario, nunca un token pasado por acá) -- resuelve AMBOS gaps con un
+solo login, porque `gh` pasa a ser también el credential helper de git.
+Verificado real: `mix motor.promover Metadata unstable testing` corrido
+completo desde el devcontainer, sin ningún paso manual desde otra
+terminal. Detalle en `docs/onboarding-nuevo-sistema.md` §6 (setup de
+`gh`, una sola vez por devcontainer -- no persiste si el contenedor se
+recrea desde cero).
