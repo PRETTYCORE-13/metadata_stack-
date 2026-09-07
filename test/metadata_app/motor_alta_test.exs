@@ -154,5 +154,34 @@ defmodule MetadataApp.MotorAltaTest do
       {log, 0} = System.cmd("git", ["log", "--oneline", "main"], cd: remoto)
       assert log =~ "direem"
     end
+
+    # Tarea 12 (idempotencia, §6 "alta parcial") -- correr el paso 5 dos
+    # veces con el mismo sistema no puede fallar ("nothing to commit")
+    # ni dejar dos commits por la misma alta.
+    test "registrar el mismo sistema dos veces no falla ni duplica el commit" do
+      sufijo = System.unique_integer([:positive])
+      remoto = Path.join(System.tmp_dir!(), "motor_alta_remoto_idem_#{sufijo}")
+      repo = Path.join(System.tmp_dir!(), "motor_alta_repo_idem_#{sufijo}")
+      on_exit(fn -> File.rm_rf!(remoto); File.rm_rf!(repo) end)
+
+      {_, 0} = System.cmd("git", ["init", "--bare", "-b", "main", remoto])
+      {_, 0} = System.cmd("git", ["init", "-b", "main", repo])
+      {_, 0} = System.cmd("git", ["remote", "add", "origin", remoto], cd: repo)
+      {_, 0} = System.cmd("git", ["config", "user.email", "test@test.local"], cd: repo)
+      {_, 0} = System.cmd("git", ["config", "user.name", "Test"], cd: repo)
+
+      path = Path.join(repo, "sistemas.json")
+      File.write!(path, "{}")
+      {_, 0} = System.cmd("git", ["add", "."], cd: repo)
+      {_, 0} = System.cmd("git", ["commit", "-m", "inicial"], cd: repo)
+      {_, 0} = System.cmd("git", ["push", "-u", "origin", "main"], cd: repo)
+
+      assert {:ok, :registrado} = MotorAlta.registrar_sistema("crm", path)
+      assert {:ok, :registrado} = MotorAlta.registrar_sistema("crm", path)
+
+      {log, 0} = System.cmd("git", ["log", "--oneline", "main"], cd: remoto)
+      # "inicial" + UN solo commit de alta -- no dos.
+      assert length(String.split(String.trim(log), "\n")) == 2
+    end
   end
 end

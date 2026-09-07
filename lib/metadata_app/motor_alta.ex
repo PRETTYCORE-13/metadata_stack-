@@ -84,10 +84,11 @@ defmodule MetadataApp.MotorAlta do
   conectarse directo desde la laptop de Dev, solo desde otro pod/proceso
   ADENTRO del clúster (design.md §2 y §6).
 
-  `{:ok, salida}` | `{:error, mensaje}`. Todavía NO es idempotente --
-  correr esto dos veces con el mismo `sistema` falla la segunda vez
-  ("database already exists"); la idempotencia es la tarea 12 de
-  `tasks.md` (Grupo B), a propósito, para verificarla como su propio paso.
+  `{:ok, salida}` | `{:error, mensaje}`. **Idempotente** (tarea 12,
+  mitigación de "alta parcial" de §6): si `db_<sistema>` ya existe (ej.
+  el paso 2 ya había corrido bien en un intento anterior que cortó
+  después), se trata como éxito -- nunca como error -- para que volver a
+  correr `mix motor.alta` retome donde cortó en vez de fallar.
   """
   def crear_base(ambiente, sistema) do
     # Comillas dobles en el identificador -- sistema puede tener guiones
@@ -98,9 +99,18 @@ defmodule MetadataApp.MotorAlta do
       "sudo k3s kubectl exec -n metadata-stack aws-postgres-0 -- psql -U appuser -d postgres -c 'CREATE DATABASE \"db_#{sistema}\";'"
 
     case MetadataApp.Ssh.ejecutar(ambiente, comando) do
-      {:ok, 0, salida} -> {:ok, salida}
-      {:ok, _codigo, salida} -> {:error, salida}
-      {:error, _} = error -> error
+      {:ok, 0, salida} ->
+        {:ok, salida}
+
+      {:ok, _codigo, salida} ->
+        if salida =~ "already exists" do
+          {:ok, "db_#{sistema} ya existía (alta retomada) -- #{String.trim(salida)}"}
+        else
+          {:error, salida}
+        end
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -295,25 +305,36 @@ defmodule MetadataApp.MotorAlta do
   `sistema` es un canal (`canales/0`), se salta entero -- los canales
   nunca se registran ahí (§3, ese archivo es solo para clientes de ADN).
 
-  `{:ok, :canal}` | `{:ok, :registrado}` | `{:error, mensaje}`.
+  `{:ok, :canal}` | `{:ok, :registrado}` | `{:error, mensaje}`. **Idempotente**
+  (tarea 12): si `sistema` ya está registrado (ej. el paso 5 ya había
+  escrito el archivo en un intento anterior que cortó antes del push), no
+  reescribe nada -- solo intenta el push por si quedó pendiente, sin
+  fallar si no hay nada nuevo que subir.
   """
   def registrar_sistema(sistema, path \\ ruta_sistemas())
 
   def registrar_sistema(sistema, _path) when sistema in ~w[unstable testing stable], do: {:ok, :canal}
 
   def registrar_sistema(sistema, path) do
-    nuevo_mapa =
-      leer_sistemas(path)
-      |> Map.put(sistema, %{
-        "dominio" => "#{sistema}.ventaenruta.com.mx",
-        "alta" => Date.to_iso8601(Date.utc_today())
-      })
+    if sistema_registrado?(sistema, path) do
+      case pushear(path) do
+        :ok -> {:ok, :registrado}
+        {:error, _} = error -> error
+      end
+    else
+      nuevo_mapa =
+        leer_sistemas(path)
+        |> Map.put(sistema, %{
+          "dominio" => "#{sistema}.ventaenruta.com.mx",
+          "alta" => Date.to_iso8601(Date.utc_today())
+        })
 
-    File.write!(path, Jason.encode!(nuevo_mapa, pretty: true) <> "\n")
+      File.write!(path, Jason.encode!(nuevo_mapa, pretty: true) <> "\n")
 
-    case comitear_y_pushear(path, sistema) do
-      :ok -> {:ok, :registrado}
-      {:error, _} = error -> error
+      case comitear_y_pushear(path, sistema) do
+        :ok -> {:ok, :registrado}
+        {:error, _} = error -> error
+      end
     end
   end
 
@@ -322,11 +343,25 @@ defmodule MetadataApp.MotorAlta do
     mensaje = "Alta: registrar sistema \"#{sistema}\" en priv/sistemas.json"
 
     with {_, 0} <- System.cmd("git", ["add", Path.basename(path)], cd: dir, stderr_to_stdout: true),
-         {_, 0} <- System.cmd("git", ["commit", "-m", mensaje], cd: dir, stderr_to_stdout: true),
-         {_, 0} <- System.cmd("git", ["push"], cd: dir, stderr_to_stdout: true) do
-      :ok
+         {_, 0} <- System.cmd("git", ["commit", "-m", mensaje], cd: dir, stderr_to_stdout: true) do
+      pushear(path)
     else
-      {salida, _codigo} -> {:error, "git add/commit/push de priv/sistemas.json falló:\n#{salida}"}
+      {salida, _codigo} -> {:error, "git add/commit de priv/sistemas.json falló:\n#{salida}"}
+    end
+  rescue
+    e in ErlangError -> {:error, "No se pudo ejecutar git: #{Exception.message(e)} -- ¿está instalado y en el PATH?"}
+  end
+
+  # Separado de comitear_y_pushear/2 a propósito -- el camino idempotente
+  # (sistema ya registrado, nada que comitear) solo necesita esto, nunca
+  # arma un commit sobre un archivo sin cambios reales ("nothing to
+  # commit" -- git sale con error si se le pide igual).
+  defp pushear(path) do
+    dir = Path.dirname(path)
+
+    case System.cmd("git", ["push"], cd: dir, stderr_to_stdout: true) do
+      {_, 0} -> :ok
+      {salida, _codigo} -> {:error, "git push de priv/sistemas.json falló:\n#{salida}"}
     end
   rescue
     e in ErlangError -> {:error, "No se pudo ejecutar git: #{Exception.message(e)} -- ¿está instalado y en el PATH?"}

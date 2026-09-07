@@ -152,9 +152,26 @@ que ya existía sin datos de valor.
     3 tests nuevos: canal no toca nada, cliente se registra de verdad
     contra un repo git temporal (bare + working copy, push real
     verificado del lado del "remoto").
-12. [ ] Idempotencia (§6, mitigación de "alta parcial") — correr
-    `mix motor.alta` dos veces seguidas con el mismo nombre no falla ni
-    duplica nada; verificar cada paso por separado.
+12. [x] Idempotencia (§6, mitigación de "alta parcial") — verificado paso
+    por paso:
+    - Paso 1 (validar): ya rechazaba una alta ya completa (registrada en
+      `sistemas.json`); una alta PARCIAL (interrumpida antes del paso 5)
+      sigue pasando la validación tal cual, para poder retomarla.
+    - Paso 2 (`crear_base`): "database already exists" ahora es éxito,
+      no error. Verificado real contra `aws-postgres`: segunda corrida
+      con la misma base, `{:ok, "... ya existía (alta retomada) ..."}`.
+    - Pasos 3-4 (`aplicar_manifiestos`): ya eran idempotentes sin
+      cambios -- `kubectl apply` actualiza en vez de fallar, `bin/setup`
+      (migrar + import) también lo es por diseño.
+    - Paso 5 (`registrar_sistema`): si `sistema` ya está en el archivo,
+      no reescribe ni vuelve a comitear -- solo reintenta el push (nunca
+      arma un commit vacío, que git rechaza con "nothing to commit").
+      Test real con git (bare + working copy): registrar el mismo
+      sistema dos veces deja UN solo commit en el remoto, no dos.
+    - Suite completa: 497 tests, 5 properties, 0 fallos.
+
+**Grupo B cerrado — los 5 pasos de `mix motor.alta` completos y
+verificados reales, incluida la idempotencia.**
 
 ## Grupo C — R9: defaults de negocio al completar el wizard
 
