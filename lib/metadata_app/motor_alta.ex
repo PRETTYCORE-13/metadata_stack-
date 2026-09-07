@@ -338,6 +338,53 @@ defmodule MetadataApp.MotorAlta do
     end
   end
 
+  @doc """
+  Consulta contra k3s la imagen que corre AHORA MISMO en `metadata-<sistema>`
+  (design.md §3, "mismo mecanismo de R8" que ya usa
+  `AmbientesLive.detectar_imagen_remota/1` para autocompletar el form de un
+  Ambiente) -- mismo comando, generalizado acá a cualquier `sistema` (canal
+  o cliente) en vez de un deployment fijo.
+
+  Usado por `mix motor.promover` para saber qué imagen exacta mover de
+  `<origen>` a `<destino>` -- promover nunca reconstruye, solo mueve el
+  MISMO artefacto ya construido. `{:ok, imagen}` | `{:error, mensaje}`.
+  """
+  def imagen_actual(ambiente, sistema) do
+    comando =
+      "sudo k3s kubectl get deployment/metadata-#{sistema} -n metadata-stack -o jsonpath='{.spec.template.spec.containers[0].image}'"
+
+    case MetadataApp.Ssh.ejecutar(ambiente, comando) do
+      {:ok, 0, salida} ->
+        case String.trim(salida) do
+          "" -> {:error, "el servidor respondió vacío -- ¿existe el deployment metadata-#{sistema}?"}
+          imagen -> {:ok, imagen}
+        end
+
+      {:ok, _codigo, salida} ->
+        {:error, String.trim(salida)}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  @doc """
+  Dispara `actualizar-sistema.yml` (GitHub Actions) vía `gh workflow run`
+  -- mismo mecanismo que `MetaPublicador.disparar_deploy/3`, pero sin
+  bundle: el workflow no reconstruye nada, solo mueve `sistema` a `imagen`
+  (ya construida) directo en k3s. `{:ok, salida}` | `{:error, mensaje}`.
+  """
+  def disparar_actualizacion(sistema, imagen) do
+    args = ["workflow", "run", "actualizar-sistema.yml", "-f", "sistema=#{sistema}", "-f", "imagen=#{imagen}"]
+
+    case System.cmd("gh", args, stderr_to_stdout: true) do
+      {salida, 0} -> {:ok, salida}
+      {salida, status} -> {:error, "gh workflow run falló (status #{status}):\n#{salida}"}
+    end
+  rescue
+    e in ErlangError -> {:error, "No se pudo ejecutar \"gh\" -- ¿está instalado y en el PATH de este proceso? (#{Exception.message(e)})"}
+  end
+
   defp comitear_y_pushear(path, sistema) do
     dir = Path.dirname(path)
     mensaje = "Alta: registrar sistema \"#{sistema}\" en priv/sistemas.json"

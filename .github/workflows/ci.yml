@@ -177,17 +177,23 @@ jobs:
   # los comandos viejos de Swarm -- rompía la migración automática en
   # CADA push a main desde entonces sin que nadie lo notara (encontrado
   # real 2026-08-28, "Actualizar ... en Docker Swarm" fallando en TODAS
-  # las corridas recientes). Namespace/deployment fijos
-  # (metadata-stack/metadata-stack-app), mismos nombres que dejó esa
-  # migración. Asume que DEPLOY_USER tiene NOPASSWD sudo para
-  # /usr/local/bin/k3s (ya configurado para "elixir" en ese servidor).
+  # las corridas recientes).
+  #
+  # SPEC-SYS-0309202601 (Grupo E, §3): `metadata-stack-app` se recrea como
+  # `metadata-unstable`, el primero de tres canales (unstable/testing/
+  # stable) -- este job sigue siendo el único 100% automático (cada push a
+  # main), y apunta SIEMPRE a unstable; promover a testing/stable es manual
+  # (`mix motor.promover`, `actualizar-sistema.yml`). Namespace fijo
+  # (`metadata-stack`), mismo nombre que dejó la migración a k3s. Asume que
+  # DEPLOY_USER tiene NOPASSWD sudo para /usr/local/bin/k3s (ya configurado
+  # para "elixir" en ese servidor).
   deploy:
     needs: build-image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Actualizar metadata-stack-app en k3s y migrar
+      - name: Actualizar metadata-unstable en k3s y migrar
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -195,11 +201,11 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             set -e
-            sudo k3s kubectl set image deployment/metadata-stack-app app=ghcr.io/prettycore-13/metadata_stack:latest -n metadata-stack
-            sudo k3s kubectl rollout restart deployment/metadata-stack-app -n metadata-stack
+            sudo k3s kubectl set image deployment/metadata-unstable app=ghcr.io/prettycore-13/metadata_stack:latest -n metadata-stack
+            sudo k3s kubectl rollout restart deployment/metadata-unstable -n metadata-stack
 
             echo "Esperando a que el rollout converja..."
-            sudo k3s kubectl rollout status deployment/metadata-stack-app -n metadata-stack --timeout=120s
+            sudo k3s kubectl rollout status deployment/metadata-unstable -n metadata-stack --timeout=120s
 
             # items[0] agarraba el PRIMERO que devolviera la API, sin ordenar
             # -- durante la ventana en que el pod viejo todavía está
@@ -211,9 +217,9 @@ jobs:
             # Ordenar por creationTimestamp y tomar el último (--sort-by
             # deja el jsonpath en orden ascendente, awk agarra el final)
             # siempre da el pod recién creado por este rollout.
-            POD=$(sudo k3s kubectl get pod -n metadata-stack -l app=metadata-stack-app --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[*].metadata.name}' | awk '{print $NF}')
+            POD=$(sudo k3s kubectl get pod -n metadata-stack -l app=metadata-unstable --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[*].metadata.name}' | awk '{print $NF}')
             if [ -z "$POD" ]; then
-              echo "No se encontró el pod de metadata-stack-app, no se pudo migrar"
+              echo "No se encontró el pod de metadata-unstable, no se pudo migrar"
               exit 1
             fi
             sudo k3s kubectl exec -n metadata-stack "$POD" -- /app/bin/setup

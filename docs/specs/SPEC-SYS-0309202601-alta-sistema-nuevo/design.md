@@ -117,13 +117,18 @@ sin bundle: dado un `sistema` y una `imagen` (tag/sha, siempre obligatorio,
 nunca implícito "el último"), actualiza `metadata-<sistema>` a esa imagen.
 Sirve para DOS cosas distintas con la misma mecánica:
 
-- **Promoción entre canales** — `mix motor.promover <origen> <destino>`
-  (`unstable→testing` o `testing→stable`, ningún otro par válido — no se
-  saltea Testing) consulta qué imagen corre HOY en `<origen>` (mismo
-  mecanismo de R8, `kubectl get deployment ... -o jsonpath=...image`) y
-  llama `actualizar-sistema.yml` con esa imagen exacta sobre `<destino>`.
-  No hay build nuevo — promover es mover el MISMO artefacto ya construido,
-  nunca reconstruirlo.
+- **Promoción entre canales** — `mix motor.promover <ambiente> <origen>
+  <destino>` (`unstable→testing` o `testing→stable`, ningún otro par
+  válido — no se saltea Testing) consulta qué imagen corre HOY en
+  `<origen>` (mismo mecanismo de R8, `kubectl get deployment ... -o
+  jsonpath=...image`) y llama `actualizar-sistema.yml` con esa imagen
+  exacta sobre `<destino>`. No hay build nuevo — promover es mover el
+  MISMO artefacto ya construido, nunca reconstruirlo. **`<ambiente>`
+  agregado durante la implementación (Grupo E, tarea 22, 2026-09-07)**:
+  consultar la imagen de `<origen>` necesita SSH directo, y
+  `MetadataApp.Ambientes` es el único registro de credenciales que ya
+  existe para eso — mismo motivo por el que `mix motor.alta` (§4) ya toma
+  `<ambiente>` como primer argumento.
 - **Actualizar un sistema de cliente** — `mix motor.actualizar <sistema>
   <imagen>` (`<sistema>` de `priv/sistemas.json`). Acá `actualizar-
   sistema.yml` valida ADEMÁS que `<imagen>` sea la que está corriendo

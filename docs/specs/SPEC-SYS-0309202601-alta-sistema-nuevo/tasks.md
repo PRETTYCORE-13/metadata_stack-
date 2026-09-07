@@ -243,21 +243,48 @@ verificados reales, incluida la idempotencia.**
     estados + transición inicial), que ningún fixture de este archivo de
     test arma hoy; construir uno solo para esto era una inversión fuera
     de alcance de esta tarea.
-19. [ ] `actualizar-sistema.yml` (nuevo) — SSH + `kubectl set image` +
+19. [x] `actualizar-sistema.yml` (nuevo) — SSH + `kubectl set image` +
     `rollout` + `bin/setup`, inputs `sistema` + `imagen`, ambos
-    obligatorios sin default.
-20. [ ] Chequeo de gate en `actualizar-sistema.yml`: si `sistema` está en
+    obligatorios sin default. Sin build/checkout de código (a diferencia
+    de `bc-deploy.yml`) — la imagen ya existe, solo se re-apunta el
+    Deployment.
+20. [x] Chequeo de gate en `actualizar-sistema.yml`: si `sistema` está en
     `priv/sistemas.json` (es cliente), valida que `imagen` coincida con lo
     que corre AHORA MISMO en `metadata-stable` — rechaza si no coincide.
-21. [ ] `mix motor.actualizar <sistema> <imagen>` — dispara
+    El chequeo "¿es cliente?" lee `priv/sistemas.json` directo del
+    checkout del propio workflow (no necesita SSH para eso — un canal
+    nunca aparece ahí, §3); la comparación de imagen sí es SSH real contra
+    `metadata-stable` en k3s (nunca un valor cacheado).
+21. [x] `mix motor.actualizar <sistema> <imagen>` — dispara
     `actualizar-sistema.yml` vía `gh workflow run`, mismo estilo que
-    `mix motor.publicar`.
-22. [ ] `mix motor.promover <origen> <destino>` — valida que el par sea
-    `unstable→testing` o `testing→stable` (ningún otro), consulta la
-    imagen actual de `<origen>` contra k3s (mismo mecanismo de R8), llama
-    `actualizar-sistema.yml` con esa imagen sobre `<destino>`.
-23. [ ] `ci.yml` — el job `deploy` se actualiza para apuntar siempre a
+    `mix motor.publicar`. Valida `<sistema>` contra
+    `MotorAlta.sistema_registrado?/1` antes de disparar nada (mismo
+    criterio R5/R6 que `motor.publicar`/`motor.despublicar`) — el gate
+    real de la imagen vive en el workflow (tarea 20), acá solo se
+    descartan nombres que ni siquiera son un cliente de alta.
+22. [x] `mix motor.promover <ambiente> <origen> <destino>` — valida que el
+    par sea `unstable→testing` o `testing→stable` (ningún otro), consulta
+    la imagen actual de `<origen>` contra k3s (`MotorAlta.imagen_actual/2`,
+    mismo mecanismo de R8 que ya usa `AmbientesLive` para autocompletar),
+    llama `actualizar-sistema.yml` con esa imagen sobre `<destino>`.
+    **Desviación de la firma original de este ítem** (`<origen>
+    <destino>`, sin `<ambiente>`): consultar la imagen de `<origen>`
+    necesita SSH directo, y `MetadataApp.Ambientes` es el único registro
+    de credenciales que ya existe para eso — mismo motivo exacto por el
+    que `mix motor.alta` ya toma `<ambiente>` como primer argumento (§4).
+    Cobertura: `MotorAlta.imagen_actual/2` sin test automático (necesita
+    SSH real, mismo criterio ya establecido para `crear_base`/
+    `aplicar_manifiestos`); `MotorAlta.disparar_actualizacion/2` cubierto
+    en `test/metadata_app/motor_alta_actualizacion_test.exs` (módulo
+    aparte, `async: false`, mismo patrón PATH-vacío que
+    `MetaPublicadorTest`). `mix test` completo: 499 tests, 0 failures.
+23. [x] `ci.yml` — el job `deploy` se actualiza para apuntar siempre a
     `metadata-unstable` (antes `metadata-stack-app`).
+
+**Grupo E cerrado (2026-09-07).** Falta la parte de infraestructura real
+(dar de alta los tres canales de verdad en el servidor, wildcard TLS,
+probar el push automático y las dos promociones de punta a punta) — eso
+es Grupo F, no código nuevo.
 
 ## Grupo F — Acciones reales sobre el servidor (última, requiere cuidado)
 

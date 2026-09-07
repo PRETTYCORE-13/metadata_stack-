@@ -1,0 +1,102 @@
+name: Actualizar Sistema
+
+# Apunta un sistema YA existente en k3s (canal o cliente) a una imagen ya
+# construida -- sin build nuevo, a diferencia de bc-deploy.yml. Mismo
+# patrón (SSH + kubectl set image + rollout + bin/setup), pero sin bundle:
+# sirve para DOS cosas con la misma mecánica (SPEC-SYS-0309202601, §3):
+#
+#   - Promoción entre canales -- disparado por `mix motor.promover
+#     <origen> <destino>`, que ya consultó qué imagen corre HOY en
+#     <origen> (R8) y la pasa acá tal cual. Mover el MISMO artefacto,
+#     nunca reconstruirlo.
+#   - Actualizar un sistema de cliente -- disparado por `mix motor.actualizar
+#     <sistema> <imagen>`. Acá SÍ hay un gate (ver abajo): la imagen tiene
+#     que ser la que está corriendo AHORA MISMO en metadata-stable, para
+#     que ningún cliente termine con algo que nunca pasó por los tres
+#     canales, sin importar quién dispare el comando o desde dónde.
+#
+# `sistema`/`imagen` sin default, ninguno de los dos -- con varios sistemas
+# compartiendo el mismo clúster (canales Y clientes), un default silencioso
+# es la forma más fácil de actualizar el sistema equivocado a la imagen
+# equivocada (mismo criterio que bc-deploy.yml, R5/R6).
+on:
+  workflow_dispatch:
+    inputs:
+      sistema:
+        description: "Sistema destino -- canal (unstable/testing/stable) o cliente de priv/sistemas.json -- sin default"
+        required: true
+      imagen:
+        description: "Imagen completa (ghcr.io/.../metadata_stack:<tag>), sin default -- nunca 'la última' implícita"
+        required: true
+
+jobs:
+  actualizar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # priv/sistemas.json ya viene en este checkout de `main` -- no hace
+      # falta SSH para saber si `sistema` es un cliente, es un archivo de
+      # este mismo repo. Un canal (unstable/testing/stable) NUNCA aparece
+      # ahí (§3) -- por eso alcanza con esto para distinguir los dos casos.
+      - name: Determinar si "sistema" es un cliente (priv/sistemas.json)
+        id: tipo
+        run: |
+          if jq -e --arg s "${{ inputs.sistema }}" 'has($s)' priv/sistemas.json > /dev/null; then
+            echo "es_cliente=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "es_cliente=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Único gate real de todo el mecanismo (R6): si "sistema" es un
+      # cliente, "imagen" tiene que coincidir EXACTO con lo que corre AHORA
+      # MISMO en metadata-stable -- consultado en vivo contra k3s (mismo
+      # mecanismo de R8), nunca contra un valor cacheado o copiado a mano.
+      # Si "sistema" es un canal (promoción unstable->testing/testing->stable,
+      # disparada por mix motor.promover), este paso no aplica -- promover
+      # ES cómo una imagen llega a stable en primer lugar.
+      - name: "Gate: para un cliente, la imagen debe ser la que corre en stable"
+        if: steps.tipo.outputs.es_cliente == 'true'
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            IMAGEN_STABLE=$(sudo k3s kubectl get deployment/metadata-stable -n metadata-stack -o jsonpath='{.spec.template.spec.containers[0].image}')
+            IMAGEN_PEDIDA="${{ inputs.imagen }}"
+            if [ "$IMAGEN_STABLE" != "$IMAGEN_PEDIDA" ]; then
+              echo "Rechazado: \"$IMAGEN_PEDIDA\" no es la imagen que corre en metadata-stable ahora mismo (\"$IMAGEN_STABLE\")."
+              echo "Un cliente solo puede actualizarse a una imagen que ya pasó por unstable -> testing -> stable."
+              exit 1
+            fi
+            echo "OK: imagen pedida coincide con metadata-stable."
+
+      - name: Actualizar metadata-${{ inputs.sistema }} en k3s y migrar
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            SISTEMA="${{ inputs.sistema }}"
+            IMAGEN="${{ inputs.imagen }}"
+
+            sudo k3s kubectl set image "deployment/metadata-$SISTEMA" "app=$IMAGEN" -n metadata-stack
+            sudo k3s kubectl rollout restart "deployment/metadata-$SISTEMA" -n metadata-stack
+
+            echo "Esperando a que el rollout converja..."
+            sudo k3s kubectl rollout status "deployment/metadata-$SISTEMA" -n metadata-stack --timeout=120s
+
+            # Mismo fix que bc-deploy.yml/ci.yml (2026-09-03): ordenar por
+            # creationTimestamp y tomar el último siempre da el pod recién
+            # creado por este rollout, nunca el viejo todavía Terminating.
+            POD=$(sudo k3s kubectl get pod -n metadata-stack -l "app=metadata-$SISTEMA" --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[*].metadata.name}' | awk '{print $NF}')
+            if [ -z "$POD" ]; then
+              echo "No se encontró el pod de metadata-$SISTEMA, no se pudo migrar"
+              exit 1
+            fi
+            sudo k3s kubectl exec -n metadata-stack "$POD" -- /app/bin/setup
