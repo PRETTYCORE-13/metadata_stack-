@@ -145,7 +145,7 @@ defmodule MetadataApp.Release do
           email = System.get_env("SYSADMIN_EMAIL")
           nombre_empresa = System.get_env("EMPRESA_INICIAL_NOMBRE", "Empresa Principal")
           usuario = MetadataApp.Autenticacion.get_usuario_by_email(email)
-          MetadataApp.Autenticacion.crear_empresa_para_usuario(nombre_empresa, usuario.id)
+          MetadataApp.Autenticacion.crear_empresa_inicial_con_estructura(nombre_empresa, usuario.id)
         end
       end)
 

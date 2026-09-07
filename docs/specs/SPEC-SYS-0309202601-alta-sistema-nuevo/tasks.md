@@ -175,17 +175,36 @@ verificados reales, incluida la idempotencia.**
 
 ## Grupo C — R9: defaults de negocio al completar el wizard
 
-13. [ ] `Autenticacion.crear_empresa_para_usuario/2` extendida — dentro de
-    la misma transacción, crea un Branch (`crear_branch/1`), un SalesUnit
-    (`crear_sales_unit/1`) y un InventoryLocation (`crear_inventory_location/1`)
-    con valores genéricos, usando el `empresa_id`/`branch_id` recién
-    creados.
-14. [ ] Test: completar el wizard de primer arranque deja el sistema con
-    Empresa + Branch + SalesUnit + InventoryLocation, los 4 verificados
-    por consulta directa (no solo que no haya error).
-15. [ ] Verificar que `Release.setup/0` (camino `SYSADMIN_EMAIL` por env
-    var, sin wizard) también dispara lo mismo — mismo código compartido,
-    no debería hacer falta nada aparte, pero confirmarlo con un test.
+13. [x] **Corrección de diseño real, no `crear_empresa_para_usuario/2`
+    extendida como decía el plan original** — esa función es GENERAL
+    (también la usa `EmpresasLive`, la pantalla de admin "Crear empresa"
+    de un sistema YA en marcha, y `dev_auto_login.ex`), no exclusiva del
+    wizard. Extenderla directo rompió 5 tests que asumían que no crea
+    nada más que la Empresa (`JerarquiaOperativaTest`,
+    `JerarquiaOrganizacionalLiveTest`, `JerarquiaOrganizacionalTest`) --
+    encontrado real corriendo la suite completa, no solo el test nuevo.
+    Arreglado: `crear_empresa_para_usuario/2` queda EXACTAMENTE como
+    estaba; se agregó `crear_empresa_inicial_con_estructura/2` (mismo
+    bloque común vía un helper privado, `extra.(empresa)` corre en la
+    MISMA transacción) que sí crea Branch/SalesUnit/InventoryLocation
+    genéricos -- y solo el wizard (`primer_arranque.ex`) y
+    `Release.asegurar_empresa_inicial/0` la llaman.
+14. [x] Test real: completar el wizard (`primer_arranque_test.exs`,
+    extendido) deja el sistema con Empresa + Branch + SalesUnit +
+    InventoryLocation, los 4 verificados por consulta directa.
+15. [x] `Release.setup/0` (camino `SYSADMIN_EMAIL`, sin wizard) verificado
+    con test real (`release_test.exs`, nuevo) -- mismo resultado, sin
+    código aparte (llama a la misma función nueva). `Ecto.Migrator.with_repo/3`
+    corre fuera del sandbox de test -- limpieza manual explícita en
+    `on_exit`, verificada sin residuo. **Hallazgo aparte, no bloqueante**:
+    `import_meta` (dentro de `setup/0`) advierte por una transición de
+    `pty_dsd_cs_canales` con el mismo tipo de problema de orden ya
+    arreglado para `.meta.json` (Grupo B), pero en `.motor.json`
+    (`importar_motor`/`importar_catalogo_motor`) -- no bloquea `setup/0`
+    (ya tolera este tipo de fallo), pendiente de arreglar aparte.
+    Suite completa: 498 tests, 5 properties, 0 fallos.
+
+**Grupo C cerrado.**
 
 ## Grupo D — `pty_folio_perfiles`/`pty_subtipos_transaccion` en la alta
 

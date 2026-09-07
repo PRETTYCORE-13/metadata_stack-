@@ -39,7 +39,20 @@ defmodule MetadataAppWeb.UsuarioLive.PrimerArranqueTest do
       usuario = Autenticacion.get_usuario_by_email("admin@ejemplo.com")
       assert usuario.super_admin
 
-      assert Repo.get_by(MetadataApp.Autenticacion.Empresa, nombre: "Empresa de Prueba")
+      empresa = Repo.get_by(MetadataApp.Autenticacion.Empresa, nombre: "Empresa de Prueba")
+      assert empresa
+
+      # SPEC-SYS-0309202601, R9 (Grupo C) -- el wizard deja el sistema
+      # con Branch/SalesUnit/InventoryLocation genéricos, no solo la
+      # Empresa. Consulta directa, no solo "sin error".
+      branch = Repo.get_by(MetadataApp.Autenticacion.Branch, empresa_id: empresa.id)
+      assert branch.branch_name == "Sucursal Principal"
+
+      sales_unit = Repo.get_by(MetadataApp.Autenticacion.SalesUnit, empresa_id: empresa.id, branch_id: branch.id)
+      assert sales_unit.sales_unit_name == "Unidad de Venta Principal"
+
+      inventory_location = Repo.get_by(MetadataApp.Autenticacion.InventoryLocation, empresa_id: empresa.id, branch_id: branch.id)
+      assert inventory_location.inventory_name == "Almacén Principal"
 
       # phx-trigger-action dispara un POST real contra el login por
       # contraseña ya existente -- confirma que la sesión se estableció

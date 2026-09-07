@@ -97,25 +97,64 @@ defmodule MetadataApp.Autenticacion do
   puerta de rescate para una empresa YA existente).
   """
   def crear_empresa_para_usuario(nombre, usuario_id) do
+    Repo.transaction(fn -> crear_empresa_transaccion(nombre, usuario_id, fn _empresa -> {:ok, nil} end) end)
+  end
+
+  @doc """
+  Igual que `crear_empresa_para_usuario/2`, pero además deja
+  Branch/SalesUnit/InventoryLocation genéricos, en la MISMA transacción
+  (SPEC-SYS-0309202601, R9 — Grupo C). Uso exclusivo del bootstrap de un
+  sistema NUEVO (wizard de primer arranque y `Release.setup/0`) -- **no**
+  la pantalla de admin "Crear empresa" (`EmpresasLive`) ni
+  `dev_auto_login.ex`, que agregan una empresa a un sistema YA en marcha
+  y no deberían inventarle una sucursal genérica sola (encontrado real:
+  usar `crear_empresa_para_usuario/2` para esto rompía 5 tests que
+  asumían que esa función no crea nada más que la Empresa).
+
+  Las tres dependen de `empresa_id` (Sales Unit/Inventory Location además
+  de `branch_id`), y ninguna Empresa existe hasta este momento (design.md
+  §5: `mix motor.alta` termina ANTES de esto a propósito, nunca le pasa
+  SYSADMIN_EMAIL a un sistema nuevo). Nombres genéricos, editables después
+  desde la UI (Jerarquía organizacional) -- el objetivo es que el sistema
+  no quede sin nada, no adivinar la estructura real del cliente.
+  """
+  def crear_empresa_inicial_con_estructura(nombre, usuario_id) do
     Repo.transaction(fn ->
-      with {:ok, empresa} <-
-             %Empresa{}
-             |> Empresa.changeset(%{nombre: nombre})
-             |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
-             |> Repo.insert(),
-           {:ok, _} <-
-             %UsuarioEmpresa{}
-             |> UsuarioEmpresa.changeset(%{usuario_id: usuario_id, empresa_id: empresa.id})
-             |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
-             |> Repo.insert(),
-           rol_admin <-
-             Repo.one!(from(r in Rol, where: r.nombre == "administrador" and is_nil(r.empresa_id))),
-           {:ok, _} <- MetadataApp.Permissions.asignar_rol(usuario_id, rol_admin.id, empresa.id) do
-        empresa
-      else
-        {:error, changeset} -> Repo.rollback(changeset)
-      end
+      crear_empresa_transaccion(nombre, usuario_id, fn empresa ->
+        with {:ok, branch} <- crear_branch(%{empresa_id: empresa.id, branch_name: "Sucursal Principal"}),
+             {:ok, _} <-
+               crear_sales_unit(%{empresa_id: empresa.id, branch_id: branch.id, sales_unit_name: "Unidad de Venta Principal"}),
+             {:ok, _} <-
+               crear_inventory_location(%{empresa_id: empresa.id, branch_id: branch.id, inventory_name: "Almacén Principal"}) do
+          {:ok, nil}
+        end
+      end)
     end)
+  end
+
+  # Común a las dos funciones de arriba -- Empresa + link al usuario + rol
+  # administrador. `extra` corre DENTRO de la misma transacción, recibe la
+  # Empresa ya creada, para que cada caller decida si agrega algo más
+  # (o no) sin duplicar este bloque.
+  defp crear_empresa_transaccion(nombre, usuario_id, extra) do
+    with {:ok, empresa} <-
+           %Empresa{}
+           |> Empresa.changeset(%{nombre: nombre})
+           |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+           |> Repo.insert(),
+         {:ok, _} <-
+           %UsuarioEmpresa{}
+           |> UsuarioEmpresa.changeset(%{usuario_id: usuario_id, empresa_id: empresa.id})
+           |> Ecto.Changeset.change(%{insert_guid: generar_guid()})
+           |> Repo.insert(),
+         rol_admin <-
+           Repo.one!(from(r in Rol, where: r.nombre == "administrador" and is_nil(r.empresa_id))),
+         {:ok, _} <- MetadataApp.Permissions.asignar_rol(usuario_id, rol_admin.id, empresa.id),
+         {:ok, _} <- extra.(empresa) do
+      empresa
+    else
+      {:error, changeset} -> Repo.rollback(changeset)
+    end
   end
 
   @doc """

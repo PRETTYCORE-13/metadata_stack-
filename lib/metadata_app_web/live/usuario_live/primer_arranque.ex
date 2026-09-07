@@ -7,7 +7,7 @@ defmodule MetadataAppWeb.UsuarioLive.PrimerArranque do
   completa un sistema nuevo desde el navegador, sin SSH, sin inventar
   una contraseña por variable de entorno para cada uno de ~100 sistemas.
 
-  Reusa `Autenticacion.upsert_sysadmin/2` + `crear_empresa_para_usuario/2`
+  Reusa `Autenticacion.upsert_sysadmin/2` + `crear_empresa_inicial_con_estructura/2`
   tal cual — las mismas funciones que ya usa `Release.setup/0` — no hay
   lógica de creación nueva acá, solo el formulario.
 
@@ -52,7 +52,7 @@ defmodule MetadataAppWeb.UsuarioLive.PrimerArranque do
   def handle_event("guardar", %{"usuario" => params}, socket) do
     with :ok <- validar(params),
          {:ok, usuario} <- Autenticacion.upsert_sysadmin(params["email"], params["password"]),
-         {:ok, _empresa} <- Autenticacion.crear_empresa_para_usuario(params["nombre_empresa"], usuario.id) do
+         {:ok, _empresa} <- Autenticacion.crear_empresa_inicial_con_estructura(params["nombre_empresa"], usuario.id) do
       {:noreply,
        socket
        |> assign(:form, to_form(params, as: "usuario"))
