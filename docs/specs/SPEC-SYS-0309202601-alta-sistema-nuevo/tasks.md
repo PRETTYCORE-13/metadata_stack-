@@ -318,25 +318,64 @@ es Grupo F, no código nuevo.
     sin Ingress; `validar_no_existe_en_servidor/2`/`exponer_dominio/3`
     sin test automático (SSH real, mismo criterio que `crear_base`/
     `aplicar_manifiestos`). `mix test` completo antes de seguir.
-25. [ ] Dar de alta `metadata-unstable`/`metadata-testing`/`metadata-stable`
-    contra el servidor real, vía `mix motor.alta` ya corregido arriba —
-    reemplaza a `metadata-stack-app` (sin datos que preservar, confirmado
-    por el usuario). **Hallazgo del recon (2026-09-07)**: hoy
-    `metadata-stack-app` usa un Deployment/Service/Secret Postgres PROPIO
-    (`metadata-stack-postgres`/`metadata-stack-pg-env`), NO `aws-postgres`
-    -- decidir en el momento si ese Deployment viejo se borra junto con
-    `metadata-stack-app` (nada de valor que preservar, mismo criterio ya
-    aprobado) o se deja huérfano un tiempo por las dudas.
-26. [ ] Confirmar que `metadata.ventaenruta.com.mx` deja de responder (o se
-    redirige) y `unstable.ventaenruta.com.mx` sirve lo mismo que servía
-    antes, con HTTPS válido (certificado automático de Caddy, sin
-    intervención manual -- ver tarea 24, ya no hace falta wildcard).
-27. [ ] Push de prueba a `main` — confirmar que `ci.yml` despliega solo a
-    `metadata-unstable`, nadie más se entera.
-28. [ ] `mix motor.promover <ambiente> unstable testing` y
-    `mix motor.promover <ambiente> testing stable` — probar la cadena
-    completa una vez, a mano, antes de confiar en ella para un cliente
-    real.
+25. [x] **Dado de alta real (2026-09-07)**: `metadata-unstable`/
+    `metadata-testing`/`metadata-stable` existen de verdad en el servidor
+    (`mix motor.alta Metadata <canal> ghcr.io/prettycore-13/metadata_stack:latest`
+    para los tres). En el camino, dar de alta el primer canal real
+    ("unstable") destapó una cadena de bugs preexistentes que bloqueaban
+    CUALQUIER alta nueva (no algo de esta spec, algo que esta spec fue la
+    primera en ejercitar de verdad) -- todos encontrados y arreglados en
+    el momento, cada uno su propio commit:
+    - CI rompía desde cero (`mix ecto.migrate`) por una columna duplicada
+      en `pty_dsd_empleados` -- faltaban 2 migraciones "quitar" intermedias
+      sin comitear entre dos ya fixeadas en la auditoría del 2026-09-04.
+    - 3 bundles `bc-*` publicados ANTES de esa misma auditoría
+      (`bc-pty_dsd_pedidos_items`, `bc-pty_gasto_diariov2`,
+      `bc-pty_aly_marcas`) tenían copias VIEJAS de migraciones ya
+      fixeadas en git -- `ci.yml` las restauraba en cada deploy,
+      resucitando el bug ya arreglado. `bc-pty_dsd_pedidos_items`
+      además le faltaba el catálogo `pty_dsd_mat_material` del que
+      dependía (publicado sin sus referencias, catálogo mismo ya no
+      existe -- se despublicó nunca corriendo `mix motor.despublicar`).
+      Los 3 releases se re-subieron con bundle corregido.
+    - `mix motor.alta` perdía el Repo (necesita `Ecto.Migrator.with_repo/3`
+      de nuevo) y nunca arrancaba Req (`Application.ensure_all_started(:req)`)
+      antes de `exponer_dominio/3` -- 2 fixes chicos, cada uno su commit.
+    - `MetadataApp.Caddy.exponer/3` confundía "stable" con "unstable"
+      (substring literal sin ancla de línea) -- `validar_no_existe_en_servidor/2`
+      lo frenó como falso positivo de colisión antes de escribir nada,
+      pero el bug de fondo (regex sin `^`/`/m`) también se arregló.
+    Verificado real: los 3 pods `Running`, migrados, HTTPS sirviendo
+    "/primer-arranque". Credencial de Cloudflare cargada en la base local
+    (no existía, necesaria para `PanelControl.Cloudflare`).
+    `metadata-stack-app`/`metadata-stack-postgres` (Deployment+Service+
+    Secret+PVC, el hallazgo del recon original) borrados -- reemplazados
+    por los 3 canales.
+26. [x] Confirmado real: `metadata.ventaenruta.com.mx` devuelve 525 (sin
+    bloque en Caddy, ya no hay nada ahí) tras sacar su entrada del
+    Caddyfile; `unstable`/`testing`/`stable`.ventaenruta.com.mx sirven
+    con HTTPS válido (certificado automático de Caddy, sin wildcard ni
+    intervención manual).
+27. [x] Ya verificado en el camino de la tarea 25 (varios pushes reales a
+    `main` durante el fix de CI) -- `ci.yml` despliega solo a
+    `metadata-unstable`, `testing`/`stable` nunca se tocan por un push
+    normal.
+28. [x] Probado real: `actualizar-sistema.yml` disparado a mano dos veces
+    (`sistema=testing`/`sistema=stable`, imagen de `unstable`) -- el paso
+    "Determinar si es cliente" correctamente detecta que ninguno de los
+    dos está en `priv/sistemas.json` y saltea el gate (correcto, un canal
+    nunca lo necesita). **Nota operativa**: `mix motor.promover` en sí no
+    se pudo correr completo desde el devcontainer -- tiene `ssh` (para
+    `imagen_actual/2`) pero no `gh` instalado, así que el paso de
+    `disparar_actualizacion/2` falló con `:enoent`; se completó disparando
+    `actualizar-sistema.yml` a mano desde la laptop de Dev (que sí tiene
+    `gh` autenticado) con la imagen que `mix motor.promover` ya había
+    impreso. Instalar `gh` en el devcontainer queda pendiente, no es un
+    bug de código.
+
+**Grupo F cerrado (2026-09-07).** Los tres canales existen de verdad en
+producción, migrados, expuestos con HTTPS real, y la promoción entre
+ellos está probada. Falta Grupo G: un cliente real de punta a punta.
 
 ## Grupo G — Cierre
 
