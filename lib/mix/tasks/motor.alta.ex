@@ -65,7 +65,9 @@ defmodule Mix.Tasks.Motor.Alta do
                  {:ok, nodeport, salida_k3s} <- MotorAlta.aplicar_manifiestos(ambiente, sistema, imagen),
                  _ <- Mix.shell().info(salida_k3s),
                  _ <- Mix.shell().info("== exponiendo #{sistema}.ventaenruta.com.mx (DNS + Caddy) =="),
-                 {:ok, salida_dominio} <- MotorAlta.exponer_dominio(ambiente, sistema, nodeport),
+                 {:ok, resultado_dominio, _apps} <-
+                   Ecto.Migrator.with_repo(MetadataApp.Repo, fn _repo -> MotorAlta.exponer_dominio(ambiente, sistema, nodeport) end),
+                 {:ok, salida_dominio} <- resultado_dominio,
                  _ <- Mix.shell().info(salida_dominio),
                  _ <- Mix.shell().info("== registrando en priv/sistemas.json =="),
                  {:ok, resultado_registro} <- MotorAlta.registrar_sistema(sistema) do
