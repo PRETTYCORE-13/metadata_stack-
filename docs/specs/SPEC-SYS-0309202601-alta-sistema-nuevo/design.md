@@ -188,16 +188,28 @@ SalesUnit y un InventoryLocation con valores genéricos — reusando
 `branch_id` recién creados. El requisito (R9) no cambia — el sistema
 termina con estos defaults igual — solo cambia CUÁNDO pasa.
 
-**Resuelto (2026-09-03)**: `pty_folio_perfiles` y `pty_subtipos_transaccion`
-técnicamente son catálogos del Motor BC (mismo mecanismo de publicación que
-cualquier BC de ADN), pero conceptualmente son básicos de sistema — hacen
-falta para generar folios de transacciones en cualquier sistema nuevo, no
-son un catálogo de negocio específico de un cliente (el nombre `pty_`
-quedó por historia, no porque sean "de un cliente" como el resto de lo que
-arranca con ese prefijo). Por eso el mismo `mix motor.alta` restaura sus
-bundles sobre el sistema nuevo (mismo mecanismo que `ci.yml` restaura
-`bc-*` releases) como parte del paso 3/4 — no dependen de ninguna Empresa,
-a diferencia de Branch/SalesUnit/InventoryLocation.
+**Resuelto (2026-09-03), corregido (2026-09-07)**: `pty_folio_perfiles` y
+`pty_subtipos_transaccion` técnicamente son catálogos del Motor BC (mismo
+mecanismo de publicación que cualquier BC de ADN), pero conceptualmente
+son básicos de sistema — hacen falta para generar folios de transacciones
+en cualquier sistema nuevo, no son un catálogo de negocio específico de un
+cliente (el nombre `pty_` quedó por historia, no porque sean "de un
+cliente" como el resto de lo que arranca con ese prefijo).
+
+La versión original de este párrafo proponía que `mix motor.alta`
+restaurara un bundle para estos dos, igual que `ci.yml` con los `bc-*` de
+ADN — quedó obsoleto: la sesión de CI de este mismo día (2026-09-03) ya
+dejó sus migraciones Y una migración de DATOS
+(`20260903000000_registrar_catalogo_pty_folio_perfiles.exs` y su par de
+`pty_subtipos_transaccion`) **permanentemente commiteadas** al repo — esa
+migración registra la metadata completa (header/detail, y para
+`pty_subtipos_transaccion` también estados/transiciones vía
+`MetaEstadosAdmin.crear_proceso_completo/1`) directo en código Elixir, sin
+depender de ningún `.meta.json`. Verificado real (2026-09-07, auditoría de
+Grupo B): una base migrada 100% desde cero YA tiene los dos catálogos con
+su metadata completa, sin ningún paso extra — `bin/setup` (migrar +
+`import_meta`, que `mix motor.alta` ya llama en el paso 4) alcanza solo.
+Grupo D queda cerrado por verificación, no por código nuevo.
 
 ## 6. Riesgo — blast radius
 

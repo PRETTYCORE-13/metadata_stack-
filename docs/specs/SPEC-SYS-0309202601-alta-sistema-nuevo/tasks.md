@@ -208,14 +208,21 @@ verificados reales, incluida la idempotencia.**
 
 ## Grupo D — `pty_folio_perfiles`/`pty_subtipos_transaccion` en la alta
 
-16. [ ] `mix motor.alta` restaura los bundles de estos dos catálogos sobre
-    el sistema nuevo (mismo mecanismo que `ci.yml` restaura `bc-*`
-    releases), como parte del paso 3/4 de §4 — antes de que exista
-    ninguna Empresa.
-17. [ ] Verificación: un sistema recién dado de alta (contra el RDS
-    simulado) tiene las tablas de estos dos catálogos, con su metadata
-    registrada (`meta_schema_header`/`detail`), sin necesitar ninguna
-    publicación aparte de ADN.
+16. [x] **Cerrado por verificación, no por código nuevo (2026-09-07).**
+    El plan original (restaurar un bundle, como `ci.yml` con los `bc-*`
+    de ADN) quedó obsoleto: la sesión de CI del 2026-09-03 ya dejó
+    commiteadas de forma permanente las migraciones de estos dos
+    catálogos, incluida una migración de DATOS que registra su metadata
+    completa (header/detail, y estados/transiciones para
+    `pty_subtipos_transaccion`) directo en código Elixir. Ver
+    `design.md` §5, corrección 2026-09-07.
+17. [x] Verificación real: una base migrada 100% desde cero (la misma
+    auditoría del Grupo B) ya tiene `pty_folio_perfiles` y
+    `pty_subtipos_transaccion` con su metadata en `meta_schema_header`,
+    sin ningún paso extra — `bin/setup` (que `mix motor.alta` ya llama en
+    el paso 4) alcanza solo.
+
+**Grupo D cerrado.**
 
 ## Grupo E — CI/CD: tres canales + workflows nuevos (§3)
 
