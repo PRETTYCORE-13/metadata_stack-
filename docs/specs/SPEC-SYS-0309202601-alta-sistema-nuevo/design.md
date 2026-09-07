@@ -291,8 +291,13 @@ Puntos concretos y su mitigación:
   a propósito** (decidido 2026-09-03 — no tiene nada de valor todavía, se
   recrea libremente, no se migra dato ninguno). Junto con Testing y Stable,
   quedan AFUERA de `priv/sistemas.json` — ese archivo es solo para
-  clientes, y `motor.publicar --sistema=` nunca puede apuntar a un canal
-  (§3). El riesgo real acá es de proceso, no técnico: si alguien confunde
+  clientes. `mix motor.actualizar`/`mix motor.promover` siguen sin poder
+  apuntar nunca a un canal por ese archivo (`sistema_registrado?/1`); la
+  ÚNICA excepción, agregada por R10 (2026-09-07, a pedido explícito),
+  es `mix motor.publicar`/`mix motor.despublicar --sistema=unstable` —
+  para probar un BC antes de mandarlo a cualquier cliente real, nunca
+  `testing`/`stable` (esos solo reciben por promoción). El riesgo real
+  acá es de proceso, no técnico: si alguien confunde
   un canal con un cliente (ej. corre `mix motor.actualizar unstable
   <imagen>` pensando que es un cliente), el mismo chequeo de "¿está en
   `sistemas.json`?" ya lo bloquea — `unstable`/`testing`/`stable` nunca

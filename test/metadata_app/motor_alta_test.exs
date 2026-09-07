@@ -62,6 +62,36 @@ defmodule MetadataApp.MotorAltaTest do
     end
   end
 
+  # R10 (2026-09-07, a pedido explícito) -- mix motor.publicar/despublicar
+  # necesitan poder apuntar a "unstable" (probar un BC antes de mandarlo a
+  # un cliente real), pero NUNCA a "testing"/"stable" (esos solo reciben
+  # por promoción).
+  describe "publicable?/2" do
+    setup do
+      path = Path.join(System.tmp_dir!(), "sistemas_test_#{System.unique_integer([:positive])}.json")
+      on_exit(fn -> File.rm(path) end)
+      {:ok, path: path}
+    end
+
+    test "\"unstable\" siempre es publicable, esté o no en el archivo", %{path: path} do
+      assert MotorAlta.publicable?("unstable", path)
+    end
+
+    test "\"testing\" y \"stable\" nunca son publicables, aunque estén (por error) en el archivo", %{path: path} do
+      File.write!(path, Jason.encode!(%{"testing" => %{}, "stable" => %{}}))
+
+      refute MotorAlta.publicable?("testing", path)
+      refute MotorAlta.publicable?("stable", path)
+    end
+
+    test "un cliente real registrado es publicable", %{path: path} do
+      File.write!(path, Jason.encode!(%{"crm" => %{"dominio" => "crm.ventaenruta.com.mx"}}))
+
+      assert MotorAlta.publicable?("crm", path)
+      refute MotorAlta.publicable?("direem", path)
+    end
+  end
+
   describe "generar_clave_base64/1" do
     test "genera algo distinto en cada llamada -- nunca se repite entre sistemas" do
       refute MotorAlta.generar_clave_base64() == MotorAlta.generar_clave_base64()

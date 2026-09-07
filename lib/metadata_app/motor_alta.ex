@@ -57,6 +57,34 @@ defmodule MetadataApp.MotorAlta do
   end
 
   @doc """
+  ¿`sistema` es un destino válido para `mix motor.publicar`/`mix
+  motor.despublicar`? Un cliente real (`sistema_registrado?/2`), o
+  `"unstable"` -- R10 (2026-09-07, a pedido explícito): ADN necesita poder
+  probar un catálogo BC antes de mandarlo a cualquier cliente real. NUNCA
+  `"testing"` ni `"stable"` aunque sean canales válidos (`canales/0`) --
+  esos dos solo reciben por promoción (`mix motor.promover`, design.md
+  §3), jamás por una publicación directa; permitirlo rompería la garantía
+  de que todo lo que llega a Stable ya pasó por Testing.
+
+  Un BC publicado a `"unstable"` queda pegado a cada build futuro igual
+  que uno publicado a un cliente real (`ci.yml` restaura TODOS los
+  releases `bc-*` en cada deploy normal, sin importar a qué sistema se
+  publicaron originalmente) -- si ya no hace falta, hay que
+  despublicarlo explícitamente o va a seguir resucitando.
+  """
+  def publicable?(sistema, path \\ ruta_sistemas())
+
+  # Excluidos EXPLÍCITAMENTE, nunca por ausencia -- si algún día
+  # "testing"/"stable" terminaran (por error) en priv/sistemas.json,
+  # sistema_registrado?/2 solo los dejaría pasar por accidente. No alcanza
+  # con que hoy "no estén" ahí.
+  def publicable?(sistema, _path) when sistema in ["testing", "stable"], do: false
+
+  def publicable?(sistema, path) do
+    sistema == "unstable" or sistema_registrado?(sistema, path)
+  end
+
+  @doc """
   Valida un nombre de sistema para dar de alta -- charset y que no esté
   ya registrado. `{:ok, sistema}` | `{:error, mensaje}`.
   """

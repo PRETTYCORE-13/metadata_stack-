@@ -15,9 +15,12 @@ defmodule Mix.Tasks.Motor.Publicar do
   `--sistema=` es OBLIGATORIO, sin default (SPEC-SYS-0309202601, R5) — con
   varios sistemas de cliente en el mismo clúster, un default silencioso es
   la forma más fácil de mandarle una actualización al cliente equivocado.
-  Se valida contra `priv/sistemas.json` (`MetadataApp.MotorAlta.sistema_registrado?/1`)
-  antes de tocar nada — un nombre que no está de alta se rechaza acá,
-  nunca llega a armar ni disparar nada.
+  Se valida con `MetadataApp.MotorAlta.publicable?/1` antes de tocar nada
+  -- un cliente real de `priv/sistemas.json`, o `"unstable"` (R10,
+  2026-09-07: probar un BC antes de mandarlo a cualquier cliente real) --
+  nunca `"testing"`/`"stable"`, esos dos solo reciben por promoción
+  (`mix motor.promover`). Un nombre que no cumple ninguna de las dos se
+  rechaza acá, nunca llega a armar ni disparar nada.
 
   Pasos (la lógica vive en `MetadataApp.MetaPublicador`, compartida con el
   futuro wizard de publicación en BC List — este task es solo la interfaz
@@ -74,8 +77,11 @@ defmodule Mix.Tasks.Motor.Publicar do
       nombres == [] ->
         Mix.raise("Uso: mix motor.publicar --sistema=<sistema> <catalogo> [<catalogo2> ...]")
 
-      not MetadataApp.MotorAlta.sistema_registrado?(sistema) ->
-        Mix.raise("\"#{sistema}\" no está de alta (no aparece en priv/sistemas.json) -- no se puede publicar ahí.")
+      not MetadataApp.MotorAlta.publicable?(sistema) ->
+        Mix.raise(
+          "\"#{sistema}\" no está de alta (no aparece en priv/sistemas.json) ni es \"unstable\" -- " <>
+            "no se puede publicar ahí. \"testing\"/\"stable\" nunca reciben una publicación directa, solo por promoción (mix motor.promover)."
+        )
 
       true ->
         publicar(sistema, nombres)

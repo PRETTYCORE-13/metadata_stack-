@@ -131,6 +131,18 @@ hoy nada de esto lo cubre el wizard de primer arranque (`primer_arranque.ex`
 + `Autenticacion.crear_empresa_para_usuario/2`) — solo crea sysadmin,
 empresa y rol administrador.
 
+### R10. Publicar un BC de prueba en Unstable (agregado 2026-09-07, a pedido explícito del usuario)
+CUANDO alguien de ADN quiere probar un catálogo BC antes de mandarlo a
+cualquier cliente real, EL SISTEMA DEBE permitir `mix motor.publicar`/
+`mix motor.despublicar --sistema=unstable`, además de un cliente
+registrado en `priv/sistemas.json` — nunca `testing` ni `stable`, que
+solo reciben por promoción (R6/design.md §3), jamás por una publicación
+directa. Un BC publicado a `unstable` queda igual de "pegado" a cada
+build futuro que uno publicado a un cliente real (R5 ya lo advierte, ver
+`ci.yml`/"Restaurar BCs publicados") — si ya no hace falta, hay que
+despublicarlo explícitamente (`mix motor.despublicar --sistema=unstable`),
+o va a seguir resucitando en cada push a `main`.
+
 ## 5. Preguntas abiertas
 
 Ninguna pendiente — las 2 que estaban acá se resolvieron (2026-09-03):

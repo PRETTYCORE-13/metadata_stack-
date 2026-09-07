@@ -1057,10 +1057,17 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      update(socket, :accion_eliminar, &Map.merge(&1, %{error: "Error inesperado: #{inspect(razon)}", procesando?: false}))}
   end
 
-  # SPEC-SYS-0309202601, R5 -- lista de sistemas válidos para el selector
-  # de los dos modales (publicar/despublicar). Ordenados, para que el
+  # SPEC-SYS-0309202601, R5/R10 -- lista de sistemas válidos para el
+  # selector de los dos modales (publicar/despublicar): los clientes
+  # reales de priv/sistemas.json + "unstable" (R10, 2026-09-07 -- probar
+  # un BC antes de mandarlo a cualquier cliente real). Nunca
+  # "testing"/"stable", esos solo reciben por promoción. Mismo criterio
+  # que MetadataApp.MotorAlta.publicable?/1 -- ordenados, para que el
   # <select> no cambie de orden entre renders.
-  defp sistemas_disponibles, do: MetadataApp.MotorAlta.leer_sistemas() |> Map.keys() |> Enum.sort()
+  defp sistemas_disponibles do
+    (["unstable"] ++ (MetadataApp.MotorAlta.leer_sistemas() |> Map.keys()))
+    |> Enum.sort()
+  end
 
   # Espejo de MetadataApp.MetaPublicador (armar_bundle/1's rutas_de/1): con
   # el .ex/meta/motor/reglas ya borrados por Eliminar, lo único que queda

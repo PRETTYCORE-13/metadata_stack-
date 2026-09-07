@@ -9,8 +9,10 @@ defmodule Mix.Tasks.Motor.Despublicar do
   Uso: mix motor.despublicar --sistema=<sistema> <catalogo>
 
   `--sistema=` obligatorio, sin default, mismo criterio que
-  `mix motor.publicar` (SPEC-SYS-0309202601, R5) — se valida contra
-  `priv/sistemas.json` antes de tocar nada.
+  `mix motor.publicar` (SPEC-SYS-0309202601, R5/R10) — se valida con
+  `MetadataApp.MotorAlta.publicable?/1` antes de tocar nada: un cliente
+  real de `priv/sistemas.json`, o `"unstable"` (nunca
+  `"testing"`/`"stable"`).
 
   Contraparte de `mix motor.publicar` para el caso que ese task no cubre:
   un catálogo `pty_*` que ya se borró LOCAL (vía "Eliminar" en BC List,
@@ -49,8 +51,10 @@ defmodule Mix.Tasks.Motor.Despublicar do
       length(catalogos) != 1 ->
         Mix.raise("Uso: mix motor.despublicar --sistema=<sistema> <catalogo> (uno solo por vez)")
 
-      not MetadataApp.MotorAlta.sistema_registrado?(sistema) ->
-        Mix.raise("\"#{sistema}\" no está de alta (no aparece en priv/sistemas.json) -- no se puede despublicar ahí.")
+      not MetadataApp.MotorAlta.publicable?(sistema) ->
+        Mix.raise(
+          "\"#{sistema}\" no está de alta (no aparece en priv/sistemas.json) ni es \"unstable\" -- no se puede despublicar ahí."
+        )
 
       true ->
         despublicar(sistema, hd(catalogos))
