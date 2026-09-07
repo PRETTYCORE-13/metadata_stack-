@@ -1,86 +1,148 @@
-# Onboarding de un sistema nuevo — plan
+# Onboarding de un sistema nuevo
 
-> Motivado por el bootstrap de `167.233.84.151` (2026-08-13/14): una base 100% vacía tardó varias horas de trabajo de ingeniero por SSH/RPC para quedar operativa. Con la meta de decenas o cientos de sistemas, ese camino no escala — este documento propone cómo dejarlo en un procedimiento transparente que Operaciones pueda ejecutar sin ayuda de un ingeniero.
+> Este documento describía un plan (2026-08-14, cuando el bootstrap de un
+> servidor nuevo tardaba horas de trabajo manual por SSH). Ese plan ya se
+> construyó e implementó completo -- **SPEC-SYS-0309202601 "Alta de
+> Sistema Nuevo"** (`docs/specs/SPEC-SYS-0309202601-alta-sistema-nuevo/`)
+> reemplazó las Fases 0-3 de la versión anterior de este documento con un
+> mecanismo real, probado en producción (2026-09-07: los tres canales
+> unstable/testing/stable y un primer cliente real, "ennova", dados de
+> alta de punta a punta con estos mismos pasos). Lo que sigue es el
+> procedimiento real de hoy, no un plan.
 
-## 1. Qué salió mal (diagnóstico, no repetir sin leerlo)
+## 1. Dar de alta un sistema nuevo
 
-Cinco problemas distintos, cada uno descubierto por un crash o un loop, uno a la vez:
+Desde el **devcontainer** (Linux) -- `MetadataApp.Ssh` corriendo directo
+en una terminal de Windows nativa es poco confiable (cuelga o pierde la
+salida capturada, problema de cómo Erlang maneja el `ssh.exe` de
+Windows, no del mecanismo en sí):
 
-1. **Variables de entorno faltantes descubiertas de a una.** `CLOAK_KEY` faltaba → el release ni arrancaba. Se corrigió, y recién ahí apareció que `SYSADMIN_EMAIL`/`SYSADMIN_PASSWORD` también faltaban. No hay ningún paso que valide TODO de una vez.
-2. **Bug real de ordenamiento de migraciones.** Las migraciones que arma el generador de catálogos usan timestamps de 17 dígitos; las escritas a mano, de 14. Ecto ordena por el entero completo, no por fecha real — un timestamp de 17 dígitos siempre ordena *después* que uno de 14, sin importar la fecha. Nunca importa en un deploy normal (la migración de creación ya corrió hace meses), pero migrar una base 100% vacía de una sola pasada sí choca.
-3. **Releases de GitHub (`bc-*`) con bundles obsoletos.** Un catálogo borrado localmente puede seguir "resucitando" en cada deploy porque otro release (ej. el de una carpeta que lo incluía) todavía trae su copia vieja.
-4. **No existe ningún camino para crear la primera empresa.** Sin al menos una empresa, la UI entera queda en loop (`/` → `seleccionar-empresa` → `/` …) — no hay botón, no hay ruta, nada. La única forma de salir fue una llamada RPC directa a una función interna (`Autenticacion.crear_empresa_para_usuario/2`), algo que solo alguien con acceso SSH + conocimiento del código puede hacer.
-5. **No hay forma de confirmar "¿este sistema ya está listo?"** sin probar manualmente cada pieza (SMTP incluido — se validó con llamadas crudas a `:ssl`/`:gen_smtp`).
+```
+mix motor.alta <ambiente> <sistema> <imagen>
+```
 
-Ítems 1, 4 y 5 son el verdadero costo — son proceso, no complejidad técnica real. El ítem 2 es el único bug de código puro que hay que arreglar antes de que vuelva a morder.
+- `<ambiente>` -- nombre de un `MetadataApp.Ambientes.Ambiente` ya
+  registrado (`/sysadmin/ambientes-deploy`) con SSH al servidor real. Hoy
+  existe uno solo, `"Metadata"`.
+- `<sistema>` -- minúsculas, dígitos, guiones (mismo charset que un
+  subdominio). Termina siendo `<sistema>.ventaenruta.com.mx`.
+- `<imagen>` -- el tag completo (`ghcr.io/prettycore-13/metadata_stack:<tag>`),
+  nunca implícito. Para un cliente real, siempre la que hoy corre en
+  `metadata-stable` (nunca algo que no pasó por los tres canales, R6) --
+  consultala con:
+  ```
+  kubectl get deployment/metadata-stable -n metadata-stack \
+    -o jsonpath='{.spec.template.spec.containers[0].image}'
+  ```
 
-## 2. Objetivo
+Qué hace, en orden (`lib/metadata_app/motor_alta.ex`):
 
-Que **Operaciones** (sin SSH, sin `docker exec`, sin conocer Elixir) pueda llevar un servidor de "recién desplegado" a "listo para el primer usuario real" siguiendo un procedimiento escrito, sin intervención de un ingeniero — y que sea **idempotente**: correrlo de más nunca rompe nada.
+1. Valida que `<sistema>` no exista ya, contra TRES fuentes:
+   `priv/sistemas.json`, un Deployment `metadata-<sistema>` en k3s, y un
+   bloque para ese dominio en el Caddyfile remoto -- las tres pueden
+   desincronizarse entre sí (encontrado real: un sistema de otra feature,
+   Panel Control, ocupando un dominio sin aparecer en las primeras dos).
+2. Crea `db_<sistema>` en el Postgres compartido ("aws-postgres", un
+   StatefulSet de k3s -- simula lo que eventualmente será RDS).
+3. Aplica el Deployment + Service (`NodePort`) + Secret del sistema en
+   k3s, y corre `/app/bin/setup` (migra + importa metadata de catálogos
+   publicados) sobre el pod nuevo.
+4. Expone el dominio de verdad: registro DNS tipo A en Cloudflare +
+   bloque en el Caddyfile remoto apuntando al NodePort recién asignado
+   (Caddy es el único front-door del servidor en 80/443, con HTTPS
+   automático por dominio -- no hay Ingress de k3s ni cert-manager, ver
+   §3 abajo).
+5. Si `<sistema>` es un cliente (no un canal): agrega la entrada a
+   `priv/sistemas.json`, comitea y pushea.
 
-## 3. Plan por fases
+Todos los pasos son **idempotentes** -- si el proceso corta a mitad (una
+migración falla, se corta la conexión), correr el mismo comando de nuevo
+retoma donde quedó en vez de duplicar o fallar.
 
-### Fase 0 — Arreglar el bug de ordenamiento de migraciones (prerrequisito)
+## 2. Completar el primer arranque
 
-Antes de construir nada nuevo encima: mientras el generador siga produciendo timestamps de 17 dígitos y convivan con migraciones escritas a mano de 14, **cualquier sistema nuevo que migre de cero puede volver a pisar esta misma trampa** con cualquier otro catálogo, no solo con `pty_gasto_diario`. Alinear el formato (o documentar + validar el orden real en un test) antes de automatizar el bootstrap sobre una base rota.
+Con el sistema de alta, abrir `https://<sistema>.ventaenruta.com.mx` --
+redirige solo a `/primer-arranque` (todavía no hay ningún sysadmin). Ahí
+se completa un formulario real (email + contraseña del administrador,
+nombre de la empresa) desde el navegador -- sin SSH, sin `docker exec`.
+Al enviarlo, además del sysadmin y la Empresa, deja creados una Sucursal,
+un Almacén y una Unidad de Venta por default (R9).
 
-*Tamaño: chico. Riesgo: bajo. Bloqueante para todo lo demás.*
+Esa pantalla desaparece para siempre en cuanto existe un sysadmin -- no
+se puede volver a usar para crear uno segundo.
 
-### Fase 1 — `/app/bin/setup`: un solo comando idempotente
+## 3. Por qué Caddy + Cloudflare, no Ingress/cert-manager
 
-Hoy existen `migrate`, `seed_sysadmin`, `import_meta` como comandos sueltos, y **crear la primera empresa no existe como comando en absoluto**. Fase 1 es consolidar todo en un solo release task:
+El plan original de esta spec asumía un ingress controller + cert-manager
+en k3s con un certificado wildcard compartido. Verificado real
+(2026-09-07, antes de tocar producción): el clúster no tiene ninguno de
+los dos instalado. El mecanismo real, en producción desde 2026-08-26 (y
+ya probado por otra feature, Panel Control, desde 2026-08-31) es un
+contenedor Caddy corriendo *fuera* de k3s -- único front-door en 80/443
+para TODO lo que corre en el servidor (metadata_stack, Chatwoot, Panel
+Control), con HTTPS automático por dominio.
 
-1. Valida TODAS las variables de entorno requeridas de una sola pasada — si falta algo, lista todo lo que falta y para ahí, en vez de ir descubriendo una por una a fuerza de crashes.
-2. Corre migraciones.
-3. Corre `import_meta` (trae los catálogos `pty_*` publicados).
-4. Crea el sysadmin si no existe (idempotente — no lo duplica si ya está).
-5. **Si no existe ninguna empresa todavía**, crea una por default (nombre desde una variable de entorno nueva, ej. `EMPRESA_INICIAL_NOMBRE`) y la asigna al sysadmin como administrador.
-6. Imprime un reporte final claro: qué se hizo, qué ya estaba, qué falló.
+`MetadataApp.Caddy` es el módulo compartido (extraído de Panel Control)
+que lee/escribe el Caddyfile remoto. Un sistema nuevo no lleva `Ingress`
+-- su `Service` es `NodePort`, y Caddy le apunta directo.
 
-Este comando se engancha en el paso de deploy que ya existe (`ci.yml`) — así CADA deploy (el primero o el número 500) deja el sistema completo, sin pasos manuales, sin importar si es la primera vez o no.
+## 4. Publicar/actualizar catálogos y promover entre canales
 
-*Tamaño: chico-mediano. Es reordenar piezas que ya existen, no inventar lógica nueva (salvo el paso 5, que no existe en ningún lado hoy).*
+- **Publicar un catálogo de ADN a un sistema**: `mix motor.publicar
+  --sistema=<sistema> <catalogo>` (o el wizard de BC List). `--sistema=`
+  es obligatorio, sin default, validado contra `priv/sistemas.json`.
+- **Despublicar** (un catálogo ya borrado local): `mix motor.despublicar
+  --sistema=<sistema> <catalogo>`.
+- **Actualizar un cliente a una imagen ya construida**: `mix
+  motor.actualizar <sistema> <imagen>` -- `actualizar-sistema.yml`
+  (GitHub Actions) valida que `<imagen>` sea EXACTO lo que corre ahora
+  mismo en `metadata-stable`, rechaza si no. Probado real (2026-09-07,
+  cliente "ennova"): acepta la imagen correcta, rechaza una inventada sin
+  tocar el Deployment.
+- **Promover entre canales** (`unstable→testing` o `testing→stable`,
+  único par válido, nunca se saltea Testing): `mix motor.promover
+  <ambiente> <origen> <destino>` -- consulta la imagen actual de
+  `<origen>` por SSH y la aplica sobre `<destino>` vía el mismo
+  `actualizar-sistema.yml`. Nunca hay build nuevo, solo mover el mismo
+  artefacto ya construido.
 
-### Fase 2 — Wizard de primer arranque (la pieza que de verdad habilita a Operaciones)
+`unstable` se actualiza solo, en cada push a `main` (`ci.yml`) -- es el
+único canal 100% automático. `testing`/`stable` y cualquier cliente
+siempre requieren un comando explícito.
 
-Esto es lo que hacen WordPress, Odoo, y la mayoría de sistemas self-hosted: si el sistema detecta que **no existe ningún sysadmin todavía**, en vez de la pantalla normal muestra una única pantalla de bienvenida: "Configurá tu administrador" (email + contraseña) y "Nombre de tu empresa". Al enviarla, hace exactamente lo que la Fase 1 hace en los pasos 4-5, pero desde el navegador — cero SSH, cero terminal.
+## 5. Prerrequisitos que existen una sola vez (no por sistema)
 
-Una vez que existe un sysadmin, esa pantalla desaparece para siempre (no se puede volver a usar para crear un segundo sysadmin colado).
+- `ghcr-pull-secret` (namespace `metadata-stack`) -- credencial para
+  bajar imágenes de `ghcr.io/prettycore-13`.
+- `aws-postgres-env` -- credenciales del Postgres compartido.
+- `smtp-compartido` -- `SMTP_RELAY`/`SMTP_USERNAME`/`SMTP_PASSWORD`/
+  `SMTP_PORT` reales, compartidos por todos los sistemas.
+- Una credencial de Cloudflare cargada en `/sysadmin/credenciales`
+  (`sistema_externo: "cloudflare"`, token con permiso de editar DNS en la
+  zona `ventaenruta.com.mx`) -- la usa `MetadataApp.PanelControl.Cloudflare`,
+  compartida con Panel Control.
 
-Con esto, Operaciones abre la URL del sistema nuevo, completa un formulario, y ya está — el resto (variables de entorno de infraestructura) sigue siendo un paso previo de Fase 3, pero todo lo de la aplicación se vuelve apuntar-y-hacer-clic.
+## 6. Gaps operativos conocidos (2026-09-07, sin resolver todavía)
 
-*Tamaño: mediano. Es una feature real (una LiveView nueva + la lógica de "solo se puede usar una vez").*
+- **`gh` no está instalado en el devcontainer.** `mix motor.actualizar`/
+  `mix motor.promover`/`mix motor.publicar` disparan workflows vía `gh
+  workflow run` -- desde el devcontainer fallan con `:enoent` en ese
+  paso. Mientras tanto: correr el comando igual (el resto de la
+  validación SÍ corre), y cuando falle en el paso de `gh`, disparar el
+  workflow a mano desde una terminal que sí tenga `gh` autenticado
+  (`gh workflow run actualizar-sistema.yml -f sistema=... -f imagen=...`),
+  usando la imagen que el comando ya imprimió.
+- **El devcontainer no tiene credenciales de git para pushear por
+  HTTPS.** El paso final de `mix motor.alta` (registrar el sistema en
+  `priv/sistemas.json`) arma el commit bien, pero el `git push` falla con
+  `could not read Username for 'https://github.com'`. Mientras tanto:
+  después de un alta, `git log` en el devcontainer para confirmar que el
+  commit quedó armado, y pushearlo a mano desde una terminal con
+  credenciales configuradas.
 
-### Fase 3 — Escalar a ~100 sistemas: plantilla + registro + runbook
+## 7. Fuera de alcance (todavía)
 
-Esto ya no es código, es proceso:
-
-- **Plantilla de variables de entorno** (`.env.example` o `docs/plantilla.env`) con cada variable requerida y una línea explicando qué es — una sola fuente de verdad, en vez de conocimiento tribal descubierto a crashes (como pasó hoy con `CLOAK_KEY`/`SYSADMIN_EMAIL`/`SMTP_*`).
-- **Registro de sistemas** (aunque sea una planilla al principio): nombre, URL, qué cuenta SMTP usa, dónde vive su `CLOAK_KEY` (nunca el valor en el registro — solo dónde está guardado, ej. gestor de contraseñas), fecha de alta, quién es dueño.
-- **Runbook escrito** (`docs/nuevo-servidor.md`, mismo estilo que `docs/ci-cd-deploy.md` ya existente): provisionar → variables desde la plantilla → deploy → confirmar que la Fase 1 corrió limpia → abrir la URL → completar el wizard de Fase 2 → listo. Esto es el "procedimiento transparente" pedido.
-
-*Tamaño: trabajo continuo de proceso/documentación, no un sprint de ingeniería.*
-
-## 4. Decisión tomada: 100 aplicativos dockerizados independientes
-
-Confirmado (2026-08-14): son **100 aplicativos separados**, no una plataforma multi-tenant — cada uno con su propia base de datos, su propio `CLOAK_KEY`, su propio ciclo de vida. Esto hace que la Fase 3 (plantilla + registro + runbook) sea necesaria completa, no opcional.
-
-Queda una segunda decisión, más chica pero con impacto operativo real en cómo se arma la Fase 3:
-
-**¿Los 100 aplicativos corren en 100 servidores/VMs separados, o son 100 *servicios* de Docker Swarm compartiendo un clúster más chico (2-3 hosts)?**
-
-Docker Swarm (lo que ya usamos) está pensado justo para el segundo caso: muchos servicios aislados entre sí (contenedores, redes, volúmenes propios de cada uno) corriendo sobre infraestructura compartida — no hace falta una VM nueva por aplicativo para tener aislamiento real. La diferencia es puramente operativa:
-
-- **100 servidores separados**: cada uno con su propio SO que mantener, parchear, monitorear — 100x el trabajo de infraestructura, aunque cada aplicativo esté más aislado a nivel físico.
-- **Clúster compartido, 100 servicios**: un solo `docker service create` (templado, ver Fase 3) por aplicativo nuevo, un solo lugar donde parchear el SO, y todavía cada aplicativo tiene su propio contenedor/red/volumen — el mismo aislamiento de datos y de proceso que tendría en su propio servidor, sin la carga de mantener 100 SO.
-
-Si no hay un motivo de compliance/contrato que obligue a servidores físicos separados por cliente, la opción de clúster compartido es la que escala de verdad a 100 sin que el equipo de Operaciones se ahogue en mantenimiento de infraestructura.
-
-**Confirmado (2026-08-14): clúster compartido, Docker Swarm por ahora — con migración a Kubernetes planeada a corto plazo (no inmediata).** Esto agrega un criterio de diseño importante para la Fase 3: no conviene invertir en automatización elaborada específica de Swarm (scripts complejos de `docker service create`, orquestación custom) si en poco tiempo hay que rehacerla para K8s (Helm charts / manifiestos). La Fase 3, mientras dure Swarm, debería quedar deliberadamente liviana — plantilla + runbook manual, no una herramienta interna sofisticada.
-
-En cambio, las **Fases 0-2 son la inversión de verdad**: viven *adentro* de la aplicación (validación de variables, el comando `/app/bin/setup`, el wizard web), no dependen de qué orquestador las corre. Eso significa que sobreviven intactas al pasar de Swarm a Kubernetes — el día de la migración, cada pod nuevo sigue arrancando, corriendo `setup`, y mostrando el mismo wizard, sin tocar una línea de esa lógica. Es la razón de más peso para priorizar 0-2 ahora y dejar la automatización pesada de infraestructura (Terraform/Ansible/Helm) para después de migrar, en vez de construirla dos veces.
-
-## 5. Fuera de alcance (por ahora)
-
-- Automatizar el aprovisionamiento de infraestructura (Terraform/Ansible para los hosts de Docker Swarm) — vale la pena recién cuando el patrón de las Fases 1-3 esté probado en varios sistemas reales.
-- UI de facturación/gestión de clientes — es un problema aparte de "dejar el sistema operativo".
+- Automatizar el aprovisionamiento de infraestructura del servidor en sí
+  (Terraform/Ansible) -- sigue siendo manual, un solo servidor hoy.
+- UI de facturación/gestión de clientes -- problema aparte de "dejar el
+  sistema operativo".

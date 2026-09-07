@@ -406,7 +406,28 @@ ellos está probada. Falta Grupo G: un cliente real de punta a punta.
     instalado en el devcontainer" (tarea 28) -- pendiente de resolver
     antes de que ADN pueda dar de alta un cliente sin depender de que Dev
     haga el push a mano.
-30. [ ] `docs/onboarding-nuevo-sistema.md` actualizado — ya no está
-    completo/vigente después de este spec, dejarlo reflejando el mecanismo
-    nuevo en vez del checklist manual de 12 pasos.
-31. [ ] Este documento actualizado con cada tarea completada.
+30. [x] `docs/onboarding-nuevo-sistema.md` reescrito -- ya no es el plan de
+    2026-08-14 (Fases 0-3, Swarm vs. K8s), es el runbook real de hoy:
+    `mix motor.alta`/wizard/`mix motor.publicar`/`mix motor.actualizar`/
+    `mix motor.promover`, por qué Caddy+Cloudflare en vez de Ingress, los
+    prerrequisitos de una sola vez, y los 2 gaps operativos (tareas 28/29)
+    documentados ahí también para quien ejecute esto sin haber vivido esta
+    sesión.
+31. [x] Este documento actualizado con cada tarea completada (ver cada
+    grupo arriba).
+
+## Cierre de la spec (2026-09-07)
+
+Los tres canales (`unstable`/`testing`/`stable`) y un primer cliente real
+(`ennova`) están de alta en producción, migrados, expuestos con HTTPS
+real vía Caddy+Cloudflare, con la cadena completa
+alta→publicar→actualizar→promover probada de punta a punta -- incluido
+el gate de seguridad "solo Stable puede ir a un cliente" verificado en
+ambos sentidos (acepta la imagen correcta, rechaza una que no lo es).
+
+Quedan 2 gaps operativos sin resolver (documentados en la tarea 29 y en
+`docs/onboarding-nuevo-sistema.md` §6): `gh` no instalado en el
+devcontainer, y sin credenciales de git para pushear por HTTPS desde
+ahí -- ninguno de los dos bloquea el mecanismo, pero obligan a un paso
+manual extra (disparar el workflow o el push a mano) hasta que se
+resuelvan.
