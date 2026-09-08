@@ -135,22 +135,6 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
     {:noreply, assign(socket, :editor, Map.put(socket.assigns.editor, "detalles", detalles))}
   end
 
-  # Reordenar (hook ListaOrdenable, mismo patrón que la tabla de Campos de
-  # BcMotorLive) — solo tiene sentido entre los YA incluidos del
-  # encabezado (no hay drag-and-drop para los campos de un detalle, menos
-  # crítico ahí — se respeta el orden natural del catálogo).
-  def handle_event("wizard_reordenar", %{"id" => campo, "index" => index}, socket) do
-    elegidos = socket.assigns.editor["elegidos"]
-    incluidos = Enum.filter(elegidos, & &1["incluido"])
-    no_incluidos = Enum.reject(elegidos, & &1["incluido"])
-
-    item = Enum.find(incluidos, &(&1["campo"] == campo))
-    nuevo_orden_incluidos = incluidos |> List.delete(item) |> List.insert_at(index, item)
-
-    editor = Map.put(socket.assigns.editor, "elegidos", nuevo_orden_incluidos ++ no_incluidos)
-    {:noreply, assign(socket, :editor, editor)}
-  end
-
   def handle_event("wizard_ir_paso", %{"paso" => paso}, socket) do
     paso = String.to_integer(paso)
     editor = socket.assigns.editor
@@ -483,7 +467,6 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
             <table class="min-w-full mb-3">
               <thead class="bg-gray-50">
                 <tr>
-                  <th class="px-1.5 py-1 border-b border-gray-200"></th>
                   <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Incluir</th>
                   <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campo</th>
                   <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Tipo</th>
@@ -491,15 +474,11 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
                   <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Identificar por (si es referencia)</th>
                 </tr>
               </thead>
-              <tbody id="wizard-campos-incluidos-ordenable" phx-hook="ListaOrdenable" data-grupo="wizard-importacion-campos">
-                <tr :for={item <- @incluidos} id={"wizard-campo-#{item["campo"]}"} data-id={item["campo"]} class="border-b border-gray-100">
-                  <td class="px-1.5 py-1 text-gray-300 jal-manija cursor-grab" title="Arrastrar para reordenar">
-                    <span class="material-symbols-outlined" style="font-size: 16px">drag_indicator</span>
-                  </td>
+              <tbody>
+                <tr :for={item <- @incluidos} class="border-b border-gray-100">
                   <.fila_campo item={item} meta={@campos_meta[item["campo"]]} prefix="elegidos" />
                 </tr>
                 <tr :for={item <- Enum.reject(@editor["elegidos"], & &1["incluido"])} class="border-b border-gray-100 opacity-60">
-                  <td></td>
                   <.fila_campo item={item} meta={@campos_meta[item["campo"]]} prefix="elegidos" />
                 </tr>
               </tbody>
