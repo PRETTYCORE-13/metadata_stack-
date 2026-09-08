@@ -532,6 +532,22 @@ defmodule MetadataApp.MetaImportacionDatos do
   defp mensaje_de_motivo({:alcance_requerido, "inventory_id"}),
     do: "No hay un Almacén activo — elegí uno desde la banda de pie antes de importar."
 
+  # MetadataApp.IdentificadoresTransaccionales.asignar/4 — errores de
+  # CONFIGURACIÓN del catálogo (Perfil de Folio), no del archivo que se
+  # está subiendo. A propósito explícitos sobre "esto no es tu Excel" —
+  # quien importa no puede arreglar esto por su cuenta, reintentar con
+  # otro archivo no cambia nada; hace falta un administrador. Antes
+  # llegaban acá como `to_string(:perfil_no_encontrado)`, un nombre
+  # interno sin sentido para quien no escribió el código.
+  defp mensaje_de_motivo(:perfil_no_encontrado),
+    do: "Este catálogo requiere folio, pero no tiene ningún Perfil de Folio configurado — no es un problema de tu archivo."
+
+  defp mensaje_de_motivo(:configuracion_ambigua),
+    do: "Hay más de un Perfil de Folio que aplica a esta fila — la configuración del catálogo es ambigua, no tu archivo."
+
+  defp mensaje_de_motivo(:subtipo_dado_de_baja),
+    do: "El subtipo de transacción de esta fila está dado de baja y no puede foliar — revisá el valor o avisale a un administrador."
+
   defp mensaje_de_motivo(motivo) when is_binary(motivo) or is_atom(motivo), do: to_string(motivo)
   defp mensaje_de_motivo(motivo), do: inspect(motivo)
 
@@ -634,6 +650,7 @@ defmodule MetadataApp.MetaImportacionDatos do
       mensaje =~ "invalid" or mensaje =~ "inválido" or mensaje =~ "formato" -> "El formato no es válido — revisá el tipo de dato esperado."
       mensaje =~ "sin_scope" -> "No se pudo determinar la empresa/sucursal — iniciá sesión de nuevo e intentá otra vez."
       mensaje =~ "no permite insertar renglones" -> "El estado actual del catálogo no permite cargar detalles — revisá los permisos por estado en el Motor."
+      mensaje =~ "Perfil de Folio" -> "No es algo que puedas resolver con el archivo — pedile a un administrador que revise la configuración de Folio de este catálogo."
       true -> "Revisá el valor e intentá de nuevo."
     end
   end
