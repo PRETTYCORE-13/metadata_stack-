@@ -1969,6 +1969,26 @@ defmodule MetadataAppWeb.FichaLive do
             </ul>
           </div>
         </div>
+
+        <div class="bg-white border border-gray-200 rounded-2xl shadow-sm px-3.5 py-3">
+          <h3 class="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Relaciones</h3>
+          <button :if={@relaciones_total > 0} type="button" phx-click="cambiar_tab" phx-value-tab="relaciones"
+            class="text-xs text-purple-700 font-semibold hover:underline">
+            {@relaciones_total} relaciones
+          </button>
+          <p :if={@relaciones_total == 0} class="text-xs text-gray-400">Sin registros relacionados todavía.</p>
+        </div>
+
+        <!-- Solo visual por ahora (2026-09-01, a pedido explícito) -- no
+             existe hoy ningún campo real donde persistir una nota interna
+             para un catálogo genérico, así que este textarea no lleva
+             name/phx-change/submit: no simula guardar algo que en
+             realidad se perdería al refrescar. -->
+        <div class="bg-white border border-gray-200 rounded-2xl shadow-sm px-3.5 py-3">
+          <h3 class="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Notas</h3>
+          <textarea readonly placeholder="Agregar una nota interna…"
+            class="w-full text-xs text-gray-400 border border-gray-200 rounded-lg px-2 py-1.5 resize-none bg-gray-50" rows="3"></textarea>
+        </div>
       </aside>
       </div>
     </div>
@@ -2916,7 +2936,7 @@ defmodule MetadataAppWeb.FichaLive do
 
   defp estilo_grid_hijos(nodo) do
     n = nodo["propiedades"]["columnas"] || 1
-    gap = %{"compacto" => "8px", "amplio" => "20px"}[nodo["propiedades"]["gap"]] || "8px"
+    gap = %{"denso" => "4px", "compacto" => "8px", "amplio" => "20px"}[nodo["propiedades"]["gap"]] || "8px"
     "--pc-grid-cols: #{n}; --pc-grid-gap: #{gap}"
   end
 
@@ -3015,6 +3035,11 @@ defmodule MetadataAppWeb.FichaLive do
   defp alineacion_v_class(_), do: "self-start"
 
   defp padding_celda_class("ninguno"), do: "p-0"
+  # "Denso" (2026-08-31, a pedido explícito): un nivel más chico que
+  # "compacto"/"normal" para fichas con muchos campos en una sola columna,
+  # donde el p-1.5 de abajo seguía dejando bastante aire acumulado fila
+  # tras fila.
+  defp padding_celda_class("denso"), do: "p-0.5"
   defp padding_celda_class("compacto"), do: "p-1.5"
   defp padding_celda_class("amplio"), do: "p-5"
   # "Normal" (default de toda celda auto-generada, ver MetaPlantillas.celda_default/0)

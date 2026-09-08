@@ -2146,6 +2146,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       <form phx-change="actualizar_propiedad">
         <label class="block text-gray-500 mb-0.5">Espaciado entre celdas</label>
         <select name="gap" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="denso" selected={@nodo["propiedades"]["gap"] == "denso"}>Denso</option>
           <option value="compacto" selected={@nodo["propiedades"]["gap"] == "compacto"}>Compacto</option>
           <option value="normal" selected={(@nodo["propiedades"]["gap"] || "normal") == "normal"}>Normal</option>
           <option value="amplio" selected={@nodo["propiedades"]["gap"] == "amplio"}>Amplio</option>
@@ -2399,7 +2400,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       <div>
         <label class="block text-gray-500 mb-1">Padding</label>
         <div class="gc-seg-row">
-          <label :for={{v, e} <- [{"ninguno", "Ninguno"}, {"compacto", "Compacto"}, {"normal", "Normal"}, {"amplio", "Amplio"}]}
+          <label :for={{v, e} <- [{"ninguno", "Ninguno"}, {"denso", "Denso"}, {"compacto", "Compacto"}, {"normal", "Normal"}, {"amplio", "Amplio"}]}
             class={["gc-seg-btn", (@celda["padding"] || "normal") == v && "gc-seg-on"]}>
             <input type="radio" name="padding" value={v} checked={(@celda["padding"] || "normal") == v} class="sr-only" />{e}
           </label>

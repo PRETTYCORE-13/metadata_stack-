@@ -235,7 +235,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 10px 4px 4px;
+  padding: 3px 8px 3px 3px;
   border: none;
   border-radius: 999px;
   background: transparent;
@@ -248,12 +248,12 @@
 }
 
 .pc-user-menu-avatar {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border-radius: 999px;
   background: #e5e7eb;
   color: #374151;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   display: flex;
   align-items: center;
@@ -376,7 +376,9 @@
   width: 100%;
   background: var(--pc-bg-secundario);
   border-bottom: 1px solid #e5e7eb;
-  padding: 8px 24px;
+  /* Compactada 2026-08-31, a pedido explícito, mismo criterio "denso"
+     que ya se aplicó a la Ficha (menos alto ocupado, misma info). */
+  padding: 6px 20px;
   flex-shrink: 0;
 }
 
@@ -394,7 +396,7 @@
 }
 
 .pc-topbar-empresa {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--pc-texto);
 }
