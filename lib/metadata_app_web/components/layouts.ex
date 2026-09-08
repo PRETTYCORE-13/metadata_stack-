@@ -41,7 +41,12 @@ defmodule MetadataAppWeb.Layouts do
       <header class="navbar px-4 sm:px-6 lg:px-8 flex-wrap gap-y-2 border-b border-white/10">
         <div class="flex-1">
           <a href="/" class="flex-1 flex w-fit items-center gap-2">
-            <img src="https://ennovacore.com.mx/IMAGENES/IMAGENES_pret/gota.png" alt="Prettycore" class="h-9 w-auto" />
+            <img
+              src="https://ennovacore.com.mx/IMAGENES/IMAGENES_pret/gota.png"
+              alt="Prettycore"
+              class="h-9 w-auto"
+              style="height: 36px; width: auto;"
+            />
           </a>
         </div>
         <!-- min-w-0 + sm:flex-none (en vez de flex-none a secas): flex-none

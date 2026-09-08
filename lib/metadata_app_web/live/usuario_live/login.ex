@@ -13,6 +13,7 @@ defmodule MetadataAppWeb.UsuarioLive.Login do
             src="https://ennovacore.com.mx/IMAGENES/IMAGENES_pret/gota.png"
             alt="Prettycore"
             class="mx-auto mb-4 h-12 w-auto"
+            style="height: 48px; width: auto; margin-left: auto; margin-right: auto; margin-bottom: 1rem;"
           />
           <.header>
             <p class="text-white">Log in</p>

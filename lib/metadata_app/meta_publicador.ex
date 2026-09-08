@@ -69,12 +69,22 @@ defmodule MetadataApp.MetaPublicador do
       # (el nativo de Windows que resuelve "mix phx.server" NO, a
       # diferencia del que trae Git Bash) -- más simple y portable evitar
       # el problema de raíz: nunca pasarle a tar una ruta con ":".
-      # File.rename!/2 después es una operación normal de Elixir, no de
-      # tar, así que mueve el archivo al temp dir sin ningún problema.
+      # File.cp!/2 + File.rm!/2 (NUNCA File.rename!/2) para mover el
+      # archivo al temp dir -- rename() no puede cruzar sistemas de
+      # archivos distintos ("cross-device link"), y en el devcontainer
+      # /app es un bind-mount de Windows mientras que /tmp es del
+      # filesystem nativo del contenedor -- dos "device" distintos para
+      # el kernel. Encontrado real (2026-09-08, primera publicación real
+      # de prueba desde el devcontainer): File.rename! reventaba ahí
+      # siempre, nunca antes se había corrido motor.publicar desde este
+      # entorno. cp+rm sí funciona cruzando filesystems, a costo de una
+      # copia real en vez de un rename atómico -- aceptable para un
+      # archivo de unos pocos KB/MB.
       case ejecutar("tar", ["-czf", nombre_archivo | rutas]) do
         {:ok, {_salida, 0}} ->
           destino = Path.join(System.tmp_dir!(), nombre_archivo)
-          File.rename!(nombre_archivo, destino)
+          File.cp!(nombre_archivo, destino)
+          File.rm!(nombre_archivo)
           {:ok, destino}
 
         {:ok, {salida, status}} ->

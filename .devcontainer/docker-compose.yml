@@ -18,6 +18,10 @@ services:
       DB_PASSWORD_PSQL: metadata1234%
       DB_NAME_PSQL: metadata
     ports:
+      # Vuelto a 4000:4000 (2026-09-08) -- se probó 4001 y 18080 durante
+      # una sesión de debugging de un bug local del navegador (ver commits
+      # de esa fecha) sin resolverlo del todo; cambiar de puerto no era la
+      # causa real. Volver al de siempre para no perder la referencia.
       - "4000:4000"
     depends_on:
       - db
