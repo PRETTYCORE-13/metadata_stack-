@@ -758,20 +758,14 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     tabla = socket.assigns.header.schema_context_name
 
     resultado =
-      Repo.transaction(fn ->
-        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
-          {:ok, detalle_actualizado} ->
-            with :ok <- CatalogoGenerador.sincronizar_nulabilidad_campo(tabla, campo),
-                 {:ok, _resultado} <- CatalogoGenerador.generar(tabla) do
-              detalle_actualizado
-            else
-              {:error, motivo} -> Repo.rollback({:generar, motivo})
-            end
-
-          {:error, changeset} ->
-            Repo.rollback({:changeset, changeset})
+      transaccion_con_generador(
+        fn -> MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) end,
+        fn ->
+          with :ok <- CatalogoGenerador.sincronizar_nulabilidad_campo(tabla, campo) do
+            CatalogoGenerador.generar(tabla)
+          end
         end
-      end)
+      )
 
     case resultado do
       {:ok, _detalle_actualizado} ->
@@ -783,6 +777,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       {:error, {:changeset, _changeset}} ->
         {:noreply, put_flash(socket, :error, "No se pudo actualizar la obligatoriedad de \"#{campo}\".")}
+
+      {:error, {:crash, _excepcion}} ->
+        {:noreply,
+         put_flash(socket, :error, "No se pudo actualizar la obligatoriedad por una falla de conexión con la base — nada se guardó, probá de nuevo en unos segundos.")}
     end
   end
 
@@ -1687,19 +1685,13 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # posible: si CatalogoGenerador.generar/1 falla, Repo.rollback/1 deshace
   # también el cambio de metadata.
   defp actualizar_campo_y_regenerar(socket, detalle, props, etiqueta_error) do
-    resultado =
-      Repo.transaction(fn ->
-        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
-          {:ok, detalle_actualizado} ->
-            case CatalogoGenerador.generar(socket.assigns.header.schema_context_name) do
-              {:ok, _resultado} -> detalle_actualizado
-              {:error, motivo} -> Repo.rollback({:generar, motivo})
-            end
+    tabla = socket.assigns.header.schema_context_name
 
-          {:error, changeset} ->
-            Repo.rollback({:changeset, changeset})
-        end
-      end)
+    resultado =
+      transaccion_con_generador(
+        fn -> MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) end,
+        fn -> CatalogoGenerador.generar(tabla) end
+      )
 
     case resultado do
       {:ok, _detalle_actualizado} ->
@@ -1711,19 +1703,40 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       {:error, {:changeset, _changeset}} ->
         {:noreply, put_flash(socket, :error, "No se pudo actualizar #{etiqueta_error} de \"#{detalle.schema_context_field}\".")}
+
+      {:error, {:crash, _excepcion}} ->
+        {:noreply,
+         put_flash(socket, :error, "No se pudo regenerar el catálogo por una falla de conexión con la base — nada se guardó, probá de nuevo en unos segundos.")}
     end
   end
 
-  # Atómico -- mismo motivo/criterio que actualizar_campo_y_regenerar/4 de
-  # abajo (ver su comentario): si CatalogoGenerador.generar/1 falla, el
-  # campo recién agregado a meta_schema_detail se deshace también, nunca
-  # queda a medias.
-  defp guardar_campo_y_generar(socket, header, nombre, propiedades) do
-    resultado =
+  # Bug real (2026-09-07): CatalogoGenerador.generar/1 corre una migración
+  # real (Ecto.Migrator) DESDE ADENTRO de esta misma transacción — el lock
+  # de migraciones de Postgres pide su PROPIA conexión del pool (vía un
+  # Task interno de Ecto), y bajo carga (varias pestañas + una importación
+  # corriendo a la vez) esa segunda conexión tardó más de los 15s de
+  # ownership_timeout: Ecto le cortó la conexión a ESTE proceso, y el
+  # LiveView entero moría con un MatchError sin pasar por ningún `rescue`
+  # de acá -- la pantalla del usuario se caía sin ningún mensaje y, peor,
+  # la migración (que corre en su propia conexión/transacción, fuera del
+  # alcance de este Repo.rollback) ya había commiteado: quedaba una columna física sin su fila en
+  # meta_schema_detail, invisible para el resto de la plataforma. Esto NO
+  # arregla la contención de conexión de fondo (correr un Migrator anidado
+  # en una transacción sigue siendo frágil) -- solo evita que ese fallo
+  # tire abajo el proceso entero: ahora se ve como un error de guardado
+  # más, con su mensaje, en vez de un crash mudo.
+  #
+  # `post_guardado` es un thunk (no siempre "solo generar/1" -- ver
+  # cambiar_obligatorio_campo/2 más abajo, que primero necesita
+  # sincronizar_nulabilidad_campo/2) que corre DESPUÉS de guardar_detalle
+  # y ANTES de comprometer la transacción -- debe devolver `{:ok, _}` o
+  # `{:error, motivo}`.
+  defp transaccion_con_generador(guardar_detalle, post_guardado) do
+    try do
       Repo.transaction(fn ->
-        case MetaSchemaContext.agregar_detalle(header, %{"schema_context_field" => nombre, "schema_context_properties" => propiedades}) do
+        case guardar_detalle.() do
           {:ok, detalle} ->
-            case CatalogoGenerador.generar(header.schema_context_name) do
+            case post_guardado.() do
               {:ok, _resultado} -> detalle
               {:error, motivo} -> Repo.rollback({:generar, motivo})
             end
@@ -1732,6 +1745,21 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             Repo.rollback({:changeset, changeset})
         end
       end)
+    rescue
+      excepcion -> {:error, {:crash, excepcion}}
+    end
+  end
+
+  # Atómico -- mismo motivo/criterio que actualizar_campo_y_regenerar/4 de
+  # arriba (ver el comentario de transaccion_con_generador/2): si
+  # CatalogoGenerador.generar/1 falla, el campo recién agregado a
+  # meta_schema_detail se deshace también, nunca queda a medias.
+  defp guardar_campo_y_generar(socket, header, nombre, propiedades) do
+    resultado =
+      transaccion_con_generador(
+        fn -> MetaSchemaContext.agregar_detalle(header, %{"schema_context_field" => nombre, "schema_context_properties" => propiedades}) end,
+        fn -> CatalogoGenerador.generar(header.schema_context_name) end
+      )
 
     case resultado do
       {:ok, _detalle} ->
@@ -1747,6 +1775,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       {:error, {:changeset, changeset}} ->
         {:noreply, update(socket, :campo_form, &Map.put(&1, "error", resumen_errores(changeset)))}
+
+      {:error, {:crash, _excepcion}} ->
+        {:noreply,
+         update(socket, :campo_form, &Map.put(&1, "error", "No se pudo generar la columna por una falla de conexión con la base — nada se guardó, probá de nuevo en unos segundos."))}
     end
   end
 
