@@ -682,7 +682,12 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   defp nil_si_vacio(""), do: nil
   defp nil_si_vacio(valor), do: valor
 
-  defp resumen_errores(changeset), do: changeset |> MetadataApp.MetaErrores.traducir() |> inspect()
+  # Antes hacía inspect/1 del mapa crudo de traducir/1 -- mostraba algo como
+  # "%{schema_context_name: [\"has already been taken\"]}" en el banner de
+  # error, ilegible para un usuario real (encontrado en vivo, 2026-09-09).
+  # MetaErrores.resumen/1 arma texto plano "Etiqueta: mensaje", mismo
+  # criterio que ya usa bc_motor_live.ex para este mismo tipo de error.
+  defp resumen_errores(changeset), do: MetadataApp.MetaErrores.resumen(changeset)
 
   # Mismos chequeos que MetaEstadosAdmin.validar_completo/3 (Fase 1), acá
   # recalculados client-side sobre lo que hay en memoria para dar feedback

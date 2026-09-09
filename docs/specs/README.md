@@ -62,3 +62,12 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   autentique contra los mismos usuarios de metadata_stack, sin cookie
   de sesión web (implementado, Grupos A-G completos; `design.md` §4 es
   el contrato de API para el cliente Flutter).
+- [`SPEC-SYS-0909202601-framework-navegacion/`](SPEC-SYS-0909202601-framework-navegacion/) —
+  documentación retroactiva del framework de navegación (sidebar,
+  topbar, footer, menú de usuario) — solo la estructura de navegación,
+  no el contenido de cada pantalla del menú. Sin `tasks.md` a propósito
+  (nada que construir todavía, es el ancla para futuros cambios).
+- [`SPEC-SYS-0909202602-demo-gestion-perros/`](SPEC-SYS-0909202602-demo-gestion-perros/) —
+  spec de práctica: catálogo `pty_perros` con motor de estados
+  (Activo/Baja/Reactivar), 100% armado con el Motor BC real (BPB +
+  Sysadmin), sin publicar a ningún sistema (queda en developer).

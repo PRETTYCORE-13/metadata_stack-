@@ -389,7 +389,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
 
   def render(assigns) do
     ~H"""
-    <div class={if @embebido?, do: "", else: "max-w-6xl mx-auto p-8"}>
+    <div class={if @embebido?, do: "", else: "w-full p-4 sm:p-6 lg:p-8"}>
       <div :if={!@embebido?} class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-2">
           <.link navigate={~p"/sysadmin/bc-list"} title="Volver al listado de BC"

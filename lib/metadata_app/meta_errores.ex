@@ -38,6 +38,21 @@ defmodule MetadataApp.MetaErrores do
   # (source sin meta_schema_detail, ej. Header/Estado/Transicion) o campo
   # sin etiqueta propia (ej. "estado_id"), cae al nombre físico de
   # siempre — nunca rompe.
+  # Header/Estado/Transicion son metadata DEL MOTOR, no catálogos de
+  # negocio -- listar_detalles/1 nunca les va a encontrar nada (no tienen
+  # meta_schema_detail propio), así que sin esto cualquier error de esos 3
+  # (ej. "schema_context_name: ya existe...") mostraba el nombre físico
+  # crudo del campo en vez de una etiqueta legible (encontrado en vivo,
+  # 2026-09-09, junto con el bug de inspect/1 en bc_nuevo_completo_live).
+  @etiquetas_header %{
+    "schema_context_name" => "Nombre",
+    "schema_context_label" => "Etiqueta",
+    "schema_context_nav" => "Navegación",
+    "codigo_trn" => "Código TRN"
+  }
+
+  defp etiquetas_por_campo(%Ecto.Changeset{data: %MetadataApp.BusinessProcessBuilder.MetaSchema.Header{}}), do: @etiquetas_header
+
   defp etiquetas_por_campo(%Ecto.Changeset{data: %struct{}}) do
     struct.__schema__(:source)
     |> MetaSchemaContext.listar_detalles()

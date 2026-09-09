@@ -38,7 +38,7 @@ Estas son las reglas que **toda transacción y todo catálogo maestro nuevo** de
 
 **Ya resuelto por el motor**: la pestaña **Contrato** de `BcMotorLive` genera la documentación completa a partir de la metadata real del catálogo (campos, estados, transiciones, `campos_editables`, `meta_campos_detalle` si es maestro) — nunca es texto escrito a mano que se desactualiza. Si el catálogo es maestro de un detalle, el contrato del **maestro** documenta también el detalle (payload de alta atómica con `"renglones"`, `meta_campos_detalle` en el GET, `"renglones"` en las transiciones). Un catálogo **detalle** no tiene pestaña Contrato propia — no es un recurso REST independiente, se documenta dentro del maestro.
 
-**Qué tenés que hacer vos**: nada extra si usás el generador — la doc sale sola. Lo único que podés romper es dejar campos sin `"etiqueta"` en `schema_context_properties` (la doc igual funciona, pero queda menos legible).
+**Qué tenés que hacer vos**: nada extra si usás el generador — la doc sale sola. Lo único que puedes romper es dejar campos sin `"etiqueta"` en `schema_context_properties` (la doc igual funciona, pero queda menos legible).
 
 ## C5 — Todo maestro debe tener: estados, transiciones, reglas, menú de navegación, estado inicial
 

@@ -162,7 +162,7 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
 
   def render(assigns) do
     ~H"""
-    <div class="max-w-3xl mx-auto p-8">
+    <div class="w-full p-4 sm:p-6 lg:p-8">
       <div class="flex items-center justify-between mb-4">
         <div class="flex items-center gap-2">
           <.link navigate={~p"/"} title="Volver al inicio"

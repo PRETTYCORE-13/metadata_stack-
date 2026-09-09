@@ -178,7 +178,10 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     |> validar_codigo_trn()
     |> validar_requiere_folio()
     |> validar_encabezado()
-    |> unique_constraint(:schema_context_name)
+    |> unique_constraint(:schema_context_name,
+      name: :meta_schema_header_schema_context_name_unico_index,
+      message: "ya existe un catálogo con este nombre — elegí otro"
+    )
     |> unique_constraint(:codigo_trn, name: :meta_schema_header_codigo_trn_unico_index)
   end
 

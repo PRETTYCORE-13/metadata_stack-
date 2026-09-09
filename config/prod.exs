@@ -8,6 +8,12 @@ import Config
 config :metadata_app, MetadataAppWeb.Endpoint,
   cache_static_manifest: "priv/static/cache_manifest.json"
 
+# Servir los .gz pre-comprimidos por `mix phx.digest` -- ver
+# lib/metadata_app_web/endpoint.ex, este flag reemplaza el viejo
+# `gzip: not code_reloading?` para que dev nunca dependa de
+# code_reloader para decidir si sirve gzip.
+config :metadata_app, static_gzip: true
+
 # Configures Swoosh API Client
 config :swoosh, api_client: Swoosh.ApiClient.Req
 

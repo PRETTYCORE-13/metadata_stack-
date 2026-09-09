@@ -231,6 +231,8 @@
   position: relative;
 }
 
+/* Puramente informativo desde 2026-09-09 (ver menu_layout.ex) -- sin
+   cursor:pointer ni :hover, ya no dispara ninguna acción. */
 .pc-user-menu-btn {
   display: flex;
   align-items: center;
@@ -239,12 +241,6 @@
   border: none;
   border-radius: 999px;
   background: transparent;
-  cursor: pointer;
-  transition: background 0.15s ease;
-}
-
-.pc-user-menu-btn:hover {
-  background: #f3f4f6;
 }
 
 .pc-user-menu-avatar {
@@ -275,36 +271,41 @@
   white-space: nowrap;
 }
 
-/* display: none acá (no en una clase "hidden" aparte): menu.css se importa
-   DESPUÉS de Tailwind en app.css, así que con la misma especificidad esta
-   regla le gana a la utilidad ".hidden" sin importar el orden de clases en
-   el HTML — el toggle de abajo pone "display:flex" inline (JS.toggle
-   display: "flex"), que siempre le gana a cualquier CSS por clase. */
-.pc-user-menu-dropdown {
+/* ---- MENÚ ADMINISTRATIVO (SPEC-SYS-0909202601, 2026-09-09) ----
+   Mismo lenguaje visual que el flyout de catálogos de negocio (ver
+   .pc-flyout-header/.pc-flyout-nav más abajo, reusadas tal cual) — a
+   pedido explícito, "no tiene caso generar una UI diferente". Reemplaza
+   al viejo dropdown compacto (.pc-user-menu-*, dado de baja). display:
+   none acá (no una clase "hidden" aparte): menu.css se importa DESPUÉS
+   de Tailwind en app.css, así que con la misma especificidad esta regla
+   le gana a la utilidad ".hidden" sin importar el orden de clases en el
+   HTML — el toggle (JS.toggle display:"flex") siempre le gana a
+   cualquier CSS por clase. */
+.pc-admin-menu-panel {
   position: absolute;
   right: 0;
   top: calc(100% + 8px);
-  min-width: 220px;
+  width: 260px;
   display: none;
   flex-direction: column;
-  gap: 2px;
   background: #ffffff;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
-  padding: 6px;
+  padding: 8px;
   z-index: 100;
 }
 
-.pc-user-menu-item {
-  display: block;
+.pc-admin-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  text-align: left;
-  padding: 8px 12px;
+  padding: 7px 8px;
   border: none;
-  background: transparent;
   border-radius: 8px;
-  font-size: 12px;
+  background: transparent;
+  font-size: 12.5px;
   font-weight: 500;
   color: #374151;
   cursor: pointer;
@@ -312,60 +313,41 @@
   transition: background 0.15s ease, color 0.15s ease;
 }
 
-.pc-user-menu-item:hover {
+.pc-admin-menu-item:hover {
   background: #f3f4f6;
   color: #111827;
 }
 
-.pc-user-menu-item-danger:hover {
+.pc-admin-menu-item-danger:hover {
   background: rgba(239, 68, 68, 0.08);
   color: #ef4444;
 }
 
-/* Grupo "Sysadmin" del dropdown de usuario — <details>/<summary> nativo,
-   mismo mecanismo sin JS que ya usa el árbol del sidebar (pc-menu-carpeta). */
-.pc-user-menu-submenu {
-  display: block;
-  width: 100%;
+.pc-admin-menu-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  color: #6b7280;
 }
 
-.pc-user-menu-item-submenu {
-  list-style: none;
+.pc-admin-menu-icon .material-symbols-outlined {
+  font-size: 18px;
 }
 
-.pc-user-menu-item-submenu::-webkit-details-marker {
-  display: none;
+.pc-admin-menu-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.pc-user-menu-item-submenu::before {
-  content: "▸";
-  display: inline-block;
-  width: 10px;
-  margin-right: 4px;
-  font-size: 10px;
-  color: #9ca3af;
-  transition: transform 0.15s ease;
-}
-
-.pc-user-menu-submenu[open] > .pc-user-menu-item-submenu::before {
-  transform: rotate(90deg);
-}
-
-.pc-user-menu-subitem {
-  padding-left: 30px;
-  font-size: 11.5px;
-}
-
-/* Sub-grupo anidado DENTRO de "Sysadmin" (ej. "Deploy": Credenciales/
-   Ambientes/Panel Control) -- mismo <details>/<summary> nativo, un nivel
-   más de indentación para que se note que está adentro del grupo padre. */
-.pc-user-menu-item-submenu-anidado {
-  padding-left: 30px;
-}
-
-.pc-user-menu-subitem-anidado {
-  padding-left: 48px;
-  font-size: 11.5px;
+.pc-admin-menu-divisor {
+  height: 1px;
+  margin: 6px 4px;
+  background: #e5e7eb;
 }
 
 /* ---- TOPBAR (branding: logo + nombre de empresa configurable) ---- */
@@ -705,6 +687,67 @@
   overflow-x: hidden;
 }
 
+/* ---- ENGRANE DE CONFIGURACIÓN (SPEC-SYS-0909202601, 2026-09-09) ----
+   Pegado al fondo del riel gracias a que .pc-sidebar-body de arriba ya
+   tiene flex:1 -- este es el próximo hermano dentro de <aside>, así que
+   se queda abajo del todo sin necesitar margin-top:auto. */
+.pc-sidebar-config {
+  position: relative;
+  flex-shrink: 0;
+  padding-top: 8px;
+  margin-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Sin etiqueta de texto (2026-09-09, a pedido explícito -- "quita
+   espacio y se sobre entiende el icono y la posición") -- centrado
+   siempre, colapsado o expandido, ya que no hay nada más adentro que
+   alinear a la izquierda. */
+.pc-sidebar-config-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pc-sidebar-config-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+/* Mismo componente que el avatar de la topbar (menu_administrativo/1,
+   clase .pc-admin-menu-panel) -- pero ese anclaje (position:absolute,
+   right:0, arriba del trigger) fue pensado para el avatar en la
+   topbar. Acá NO alcanza: .pc-platform-sidebar tiene overflow:hidden
+   (lo necesita para la animación de expandir/colapsar, ver arriba) y
+   eso recorta cualquier position:absolute que intente salir del riel
+   -- encontrado en vivo (2026-09-09), el dropdown "abría" pero quedaba
+   invisible, recortado por el padre. position:fixed no tiene ese
+   problema (su containing block es el viewport, no el ancestro con
+   overflow:hidden) -- a cambio, el offset horizontal no puede ser
+   relativo al trigger (fixed no sabe de .pc-sidebar-config), así que
+   se fija a mano según el riel esté colapsado (48px) o expandido
+   (--pc-sidebar-width). El selector por id le gana en especificidad a
+   la clase compartida sin necesitar !important. */
+#sidebar-config-dropdown {
+  position: fixed;
+  top: auto;
+  right: auto;
+  bottom: 14px;
+  left: 56px;
+}
+
+.pc-platform-sidebar-open #sidebar-config-dropdown {
+  left: calc(var(--pc-sidebar-width, 200px) + 8px);
+}
+
 /* ---- NAV ---- */
 .pc-sidebar-nav {
   display: flex;
@@ -968,6 +1011,7 @@
    ya van en blanco/negro directo en su propia definición más abajo. */
 .pc-sidebar-flyout .pc-nav-item {
   color: #111827;
+  align-items: center;
 }
 
 .pc-sidebar-flyout .pc-nav-item:hover {
@@ -987,9 +1031,19 @@
    veía el ícono). Mismo motivo para el tamaño del ícono: sin esto se
    quedaba en el tamaño "grande" (32px, pensado para el riel colapsado) en
    vez del chico (15px) que usa el riel expandido. */
+/* Una sola línea + "…" acá (a diferencia del riel angosto colapsado,
+   donde .pc-nav-label de más abajo SÍ necesita partir el texto en
+   varias líneas por falta de espacio) -- el panel flotante tiene ancho
+   de sobra, partir "Patrón de Frecuencias" en "Patr"/"Frec" se veía
+   roto y desbalanceaba el ícono al lado (encontrado en vivo,
+   2026-09-09). */
 .pc-sidebar-flyout .pc-nav-label {
   opacity: 1;
   color: #111827;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: normal;
 }
 
 .pc-sidebar-flyout .pc-nav-icon {
@@ -1400,14 +1454,20 @@
 }
 
 :root[data-theme="light"] .pc-sidebar-toggle,
-:root[data-theme="light"] .pc-theme-btn {
+:root[data-theme="light"] .pc-theme-btn,
+:root[data-theme="light"] .pc-sidebar-config-btn {
   color: #6b7280;
 }
 
 :root[data-theme="light"] .pc-sidebar-toggle:hover,
-:root[data-theme="light"] .pc-theme-btn:hover {
+:root[data-theme="light"] .pc-theme-btn:hover,
+:root[data-theme="light"] .pc-sidebar-config-btn:hover {
   background: #f3f4f6;
   color: #111827;
+}
+
+:root[data-theme="light"] .pc-sidebar-config {
+  border-top: 1px solid #e5e7eb;
 }
 
 :root[data-theme="light"] .pc-nav-item {

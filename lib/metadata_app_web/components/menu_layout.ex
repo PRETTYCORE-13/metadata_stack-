@@ -42,7 +42,11 @@ defmodule MetadataAppWeb.MenuLayout do
       |> asignar_datos_usuario()
 
     bpb_habilitado = assigns.bpb_habilitado
-    assigns = assign(assigns, :capacidades_sysadmin_visibles, capacidades_sysadmin_visibles(assigns[:current_scope], bpb_habilitado))
+
+    assigns =
+      assigns
+      |> assign(:opciones_administrativas_visibles, opciones_administrativas_visibles(assigns[:current_scope]))
+      |> assign(:opciones_plataforma_visibles, opciones_plataforma_visibles(assigns[:current_scope], bpb_habilitado))
 
     ~H"""
     <div class="pc-platform">
@@ -149,6 +153,41 @@ defmodule MetadataAppWeb.MenuLayout do
             </nav>
           </div>
         </div>
+        <!-- Engrane de configuración (SPEC-SYS-0909202601, incremento
+             2026-09-09) -- segundo acceso al MISMO menú administrativo
+             que el avatar de la topbar (misma fuente de datos, ver
+             menu_administrativo/1), pegado al fondo del riel gracias a
+             que .pc-sidebar-body ya tiene flex:1 arriba (ver menu.css). -->
+        <div
+          :if={@opciones_administrativas_visibles != [] or @opciones_plataforma_visibles != []}
+          class="pc-sidebar-config"
+        >
+          <button
+            type="button"
+            class="pc-sidebar-config-btn"
+            phx-click={
+              JS.toggle(
+                to: "#sidebar-config-dropdown",
+                display: "flex",
+                in: {"ease-out duration-150", "opacity-0 scale-95", "opacity-100 scale-100"},
+                out: {"ease-in duration-100", "opacity-100 scale-100", "opacity-0 scale-95"}
+              )
+            }
+            title="Configuración"
+            aria-label="Configuración"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" width="18" height="18">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+          <.menu_administrativo
+            id="sidebar-config-dropdown"
+            opciones_administrativas={@opciones_administrativas_visibles}
+            opciones_plataforma={@opciones_plataforma_visibles}
+            current_scope={@current_scope}
+          />
+        </div>
       </aside>
       <!-- FLYOUT: panel que aparece pegado al borde derecho del riel al abrir
            una carpeta raíz (nivel 0), mostrando SOLO las opciones de esa
@@ -228,22 +267,13 @@ defmodule MetadataAppWeb.MenuLayout do
             user_id={@current_user_id}
             refresh={@notif_refresh}
           />
-          <!-- Usuario: antes vivía abajo del todo en el sidebar (sección
-               "Cuenta"), ahora es un solo botón acá con menú desplegable —
-               reemplaza también al link viejo de "Iniciar sesión". -->
+          <!-- Usuario: puramente informativo (2026-09-09, a pedido
+               explícito) -- el menú administrativo se accede SOLO desde
+               el engrane del sidebar (ver pc-sidebar-config más abajo),
+               nunca desde acá. Antes era un botón con dropdown propio;
+               ese dropdown se sacó, no reemplazado por otra acción. -->
           <div class="pc-user-menu">
-            <button
-              type="button"
-              class="pc-user-menu-btn"
-              phx-click={
-                JS.toggle(
-                  to: "#user-menu-dropdown",
-                  display: "flex",
-                  in: {"ease-out duration-150", "opacity-0 scale-95", "opacity-100 scale-100"},
-                  out: {"ease-in duration-100", "opacity-100 scale-100", "opacity-0 scale-95"}
-                )
-              }
-            >
+            <div class="pc-user-menu-btn">
               <%= if @current_scope && @current_scope.usuario do %>
                 <img
                   src={MetadataApp.Autenticacion.Usuario.avatar_url(@current_scope.usuario, 56)}
@@ -255,83 +285,6 @@ defmodule MetadataAppWeb.MenuLayout do
                 </div>
               <% end %>
               <span class="pc-user-menu-label">{@current_user_name || "Usuario"}</span>
-            </button>
-            <div
-              id="user-menu-dropdown"
-              class="pc-user-menu-dropdown"
-              phx-click-away={JS.hide(to: "#user-menu-dropdown")}
-            >
-              <details :if={@capacidades_sysadmin_visibles != []} class="pc-user-menu-submenu">
-                <summary class="pc-user-menu-item pc-user-menu-item-submenu">Sysadmin</summary>
-                <.link :if={"sysadmin_bc" in @capacidades_sysadmin_visibles} navigate="/sysadmin/bc-list" class="pc-user-menu-item pc-user-menu-subitem">
-                  Business Process Builder
-                </.link>
-                <.link :if={"sysadmin_tepache" in @capacidades_sysadmin_visibles} navigate="/sysadmin/tepache" class="pc-user-menu-item pc-user-menu-subitem">
-                  Tepache Exp/Imp
-                </.link>
-                <.link :if={"sysadmin_roles" in @capacidades_sysadmin_visibles} navigate="/sysadmin/roles" class="pc-user-menu-item pc-user-menu-subitem">
-                  Roles Admin
-                </.link>
-                <.link :if={"sysadmin_empresas" in @capacidades_sysadmin_visibles} navigate="/sysadmin/empresas" class="pc-user-menu-item pc-user-menu-subitem">
-                  Empresas
-                </.link>
-                <.link :if={"sysadmin_usuarios" in @capacidades_sysadmin_visibles} navigate="/sysadmin/usuarios" class="pc-user-menu-item pc-user-menu-subitem">
-                  RBAC Usuarios
-                </.link>
-                <.link :if={"sysadmin_catalogos_permisos" in @capacidades_sysadmin_visibles} navigate="/sysadmin/catalogos/permisos" class="pc-user-menu-item pc-user-menu-subitem">
-                  RBAC Bisness Context
-                </.link>
-                <.link :if={"sysadmin_jerarquia" in @capacidades_sysadmin_visibles} navigate="/sysadmin/jerarquia" class="pc-user-menu-item pc-user-menu-subitem">
-                  Jerarquía organizacional
-                </.link>
-                <details
-                  :if={Enum.any?(["sysadmin_credenciales", "sysadmin_ambientes", "sysadmin_panel_control"], &(&1 in @capacidades_sysadmin_visibles))}
-                  class="pc-user-menu-submenu"
-                >
-                  <summary class="pc-user-menu-item pc-user-menu-subitem pc-user-menu-item-submenu pc-user-menu-item-submenu-anidado">Deploy</summary>
-                  <.link :if={"sysadmin_credenciales" in @capacidades_sysadmin_visibles} navigate="/sysadmin/credenciales" class="pc-user-menu-item pc-user-menu-subitem-anidado">
-                    Credenciales
-                  </.link>
-                  <.link :if={"sysadmin_ambientes" in @capacidades_sysadmin_visibles} navigate="/sysadmin/ambientes" class="pc-user-menu-item pc-user-menu-subitem-anidado">
-                    Ambientes de Deploy
-                  </.link>
-                  <.link :if={"sysadmin_panel_control" in @capacidades_sysadmin_visibles} navigate="/sysadmin/panel-control" class="pc-user-menu-item pc-user-menu-subitem-anidado">
-                    Panel Control
-                  </.link>
-                </details>
-                <.link :if={"sysadmin_acciones_externas" in @capacidades_sysadmin_visibles} navigate="/sysadmin/acciones-externas" class="pc-user-menu-item pc-user-menu-subitem">
-                  Acciones externas
-                </.link>
-              </details>
-              <button
-                :if={@current_scope && @current_scope.empresa_activa}
-                type="button"
-                class="pc-user-menu-item"
-                phx-click={
-                  JS.hide(to: "#user-menu-dropdown")
-                  |> JS.push("abrir", target: "#cambiar-unidad-modal")
-                }
-              >
-                Cambiar Unidad Operativa
-              </button>
-              <button
-                type="button"
-                class="pc-user-menu-item"
-                phx-click={
-                  JS.hide(to: "#user-menu-dropdown")
-                  |> JS.push("abrir", target: "#config-cuenta-modal")
-                }
-              >
-                Configuración de cuenta
-              </button>
-              <.link
-                href="/meta_schema_usuario/log-out"
-                method="delete"
-                class="pc-user-menu-item pc-user-menu-item-danger"
-                data-confirm="¿Cerrar sesión?"
-              >
-                Cerrar sesión
-              </.link>
             </div>
           </div>
         </div>
@@ -520,6 +473,111 @@ defmodule MetadataAppWeb.MenuLayout do
       </div>
       </div>
       </div>
+    </div>
+    """
+  end
+
+  # Menú administrativo compartido (SPEC-SYS-0909202601, incremento
+  # 2026-09-09) -- mismo contenido/comportamiento instanciado DOS veces
+  # (topbar y sidebar, ver sidebar/1 arriba y abajo), cada una con su
+  # propio `id` porque son dos elementos del DOM. Grupo "Sysadmin" entero
+  # desaparece si ambas listas vienen vacías -- nunca un menú sin nada
+  # adentro para ningún trigger.
+  attr :id, :string, required: true
+  attr :opciones_administrativas, :list, required: true
+  attr :opciones_plataforma, :list, required: true
+  attr :current_scope, :any, default: nil
+
+  def menu_administrativo(assigns) do
+    ~H"""
+    <div id={@id} class="pc-admin-menu-panel" phx-click-away={JS.hide(to: "##{@id}")}>
+      <div class="pc-flyout-header">
+        <span class="pc-flyout-header-nombre">Configuración</span>
+        <button type="button" class="pc-flyout-cerrar" phx-click={JS.hide(to: "##{@id}")} title="Cerrar" aria-label="Cerrar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+      <nav class="pc-flyout-nav">
+        <.link :if={"sysadmin_bc" in @opciones_plataforma} navigate="/sysadmin/bc-list" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">build</span></span>
+          <span class="pc-admin-menu-label">Business Process Builder</span>
+        </.link>
+        <.link :if={"sysadmin_tepache" in @opciones_plataforma} navigate="/sysadmin/tepache" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">sync_alt</span></span>
+          <span class="pc-admin-menu-label">Tepache Exp/Imp</span>
+        </.link>
+        <.link :if={"sysadmin_roles" in @opciones_administrativas} navigate="/sysadmin/roles" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">badge</span></span>
+          <span class="pc-admin-menu-label">Roles Admin</span>
+        </.link>
+        <.link :if={"sysadmin_empresas" in @opciones_administrativas} navigate="/sysadmin/empresas" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">apartment</span></span>
+          <span class="pc-admin-menu-label">Empresas</span>
+        </.link>
+        <.link :if={"sysadmin_usuarios" in @opciones_administrativas} navigate="/sysadmin/usuarios" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">group</span></span>
+          <span class="pc-admin-menu-label">RBAC Usuarios</span>
+        </.link>
+        <.link :if={"sysadmin_catalogos_permisos" in @opciones_administrativas} navigate="/sysadmin/catalogos/permisos" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">security</span></span>
+          <span class="pc-admin-menu-label">RBAC Bisness Context</span>
+        </.link>
+        <.link :if={"sysadmin_jerarquia" in @opciones_administrativas} navigate="/sysadmin/jerarquia" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">account_tree</span></span>
+          <span class="pc-admin-menu-label">Jerarquía organizacional</span>
+        </.link>
+        <.link :if={"sysadmin_credenciales" in @opciones_plataforma} navigate="/sysadmin/credenciales" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">key</span></span>
+          <span class="pc-admin-menu-label">Credenciales</span>
+        </.link>
+        <.link :if={"sysadmin_ambientes" in @opciones_plataforma} navigate="/sysadmin/ambientes" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">cloud</span></span>
+          <span class="pc-admin-menu-label">Ambientes de Deploy</span>
+        </.link>
+        <.link :if={"sysadmin_panel_control" in @opciones_plataforma} navigate="/sysadmin/panel-control" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">tune</span></span>
+          <span class="pc-admin-menu-label">Panel Control</span>
+        </.link>
+        <.link :if={"sysadmin_acciones_externas" in @opciones_plataforma} navigate="/sysadmin/acciones-externas" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">bolt</span></span>
+          <span class="pc-admin-menu-label">Acciones externas</span>
+        </.link>
+        <div :if={@opciones_administrativas != [] or @opciones_plataforma != []} class="pc-admin-menu-divisor"></div>
+        <button
+          :if={@current_scope && @current_scope.empresa_activa}
+          type="button"
+          class="pc-admin-menu-item"
+          phx-click={
+            JS.hide(to: "##{@id}")
+            |> JS.push("abrir", target: "#cambiar-unidad-modal")
+          }
+        >
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">swap_horiz</span></span>
+          <span class="pc-admin-menu-label">Cambiar Unidad Operativa</span>
+        </button>
+        <button
+          type="button"
+          class="pc-admin-menu-item"
+          phx-click={
+            JS.hide(to: "##{@id}")
+            |> JS.push("abrir", target: "#config-cuenta-modal")
+          }
+        >
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">person</span></span>
+          <span class="pc-admin-menu-label">Configuración de cuenta</span>
+        </button>
+        <.link
+          href="/meta_schema_usuario/log-out"
+          method="delete"
+          class="pc-admin-menu-item pc-admin-menu-item-danger"
+          data-confirm="¿Cerrar sesión?"
+        >
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">logout</span></span>
+          <span class="pc-admin-menu-label">Cerrar sesión</span>
+        </.link>
+      </nav>
     </div>
     """
   end
@@ -783,28 +841,47 @@ defmodule MetadataAppWeb.MenuLayout do
 
   defp firma_unidad_operativa(_scope), do: ""
 
-  # Dropdown "Sysadmin" (2026-08-16, a pedido explícito) -- antes mostraba
-  # las 10 opciones a CUALQUIER usuario autenticado sin importar sus
-  # permisos (la enforcement real vivía solo en el on_mount de cada
-  # pantalla, ver Hooks.Autorizacion) -- entrar por un link roto con "No
-  # tienes permiso" es peor UX que directamente no ofrecerlo. Ahora: cada
-  # capacidad se filtra contra Permissions.can?/3 (mismo criterio de
-  # "administrador ve todo" que ya usa el resto de RBAC), y sysadmin_bc/
-  # sysadmin_tepache ADEMÁS respetan bpb_habilitado (compile-time, no hay
-  # BPB en producción) -- si eso los apaga, no cuentan para "¿hay algo que
-  # mostrar?" tampoco. Con la lista vacía, el <details> entero desaparece
-  # en vez de quedar como un submenú sin nada adentro.
-  defp capacidades_sysadmin_visibles(%MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa} = scope, bpb_habilitado)
+  # Menú administrativo (SPEC-SYS-0909202601, incremento 2026-09-09, a
+  # pedido explícito) -- reemplaza la lista única de 11 capacidades por
+  # DOS grupos con gates distintos, para poder ofrecer el mismo menú
+  # desde dos triggers (avatar de topbar + engrane del sidebar, ver
+  # sidebar/1 y menu_administrativo/1 más abajo):
+  #
+  # - "Administrativas" (Roles/Empresas/RBAC Usuarios/RBAC Business
+  #   Context/Jerarquía): mismo criterio que cualquier página del árbol
+  #   -- Permissions.can?/3, sin ningún gate extra. Ya NO hace falta ser
+  #   sysadmin de plataforma para verlas, en ningún ambiente.
+  # - "Plataforma" (Credenciales/Ambientes/Panel Control/Acciones
+  #   externas + BPB/Tepache si además bpb_habilitado): gate NUEVO,
+  #   usuario.super_admin == true -- el mismo campo que ya decide si
+  #   existe algún sysadmin en el primer arranque
+  #   (Autenticacion.existe_sysadmin?/0), no un concepto inventado acá.
+  #   Sin super_admin, ninguna de estas aparece aunque el rol tenga el
+  #   permiso RBAC concedido.
+  @recursos_administrativos ~w(sysadmin_roles sysadmin_empresas sysadmin_usuarios sysadmin_catalogos_permisos sysadmin_jerarquia)
+  @recursos_plataforma ~w(sysadmin_credenciales sysadmin_ambientes sysadmin_panel_control sysadmin_acciones_externas)
+  @recursos_plataforma_bpb ~w(sysadmin_bc sysadmin_tepache)
+
+  defp opciones_administrativas_visibles(%MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa} = scope)
        when not is_nil(usuario) and not is_nil(empresa) do
-    MetadataApp.Permissions.capacidades_sysadmin()
-    |> Enum.filter(fn {recurso, _rol_nombre, _etiqueta} ->
-      (bpb_habilitado or recurso not in ["sysadmin_bc", "sysadmin_tepache"]) and
-        MetadataApp.Permissions.can?(scope, "leer", recurso)
-    end)
-    |> Enum.map(fn {recurso, _rol_nombre, _etiqueta} -> recurso end)
+    Enum.filter(@recursos_administrativos, &MetadataApp.Permissions.can?(scope, "leer", &1))
   end
 
-  defp capacidades_sysadmin_visibles(_scope, _bpb_habilitado), do: []
+  defp opciones_administrativas_visibles(_scope), do: []
+
+  defp opciones_plataforma_visibles(%MetadataApp.Autenticacion.Scope{usuario: %{super_admin: true}, empresa_activa: empresa} = scope, bpb_habilitado)
+       when not is_nil(empresa) do
+    base = Enum.filter(@recursos_plataforma, &MetadataApp.Permissions.can?(scope, "leer", &1))
+
+    extra =
+      if bpb_habilitado,
+        do: Enum.filter(@recursos_plataforma_bpb, &MetadataApp.Permissions.can?(scope, "leer", &1)),
+        else: []
+
+    base ++ extra
+  end
+
+  defp opciones_plataforma_visibles(_scope, _bpb_habilitado), do: []
 
   defp asignar_datos_usuario(assigns) do
     case assigns[:current_scope] do
