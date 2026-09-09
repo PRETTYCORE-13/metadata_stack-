@@ -587,6 +587,155 @@ defmodule MetadataAppWeb.CatalogoLive do
     {:noreply, socket |> assign(:importar_modal, modal) |> assign(:pagina, 1) |> cargar_filas()}
   end
 
+  # "Descargar Excel" — vuelca EXACTAMENTE lo que la tabla está mostrando
+  # ahora mismo: mismos filtros/búsqueda/parámetros que @filas, pero SIN
+  # paginar (todas las filas que matchean, no solo la página actual) y con
+  # una fila "TOTAL" al pie usando lo que ya esté calculado en la banda de
+  # resumen (@agregaciones_valores del usuario, si no @totales_generales
+  # del admin) — nunca corre una agregación nueva acá, reusa la que ya
+  # está en pantalla. Techo de filas a propósito (@excel_max_filas): un
+  # catálogo de millones de registros sin filtro alguno no debería poder
+  # traer todo a memoria de una — se le pide al usuario acotar primero,
+  # mismo criterio que ya usa MetaImportacionDatos con archivos gigantes.
+  @excel_max_filas 20_000
+
+  def handle_event("descargar_excel", _params, socket) do
+    if socket.assigns.total_filas > @excel_max_filas do
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         "Hay #{socket.assigns.total_filas} registros para exportar — más de lo que Excel puede recibir de una. Filtrá más antes de descargar."
+       )}
+    else
+      filas = filas_export(socket)
+      binario = construir_excel_export(socket.assigns, filas)
+      href = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," <> Base.encode64(binario)
+      nombre = "#{socket.assigns.current_page}.xlsx"
+
+      {:noreply, push_event(socket, "descargar-archivo", %{href: href, nombre: nombre})}
+    end
+  end
+
+  defp filas_export(%{assigns: %{es_consulta?: true}} = socket) do
+    %{
+      consulta: consulta,
+      columnas: columnas,
+      filtros: filtros,
+      busqueda_general: busqueda_general,
+      overrides_parametro: overrides_parametro,
+      orden_usuario: orden_usuario
+    } = socket.assigns
+
+    filtros_ecto = construir_filtros_ecto(filtros, columnas)
+    campos_busqueda = Enum.map(columnas, & &1.schema_context_field)
+    busqueda = {busqueda_general, campos_busqueda}
+    consulta_ordenada = if orden_usuario, do: %{consulta | orden_por: [orden_usuario]}, else: consulta
+
+    %{filas: filas} =
+      MetaConsultas.ejecutar(consulta_ordenada, socket.assigns[:current_scope], filtros_ecto, [], busqueda, overrides_parametro)
+
+    filas
+  end
+
+  defp filas_export(socket) do
+    %{
+      modulo: modulo,
+      current_page: catalogo,
+      estados_por_id: estados_por_id,
+      columnas: columnas,
+      filtros: filtros,
+      busqueda_general: busqueda_general,
+      campos_param: campos_param,
+      overrides_parametro: overrides_parametro
+    } = socket.assigns
+
+    filtros_ecto = construir_filtros_ecto(filtros, columnas)
+    campos_busqueda = Enum.map(columnas, & &1.schema_context_field)
+    busqueda = {busqueda_general, campos_busqueda}
+    parametros = {campos_param, %{catalogo => :t0}, overrides_parametro}
+    orden = orden_desde_header(socket.assigns.header, modulo)
+
+    registros = CatalogoGenerico.listar(modulo, socket.assigns[:current_scope], filtros_ecto, [orden: orden], busqueda, parametros)
+    acompanamiento = CatalogoGenerico.mapa_acompanamiento(catalogo, registros)
+
+    registros
+    |> Enum.map(&CatalogoGenerico.serializar(&1, estados_por_id, acompanamiento))
+    |> agregar_alcance_a_filas(socket.assigns)
+    |> agregar_creado_por_a_filas(socket.assigns)
+  end
+
+  defp construir_excel_export(assigns, filas) do
+    columnas = assigns.columnas_render
+    etiquetas = Enum.map(columnas, &etiqueta_columna_export/1)
+
+    filas_datos =
+      Enum.map(filas, fn fila ->
+        Enum.map(columnas, &valor_columna_export(&1, fila))
+      end)
+
+    fila_total = fila_total_export(assigns, columnas)
+
+    filas_hoja =
+      [Enum.map(etiquetas, &[&1, bold: true, bg_color: "#DDD9C4"])] ++
+        Enum.map(filas_datos, &Enum.map(&1, fn valor -> [valor] end)) ++
+        [Enum.map(fila_total, &[&1, bold: true, bg_color: "#EFEBDD"])]
+
+    sheet = %Elixlsx.Sheet{name: String.slice(assigns.label, 0, 31), rows: filas_hoja, pane_freeze: {1, 0}}
+
+    case Elixlsx.write_to_memory(%Elixlsx.Workbook{sheets: [sheet]}, "reporte.xlsx") do
+      {:ok, {_nombre, binario}} -> binario
+      {:error, motivo} -> raise "No se pudo generar el Excel: #{inspect(motivo)}"
+    end
+  end
+
+  defp etiqueta_columna_export(%{tipo_columna: :negocio} = col), do: col.columna.schema_context_properties["etiqueta"]
+  defp etiqueta_columna_export(col), do: col.etiqueta
+
+  defp valor_columna_export(%{tipo_columna: :negocio} = col, fila) do
+    valor = Map.get(fila, String.to_existing_atom(col.columna.schema_context_field))
+    formatear_valor_export(formatear_celda(valor, col.columna.schema_context_properties))
+  end
+
+  defp valor_columna_export(%{tipo_columna: :id}, fila), do: fila.id
+  defp valor_columna_export(%{tipo_columna: :estado}, fila), do: Map.get(fila, :estado_nombre)
+  defp valor_columna_export(%{tipo_columna: :trn}, fila), do: Map.get(fila, :trn)
+  defp valor_columna_export(%{tipo_columna: :empresa}, fila), do: Map.get(fila, :empresa_nombre)
+  defp valor_columna_export(%{tipo_columna: :branch}, fila), do: Map.get(fila, :branch_nombre)
+  defp valor_columna_export(%{tipo_columna: :inventory_location}, fila), do: Map.get(fila, :inventory_nombre)
+  defp valor_columna_export(%{tipo_columna: :sales_unit}, fila), do: Map.get(fila, :sales_unit_nombre)
+  defp valor_columna_export(%{tipo_columna: :creado_por}, fila), do: Map.get(fila, :creado_por)
+
+  # Elixlsx no acepta Decimal ni DateTime directo en una celda (mismo
+  # motivo que MetaImportacionDatos.formatear_valor_crudo/1) — formatear_celda/2
+  # ya resolvió el string/número para pantalla, esto solo cubre lo que
+  # todavía puede llegar como struct.
+  defp formatear_valor_export(%Decimal{} = v), do: Decimal.to_float(v)
+  defp formatear_valor_export(%Date{} = v), do: Calendar.strftime(v, "%d/%m/%Y")
+  defp formatear_valor_export(%Time{} = v), do: Calendar.strftime(v, "%H:%M")
+  defp formatear_valor_export(v), do: v
+
+  # Una sola fila de TOTAL, no una por cada tipo de resumen que la pantalla
+  # pueda mostrar apiladas (agregación de usuario, Mín/Máx, Totalizado,
+  # Total de página) — un archivo Excel no tiene "franjas", tiene filas.
+  # Prioridad por columna: lo que el usuario ELIGIÓ ver (@agregaciones_valores)
+  # gana; si no eligió nada ahí, cae a "Totalizado" del admin
+  # (@totales_generales, siempre suma); si ninguno aplica, la celda queda
+  # vacía. La primera columna de la fila lleva la palabra "TOTAL" en vez
+  # de un valor, para que se lea igual que en Excel.
+  defp fila_total_export(assigns, columnas) do
+    columnas
+    |> Enum.with_index()
+    |> Enum.map(fn {col, indice} ->
+      cond do
+        indice == 0 -> "TOTAL"
+        Map.has_key?(assigns.agregaciones_valores, col.clave) -> formatear_valor_export(assigns.agregaciones_valores[col.clave])
+        Map.has_key?(assigns.totales_generales, col.clave) -> formatear_valor_export(assigns.totales_generales[col.clave])
+        true -> ""
+      end
+    end)
+  end
+
   # Búsqueda general: mismo texto contra CUALQUIER columna (OR), a
   # diferencia de los filtros de arriba (AND por columna, para acotar).
   # Conviven las dos — ver aplicar_busqueda/2 en CatalogoGenerico.
@@ -1285,6 +1434,11 @@ defmodule MetadataAppWeb.CatalogoLive do
               <span class="material-symbols-outlined" style="font-size:14px">upload_file</span>
               <span>Importar</span>
             </button>
+            <button type="button" phx-click="descargar_excel"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50">
+              <span class="material-symbols-outlined" style="font-size:14px">download</span>
+              <span>Descargar Excel</span>
+            </button>
             <span class="text-xs font-medium text-gray-500 bg-gray-100 rounded-full px-3 py-1">
               {@inicio}-{@fin} de {@total_filas}
             </span>
@@ -1402,6 +1556,14 @@ defmodule MetadataAppWeb.CatalogoLive do
       </div>
 
       <.modal_importar :if={@importar_modal} modal={@importar_modal} plantillas={@plantillas_importacion} uploads={@uploads} label={@label} />
+
+      <%!-- Ancla oculta y permanente (nunca se desmonta/remonta) — el hook
+           JS "DescargarArchivo" se monta UNA vez y escucha el evento
+           "descargar-archivo" durante toda la vida de la página; si en vez
+           de esto el <a> apareciera solo condicionalmente, LiveView lo
+           montaría de nuevo cada vez y el click automático dependería de
+           ganarle una carrera al render, en vez de a un evento explícito. --%>
+      <a id="descarga-excel-link" phx-hook="DescargarArchivo" style="display:none" href="#"></a>
     </div>
     """
   end

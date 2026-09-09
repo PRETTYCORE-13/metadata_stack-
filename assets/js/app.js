@@ -921,10 +921,27 @@ const AbrirVistaPrevia = {
   },
 }
 
+// Botón "Descargar Excel" de CatalogoLive: el servidor arma el archivo
+// (Elixlsx, en memoria) y lo manda como data: URI en vez de una
+// descarga por HTTP aparte — evita reconstruir filtros/búsqueda/
+// parámetros actuales del lado del controller. El <a> vive SIEMPRE en el
+// DOM (nunca condicional), así este hook se monta una sola vez por
+// carga de página y solo espera el evento — no hay carrera con ningún
+// re-render.
+const DescargarArchivo = {
+  mounted() {
+    this.handleEvent("descargar-archivo", ({href, nombre}) => {
+      this.el.href = href
+      this.el.download = nombre
+      this.el.click()
+    })
+  },
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField, UnidadOperativaWatcher, RecordarSeccion, AutoImprimir, ZoomLienzo},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField, UnidadOperativaWatcher, RecordarSeccion, AutoImprimir, ZoomLienzo, DescargarArchivo},
 })
 
 // Show progress bar on live navigation and form submits
