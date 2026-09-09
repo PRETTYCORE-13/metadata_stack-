@@ -213,7 +213,7 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
   # identificador de encabezado elegido (ver moduledoc de
   # MetaImportacionDatos) — nil si todo está bien.
   #
-  # Los dos chequeos de "identificador incluido" (SPEC-SYS-0909202602,
+  # Los dos chequeos de "identificador incluido" (SPEC-SYS-0909202604,
   # tarea A4) corren SIEMPRE que haya un identificador elegido, no solo
   # cuando hay detalles activos: un identificador que no es columna del
   # Excel nunca puede leerse de vuelta al reimportar, ni para vincular

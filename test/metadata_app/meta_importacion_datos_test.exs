@@ -1,5 +1,5 @@
 defmodule MetadataApp.MetaImportacionDatosTest do
-  # SPEC-SYS-0909202602, tarea B1/B2 -- Postgres real, mismo criterio que
+  # SPEC-SYS-0909202604, tarea B1/B2 -- Postgres real, mismo criterio que
   # ParametrosCatalogoTest: MetaFixtureCliente/PedidoPruebaMultinivel/
   # PartidasPruebaMultinivel son catálogos reales, no mocks.
   use MetadataApp.DataCase, async: true

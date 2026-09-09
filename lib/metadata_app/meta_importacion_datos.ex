@@ -393,7 +393,7 @@ defmodule MetadataApp.MetaImportacionDatos do
 
   # =========================================================================
   # Búsqueda de un registro YA EXISTENTE del propio catálogo que se está
-  # importando (SPEC-SYS-0909202602) — para decidir alta vs actualización.
+  # importando (SPEC-SYS-0909202604) — para decidir alta vs actualización.
   # Mismo criterio de coincidencia exacta que resolver_referencia/3 de
   # arriba, pero acá "cero coincidencias" es un resultado VÁLIDO (alta),
   # no un error: la diferencia es que resolver_referencia/3 busca un dato
@@ -526,7 +526,7 @@ defmodule MetadataApp.MetaImportacionDatos do
     end
   end
 
-  # SPEC-SYS-0909202602 (tareas C1/C2) -- sin campo_identificador_encabezado
+  # SPEC-SYS-0909202604 (tareas C1/C2) -- sin campo_identificador_encabezado
   # configurado, comportamiento IDÉNTICO a como era antes de esta spec:
   # siempre alta, nunca busca nada (regresión cero para toda plantilla ya
   # existente, R5). Con identificador y sin valor en ESTA fila (celda
@@ -738,7 +738,7 @@ defmodule MetadataApp.MetaImportacionDatos do
   defp mensaje_de_motivo(:subtipo_dado_de_baja),
     do: "El subtipo de transacción de esta fila está dado de baja y no puede foliar — revisá el valor o avisale a un administrador."
 
-  # SPEC-SYS-0909202602 (tarea E1) -- errores propios del camino de
+  # SPEC-SYS-0909202604 (tarea E1) -- errores propios del camino de
   # actualización (Grupo C/D).
   defp mensaje_de_motivo(:identificador_ambiguo),
     do: "Hay más de un registro con ese identificador — no se puede determinar cuál actualizar."
