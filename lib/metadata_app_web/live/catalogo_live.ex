@@ -1663,7 +1663,7 @@ defmodule MetadataAppWeb.CatalogoLive do
             <%= if listos > 0 do %>
               <button type="button" phx-click="importar_confirmar"
                 class="w-full mt-3 px-4 py-3 rounded-lg bg-purple-600 text-white text-sm font-bold hover:bg-purple-700">
-                Importar {listos} {String.downcase(@label)}
+                {texto_boton_importar(@modal["resultado"], @label)}
               </button>
             <% else %>
               <button type="button" phx-click="importar_otro_archivo"
@@ -1721,6 +1721,21 @@ defmodule MetadataAppWeb.CatalogoLive do
     """
   end
 
+  # Tarea F3 -- variantes según qué balde (crear/actualizar) tiene algo,
+  # mismo criterio de un solo botón dominante que ya usa este modal.
+  defp texto_boton_importar(resultado, label) do
+    ok = Enum.filter(resultado, &(&1.resultado == :ok))
+    crear = Enum.count(ok, &(&1.accion == :crear))
+    actualizar = Enum.count(ok, &(&1.accion == :actualizar))
+    label_minuscula = String.downcase(label)
+
+    cond do
+      actualizar == 0 -> "Importar #{crear} #{label_minuscula}"
+      crear == 0 -> "Actualizar #{actualizar} #{label_minuscula}"
+      true -> "Importar #{crear} y actualizar #{actualizar} #{label_minuscula}"
+    end
+  end
+
   defp formatear_bytes(bytes) when bytes < 1024, do: "#{bytes} B"
   defp formatear_bytes(bytes) when bytes < 1_048_576, do: "#{Float.round(bytes / 1024, 1)} KB"
   defp formatear_bytes(bytes), do: "#{Float.round(bytes / 1_048_576, 1)} MB"
@@ -1730,16 +1745,25 @@ defmodule MetadataAppWeb.CatalogoLive do
   attr :mostrar_errores?, :boolean, required: true
 
   defp resultado_importar(assigns) do
-    ok = Enum.count(assigns.resultado, &(&1.resultado == :ok))
+    ok = Enum.filter(assigns.resultado, &(&1.resultado == :ok))
+    crear = Enum.count(ok, &(&1.accion == :crear))
+    actualizar = Enum.count(ok, &(&1.accion == :actualizar))
     error = Enum.count(assigns.resultado, &(&1.resultado == :error))
-    assigns = assigns |> assign(:ok, ok) |> assign(:error, error)
+    assigns = assigns |> assign(:crear, crear) |> assign(:actualizar, actualizar) |> assign(:error, error)
 
     ~H"""
     <div class="flex flex-col gap-2">
-      <div class="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-green-50 border border-green-200">
+      <div :if={@crear > 0 or @actualizar == 0} class="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-green-50 border border-green-200">
         <span class="material-symbols-outlined text-green-600 flex-none" style="font-size:20px">check_circle</span>
         <span class="font-bold text-green-800">
-          {@ok} registro{if @ok != 1, do: "s"} {if @confirmando?, do: "importado#{if @ok != 1, do: "s", else: ""}", else: "listo#{if @ok != 1, do: "s", else: ""} para importar"}
+          {@crear} registro{if @crear != 1, do: "s"} {if @confirmando?, do: "creado#{if @crear != 1, do: "s", else: ""}", else: "nuevo#{if @crear != 1, do: "s", else: ""}"}
+        </span>
+      </div>
+
+      <div :if={@actualizar > 0} class="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-blue-50 border border-blue-200">
+        <span class="material-symbols-outlined text-blue-600 flex-none" style="font-size:20px">sync</span>
+        <span class="font-bold text-blue-800">
+          {@actualizar} registro{if @actualizar != 1, do: "s"} {if @confirmando?, do: "actualizado#{if @actualizar != 1, do: "s", else: ""}", else: "a actualizar"}
         </span>
       </div>
 

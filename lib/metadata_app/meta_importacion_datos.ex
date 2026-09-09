@@ -32,6 +32,8 @@ defmodule MetadataApp.MetaImportacionDatos do
 
   import Ecto.Query
   alias MetadataApp.Repo
+  alias MetadataApp.Renglones
+  alias MetadataApp.MetaStateEngine
   alias MetadataApp.MetaSchema.PlantillaImportacion
   alias MetadataApp.MetaErrores
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerico}
@@ -390,6 +392,42 @@ defmodule MetadataApp.MetaImportacionDatos do
   end
 
   # =========================================================================
+  # Búsqueda de un registro YA EXISTENTE del propio catálogo que se está
+  # importando (SPEC-SYS-0909202602) — para decidir alta vs actualización.
+  # Mismo criterio de coincidencia exacta que resolver_referencia/3 de
+  # arriba, pero acá "cero coincidencias" es un resultado VÁLIDO (alta),
+  # no un error: la diferencia es que resolver_referencia/3 busca un dato
+  # en OTRO catálogo (no encontrar nada ahí es un valor mal escrito),
+  # mientras que esto busca en el MISMO catálogo que se está por crear o
+  # actualizar, donde "no existe todavía" es el caso más común.
+  # =========================================================================
+
+  @doc "Registro de `modulo` cuyo `campo` (átomo) sea exactamente `valor` (ignorando dados de baja) — `{:ok, nil}` si no hay ninguno, `{:ok, registro}` si hay exactamente uno, `{:error, :identificador_ambiguo}` si hay más de uno."
+  def buscar_existente(modulo, campo_atom, valor) do
+    query = from(r in modulo, where: field(r, ^campo_atom) == ^valor and is_nil(r.delete_guid))
+
+    case Repo.all(query) do
+      [] -> {:ok, nil}
+      [registro] -> {:ok, registro}
+      _varios -> {:error, :identificador_ambiguo}
+    end
+  end
+
+  @doc "Igual que buscar_existente/3, pero acotado a un `encabezado_id` puntual — para decidir si una fila de detalle actualiza un renglón que ya existe DE ESE encabezado, o si hay que crear uno nuevo (nunca mezcla renglones de otro encabezado, aunque compartan el mismo valor de identificador)."
+  def buscar_renglon_existente(modulo_detalle, encabezado_id, campo_atom, valor) do
+    query =
+      from(r in modulo_detalle,
+        where: r.encabezado_id == ^encabezado_id and field(r, ^campo_atom) == ^valor and is_nil(r.delete_guid)
+      )
+
+    case Repo.all(query) do
+      [] -> {:ok, nil}
+      [renglon] -> {:ok, renglon}
+      _varios -> {:error, :identificador_ambiguo}
+    end
+  end
+
+  # =========================================================================
   # Previsualización (dry-run) y ejecución real
   # =========================================================================
 
@@ -417,6 +455,8 @@ defmodule MetadataApp.MetaImportacionDatos do
       |> Enum.filter(& &1["activo"])
       |> Map.new(fn detalle_def -> {detalle_def["catalogo"], {detalle_def, campos_disponibles(detalle_def["catalogo"]) |> Map.new(&{&1.campo, &1})}} end)
 
+    detalles_identificadores = Map.new(detalles_meta, fn {catalogo, {detalle_def, _meta}} -> {catalogo, detalle_def["campo_identificador_detalle"]} end)
+
     filas_encabezado
     |> Enum.with_index(1)
     |> Enum.map(fn {fila_valores, indice} ->
@@ -431,7 +471,7 @@ defmodule MetadataApp.MetaImportacionDatos do
           }
 
         {:ok, renglones_spec} ->
-          procesar_fila(modulo, scope, campos_meta, plantilla, indice, fila_valores, renglones_spec, commit?)
+          procesar_fila(modulo, scope, campos_meta, plantilla, identificador_campo, detalles_identificadores, indice, fila_valores, renglones_spec, commit?)
       end
     end)
   end
@@ -466,7 +506,7 @@ defmodule MetadataApp.MetaImportacionDatos do
     end
   end
 
-  defp procesar_fila(modulo, scope, campos_meta, plantilla, indice, fila_valores, renglones_spec, commit?) do
+  defp procesar_fila(modulo, scope, campos_meta, plantilla, identificador_campo, detalles_identificadores, indice, fila_valores, renglones_spec, commit?) do
     case construir_attrs(plantilla.definicion["campos"] || [], campos_meta, fila_valores) do
       {:error, {campo, motivo}} ->
         etiqueta = get_in(campos_meta, [campo, :etiqueta]) || campo
@@ -480,21 +520,171 @@ defmodule MetadataApp.MetaImportacionDatos do
         }
 
       {:ok, attrs} ->
-        Repo.transaction(fn ->
-          case CatalogoGenerico.crear(modulo, scope, attrs, renglones: renglones_spec) do
-            {:ok, registro} -> if commit?, do: registro, else: Repo.rollback({:preview_ok, registro})
-            {:error, motivo} -> Repo.rollback({:error, motivo})
-          end
-        end)
+        modulo
+        |> ejecutar_alta_o_actualizacion(scope, attrs, identificador_campo, detalles_identificadores, renglones_spec, commit?)
         |> interpretar_resultado(indice, fila_valores, campos_meta)
     end
   end
 
-  defp interpretar_resultado({:ok, registro}, indice, _fila_valores, _campos_meta),
-    do: %{fila: indice, resultado: :ok, registro: registro}
+  # SPEC-SYS-0909202602 (tareas C1/C2) -- sin campo_identificador_encabezado
+  # configurado, comportamiento IDÉNTICO a como era antes de esta spec:
+  # siempre alta, nunca busca nada (regresión cero para toda plantilla ya
+  # existente, R5). Con identificador y sin valor en ESTA fila (celda
+  # vacía), tampoco hay nada que buscar -- también alta; si el campo es
+  # obligatorio de verdad, CatalogoGenerico.crear/4 ya lo rechaza solo,
+  # no hace falta duplicar esa validación acá.
+  defp ejecutar_alta_o_actualizacion(modulo, scope, attrs, nil, _detalles_identificadores, renglones_spec, commit?),
+    do: dar_de_alta(modulo, scope, attrs, renglones_spec, commit?) |> etiquetar_accion(:crear)
 
-  defp interpretar_resultado({:error, {:preview_ok, registro}}, indice, _fila_valores, _campos_meta),
-    do: %{fila: indice, resultado: :ok, registro: registro}
+  defp ejecutar_alta_o_actualizacion(modulo, scope, attrs, identificador_campo, detalles_identificadores, renglones_spec, commit?) do
+    case Map.get(attrs, identificador_campo) do
+      nil ->
+        dar_de_alta(modulo, scope, attrs, renglones_spec, commit?) |> etiquetar_accion(:crear)
+
+      valor ->
+        campo_atom = String.to_existing_atom(identificador_campo)
+
+        case buscar_existente(modulo, campo_atom, valor) do
+          {:ok, nil} ->
+            dar_de_alta(modulo, scope, attrs, renglones_spec, commit?) |> etiquetar_accion(:crear)
+
+          {:ok, existente} ->
+            actualizar_existente(modulo, existente, scope, attrs, detalles_identificadores, renglones_spec, commit?) |> etiquetar_accion(:actualizar)
+
+          {:error, motivo} ->
+            {:error, {:error, motivo}}
+        end
+    end
+  end
+
+  # Tarea F1 -- de qué lado del bifurcado de arriba vino este resultado
+  # (:crear/:actualizar), para que la previsualización pueda mostrarlo
+  # (R8) sin tener que volver a adivinarlo del lado de la UI.
+  defp etiquetar_accion({:ok, registro}, accion), do: {:ok, {accion, registro}}
+  defp etiquetar_accion({:error, {:preview_ok, registro}}, accion), do: {:error, {:preview_ok, {accion, registro}}}
+  defp etiquetar_accion({:error, {:error, _motivo}} = error, _accion), do: error
+
+  defp dar_de_alta(modulo, scope, attrs, renglones_spec, commit?) do
+    Repo.transaction(fn ->
+      case CatalogoGenerico.crear(modulo, scope, attrs, renglones: renglones_spec) do
+        {:ok, registro} -> if commit?, do: registro, else: Repo.rollback({:preview_ok, registro})
+        {:error, motivo} -> Repo.rollback({:error, motivo})
+      end
+    end)
+  end
+
+  # Grupo D -- cada fila de detalle se parte en dos baldes por catálogo
+  # ("editar" un renglón que ya existe de ESTE encabezado, "nuevo" el
+  # resto, R7.1/R7.2/R7.4) ANTES de tocar nada, con la misma transacción
+  # atómica de siempre (si algo falla, la fila de encabezado entera se
+  # rechaza). "editar" pasa por MetaStateEngine.ejecutar_transicion/4
+  # (requiere "Guardar", R10/R12); "nuevo" por Renglones.crear_todos/3
+  # (no depende de "Guardar", R12) -- ambos dentro del mismo
+  # Repo.transaction para que sea todo o nada.
+  defp actualizar_existente(modulo, existente, scope, attrs, detalles_identificadores, renglones_spec, commit?) do
+    case particionar_renglones(existente.id, detalles_identificadores, renglones_spec) do
+      {:error, motivo} ->
+        {:error, {:error, motivo}}
+
+      {:ok, editar_por_catalogo, nuevo_por_catalogo} ->
+        catalogo_maestro = modulo.__schema__(:source)
+
+        Repo.transaction(fn ->
+          case aplicar_actualizacion(existente, scope, attrs, catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo) do
+            {:ok, actualizado} -> if commit?, do: actualizado, else: Repo.rollback({:preview_ok, actualizado})
+            {:error, motivo} -> Repo.rollback({:error, motivo})
+          end
+        end)
+    end
+  end
+
+  defp aplicar_actualizacion(existente, scope, attrs, catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo) do
+    with {:ok, actualizado} <- aplicar_encabezado(existente, scope, attrs, catalogo_maestro, editar_por_catalogo),
+         {:ok, _nuevos} <- Renglones.crear_todos(catalogo_maestro, existente.id, nuevo_por_catalogo) do
+      {:ok, actualizado}
+    end
+  end
+
+  # Bucket "editar" vacío en TODOS los detalles -> mismo camino de la
+  # tarea C2 (solo encabezado). Si algún detalle tiene algo para editar,
+  # el encabezado y esos renglones se mueven juntos vía la transición
+  # "Guardar" del maestro (R10: la MISMA regla que ya rige la edición
+  # manual de un renglón existente, CompliancePty C6) -- sin ella, la
+  # fila entera se rechaza (R11), nunca se editan los renglones "por la
+  # ventana" saltándose el motor de estados.
+  defp aplicar_encabezado(existente, scope, attrs, _catalogo_maestro, editar_por_catalogo) when map_size(editar_por_catalogo) == 0,
+    do: CatalogoGenerico.actualizar(existente, scope, attrs)
+
+  defp aplicar_encabezado(existente, _scope, attrs, catalogo_maestro, editar_por_catalogo) do
+    case MetaStateEngine.transicion_guardar(catalogo_maestro, existente.estado_id) do
+      nil ->
+        {catalogo, _items} = Enum.at(editar_por_catalogo, 0)
+        {:error, {:renglon_sin_guardar, catalogo}}
+
+      transicion ->
+        MetaStateEngine.ejecutar_transicion(existente, transicion.accion, attrs, renglones: editar_por_catalogo)
+    end
+  end
+
+  # Para cada catálogo detalle activo: sin campo_identificador_detalle
+  # configurado, TODAS sus filas van al balde "nuevo" (R7.4, sin cambios
+  # de comportamiento respecto de antes de esta spec). Con identificador,
+  # cada fila se busca por separado contra ESTE encabezado
+  # (buscar_renglon_existente/4) -- nunca se toca ni se borra un renglón
+  # que el archivo no menciona (R7.3).
+  defp particionar_renglones(_encabezado_id, _detalles_identificadores, renglones_spec) when map_size(renglones_spec) == 0,
+    do: {:ok, %{}, %{}}
+
+  defp particionar_renglones(encabezado_id, detalles_identificadores, renglones_spec) do
+    Enum.reduce_while(renglones_spec, {:ok, %{}, %{}}, fn {catalogo, items}, {:ok, editar_acc, nuevo_acc} ->
+      campo_identificador = Map.get(detalles_identificadores, catalogo)
+
+      case particionar_items(catalogo, encabezado_id, campo_identificador, items) do
+        {:ok, [], []} ->
+          {:cont, {:ok, editar_acc, nuevo_acc}}
+
+        {:ok, editar_items, nuevo_items} ->
+          editar_acc = if editar_items == [], do: editar_acc, else: Map.put(editar_acc, catalogo, editar_items)
+          nuevo_acc = if nuevo_items == [], do: nuevo_acc, else: Map.put(nuevo_acc, catalogo, nuevo_items)
+          {:cont, {:ok, editar_acc, nuevo_acc}}
+
+        {:error, motivo} ->
+          {:halt, {:error, "#{catalogo}: #{motivo}"}}
+      end
+    end)
+  end
+
+  defp particionar_items(_catalogo, _encabezado_id, campo_identificador, items) when campo_identificador in [nil, ""],
+    do: {:ok, [], items}
+
+  defp particionar_items(catalogo, encabezado_id, campo_identificador, items) do
+    modulo_detalle = MetaSchemaContext.modulo_por_nombre(catalogo)
+    campo_atom = String.to_existing_atom(campo_identificador)
+
+    Enum.reduce_while(items, {:ok, [], []}, fn attrs, {:ok, editar, nuevo} ->
+      case Map.get(attrs, campo_identificador) do
+        nil ->
+          {:cont, {:ok, editar, [attrs | nuevo]}}
+
+        valor ->
+          case buscar_renglon_existente(modulo_detalle, encabezado_id, campo_atom, valor) do
+            {:ok, nil} -> {:cont, {:ok, editar, [attrs | nuevo]}}
+            {:ok, renglon} -> {:cont, {:ok, [Map.put(attrs, "renglon_id", renglon.renglon_id) | editar], nuevo}}
+            {:error, motivo} -> {:halt, {:error, motivo}}
+          end
+      end
+    end)
+    |> case do
+      {:ok, editar, nuevo} -> {:ok, Enum.reverse(editar), Enum.reverse(nuevo)}
+      error -> error
+    end
+  end
+
+  defp interpretar_resultado({:ok, {accion, registro}}, indice, _fila_valores, _campos_meta),
+    do: %{fila: indice, resultado: :ok, accion: accion, registro: registro}
+
+  defp interpretar_resultado({:error, {:preview_ok, {accion, registro}}}, indice, _fila_valores, _campos_meta),
+    do: %{fila: indice, resultado: :ok, accion: accion, registro: registro}
 
   defp interpretar_resultado({:error, {:error, motivo}}, indice, fila_valores, campos_meta),
     do: %{fila: indice, resultado: :error, errores: errores_de(motivo, fila_valores, campos_meta)}
@@ -547,6 +737,15 @@ defmodule MetadataApp.MetaImportacionDatos do
 
   defp mensaje_de_motivo(:subtipo_dado_de_baja),
     do: "El subtipo de transacción de esta fila está dado de baja y no puede foliar — revisá el valor o avisale a un administrador."
+
+  # SPEC-SYS-0909202602 (tarea E1) -- errores propios del camino de
+  # actualización (Grupo C/D).
+  defp mensaje_de_motivo(:identificador_ambiguo),
+    do: "Hay más de un registro con ese identificador — no se puede determinar cuál actualizar."
+
+  defp mensaje_de_motivo({:renglon_sin_guardar, catalogo}),
+    do:
+      "Esta fila necesita actualizar un renglón de \"#{catalogo}\" que ya existe, pero el catálogo no tiene configurada la transición \"Guardar\" — no se puede editar un renglón existente sin ella."
 
   defp mensaje_de_motivo(motivo) when is_binary(motivo) or is_atom(motivo), do: to_string(motivo)
   defp mensaje_de_motivo(motivo), do: inspect(motivo)
@@ -643,6 +842,7 @@ defmodule MetadataApp.MetaImportacionDatos do
 
   defp sugerencia_para(mensaje) do
     cond do
+      mensaje =~ "no tiene configurada la transición" -> "Configurá la transición \"Guardar\" para este catálogo en el Motor de Estados — sin ella no se puede editar un renglón ya existente, ni a mano ni por importación."
       mensaje =~ "blank" or mensaje =~ "vacío" -> "Completá este campo — es obligatorio."
       mensaje =~ "taken" or mensaje =~ "ya existe" or mensaje =~ "único" -> "Ya existe un registro con este valor — tiene que ser único."
       mensaje =~ "no se encontró" -> "Revisá que el valor exista en el catálogo relacionado, escrito exactamente igual."

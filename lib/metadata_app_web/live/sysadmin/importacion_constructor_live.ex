@@ -174,7 +174,14 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
           "detalles" =>
             editor["detalles"]
             |> Enum.filter(& &1["activo"])
-            |> Enum.map(fn d -> %{"catalogo" => d["catalogo"], "activo" => true, "campos" => campos_a_definicion(d["elegidos"])} end)
+            |> Enum.map(fn d ->
+              %{
+                "catalogo" => d["catalogo"],
+                "activo" => true,
+                "campos" => campos_a_definicion(d["elegidos"]),
+                "campo_identificador_detalle" => d["campo_identificador_detalle"]
+              }
+            end)
         }
 
         attrs = %{"nombre" => editor["nombre"], "descripcion" => editor["descripcion"], "definicion" => definicion}
@@ -205,10 +212,19 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
   # vacía), y ningún detalle activo puede vincularse sin un campo
   # identificador de encabezado elegido (ver moduledoc de
   # MetaImportacionDatos) — nil si todo está bien.
+  #
+  # Los dos chequeos de "identificador incluido" (SPEC-SYS-0909202602,
+  # tarea A4) corren SIEMPRE que haya un identificador elegido, no solo
+  # cuando hay detalles activos: un identificador que no es columna del
+  # Excel nunca puede leerse de vuelta al reimportar, ni para vincular
+  # detalle ni para buscar el registro a actualizar.
   defp validar_detalles(editor) do
     detalles_activos = Enum.filter(editor["detalles"], & &1["activo"])
 
     cond do
+      not identificador_incluido?(editor["campo_identificador_encabezado"], editor["elegidos"]) ->
+        "El campo identificador del encabezado tiene que estar entre los campos incluidos del encabezado."
+
       detalles_activos == [] ->
         nil
 
@@ -218,10 +234,20 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
       Enum.any?(detalles_activos, &Enum.all?(&1["elegidos"], fn c -> !c["incluido"] end)) ->
         "Cada detalle activado necesita al menos un campo incluido."
 
+      Enum.any?(detalles_activos, &(!identificador_incluido?(&1["campo_identificador_detalle"], &1["elegidos"]))) ->
+        "El campo identificador de un detalle tiene que estar entre los campos incluidos de ese mismo detalle."
+
       true ->
         nil
     end
   end
+
+  # Sin identificador elegido, no hay nada que validar acá — el
+  # identificador siempre es opcional (R2 del requirements.md).
+  defp identificador_incluido?(campo, _elegidos) when campo in [nil, ""], do: true
+
+  defp identificador_incluido?(campo, elegidos),
+    do: Enum.any?(elegidos, &(&1["campo"] == campo and &1["incluido"]))
 
   defp campos_a_definicion(elegidos) do
     elegidos
@@ -287,7 +313,13 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
   # que usa el encabezado, para reusar fila_campo/1 y elegidos_desde_params/2
   # tal cual.
   defp detalle_inicial(%{catalogo: catalogo, etiqueta: etiqueta}, nil) do
-    %{"catalogo" => catalogo, "etiqueta" => etiqueta, "activo" => false, "elegidos" => elegidos_iniciales(MetaImportacionDatos.campos_disponibles(catalogo))}
+    %{
+      "catalogo" => catalogo,
+      "etiqueta" => etiqueta,
+      "activo" => false,
+      "elegidos" => elegidos_iniciales(MetaImportacionDatos.campos_disponibles(catalogo)),
+      "campo_identificador_detalle" => nil
+    }
   end
 
   defp detalle_inicial(%{catalogo: catalogo, etiqueta: etiqueta}, guardado) do
@@ -302,7 +334,13 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
         end
       end)
 
-    %{"catalogo" => catalogo, "etiqueta" => etiqueta, "activo" => true, "elegidos" => elegidos}
+    %{
+      "catalogo" => catalogo,
+      "etiqueta" => etiqueta,
+      "activo" => true,
+      "elegidos" => elegidos,
+      "campo_identificador_detalle" => guardado["campo_identificador_detalle"]
+    }
   end
 
   defp elegidos_desde_params(nil, elegidos_actuales), do: elegidos_actuales
@@ -336,7 +374,8 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
           %{
             detalle
             | "activo" => Map.get(dp, "activo") == "true",
-              "elegidos" => elegidos_desde_params(Map.get(dp, "elegidos"), detalle["elegidos"])
+              "elegidos" => elegidos_desde_params(Map.get(dp, "elegidos"), detalle["elegidos"]),
+              "campo_identificador_detalle" => Map.get(dp, "campo_identificador_detalle", detalle["campo_identificador_detalle"])
           }
       end
     end)
@@ -492,23 +531,37 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
           <% end %>
 
           <%= if @editor["paso"] == 2 do %>
+            <div class="mb-3">
+              <label class="block text-gray-500 mb-0.5">
+                Campo identificador del encabezado (ej. Folio) — vincula las hojas de detalle y, si se reimporta el mismo valor más adelante, actualiza ese registro en vez de crear uno duplicado
+              </label>
+              <select name="campo_identificador_encabezado" class="border border-gray-300 rounded-lg px-2 py-1.5">
+                <option value="">— Elegir —</option>
+                <option :for={c <- @campos_disponibles} value={c.campo} selected={@editor["campo_identificador_encabezado"] == c.campo}>{c.etiqueta}</option>
+              </select>
+            </div>
+
             <p :if={@editor["detalles"] == []} class="text-gray-400 mb-3">Este catálogo no tiene detalles configurados (maestro-detalle) — no hay nada que activar acá.</p>
 
             <div :if={@editor["detalles"] != []}>
-              <div class="mb-3">
-                <label class="block text-gray-500 mb-0.5">Campo identificador del encabezado (vincula las hojas de detalle — ej. Folio)</label>
-                <select name="campo_identificador_encabezado" class="border border-gray-300 rounded-lg px-2 py-1.5">
-                  <option value="">— Elegir —</option>
-                  <option :for={c <- @campos_disponibles} value={c.campo} selected={@editor["campo_identificador_encabezado"] == c.campo}>{c.etiqueta}</option>
-                </select>
-              </div>
-
               <div :for={d <- @editor["detalles"]} class="border border-gray-200 rounded-lg p-3 mb-2">
                 <label class="flex items-center gap-2 font-semibold text-gray-800 mb-2">
                   <input type="hidden" name={"detalles[#{d["catalogo"]}][activo]"} value="false" />
                   <input type="checkbox" name={"detalles[#{d["catalogo"]}][activo]"} value="true" checked={d["activo"]} class="accent-purple-600" />
                   {d["etiqueta"]}
                 </label>
+
+                <div :if={d["activo"]} class="mb-2">
+                  <label class="block text-gray-500 mb-0.5">
+                    Campo identificador de este detalle (opcional — permite actualizar un renglón puntual en vez de reemplazarlos todos al reimportar)
+                  </label>
+                  <select name={"detalles[#{d["catalogo"]}][campo_identificador_detalle]"} class="border border-gray-300 rounded-lg px-2 py-1.5">
+                    <option value="">— Ninguno —</option>
+                    <option :for={c <- MetadataApp.MetaImportacionDatos.campos_disponibles(d["catalogo"])} value={c.campo} selected={d["campo_identificador_detalle"] == c.campo}>
+                      {c.etiqueta}
+                    </option>
+                  </select>
+                </div>
 
                 <div :if={d["activo"]} class="flex items-center gap-2 mb-1 text-[11px]">
                   <button type="button" phx-click="wizard_marcar_todos" phx-value-scope="detalle" phx-value-catalogo={d["catalogo"]} phx-value-valor="true" class="text-purple-600 hover:text-purple-800 font-semibold">Marcar todos</button>
