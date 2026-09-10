@@ -133,3 +133,25 @@ corrigió a una sola línea con ellipsis — esto es un fix sobre R5
 el menú administrativo de este incremento, pero vive en el mismo
 `menu.css` así que se registra acá para que no quede sin rastro en
 ningún lado.
+
+**Segundo fix relacionado, mismo día (2026-09-10)** — también sobre R5,
+también fuera del alcance de este incremento: los íconos de página
+dentro del flyout (`.pc-sidebar-flyout .pc-nav-icon`) se veían
+desproporcionados. Encontrado en vivo con DevTools + varias vueltas de
+ajuste junto al usuario:
+1. 15px se veía "grande y raro" al lado de la etiqueta de 10px —
+   confirmado con el panel Computed que el tamaño SÍ se aplicaba
+   correcto (no era un problema de cascade/especificidad).
+2. Al bajar a 12px×12px exacto (contenedor = glyph), el ícono empezó a
+   verse CORTADO — el glyph de Material Symbols no entra completo en
+   su propio `font-size` nominal, y `overflow: hidden` del contenedor
+   se lo recortaba.
+3. Fix final: contenedor MÁS GRANDE que el glyph (aire de sobra para
+   no recortar), tamaño percibido controlado solo por el `font-size`
+   del glyph. Después de 2 ajustes en vivo con el usuario, quedó en
+   contenedor 20px / glyph 16px (subido gradualmente desde 16px/12px
+   hasta que confirmó "listo").
+
+Mismas 2 ubicaciones que el fix de arriba (`.pc-sidebar-flyout
+.pc-nav-icon` fuera del media query + su copia `!important` dentro del
+breakpoint móvil, por la misma razón defensiva ya documentada ahí).

@@ -1046,23 +1046,33 @@
   word-break: normal;
 }
 
+/* 15px se veía grande/pesado al lado de la etiqueta de 10px (encontrado
+   en vivo, 2026-09-10, confirmado con DevTools que el tamaño SÍ se
+   aplicaba correcto -- era desbalance de proporción, no una regla
+   perdiendo el cascade). El glyph de Material Symbols en sí queda en
+   12px (controla el tamaño percibido), pero el CONTENEDOR se deja un
+   poco más grande (16px) -- a 12px×12px exacto el glyph no entraba
+   completo en su propio "font-size" nominal y `overflow: hidden` se
+   lo recortaba (encontrado en vivo, mismo día: "el icono se ve
+   cortado, no se ve que dibujo es"). El aire extra evita el recorte
+   sin agrandar el ícono percibido. */
 .pc-sidebar-flyout .pc-nav-icon {
-  width: 15px;
-  height: 15px;
+  width: 20px;
+  height: 20px;
 }
 
 .pc-sidebar-flyout .pc-nav-icon svg {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
 }
 
 .pc-sidebar-flyout .pc-nav-icon .material-symbols-outlined {
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .pc-sidebar-flyout .pc-nav-icon img {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
 }
 
 .pc-sidebar-flyout .pc-menu-carpeta-summary {
@@ -1217,6 +1227,31 @@
     padding: 12px 14px;
     border-radius: 10px;
     min-height: 48px;
+  }
+
+  /* Verificado con DevTools (2026-09-10) que la regla de más abajo en
+     el archivo ya ganaba bien acá sin necesitar esto -- se deja como
+     refuerzo explícito de todos modos, mismo criterio defensivo que ya
+     usan las reglas de arriba en este media query (!important). Mismo
+     tamaño que la versión de escritorio -- contenedor 20px, glyph 16px
+     (el aire extra evita que overflow:hidden recorte el ícono). */
+  .pc-sidebar-flyout .pc-nav-icon {
+    width: 20px !important;
+    height: 20px !important;
+  }
+
+  .pc-sidebar-flyout .pc-nav-icon svg {
+    width: 16px !important;
+    height: 16px !important;
+  }
+
+  .pc-sidebar-flyout .pc-nav-icon .material-symbols-outlined {
+    font-size: 16px !important;
+  }
+
+  .pc-sidebar-flyout .pc-nav-icon img {
+    width: 16px !important;
+    height: 16px !important;
   }
 }
 

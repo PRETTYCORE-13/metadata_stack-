@@ -66,6 +66,15 @@ con el `phx-click` que fuerza `open=true` explícito) no revierta el
 estado ~8ms después — confirmado en vivo con un `MutationObserver`
 durante el desarrollo original.
 
+**Corregido 2026-09-10** (dos bugs reales, no requisitos nuevos — ver
+`tasks.md`, sección "Nota" al final): las etiquetas largas dentro del
+flyout partían en 2 líneas truncadas (ahora una sola línea + ellipsis),
+y los íconos de página (`.pc-sidebar-flyout .pc-nav-icon`) se veían
+desproporcionados — el contenedor tiene que ser MÁS GRANDE que el
+glyph (20px vs. 16px hoy) porque Material Symbols no entra completo en
+su propio `font-size` nominal; con contenedor = glyph exacto,
+`overflow: hidden` recorta el ícono.
+
 ## 5. Búsqueda del sidebar
 
 `FiltroMenu` (hook JS, `phx-update="ignore"`): filtra el árbol ya
