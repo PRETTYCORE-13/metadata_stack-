@@ -7,11 +7,14 @@ Documentación retroactiva — describe el mecanismo tal como existe en
 `MetadataAppWeb.MenuLayout.sidebar/1`, usado por `Layouts.app` en toda
 pantalla autenticada) + los hooks JS de `assets/js/app.js`.
 
-**§7 actualizada (2026-09-09, a pedido explícito)** — a diferencia del
-resto del documento (retroactivo, sin tocar código), §7 SÍ describe un
-cambio real todavía no implementado: la reorganización del menú
+**§7 actualizada (2026-09-09/10)** — a diferencia del resto del
+documento (retroactivo desde el día 0), §7 describe un incremento real
+que sí se planeó antes de construirse: la reorganización del menú
 administrativo en dos grupos + un segundo punto de entrada desde el
-sidebar. Ver `tasks.md` para la ejecución.
+sidebar (engrane) — **implementado y confirmado visualmente por el
+usuario**, ver `tasks.md` (Grupos A-F) para el detalle de ejecución,
+incluidas dos correcciones el mismo día (Grupo E: sacar el acceso
+desde el avatar; Grupo F: rediseño estilo flyout).
 
 ## 1. Fuente del árbol de navegación
 

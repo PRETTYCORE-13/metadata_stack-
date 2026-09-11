@@ -89,7 +89,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     {"referencia", "Catálogo"}
   ]
 
-  # Mismas 8 claves/etiquetas que @campos_control de BcMotorLive (Get
+  # Mismas 9 claves/etiquetas que @campos_control de BcMotorLive (Get
   # View) y @claves_control/@etiquetas_control de CatalogoLive -- acá para
   # ofrecerlas como opción de "Campo del catálogo" en un nodo tipo
   # "campo", además de los campos de negocio. "empresa"/"branch"/
@@ -98,10 +98,19 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   # alcance_field_asts/1 en MetaCatalogoGenerico). El render real
   # (resolución de valor + picker editable de branch/inventory/sales_unit)
   # vive en FichaLive.nodo_plantilla_render/1 para tipo "campo".
+  #
+  # "folio" agregado 2026-09-11 (SPEC-SYS-1109202607, hallazgo real): la
+  # feature de folio (SPEC-SYS-0109202601 R9) ya soportaba esta clave en
+  # FichaLive (@claves_campos_control, valor_legible_control/4) y en
+  # BcMotorLive/Get View desde que se construyó -- solo faltaba acá, así
+  # que un catálogo con folio no podía colocar un nodo "Folio" al armar
+  # una plantilla custom (solo lo veía en la fila fija de la plantilla
+  # automática).
   @campos_control [
     %{clave: "id", etiqueta: "ID", requiere_alcance?: false},
     %{clave: "estado", etiqueta: "Estado", requiere_alcance?: false},
     %{clave: "trn", etiqueta: "TRN", requiere_alcance?: false},
+    %{clave: "folio", etiqueta: "Folio", requiere_alcance?: false},
     %{clave: "empresa", etiqueta: "Empresa", requiere_alcance?: true},
     %{clave: "branch", etiqueta: "Sucursal", requiere_alcance?: true},
     %{clave: "inventory_location", etiqueta: "Almacén", requiere_alcance?: true},

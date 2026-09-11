@@ -835,17 +835,32 @@ const cargarMermaid = () => {
 
 const DiagramaMotor = {
   async mounted() {
+    this.definicionPintada = null
+    await this.pintar()
+  },
+  // Bug real (SPEC-SYS-1109202602 R10): `phx-update="ignore"` congela el
+  // CONTENIDO de este div para LiveView (necesario -- si no, cada
+  // re-render pisaría el SVG que Mermaid ya dibujó), pero el elemento
+  // SIGUE recibiendo sus propios atributos actualizados (`data-diagrama`)
+  // en cada diff, y `updated()` se dispara igual. Antes no existía este
+  // callback: editar un estado/transición mientras el tab Diagrama seguía
+  // abierto (o al volver a él sin recargar la página) dejaba el dibujo
+  // viejo en pantalla. Redibuja SOLO si la definición realmente cambió --
+  // mermaid.render() no es gratis, y `updated()` puede disparar por
+  // cualquier otro cambio de la página que no toque este div.
+  async updated() {
     await this.pintar()
   },
   async pintar() {
     const definicion = this.el.dataset.diagrama
-    if (!definicion) return
+    if (!definicion || definicion === this.definicionPintada) return
 
     try {
       const mermaid = await cargarMermaid()
       mermaid.initialize({startOnLoad: false, theme: "neutral", securityLevel: "strict"})
       const {svg} = await mermaid.render(`svg-${this.el.id}`, definicion)
       this.el.innerHTML = svg
+      this.definicionPintada = definicion
     } catch (e) {
       this.el.textContent = "No se pudo dibujar el diagrama."
       console.error("[DiagramaMotor]", e)

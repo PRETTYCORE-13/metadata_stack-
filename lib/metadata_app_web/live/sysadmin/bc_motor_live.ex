@@ -886,14 +886,22 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # CatalogoPermisosLive/pestaña Permisos, ver ese módulo — "revuelve
   # mucho" tenerlo separado de la config por rol en otra pestaña).
 
-  # Sub-filtro de fecha de "Filtros por default" — "rango" (necesita desde
-  # Y hasta, dos calendarios, sin precargar porque no hay un valor obvio
-  # para ninguno de los dos) / "actual", "primer_dia_anio", "ultimo_dia_anio"
-  # (sin calendario — son dinámicos, se recalculan solos contra la fecha de
-  # hoy en cada consulta, ver FiltrosDefault.rango_fecha/3) o "" para
-  # apagarlo — al cambiar de modo se limpian las fechas viejas para no
-  # dejar pegado un valor de "rango" si se cambia a otro modo (ver
-  # cambiar_filtro_fecha_valor/2 abajo).
+  # Sub-filtro de fecha de "Filtros por default" — 6 modos reales
+  # (`FiltrosDefault.modos_fecha/0`), todos dinámicos salvo "formula"
+  # (texto parseado por FormulaFecha, ver `rango_fecha/3`), o "" para
+  # apagarlo. `filtro_default_fecha_valor`/`valor_hasta` quedan en nil
+  # al cambiar de modo -- limpieza defensiva, ningún modo de la UI
+  # real los usa como fecha literal hoy.
+  #
+  # 2026-09-11 (SPEC-SYS-1109202606, hallazgo + decisión del usuario):
+  # existía un séptimo modo, "rango" (fecha fija desde/hasta con dos
+  # calendarios), que ningún botón de esta UI podía activar Y que
+  # `FiltrosDefault.rango_fecha/3` tampoco implementaba (caía al
+  # catch-all, no acotaba nada) -- código muerto de una versión
+  # anterior del vocabulario de modos. Se eliminó la rama de UI
+  # correspondiente en `FiltrosDefaultComponents.panel_filtros_default/1`
+  # y este `handle_event("cambiar_filtro_fecha_valor", ...)`, su único
+  # emisor real.
   def handle_event("cambiar_filtro_fecha_modo", %{"modo" => modo}, socket) do
     header = socket.assigns.header
 
@@ -906,19 +914,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     case MetaSchemaContext.actualizar_header(header, attrs) do
       {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
       {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar el filtro de fecha.")}
-    end
-  end
-
-  # "campo" es "desde"/"hasta" — solo el modo "rango" tiene calendario hoy
-  # (ver panel_filtros_default/1), los otros 3 modos de fecha son dinámicos
-  # y no disparan este evento.
-  def handle_event("cambiar_filtro_fecha_valor", %{"campo" => campo, "valor" => valor}, socket) do
-    header = socket.assigns.header
-    clave = if campo == "desde", do: "filtro_default_fecha_valor", else: "filtro_default_fecha_valor_hasta"
-
-    case MetaSchemaContext.actualizar_header(header, %{clave => valor}) do
-      {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
-      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la fecha.")}
     end
   end
 

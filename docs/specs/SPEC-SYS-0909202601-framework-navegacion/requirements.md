@@ -1,6 +1,6 @@
 # SPEC-SYS-0909202601 — Framework de Navegación
 
-**Documento:** Requirements · **Fase:** ✅ aprobada (2026-09-09) — documentación retroactiva, sin `tasks.md` (nada que construir todavía). Se actualiza acá primero cuando haya un cambio real que planear sobre el framework.
+**Documento:** Requirements · **Fase:** ✅ aprobada (2026-09-09), con un incremento real después (2026-09-09/10: menú administrativo reorganizado — ver `tasks.md`, Grupos A-F). Se actualiza acá primero cuando haya un cambio real que planear sobre el framework.
 
 **Alcance de esta spec**: documentar (retroactivo, ya implementado, sin
 tocar código) el "framework" — la estructura fija que envuelve toda
