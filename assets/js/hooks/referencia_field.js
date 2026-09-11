@@ -32,6 +32,42 @@ export default {
     this.texto.addEventListener("input", () => this.filtrar(this.texto.value))
     this.texto.addEventListener("blur", () => this.cerrar())
     this.lista.addEventListener("mousedown", (e) => this.onMousedownLista(e))
+
+    // Cierra en vez de dejar la posición vieja (ver posicionarLista más
+    // abajo) -- más simple que recalcular en cada scroll/resize, y el
+    // usuario la reabre con una tecla. `capture: true` en scroll porque
+    // el contenedor que hace scroll (no window) no burbujea el evento.
+    this.alScrollOCerrar = () => this.abierta() && this.cerrar()
+    window.addEventListener("scroll", this.alScrollOCerrar, true)
+    window.addEventListener("resize", this.alScrollOCerrar)
+  },
+
+  destroyed() {
+    window.removeEventListener("scroll", this.alScrollOCerrar, true)
+    window.removeEventListener("resize", this.alScrollOCerrar)
+  },
+
+  // Bug real (2026-09-10, catálogo Clientes, campo "Grupos"): este mismo
+  // combo vive dentro de un contenedor `overflow-hidden` (el redondeado de
+  // esquinas de la tarjeta, ver ficha_live.ex tab_datos/1) -- la lista
+  // (`position: absolute`) quedaba recortada/invisible cada vez que el
+  // campo caía cerca del borde inferior de esa tarjeta. Mismo tipo de bug
+  // ya resuelto antes para el flyout del menú del engrane (menu.css) --
+  // acá la solución es la misma idea pero calculada en JS: `position:
+  // fixed` con coordenadas reales del input (getBoundingClientRect),
+  // así la lista escapa de CUALQUIER ancestro con overflow, sin importar
+  // en qué catálogo/posición esté este campo.
+  posicionarLista() {
+    const r = this.texto.getBoundingClientRect()
+    Object.assign(this.lista.style, {
+      position: "fixed",
+      top: `${r.bottom + 2}px`,
+      left: `${r.left}px`,
+      width: `${r.width}px`,
+      right: "auto",
+      marginTop: "0",
+      zIndex: "9999",
+    })
   },
 
   // Referencia dependiente ("combo en cascada", ver
@@ -138,6 +174,7 @@ export default {
           )
           .join("")
       : `<li class="px-2 py-1 text-gray-400">Sin resultados</li>`
+    this.posicionarLista()
     this.lista.classList.remove("hidden")
   },
 

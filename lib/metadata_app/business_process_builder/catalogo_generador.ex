@@ -967,8 +967,21 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     end
   end
 
+  # Nombre de constraint explícito, SIN el default de Ecto ("<tabla>_<campo>_fkey"):
+  # con la convención de este proyecto (cada campo ya arrastra el nombre
+  # completo de su tabla como prefijo), el default de Ecto duplica ese
+  # prefijo -- dos campos de referencia cuyo nombre completo comparte
+  # los primeros ~63 bytes (ej. "..._dsd_mat_material" y
+  # "..._dsd_mat_material_precios") quedan con el MISMO nombre de
+  # constraint una vez que Postgres trunca en silencio a 63 bytes,
+  # y la migración revienta con "constraint ya existe" al intentar
+  # crear el segundo (encontrado en vivo, 2026-09-10, en
+  # pty_dsd_pedidos_material). Usar solo `campo` (ya único por catálogo,
+  # ver meta_schema_detail_unico_index) evita el doble prefijo y dejó
+  # mucho más margen antes de tocar el límite de 63 bytes.
   defp columna_migracion(campo, _tipo, %{tabla_referenciada: tabla_ref} = opciones),
-    do: "      add :#{campo}, references(:#{tabla_ref}), null: #{nulo?(opciones)}"
+    do:
+      "      add :#{campo}, references(:#{tabla_ref}, name: :\"#{campo}_fkey\"), null: #{nulo?(opciones)}"
 
   defp columna_migracion(campo, :string, %{texto_largo: true} = opciones),
     do: "      add :#{campo}, :text, null: #{nulo?(opciones)}"
@@ -1029,6 +1042,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     {columnas_folio, indices_folio} = columnas_folio(schema_context_name, header)
     {columnas_encab, indices_encab} = columnas_encabezado_detalle(schema_context_name, header)
     columnas_alcance = columnas_alcance(header)
+    indice_unico_negocio = indice_unico_negocio(schema_context_name, nombres_campos, nombre_indice, header)
 
     contenido = """
     defmodule MetadataApp.Repo.Migrations.#{modulo_migracion} do
@@ -1047,9 +1061,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
           add :fecha_registro, :utc_datetime, null: true
     #{columnas_trn}#{columnas_folio}#{columnas_encab}#{columnas_alcance}
         end
-
-        create unique_index(:#{schema_context_name}, [#{nombres_campos}], name: :#{nombre_indice})
-    #{indices_trn}#{indices_folio}#{indices_encab}
+    #{indice_unico_negocio}#{indices_trn}#{indices_folio}#{indices_encab}
       end
     end
     """
@@ -1080,6 +1092,22 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   end
 
   # SPEC-SYS-0109202601 (Administrador de Folios, design.md §4) —
+  # Índice único de negocio (todos los campos combinados) -- SALVO para
+  # un catálogo con folio (bug real 2026-09-11, pty_dsd_pedidos: dos
+  # pedidos legítimos con el mismo cliente/sucursal/fecha quedaban
+  # rechazados como "duplicados"). Un catálogo con folio es por diseño
+  # una serie de DOCUMENTOS repetibles -- el folio/TRN ya es su identidad
+  # real, exigir además unicidad de negocio no tiene sentido ahí. Para
+  # cualquier otro catálogo (maestro de datos, con o sin TRN) el índice
+  # sigue existiendo tal cual -- ahí SÍ previene filas duplicadas de
+  # verdad (dos Clientes/Marcas idénticas). Ver también el `folio?` de
+  # MetaCatalogoGenerico.__using__/1, que salteA el unique_constraint/3
+  # correspondiente en el changeset generado.
+  defp indice_unico_negocio(_schema_context_name, _nombres_campos, _nombre_indice, %{requiere_folio: true}), do: ""
+
+  defp indice_unico_negocio(schema_context_name, nombres_campos, nombre_indice, _header),
+    do: "\n    create unique_index(:#{schema_context_name}, [#{nombres_campos}], name: :#{nombre_indice})\n"
+
   # folio_serie/folio_numero solo se agregan si el header marcó
   # requiere_folio. Nullable a nivel columna (mismo criterio que
   # trn/ulid arriba): la garantía es de aplicación
@@ -1201,12 +1229,13 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
       |> Enum.join(", ")
 
     opciones_trn = opciones_trn_use(header)
+    opciones_folio = opciones_folio_use(header)
     opciones_detalle = opciones_detalle_use(header)
     opciones_alcance = opciones_alcance_use(header)
 
     contenido = """
     defmodule MetadataApp.MetaBusinessProcess.Catalogos.#{modulo} do
-      use MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico, tabla: "#{schema_context_name}", campos: [#{campos_literal}]#{opciones_trn}#{opciones_detalle}#{opciones_alcance}
+      use MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico, tabla: "#{schema_context_name}", campos: [#{campos_literal}]#{opciones_trn}#{opciones_folio}#{opciones_detalle}#{opciones_alcance}
     end
     """
 
@@ -1234,6 +1263,17 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
   defp opciones_trn_use(%{schema_es_transaccional: true, codigo_trn: codigo}), do: ", transaccional: true, codigo_trn: #{inspect(codigo)}"
   defp opciones_trn_use(_header), do: ""
+
+  # SPEC-SYS-0109202601 (Administrador de Folios) -- bug real encontrado
+  # en vivo (2026-09-10): `MetaCatalogoGenerico` soporta `folio: true`
+  # completo (agrega field :folio_serie/:folio_numero al schema, ver
+  # meta_catalogo_generico.ex), pero esta función que arma la línea
+  # `use` del .ex generado nunca lo pasaba -- la migración SÍ agregaba
+  # las columnas físicas (columnas_folio/2 más abajo), pero el struct de
+  # Ecto nunca las declaraba, así que ni se leían ni podían asignarse.
+  # Mismo patrón que opciones_trn_use/1 arriba.
+  defp opciones_folio_use(%{requiere_folio: true}), do: ", folio: true"
+  defp opciones_folio_use(_header), do: ""
 
   defp opciones_detalle_use(%{schema_encabezado_id: id}) when not is_nil(id) do
     maestro = MetaSchemaContext.obtener_header!(id)

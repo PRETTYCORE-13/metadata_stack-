@@ -17,6 +17,7 @@ defmodule MetadataApp.IdentificadoresTransaccionalesTest do
   alias MetadataApp.IdentificadoresTransaccionales
   alias MetadataApp.MetaFixtureAlcance
   alias MetadataApp.MetaStateEngine
+  alias MetadataApp.MetaSchema.Estado
   alias MetadataApp.MetaBusinessProcess.Catalogos.PtyFolioPerfiles
   alias MetadataApp.MetaBusinessProcess.Catalogos.PtySubtiposTransaccion
 
@@ -46,9 +47,35 @@ defmodule MetadataApp.IdentificadoresTransaccionalesTest do
   end
 
   defp perfil_fixture(header, attrs \\ %{}) do
+    asegurar_estado_inicial("pty_folio_perfiles")
     base = %{"documento" => header.id, "serie" => "AAAA", "numero_inicial" => 1}
     {:ok, perfil} = CatalogoGenerico.crear(PtyFolioPerfiles, :sistema, Map.merge(base, renombrar_subtipo(attrs)))
     perfil
+  end
+
+  # CatalogoGenerico.crear/2 ya no acepta un alta en un catálogo sin NI UN
+  # estado definido (2026-09-10, motor de estados obligatorio) --
+  # pty_folio_perfiles es un catálogo pty_* real (nunca viaja en git, ver
+  # feedback_pty_cleanup en memoria del proyecto) que en esta base de test
+  # nunca tuvo un solo estado configurado. No hace falta transición "alta"
+  # formal -- crear_simple/4 solo necesita estado_inicial/1 (ver
+  # catalogo_generico.ex).
+  defp asegurar_estado_inicial(catalogo) do
+    if is_nil(MetaStateEngine.estado_inicial(catalogo)) do
+      header = Repo.get_by!(Header, schema_context_name: catalogo)
+
+      %Estado{}
+      |> Estado.changeset(%{
+        meta_schema_header_id: header.id,
+        nombre: "inicial_test_#{System.unique_integer([:positive])}",
+        es_inicial: true,
+        orden: 1
+      })
+      |> Ecto.Changeset.put_change(:insert_guid, guid())
+      |> Repo.insert!()
+    end
+
+    :ok
   end
 
   # El campo público de subtipo en pty_folio_perfiles se renombró

@@ -29,11 +29,12 @@ defmodule MetadataAppWeb.CatalogoLive do
   # claves de control que allá, en el mismo orden de siempre (para
   # catálogos que nunca configuraron Header.orden_columnas_tabla, ver
   # construir_columnas_render/3).
-  @claves_control ~w(id estado trn empresa branch inventory_location sales_unit creado_por)
+  @claves_control ~w(id estado trn folio empresa branch inventory_location sales_unit creado_por)
   @etiquetas_control %{
     "id" => "ID",
     "estado" => "Estado",
     "trn" => "TRN",
+    "folio" => "Folio",
     "empresa" => "Empresa",
     "branch" => "Sucursal",
     "inventory_location" => "Almacén",
@@ -123,6 +124,7 @@ defmodule MetadataAppWeb.CatalogoLive do
     mostrar_id? = header.mostrar_id_en_tabla
     mostrar_estado? = estados_por_id != %{} and header.mostrar_estado_en_tabla
     mostrar_trn? = header.schema_es_transaccional and header.mostrar_trn_en_tabla
+    mostrar_folio? = header.requiere_folio and header.mostrar_folio_en_tabla
     mostrar_empresa? = header.alcance_habilitado and header.mostrar_empresa_en_tabla
     mostrar_branch? = header.alcance_habilitado and header.mostrar_branch_en_tabla
     mostrar_inventory_location? = header.alcance_habilitado and header.mostrar_inventory_location_en_tabla
@@ -136,6 +138,7 @@ defmodule MetadataAppWeb.CatalogoLive do
         "id" => mostrar_id?,
         "estado" => mostrar_estado?,
         "trn" => mostrar_trn?,
+        "folio" => mostrar_folio?,
         "empresa" => mostrar_empresa?,
         "branch" => mostrar_branch?,
         "inventory_location" => mostrar_inventory_location?,
@@ -700,11 +703,21 @@ defmodule MetadataAppWeb.CatalogoLive do
   defp valor_columna_export(%{tipo_columna: :id}, fila), do: fila.id
   defp valor_columna_export(%{tipo_columna: :estado}, fila), do: Map.get(fila, :estado_nombre)
   defp valor_columna_export(%{tipo_columna: :trn}, fila), do: Map.get(fila, :trn)
+  defp valor_columna_export(%{tipo_columna: :folio}, fila), do: formatear_folio(Map.get(fila, :folio_serie), Map.get(fila, :folio_numero))
   defp valor_columna_export(%{tipo_columna: :empresa}, fila), do: Map.get(fila, :empresa_nombre)
   defp valor_columna_export(%{tipo_columna: :branch}, fila), do: Map.get(fila, :branch_nombre)
   defp valor_columna_export(%{tipo_columna: :inventory_location}, fila), do: Map.get(fila, :inventory_nombre)
   defp valor_columna_export(%{tipo_columna: :sales_unit}, fila), do: Map.get(fila, :sales_unit_nombre)
   defp valor_columna_export(%{tipo_columna: :creado_por}, fila), do: Map.get(fila, :creado_por)
+
+  # SPEC-SYS-0109202601 §3.3 -- Serie+Folio se arma en la capa de
+  # presentación concatenando las dos columnas físicas, nunca se guarda
+  # un tercer string combinado. nil en cualquiera de las dos (folio
+  # todavía no asignado, o catálogo sin folio) -> "—", nunca "AAAA-"
+  # ni un crash.
+  defp formatear_folio(nil, _numero), do: "—"
+  defp formatear_folio(_serie, nil), do: "—"
+  defp formatear_folio(serie, numero), do: "#{serie}-#{numero}"
 
   # Elixlsx no acepta Decimal ni DateTime directo en una celda (mismo
   # motivo que MetaImportacionDatos.formatear_valor_crudo/1) — formatear_celda/2
@@ -1867,6 +1880,20 @@ defmodule MetadataAppWeb.CatalogoLive do
   defp celda_body(%{col: %{tipo_columna: :trn}} = assigns) do
     ~H"""
     <td data-col="trn" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700 font-mono" title={Map.get(@fila, :ulid)}>{Map.get(@fila, :trn)}</td>
+    """
+  end
+
+  # Map.get/2, no @fila.folio_serie -- mismo motivo que FichaLive con
+  # :trn (ver ese comentario): :folio_serie/:folio_numero solo existen
+  # en el struct si el header ya estaba requiere_folio: true cuando se
+  # generó ese schema (CatalogoGenerador.opciones_folio_use/1). Registros
+  # de antes de activar folio en un catálogo ya existente legítimamente
+  # no tienen folio asignado -- "—" en vez de nada.
+  defp celda_body(%{col: %{tipo_columna: :folio}} = assigns) do
+    assigns = assign(assigns, :folio_texto, formatear_folio(Map.get(assigns.fila, :folio_serie), Map.get(assigns.fila, :folio_numero)))
+
+    ~H"""
+    <td data-col="folio" class="px-2 py-2 text-[11px] sm:px-4 sm:py-1.5 sm:text-[10px] text-gray-700 font-mono">{@folio_texto}</td>
     """
   end
 

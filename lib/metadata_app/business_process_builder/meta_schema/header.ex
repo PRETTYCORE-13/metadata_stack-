@@ -64,6 +64,14 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :mostrar_estado_en_tabla, :boolean, default: true
     field :mostrar_trn_en_tabla, :boolean, default: true
 
+    # SPEC-SYS-0109202601 (Administrador de Folios), R9 (2026-09-10) --
+    # mismo criterio que mostrar_trn_en_tabla arriba (Serie+Folio nunca
+    # se edita, R2, así que esto es puro toggle de presentación). Se
+    # AND-ea en el lugar de uso con requiere_folio, igual que TRN se
+    # AND-ea con schema_es_transaccional -- un catálogo sin folio nunca
+    # muestra la columna sin importar este flag.
+    field :mostrar_folio_en_tabla, :boolean, default: true
+
     # Alcance de Datos (Fase 3, 2026-08-11) -- default false: filas de este
     # catálogo se ven/editan sin ningún filtro adicional hasta que un admin
     # lo prenda a mano (BcMotorLive, Fase 6). El "QUÉ TIPO" de alcance no
@@ -163,6 +171,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
           :mostrar_id_en_tabla,
           :mostrar_estado_en_tabla,
           :mostrar_trn_en_tabla,
+          :mostrar_folio_en_tabla,
           :alcance_habilitado,
           :mostrar_empresa_en_tabla,
           :mostrar_branch_en_tabla,

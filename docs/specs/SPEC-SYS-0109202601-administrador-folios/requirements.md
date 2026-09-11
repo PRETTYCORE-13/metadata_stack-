@@ -104,6 +104,9 @@ CUANDO la creación de una transacción falla después de haberse generado su fo
 ### R8. Subtipo dado de baja no folía (agregado 2026-09-01, a pedido explícito)
 CUANDO se pide un folio para una transacción cuyo Subtipo está dado de baja, EL SISTEMA DEBE rechazar la asignación — sin importar el canal (R5) ni si existe un perfil configurado para ese subtipo. Depende del catálogo "Subtipos de Transacción" (glosario, dependencia asumida en design.md §2), que nace junto con esta regla: cada subtipo tiene su propio ciclo de vida (Activo/Baja), independiente del estado de la transacción que lo usa.
 
+### R9. Visibilidad de Serie+Folio donde el usuario ya trabaja (agregado 2026-09-10, a pedido explícito)
+CUANDO un documento con folio asignado se consulta — vía la API (GET, y también en la respuesta del POST que lo crea, ya que el folio nace en esa misma operación, R2) o desde la Ficha 360° — EL SISTEMA DEBE mostrar su Serie+Folio. CUANDO un administrador configura las columnas visibles de la tabla/grid de un catálogo, EL SISTEMA DEBE ofrecer Serie+Folio como una columna disponible para mostrar (mismo criterio ya usado para TRN/Estado/ID, todas opcionales por catálogo). En ningún caso (API, Ficha 360°, grid) el campo es editable — Serie+Folio nunca se escribe a mano (R2), solo se lee.
+
 ## 5. Requisitos no funcionales
 
 <!-- Concurrencia, seguridad, rendimiento, auditoría -- lo que no es

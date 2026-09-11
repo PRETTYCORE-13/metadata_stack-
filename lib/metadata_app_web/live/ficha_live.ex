@@ -55,11 +55,12 @@ defmodule MetadataAppWeb.FichaLive do
   # -- acá es donde un nodo tipo "campo" con `propiedades["campo"]` en una de
   # estas claves (en vez de un schema_context_field real) se resuelve a un
   # valor mostrable. Ver campo_control_row/1 más abajo.
-  @claves_campos_control ~w(id estado trn empresa branch inventory_location sales_unit creado_por)
+  @claves_campos_control ~w(id estado trn folio empresa branch inventory_location sales_unit creado_por)
   @etiquetas_campos_control %{
     "id" => "ID",
     "estado" => "Estado",
     "trn" => "TRN",
+    "folio" => "Folio",
     "empresa" => "Empresa",
     "branch" => "Sucursal",
     "inventory_location" => "Almacén",
@@ -1653,6 +1654,30 @@ defmodule MetadataAppWeb.FichaLive do
   defp formatear_error({:alcance_requerido, "inventory_id"}),
     do: "No tienes un Almacén activo — elegí uno desde la banda de pie para poder crear este registro."
 
+  # MetadataApp.IdentificadoresTransaccionales.asignar/4 -- errores de
+  # CONFIGURACIÓN del catálogo (Perfil de Folio), no de lo que el usuario
+  # cargó en el formulario. Mismos mensajes que ya usa
+  # MetaImportacionDatos.mensaje_de_motivo/1 para el camino de Excel (bug
+  # real 2026-09-10, catálogo Pedidos: este camino interactivo mostraba
+  # "No se pudo completar la operación." sin ninguna pista, mientras el
+  # de importar ya traducía el mismo error de forma clara).
+  defp formatear_error(:perfil_no_encontrado),
+    do: "Este catálogo requiere folio, pero no tiene ningún Perfil de Folio configurado — avisale a un administrador."
+
+  defp formatear_error(:configuracion_ambigua),
+    do: "Hay más de un Perfil de Folio que aplica a este registro — la configuración del catálogo es ambigua."
+
+  defp formatear_error(:subtipo_dado_de_baja),
+    do: "El subtipo de transacción elegido está dado de baja y no puede foliar."
+
+  # CatalogoGenerico.crear_simple_o_rechazar/4 (2026-09-10, a pedido
+  # explícito): un catálogo BC de negocio sin motor de estados configurado
+  # (sin transición "alta") ya no puede recibir altas -- bug real detectado
+  # en vivo (pty_dsd_mat_marca aceptaba datos sin tener un solo estado
+  # definido).
+  defp formatear_error(:motor_no_configurado),
+    do: "Este catálogo no tiene un motor de estados configurado — un administrador tiene que definir al menos un estado inicial y una transición \"alta\" en BC Motor antes de poder registrar datos acá."
+
   defp formatear_error(_otro), do: "No se pudo completar la operación."
 
   # El botón de guardar lleva la etiqueta real de la transición "guardar"
@@ -1720,6 +1745,10 @@ defmodule MetadataAppWeb.FichaLive do
       # marcado transaccional pero el módulo todavía no se regeneró/
       # publicó con ese campo (hallazgo real 2026-08-04, pty_gasto_diario).
       |> assign(:trn_registro, Map.get(assigns.registro, :trn))
+      # Map.get/2 dos veces, mismo motivo que :trn arriba (:folio_serie/
+      # :folio_numero solo existen si el header ya era requiere_folio:
+      # true cuando se generó este schema).
+      |> assign(:folio_registro, formatear_folio(Map.get(assigns.registro, :folio_serie), Map.get(assigns.registro, :folio_numero)))
       |> assign(:contexto_formula, contexto_formula)
       |> assign(
         :valores_calculados,
@@ -1948,6 +1977,10 @@ defmodule MetadataAppWeb.FichaLive do
             <div :if={@header.schema_es_transaccional and @trn_registro} class="flex justify-between gap-2">
               <dt class="text-gray-500">TRN</dt>
               <dd class="text-gray-900 font-medium text-right font-mono">{@trn_registro}</dd>
+            </div>
+            <div :if={@header.requiere_folio and @folio_registro} class="flex justify-between gap-2">
+              <dt class="text-gray-500">Serie-Folio</dt>
+              <dd class="text-gray-900 font-medium text-right font-mono">{@folio_registro}</dd>
             </div>
           </dl>
         </div>
@@ -3527,6 +3560,16 @@ defmodule MetadataAppWeb.FichaLive do
 
   defp valor_legible_control("id", registro, _estados_por_id, _tabla), do: Map.get(registro, :id)
   defp valor_legible_control("trn", registro, _estados_por_id, _tabla), do: Map.get(registro, :trn)
+  defp valor_legible_control("folio", registro, _estados_por_id, _tabla), do: formatear_folio(Map.get(registro, :folio_serie), Map.get(registro, :folio_numero))
+
+  # A diferencia de la versión de catalogo_live.ex (que devuelve "—"
+  # para una celda de tabla, mismo criterio que el resto de columnas
+  # ahí), acá devuelve nil sin asignar -- mismo estilo que trn_registro
+  # (Map.get crudo), para que el `:if` de la fila oculte la fila entera
+  # en vez de mostrar un guion suelto cuando no hay folio.
+  defp formatear_folio(nil, _numero), do: nil
+  defp formatear_folio(_serie, nil), do: nil
+  defp formatear_folio(serie, numero), do: "#{serie}-#{numero}"
   defp valor_legible_control("estado", registro, estados_por_id, _tabla), do: Map.get(estados_por_id, registro.estado_id)
   defp valor_legible_control("branch", registro, _estados_por_id, _tabla), do: valor_dimension_alcance(:branch, Map.get(registro, :branch_id))
 

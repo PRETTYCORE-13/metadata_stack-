@@ -205,3 +205,72 @@ design.md §2.
     preexistentes) y con scripts de humo contra `dev` real (rollback,
     sin residuo) — casos válido e inválido de la nota de alcance de
     §4.
+
+## Grupo I — R9: visibilidad de Serie+Folio ✅ (bug de fondo) / ⏳ (UI pendiente)
+
+> Disparado por: "en el GET y POST debemos poder verlos. jamás se
+> editan, pero si se debemos vizualizarlo en la ficha 360 y en el GET
+> en el grid de campos a mostrar" — ver `requirements.md` R9,
+> `design.md` §7.
+
+32. [x] **Bug real encontrado y corregido**: `crear_schema/4` nunca
+    agregaba `folio: true` a la línea `use MetaCatalogoGenerico` del
+    `.ex` generado (le faltaba el equivalente de `opciones_trn_use/1`)
+    — la tabla física tenía `folio_serie`/`folio_numero` pero el struct
+    de Ecto no los declaraba, así que ni se podían leer ni asignar.
+    Agregada `opciones_folio_use/1`, mismo patrón que la de TRN.
+33. [x] `pty_dsd_pedidos.ex` regenerado con el fix — confirmado con
+    script real: `PtyDsdPedidos.__schema__(:fields)` ahora incluye
+    `:folio_serie`/`:folio_numero`. Migración/`.ex` huérfanos del
+    intento fallido (tabla ya existía) limpiados a mano.
+34. [x] `mix test`: 517 tests, 0 failures. Servidor reiniciado con el
+    fix.
+35. [x] Confirmado por lectura de código que el GET/POST de la API
+    (`CatalogoController` → `CatalogoGenerico.serializar/2`) YA
+    incluye `folio_serie`/`folio_numero` en el JSON sin tocar el
+    controller — `Map.from_struct` + drop-list que no los excluye.
+    Sin este bug corregido, esos campos ni existían en el struct para
+    serializar.
+36. [x] `mostrar_folio_en_tabla` (boolean, **default `true`** — no
+    `false`, mismo criterio que `mostrar_id/estado/trn_en_tabla`, ver
+    header.ex) agregado a `meta_schema_header` vía migración
+    `20260910040000_agregar_mostrar_folio_en_tabla.exs`, y al cast list
+    del changeset.
+37. [x] Toggle agregado a `@campos_control` de `BcMotorLive` — la UI de
+    "Get View" (checkbox, orden, drag-and-drop) es 100% data-driven
+    desde esa lista, así que no hizo falta tocar ningún template a
+    mano para que el checkbox "Folio" aparezca y guarde.
+38. [x] Columna condicional en `CatalogoLive`: `@claves_control`/
+    `@etiquetas_control`, flag `mostrar_folio? = header.requiere_folio
+    and header.mostrar_folio_en_tabla`, `celda_body/1` y
+    `valor_columna_export/2` para `tipo_columna: :folio` — concatena
+    `folio_serie`+`folio_numero` vía `formatear_folio/2` (nunca guarda
+    un string combinado, §3.3), "—" si falta cualquiera de las dos
+    (catálogo con folio pero registro previo a activarlo).
+39. [x] Sección de solo lectura en `FichaLive` — fila "Serie-Folio"
+    junto a la de TRN existente, mismo patrón exacto
+    (`:if={@header.requiere_folio and @folio_registro}`,
+    `Map.get/2` nunca acceso directo al campo — mismo motivo de
+    seguridad que ya documentaba el comentario de `:trn_registro`).
+    También agregado a `@claves_campos_control`/`valor_legible_control`
+    para que esté disponible en plantillas de Ficha personalizadas,
+    consistente con TRN ahí también.
+40. [x] **Bonus, no pedido pero necesario para consistencia**: agregado
+    también a `MetaSchemaContext.exportar_header/2` (`.meta.json`) y a
+    `MetaImportExport.sincronizar_columnas_estructurales/2` — este
+    último es EXACTAMENTE el punto que la memoria del proyecto marca
+    como bug recurrente ("nuevas propiedades de metadata se olvidan en
+    la whitelist de importar_contexto/1") — de no agregarlo acá, el
+    toggle se hubiera perdido en el próximo `mix motor.publicar`/bundle
+    import de cualquier catálogo con folio.
+41. [x] Verificación real: `mix test` (517 tests, 0 failures) +
+    `PtyDsdPedidos.__schema__(:fields)` confirmado con `folio_serie`/
+    `folio_numero` reales (antes ni existían como llave del struct,
+    daba `KeyError`). Verificación end-to-end COMPLETA (API + tabla +
+    Ficha con un Pedido real) quedó bloqueada por datos de negocio que
+    todavía no existen en este ambiente (catálogos "Clientes Operación"
+    y "RFC Admin" están vacíos, campos obligatorios de `pty_dsd_pedidos`)
+    — no es parte de este bug, es data pendiente de cargar del lado del
+    usuario. Confirmado sin residuo: el perfil de prueba se insertó y
+    se hizo rollback dentro de una transacción, `select count(*)` post
+    devuelve 0.

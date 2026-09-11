@@ -361,7 +361,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
       case MetadataApp.MetaStateEngine.transicion_alta(catalogo) do
         nil ->
           header = MetaSchemaContext.obtener_header_por_nombre(catalogo)
-          crear_simple(schema_mod, attrs, renglones_spec, header)
+          crear_simple_o_rechazar(schema_mod, attrs, renglones_spec, header)
 
         transicion ->
           schema_mod
@@ -371,6 +371,38 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
 
     auditar_alta(resultado, catalogo, contexto)
   end
+
+  # Decisión explícita (2026-09-10, a pedido): un catálogo BC de NEGOCIO
+  # (schema_encabezado_id nil -- no es detalle de ningún maestro) sin NI
+  # UN SOLO estado definido ya no puede recibir altas -- antes caía en
+  # silencio al modo "simple" (crear_simple/4, sin estado_id), lo que
+  # dejaba insertar datos en un catálogo con CERO estados configurados
+  # (bug real: pty_dsd_mat_marca). El gate es `estado_inicial/1`, NO
+  # `transicion_alta/1` -- crear_simple/4 YA sabe asignar el estado
+  # inicial de un catálogo que tiene estados pero todavía no tiene la
+  # transición "alta" formal cableada (una config intermedia válida
+  # mientras se arma el BC, ver asignar_estado_inicial/2 más abajo);
+  # exigir la transición acá bloquearía ESE caso también, que sí es
+  # válido -- lo que nunca fue válido es CERO estados.
+  #
+  # Un catálogo DETALLE (schema_encabezado_id no nil) sigue usando
+  # crear_simple/4 sin motor propio -- por diseño, sus filas nacen como
+  # parte del alta del MAESTRO (ver Renglones.crear_todos/3, que llama
+  # este mismo crear/4 para cada renglón) y jamás tuvieron ni van a tener
+  # su propio estado; exigirlo ahí rompería TODO catálogo maestro-detalle
+  # del sistema.
+  defp crear_simple_o_rechazar(schema_mod, attrs, renglones_spec, %{schema_encabezado_id: nil} = header) do
+    catalogo = schema_mod.__schema__(:source)
+
+    if is_nil(MetadataApp.MetaStateEngine.estado_inicial(catalogo)) do
+      {:error, :motor_no_configurado}
+    else
+      crear_simple(schema_mod, attrs, renglones_spec, header)
+    end
+  end
+
+  defp crear_simple_o_rechazar(schema_mod, attrs, renglones_spec, header),
+    do: crear_simple(schema_mod, attrs, renglones_spec, header)
 
   ## Alcance de Datos en escritura (Fase 4b, 2026-08-11) — ver el moduledoc
   ## de MetadataApp.Autenticacion.Scope. A diferencia de la lectura

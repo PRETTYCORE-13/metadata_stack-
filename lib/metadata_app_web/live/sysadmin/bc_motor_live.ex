@@ -55,6 +55,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     %{clave: "id", etiqueta: "ID", visible_key: :mostrar_id_en_tabla, requiere_alcance?: false},
     %{clave: "estado", etiqueta: "Estado", visible_key: :mostrar_estado_en_tabla, requiere_alcance?: false},
     %{clave: "trn", etiqueta: "TRN", visible_key: :mostrar_trn_en_tabla, requiere_alcance?: false},
+    %{clave: "folio", etiqueta: "Folio", visible_key: :mostrar_folio_en_tabla, requiere_alcance?: false},
     %{clave: "empresa", etiqueta: "Empresa", visible_key: :mostrar_empresa_en_tabla, requiere_alcance?: true},
     %{clave: "branch", etiqueta: "Sucursal", visible_key: :mostrar_branch_en_tabla, requiere_alcance?: true},
     %{clave: "inventory_location", etiqueta: "Almacén", visible_key: :mostrar_inventory_location_en_tabla, requiere_alcance?: true},
@@ -1433,36 +1434,56 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   def handle_event("guardar_transicion", params, socket) do
     accion = String.trim(params["accion"] || "")
     campos_editables = params |> Map.get("campos_editables", []) |> List.wrap() |> Enum.reject(&(&1 == ""))
+    origen_id = nil_si_vacio(params["estado_origen_id"])
 
     attrs = %{
       "meta_schema_header_id" => socket.assigns.header.id,
       "accion" => accion,
       "etiqueta" => String.trim(params["etiqueta"] || ""),
-      "estado_origen_id" => nil_si_vacio(params["estado_origen_id"]),
+      "estado_origen_id" => origen_id,
       "estado_destino_id" => params["estado_destino_id"],
       "campos_editables" => campos_editables
     }
 
-    resultado =
-      case params["registro_id"] do
-        "" ->
-          MetaEstadosAdmin.crear_transicion(attrs)
+    # Encontrado en vivo (2026-09-10): sin esto, una transición sin
+    # "Estado origen" (la entrada al catálogo, el botón "Nuevo") con
+    # cualquier acción que no fuera EXACTO "alta" (ej. "altaaa", un typo
+    # real) se guardaba sin aviso -- MetaStateEngine.transicion_alta/1
+    # compara `accion == "alta"` a secas, así que esa transición quedaba
+    # muerta: el catálogo pasaba validar_completo/3 (acepta un estado
+    # inicial marcado aparte como suficiente) pero nunca mostraba el
+    # botón "Nuevo", sin ningún mensaje que explicara por qué. Chequeo
+    # temprano (no vive en el `case resultado` de abajo porque ese
+    # espera un changeset real para resumen_errores/1, esto es un
+    # mensaje de texto plano). Mayúsculas no cuentan (se normalizan
+    # solas al guardar, Transicion.normalizar_accion/1).
+    if is_nil(origen_id) and String.downcase(accion) != "alta" do
+      mensaje =
+        "Una transición sin \"Estado origen\" es la ENTRADA al catálogo (el botón \"Nuevo\") — el motor solo la reconoce si la acción es exactamente \"alta\", no \"#{accion}\". La etiqueta sí puede decir lo que quieras."
 
-        id ->
-          transicion = Enum.find(socket.assigns.transiciones, &(&1.id == String.to_integer(id)))
-          MetaEstadosAdmin.actualizar_transicion(transicion, attrs)
+      {:noreply, update(socket, :transicion_form, &Map.put(&1, "error", mensaje))}
+    else
+      resultado =
+        case params["registro_id"] do
+          "" ->
+            MetaEstadosAdmin.crear_transicion(attrs)
+
+          id ->
+            transicion = Enum.find(socket.assigns.transiciones, &(&1.id == String.to_integer(id)))
+            MetaEstadosAdmin.actualizar_transicion(transicion, attrs)
+        end
+
+      case resultado do
+        {:ok, _transicion} ->
+          {:noreply,
+           socket
+           |> assign(:transicion_form, nil)
+           |> put_flash(:info, "Transición \"#{accion}\" guardada.")
+           |> cargar_motor()}
+
+        {:error, changeset} ->
+          {:noreply, update(socket, :transicion_form, &Map.put(&1, "error", resumen_errores(changeset)))}
       end
-
-    case resultado do
-      {:ok, _transicion} ->
-        {:noreply,
-         socket
-         |> assign(:transicion_form, nil)
-         |> put_flash(:info, "Transición \"#{accion}\" guardada.")
-         |> cargar_motor()}
-
-      {:error, changeset} ->
-        {:noreply, update(socket, :transicion_form, &Map.put(&1, "error", resumen_errores(changeset)))}
     end
   end
 

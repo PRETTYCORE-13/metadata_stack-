@@ -316,8 +316,15 @@ defmodule MetadataApp.MetaStateEngine do
     )
   end
 
-  defp obtener_header_por_nombre!(catalogo),
-    do: Repo.get_by!(Header, schema_context_name: catalogo)
+  # Encontrado en vivo (2026-09-10): sin filtrar por delete_guid, un
+  # catálogo borrado (soft-delete) con el mismo schema_context_name que
+  # uno nuevo (nombre reutilizado tras SPEC-SYS-0909202601's fix del
+  # índice único) hacía que Repo.get_by! encontrara 2 filas y explotara
+  # con Ecto.MultipleResultsError -- mismo criterio que ya usa
+  # MetaSchemaContext.obtener_header_por_nombre/1.
+  defp obtener_header_por_nombre!(catalogo) do
+    Repo.one!(from h in Header, where: h.schema_context_name == ^catalogo and is_nil(h.delete_guid))
+  end
 
   # --- Paso 1: resolución estructural ---------------------------------------
 

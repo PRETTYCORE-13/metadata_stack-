@@ -6,10 +6,51 @@ defmodule MetadataAppWeb.FichaLiveAuditoriaTest do
 
   alias MetadataApp.Repo
   alias MetadataApp.Autenticacion.{Empresa, Rol, UsuarioEmpresa}
-  alias MetadataApp.MetaSchema.Auditoria
+  alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
+  alias MetadataApp.MetaSchema.{Auditoria, Estado, Transicion}
   alias MetadataApp.Permissions
 
   import Ecto.Query
+
+  defp guid, do: Ecto.UUID.generate() |> String.replace("-", "")
+
+  # CatalogoGenerico.crear/2 ya no acepta un alta en un catálogo sin NI UN
+  # estado definido (2026-09-10, motor de estados obligatorio) --
+  # meta_fixture_cliente es un fixture PERMANENTE compartido con otros
+  # archivos de test, que arman/desarman sus propios estados por test
+  # (transacción de sandbox, se revierte sola). A diferencia de un test
+  # contra CatalogoGenerico.crear/2 directo (que solo necesita
+  # estado_inicial/1), este archivo maneja el FORM real de FichaLive --
+  # sin una transición "alta" con campos_editables, el form monta pero
+  # con TODOS los inputs deshabilitados (campos_alta == []), y
+  # render_submit no encuentra el input a completar. Hace falta la
+  # transición completa, no solo el estado.
+  defp asegurar_estado_inicial(catalogo) do
+    header = Repo.get_by!(Header, schema_context_name: catalogo)
+
+    estado =
+      %Estado{}
+      |> Estado.changeset(%{
+        meta_schema_header_id: header.id,
+        nombre: "inicial_auditoria_#{System.unique_integer([:positive])}",
+        es_inicial: true,
+        orden: 1
+      })
+      |> Ecto.Changeset.put_change(:insert_guid, guid())
+      |> Repo.insert!()
+
+    %Transicion{}
+    |> Transicion.changeset(%{
+      meta_schema_header_id: header.id,
+      accion: "alta",
+      etiqueta: "Alta",
+      estado_origen_id: nil,
+      estado_destino_id: estado.id,
+      campos_editables: ["meta_fixture_cliente_nombre", "meta_fixture_cliente_edad", "meta_fixture_cliente_venta"]
+    })
+    |> Ecto.Changeset.put_change(:insert_guid, guid())
+    |> Repo.insert!()
+  end
 
   # Prueba de integración real (roadmap #6, Fase 2): confirma que
   # get_connect_info/2 en FichaLive.mount/3 no explota bajo un socket
@@ -38,6 +79,7 @@ defmodule MetadataAppWeb.FichaLiveAuditoriaTest do
   end
 
   test "alta real vía FichaLive queda auditada con usuario/ip/user-agent", %{conn: conn, usuario: usuario} do
+    asegurar_estado_inicial("meta_fixture_cliente")
     {:ok, view, _html} = live(conn, "/registro/meta_fixture_cliente/nuevo")
 
     campos = %{
@@ -80,6 +122,8 @@ defmodule MetadataAppWeb.FichaLiveAuditoriaTest do
   # bug (el suite completo no lo detectaba porque no había ningún test
   # que viera un registro EXISTENTE, solo "/nuevo").
   test "ver un registro ya persistido no explota (KeyError detalle_renglones_eliminados)", %{conn: conn} do
+    asegurar_estado_inicial("meta_fixture_cliente")
+
     campos = %{
       "meta_fixture_cliente_nombre" => "Ver Existente",
       "meta_fixture_cliente_edad" => "40",

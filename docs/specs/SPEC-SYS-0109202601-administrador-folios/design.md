@@ -266,6 +266,45 @@ CREADO (hoy `BcMotorLive` no tiene ningún campo de este spec — ni
 editable después del alta; activarlo en un catálogo existente sigue
 siendo SQL/consola + `CatalogoGenerador.generar/1` a mano).
 
+**Bug real encontrado y corregido (2026-09-10)**: `crear_schema/4`
+(la función que escribe el `.ex` del catálogo) llamaba
+`opciones_trn_use/1` para agregar `transaccional: true, codigo_trn:
+...` a la línea `use MetaCatalogoGenerico`, pero nunca tenía el
+equivalente para `folio: true` — ninguna función `opciones_folio_use/1`
+existía. Consecuencia real: la migración SÍ agregaba las columnas
+físicas `folio_serie`/`folio_numero` (`columnas_folio/2`/`asegurar_folio/3`,
+correctos desde el principio), pero el struct de Ecto nunca las
+declaraba (`MetaCatalogoGenerico` sí soporta `folio: true` completo,
+nunca se lo pasaban) — ni se podían leer con `Repo.get`/`Repo.all` ni
+asignar. **Todo catálogo con `requiere_folio: true` generado antes de
+este fix tiene la tabla física correcta pero el `.ex` viejo sin el
+campo** — necesita regenerarse (borrar el `.ex`, si la tabla ya existe
+escribir el `.ex` corregido a mano en vez de dejar que `generar/1`
+intente un `CREATE TABLE` que va a chocar).
+
+## 7. Visibilidad de Serie+Folio (R9, agregado 2026-09-10)
+
+**API (GET index/show, POST create)**: ya satisfecho sin cambios de
+código, una vez corregido el bug de arriba. `CatalogoController`
+serializa con `CatalogoGenerico.serializar/2`, que hace
+`Map.from_struct(registro) |> Map.drop([:__meta__, :insert_guid,
+:update_guid, :delete_guid])` — cualquier campo del struct que no esté
+en ese drop-list sale en el JSON automáticamente. Con `folio_serie`/
+`folio_numero` ahora declarados en el schema (fix de arriba), ya
+aparecen en la respuesta sin tocar el controller.
+
+**Ficha 360° y grid de columnas — implementado** (ver `tasks.md` Grupo
+I): mismo patrón que TRN (`mostrar_trn_en_tabla` en
+`meta_schema_header`) — nuevo campo `mostrar_folio_en_tabla` (boolean,
+default `true`, mismo criterio que `mostrar_id/estado/trn_en_tabla`),
+toggle en la sección "Get View" de `BcMotorLive`
+junto a los demás `mostrar_*_en_tabla`, columna condicional en
+`CatalogoLive` (arma "Serie-Folio" concatenando ambas columnas, no un
+string guardado aparte — mismo criterio que §3.3), y sección de solo
+lectura en `FichaLive` (siempre visible si el catálogo tiene
+`requiere_folio: true`, sin depender del toggle de la tabla — mismo
+criterio que TRN en la ficha).
+
 ## 5. Módulo y API pública
 
 **`MetadataApp.IdentificadoresTransaccionales`** reemplaza el punto de

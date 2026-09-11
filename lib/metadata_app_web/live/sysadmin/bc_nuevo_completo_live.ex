@@ -434,6 +434,29 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       destino == "" ->
         {:noreply, update(socket, :transicion_form, &Map.put(&1, "error", "Elegí un estado destino."))}
 
+      # Encontrado en vivo (2026-09-10): sin esto, una transición sin
+      # "Estado origen" (la entrada al catálogo, el botón "Nuevo") con
+      # cualquier nombre que no fuera EXACTO "alta" (ej. "altaaa", un
+      # typo real) se guardaba sin ningún aviso -- MetaStateEngine.
+      # transicion_alta/1 compara `accion == "alta"` a secas, así que esa
+      # transición quedaba muerta: el catálogo entero se armaba "bien" a
+      # los ojos de validar_completo/3 (que acepta un estado inicial
+      # marcado aparte como suficiente) pero sin botón "Nuevo" nunca, sin
+      # ningún mensaje que explicara por qué. Mayúsculas no cuentan acá
+      # (se normalizan solas al guardar, ver Transicion.normalizar_accion/1)
+      # -- el chequeo compara en minúsculas para no rechazar "Alta" válido.
+      nil_si_vacio(params["estado_origen"]) == nil and String.downcase(accion) != "alta" ->
+        {:noreply,
+         update(
+           socket,
+           :transicion_form,
+           &Map.put(
+             &1,
+             "error",
+             "Una transición sin \"Estado origen\" es la ENTRADA al catálogo (el botón \"Nuevo\") — el motor solo la reconoce si la acción es exactamente \"alta\", no \"#{accion}\". La etiqueta sí puede decir lo que quieras."
+           )
+         )}
+
       true ->
         transicion = %{
           "accion" => accion,

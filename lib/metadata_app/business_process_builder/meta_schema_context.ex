@@ -1572,6 +1572,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
           mostrar_id_en_tabla: header.mostrar_id_en_tabla,
           mostrar_estado_en_tabla: header.mostrar_estado_en_tabla,
           mostrar_trn_en_tabla: header.mostrar_trn_en_tabla,
+          mostrar_folio_en_tabla: header.mostrar_folio_en_tabla,
           mostrar_empresa_en_tabla: header.mostrar_empresa_en_tabla,
           mostrar_branch_en_tabla: header.mostrar_branch_en_tabla,
           mostrar_inventory_location_en_tabla: header.mostrar_inventory_location_en_tabla,

@@ -243,6 +243,7 @@ defmodule MetadataApp.MetaImportExport do
       {:mostrar_id_en_tabla, "mostrar_id_en_tabla", "ID"},
       {:mostrar_estado_en_tabla, "mostrar_estado_en_tabla", "Estado"},
       {:mostrar_trn_en_tabla, "mostrar_trn_en_tabla", "TRN"},
+      {:mostrar_folio_en_tabla, "mostrar_folio_en_tabla", "Folio"},
       {:mostrar_empresa_en_tabla, "mostrar_empresa_en_tabla", "Empresa"},
       {:mostrar_branch_en_tabla, "mostrar_branch_en_tabla", "Sucursal"},
       {:mostrar_inventory_location_en_tabla, "mostrar_inventory_location_en_tabla", "Almacén"},

@@ -128,7 +128,21 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
         |> MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.aplicar_validaciones(@campos_meta)
         |> MetadataApp.BusinessProcessBuilder.MetaSchemaContext.validar_dependencias_referencia(unquote(tabla))
         |> MetadataApp.BusinessProcessBuilder.MetaSchemaContext.validar_formato_captura(unquote(tabla))
-        |> unique_constraint(@campos, name: @nombre_indice, message: "ya existe un registro con estos valores")
+        # "folio: true" (2026-09-11, bug real en pty_dsd_pedidos): un
+        # catálogo con folio es por diseño una serie de DOCUMENTOS
+        # repetibles (pedidos, movimientos) -- el folio/TRN ya es su
+        # identidad real, así que exigir además que TODOS sus campos de
+        # negocio combinados sean únicos rechazaba pedidos legítimos
+        # (mismo cliente/sucursal/fecha, un caso normal). El índice
+        # compuesto sigue existiendo para cualquier catálogo SIN folio
+        # (ahí sí previene filas duplicadas de verdad, ej. Clientes/Marca).
+        |> unquote(
+          if folio? do
+            quote(do: Function.identity())
+          else
+            quote(do: unique_constraint(@campos, name: @nombre_indice, message: "ya existe un registro con estos valores"))
+          end
+        )
       end
     end
   end

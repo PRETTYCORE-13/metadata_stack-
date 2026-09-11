@@ -47,6 +47,47 @@ defmodule MetadataApp.BusinessProcessBuilder.IdentificadoresTransaccionalesEngan
     header
   end
 
+  # CatalogoGenerico.crear/2 ya no acepta un alta en un catálogo sin NI UN
+  # estado definido (2026-09-10, motor de estados obligatorio) -- a
+  # diferencia de con_transicion_alta/1 (abajo), esto NO agrega la
+  # transición "alta" formal: fuerza a crear_con_attrs_preparados/5 a
+  # seguir yendo por crear_simple/4 (que es justo lo que estos tests
+  # necesitan probar), solo que ahora crear_simple/4 exige que exista
+  # AL MENOS un estado_inicial/1 -- ver crear_simple_o_rechazar/4 en
+  # catalogo_generico.ex.
+  defp con_estado_inicial(header) do
+    {:ok, _estado} =
+      %MetadataApp.MetaSchema.Estado{}
+      |> MetadataApp.MetaSchema.Estado.changeset(%{
+        meta_schema_header_id: header.id,
+        nombre: "inicial_simple_#{System.unique_integer([:positive])}",
+        es_inicial: true,
+        orden: System.unique_integer([:positive])
+      })
+      |> Ecto.Changeset.put_change(:insert_guid, guid())
+      |> Repo.insert()
+
+    :ok
+  end
+
+  defp asegurar_estado_inicial_perfiles do
+    if is_nil(MetadataApp.MetaStateEngine.estado_inicial("pty_folio_perfiles")) do
+      header = Repo.get_by!(Header, schema_context_name: "pty_folio_perfiles")
+
+      %MetadataApp.MetaSchema.Estado{}
+      |> MetadataApp.MetaSchema.Estado.changeset(%{
+        meta_schema_header_id: header.id,
+        nombre: "inicial_test_#{System.unique_integer([:positive])}",
+        es_inicial: true,
+        orden: 1
+      })
+      |> Ecto.Changeset.put_change(:insert_guid, guid())
+      |> Repo.insert!()
+    end
+
+    :ok
+  end
+
   # Mismo patrón que alcance_de_datos_escritura_test.exs -- da de alta
   # una transición "alta" para forzar el camino MetaStateEngine.dar_de_alta/5
   # en vez de crear_simple/4.
@@ -78,6 +119,7 @@ defmodule MetadataApp.BusinessProcessBuilder.IdentificadoresTransaccionalesEngan
   end
 
   defp perfil_fixture(header, attrs \\ %{}) do
+    asegurar_estado_inicial_perfiles()
     base = %{"documento" => header.id, "serie" => "AAAA", "numero_inicial" => 1}
     {:ok, perfil} = CatalogoGenerico.crear(PtyFolioPerfiles, :sistema, Map.merge(base, attrs))
     perfil
@@ -87,7 +129,8 @@ defmodule MetadataApp.BusinessProcessBuilder.IdentificadoresTransaccionalesEngan
 
   describe "Tarea 20 — regresión TRN (catálogo transaccional SIN folio)" do
     test "vía crear_simple/4 (sin motor de estados)" do
-      _header = header_fixture(%{requiere_folio: false})
+      header = header_fixture(%{requiere_folio: false})
+      :ok = con_estado_inicial(header)
 
       assert {:ok, registro} = CatalogoGenerico.crear(MetaFixtureAlcance, :sistema, %{"nombre" => "sin folio simple"})
 
@@ -113,6 +156,7 @@ defmodule MetadataApp.BusinessProcessBuilder.IdentificadoresTransaccionalesEngan
   describe "Tarea 21 — atomicidad R7 (folio+documento revierten juntos)" do
     test "si la creación falla DESPUÉS de generar el folio, nada queda persistido" do
       header = header_fixture(%{requiere_folio: true})
+      :ok = con_estado_inicial(header)
       perfil = perfil_fixture(header, %{"serie" => "R7XX"})
 
       assert numero_actual(perfil.id) == 0
@@ -138,6 +182,7 @@ defmodule MetadataApp.BusinessProcessBuilder.IdentificadoresTransaccionalesEngan
 
     test "sin falla, folio y documento se confirman juntos" do
       header = header_fixture(%{requiere_folio: true})
+      :ok = con_estado_inicial(header)
       perfil = perfil_fixture(header, %{"serie" => "R7OK"})
 
       assert {:ok, registro} = CatalogoGenerico.crear(MetaFixtureAlcance, :sistema, %{"nombre" => "r7 ok"})

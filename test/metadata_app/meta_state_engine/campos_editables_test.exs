@@ -131,16 +131,14 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
   end
 
   describe "CatalogoGenerico.crear/2 — asignación automática del estado inicial" do
-    test "catálogo sin motor de estados: estado_id sigue en nil" do
+    test "catálogo sin ningún estado definido: crear/2 rechaza con :motor_no_configurado" do
       header = header_equipos_nfl()
       desactivar_motor(header)
 
-      {:ok, equipo} =
-        CatalogoGenerico.crear(MetaFixtureEquipo, :sistema, %{
-          "meta_fixture_equipo_nombre_equipo" => "equipo #{unique()}"
-        })
-
-      assert equipo.estado_id == nil
+      assert {:error, :motor_no_configurado} =
+               CatalogoGenerico.crear(MetaFixtureEquipo, :sistema, %{
+                 "meta_fixture_equipo_nombre_equipo" => "equipo #{unique()}"
+               })
     end
 
     test "catálogo con motor de estados: nace en el estado inicial" do
@@ -230,10 +228,15 @@ defmodule MetadataApp.MetaStateEngine.CamposEditablesTest do
       header = header_equipos_nfl()
       desactivar_motor(header)
 
-      {:ok, equipo} =
-        CatalogoGenerico.crear(MetaFixtureEquipo, :sistema, %{
-          "meta_fixture_equipo_nombre_equipo" => "equipo #{unique()}"
-        })
+      # crear/2 ya rechaza el ALTA de un catálogo sin ningún estado (ver
+      # describe de arriba) -- este test es sobre actualizar/2, así que el
+      # registro nace directo por Repo.insert!, sin pasar por crear/2
+      # (mismo patrón que fixture_cliente/1 más arriba en este archivo).
+      equipo =
+        %MetaFixtureEquipo{}
+        |> MetaFixtureEquipo.changeset(%{meta_fixture_equipo_nombre_equipo: "equipo #{unique()}"})
+        |> put_change(:insert_guid, guid())
+        |> Repo.insert!()
 
       assert {:ok, actualizado} =
                CatalogoGenerico.actualizar(equipo, :sistema, %{

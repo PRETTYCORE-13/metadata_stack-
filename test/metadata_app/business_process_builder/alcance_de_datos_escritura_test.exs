@@ -16,9 +16,16 @@ defmodule MetadataApp.BusinessProcessBuilder.AlcanceDeDatosEscrituraTest do
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerico
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
   alias MetadataApp.MetaFixtureAlcance
+  alias MetadataApp.MetaSchema.Estado
 
   defp guid, do: Ecto.UUID.generate() |> String.replace("-", "")
 
+  # CatalogoGenerico.crear/2 ya no acepta un alta en un catálogo sin NI UN
+  # estado definido (2026-09-10, motor de estados obligatorio) -- este
+  # archivo prueba Alcance de Datos, algo ortogonal al motor de estados,
+  # así que alcanza con un estado_inicial mínimo (sin transición "alta"
+  # formal) para que crear_simple/4 siga aceptando el alta -- ver
+  # crear_simple_o_rechazar/4 en catalogo_generico.ex.
   defp header_fixture(alcance_habilitado?) do
     {:ok, header} =
       %Header{}
@@ -29,6 +36,17 @@ defmodule MetadataApp.BusinessProcessBuilder.AlcanceDeDatosEscrituraTest do
         schema_context_nav: "/catalogos/fixture-alcance-escritura-#{System.unique_integer([:positive])}",
         schema_visible: true,
         alcance_habilitado: alcance_habilitado?
+      })
+      |> Ecto.Changeset.put_change(:insert_guid, guid())
+      |> Repo.insert()
+
+    {:ok, _estado} =
+      %Estado{}
+      |> Estado.changeset(%{
+        meta_schema_header_id: header.id,
+        nombre: "inicial_#{System.unique_integer([:positive])}",
+        es_inicial: true,
+        orden: 1
       })
       |> Ecto.Changeset.put_change(:insert_guid, guid())
       |> Repo.insert()
@@ -364,17 +382,11 @@ defmodule MetadataApp.BusinessProcessBuilder.AlcanceDeDatosEscrituraTest do
   # cada alta, sin ningún error visible, aunque preparar_attrs_con_alcance/3
   # ya los hubiera validado/estampado en `attrs` correctamente.
   describe "crear/4 — catálogo con motor de estados adoptado (transición \"alta\")" do
+    # header_fixture/1 ya insertó un estado_inicial (única/es_inicial por
+    # header) -- se REUSA acá para la transición "alta" en vez de crear
+    # uno segundo, que chocaría con meta_schema_estados_un_inicial_index.
     defp con_transicion_alta(header) do
-      {:ok, estado} =
-        %MetadataApp.MetaSchema.Estado{}
-        |> MetadataApp.MetaSchema.Estado.changeset(%{
-          meta_schema_header_id: header.id,
-          nombre: "inicial_#{System.unique_integer([:positive])}",
-          es_inicial: true,
-          orden: System.unique_integer([:positive])
-        })
-        |> Ecto.Changeset.put_change(:insert_guid, guid())
-        |> Repo.insert()
+      estado = Repo.get_by!(MetadataApp.MetaSchema.Estado, meta_schema_header_id: header.id, es_inicial: true)
 
       {:ok, _transicion} =
         %MetadataApp.MetaSchema.Transicion{}
