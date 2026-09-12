@@ -128,22 +128,67 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
       # producción, el borrado queda completo ahí también, no solo en el
       # ambiente donde se pidió. No se purga acá aparte para no duplicar
       # (y porque el header ya no existiría cuando migrar/0 termine).
-      crear_migracion_drop(schema_context_name)
-      migrar()
+      path = crear_migracion_drop(schema_context_name)
 
-      archivo_eliminado? = borrar_schema_file(schema_context_name)
-      reglas_eliminadas? = borrar_reglas_dir(schema_context_name)
-      borrar_export_meta(schema_context_name)
+      case migrar_capturando_fk() do
+        :ok ->
+          archivo_eliminado? = borrar_schema_file(schema_context_name)
+          reglas_eliminadas? = borrar_reglas_dir(schema_context_name)
+          borrar_export_meta(schema_context_name)
 
-      MetaAuditoriaDefinicion.registrar(
-        schema_context_name,
-        "eliminar",
-        %{"filas_eliminadas" => confirmar_filas},
-        contexto
-      )
+          MetaAuditoriaDefinicion.registrar(
+            schema_context_name,
+            "eliminar",
+            %{"filas_eliminadas" => confirmar_filas},
+            contexto
+          )
 
-      {:ok, %{tabla: schema_context_name, archivo_eliminado: archivo_eliminado?, reglas_eliminadas: reglas_eliminadas?}}
+          {:ok, %{tabla: schema_context_name, archivo_eliminado: archivo_eliminado?, reglas_eliminadas: reglas_eliminadas?}}
+
+        {:error, mensaje} ->
+          # La migración nunca llegó a aplicarse (Postgres hizo rollback de la
+          # transacción completa ante la FK) -- el archivo .exs que se acaba
+          # de escribir quedaría como basura sin ningún efecto real; se borra
+          # para no acumular un "eliminar_<tabla>_*" muerto por cada intento
+          # fallido (bug real 2026-09-11: 3 intentos seguidos dejaron 3
+          # migraciones huérfanas en priv/repo/migrations, ver design.md).
+          File.rm(path)
+          {:error, mensaje}
+      end
     end
+  end
+
+  # `validar_sin_dependientes/1` solo conoce dependencias declaradas en
+  # metadata (un campo "referencia" cuyo "catalogo" es EXACTAMENTE este
+  # nombre) -- no ve una FK real de Postgres creada por un campo genérico
+  # tipo "referencia a meta_schema_header" (ej. "documento" en
+  # pty_folio_perfiles, que puede apuntar a CUALQUIER catálogo, así que su
+  # "catalogo" configurado es "meta_schema_header", no el nombre puntual).
+  # Bug real (2026-09-11): un Perfil de Folio con `documento` apuntando a
+  # `pty_dsd_pedidos` bloqueaba el DELETE del header con
+  # foreign_key_violation dentro de la migración generada -- la transacción
+  # hacía rollback completo (tabla y header quedaban intactos) pero
+  # `eliminar/3` devolvía éxito igual porque nada capturaba la excepción, y
+  # el usuario veía "eliminado" 3 veces seguidas sin que nada cambiara en la
+  # base. Acá se traduce esa excepción a un {:error, mensaje} real y
+  # legible, señalando la tabla/constraint real que todavía referencia este
+  # catálogo -- no reemplaza el chequeo de metadata (que sigue siendo más
+  # rápido y da mejor mensaje para el caso común), solo cubre el hueco.
+  defp migrar_capturando_fk do
+    migrar()
+    :ok
+  rescue
+    e in Postgrex.Error ->
+      case e.postgres do
+        %{code: :foreign_key_violation, table: tabla, constraint: constraint} ->
+          {:error,
+           "no se puede borrar: la tabla \"#{tabla}\" todavía tiene un registro que referencia " <>
+             "este catálogo por llave foránea real (restricción \"#{constraint}\") -- hay que " <>
+             "borrar o desenganchar esa referencia primero."}
+
+        _ ->
+          {:error, "error de base de datos al borrar: #{Exception.message(e)}"}
+      end
   end
 
   @doc """
@@ -772,6 +817,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     """
 
     File.write!(path, contenido)
+    path
   end
 
   defp borrar_schema_file(schema_context_name) do
