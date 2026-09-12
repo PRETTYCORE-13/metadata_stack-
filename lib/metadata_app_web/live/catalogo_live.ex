@@ -119,7 +119,6 @@ defmodule MetadataAppWeb.CatalogoLive do
     overrides_parametro = overrides_parametro_default(parametros_string, scope, detalles_por_catalogo)
 
     estados_por_id = MetaStateEngine.mapa_nombres_estados(header.schema_context_name)
-    filtros = filtros_por_default(header)
 
     mostrar_id? = header.mostrar_id_en_tabla
     mostrar_estado? = estados_por_id != %{} and header.mostrar_estado_en_tabla
@@ -186,17 +185,13 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> allow_upload(:archivo_importacion, accept: ~w(.xlsx), max_entries: 1, auto_upload: true, progress: &handle_progress_importar/3)
      |> assign(:estados_por_id, estados_por_id)
      |> assign(:pagina, 1)
-     |> assign(:filtros, filtros)
+     |> assign(:filtros, %{})
      |> assign(:busqueda_general, "")
      |> assign(:agregaciones, %{})
      |> assign(:agregaciones_valores, %{})
      |> assign(:minmax_valores, %{})
      |> assign(:totales_generales, %{})
      |> assign(:cargar_todos_por_default?, header.cargar_todos_por_default)
-     |> assign(
-       :filtro_default_fecha_descripcion,
-       FiltrosDefault.descripcion(header.filtro_default_fecha_modo, header.filtro_default_fecha_valor, header.filtro_default_fecha_valor_hasta)
-     )
      |> cargar_filas()}
   end
 
@@ -256,23 +251,6 @@ defmodule MetadataAppWeb.CatalogoLive do
     |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
     |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
     |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
-  end
-
-  # Get View → "Filtros por default" (bc_motor_live.ex): "Agregar todos
-  # los registros" + acotar por fecha de alta — arma el @filtros INICIAL
-  # de la tabla, en vez de arrancar vacía. Filtra directo sobre la
-  # columna real "fecha_registro" (2026-08-06, en TODA tabla de catálogo
-  # — ver MetaCatalogoGenerico) — antes de que existiera, esto resolvía
-  # la fecha vía la tabla de auditoría (MetaAuditoria.ids_creados_en_rango/3,
-  # ya no hace falta). Va aparte como "__fecha_registro__" (no es una
-  # fila editable del panel de Filtros normal, así que no puede sumarse
-  # a @filtros con la clave "fecha_registro_desde"/"_hasta" de siempre —
-  # eso dejaría ver/tocar un input que no existe en el panel).
-  defp filtros_por_default(header) do
-    case FiltrosDefault.rango_fecha(header.filtro_default_fecha_modo, header.filtro_default_fecha_valor, header.filtro_default_fecha_valor_hasta) do
-      nil -> %{}
-      {desde, hasta} -> %{"__fecha_registro__" => {desde, hasta}}
-    end
   end
 
   # Consulta Ecto (schema_context_type: 3): reporte de solo lectura, sin
@@ -857,18 +835,16 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   defp datos_solicitados?(socket) do
     socket.assigns.cargar_todos_por_default? or
-      Map.has_key?(socket.assigns.filtros, "__fecha_registro__") or
       String.trim(socket.assigns.busqueda_general) != "" or
       parametros_activos?(socket)
   end
 
-  # Mismo espíritu que "__fecha_registro__" arriba, pero para la barra de
-  # Parámetros de una Consulta (ver montar_consulta/2) -- una columna
-  # Fecha SIEMPRE acota (rediseño 2026-08-27: ya no existe "sin acotar"
-  # para Fecha, ver moduledoc de MetaSchema.Consulta), así que con solo
-  # que exista una ya hay "datos solicitados" sin que el usuario toque
-  # nada más. Si no hay ninguna Fecha, alcanza con que haya tocado algún
-  # override de sesión (string/numérico/fecha).
+  # Una columna Fecha de Parámetros SIEMPRE acota (rediseño 2026-08-27:
+  # ya no existe "sin acotar" para Fecha, ver moduledoc de
+  # MetaSchema.Consulta), así que con solo que exista una ya hay "datos
+  # solicitados" sin que el usuario toque nada más. Si no hay ninguna
+  # Fecha, alcanza con que haya tocado algún override de sesión
+  # (string/numérico/fecha).
   defp parametros_activos?(socket) do
     socket.assigns.parametros_fecha != [] or map_size(socket.assigns.overrides_parametro) > 0
   end
@@ -1215,24 +1191,11 @@ defmodule MetadataAppWeb.CatalogoLive do
   # -> rango desde/hasta, cualquier otro tipo (enum, referencia) -> texto
   # exacto como fallback razonable.
   defp construir_filtros_ecto(filtros, columnas) do
-    base =
-      Enum.reduce(columnas, %{}, fn columna, acc ->
-        campo = columna.schema_context_field
-        tipo = columna.schema_context_properties["tipo"]
-        agregar_filtro_ecto(acc, campo, tipo, filtros)
-      end)
-
-    # "__fecha_registro__" (ver filtros_por_default/1) — mismo campo real
-    # "fecha_registro" que ya procesó el reduce de arriba (si el usuario
-    # final lo agregó a mano desde el panel de Filtros normal), pero con
-    # su PROPIA clave para no pisarse con "fecha_registro_desde"/"_hasta"
-    # ni viceversa — son dos filtros independientes sobre la misma
-    # columna, el de acá con bordes de DateTime completos (00:00:00 a
-    # 23:59:59) en vez de un %Date{} suelto.
-    case Map.get(filtros, "__fecha_registro__") do
-      nil -> base
-      {desde, hasta} -> Map.put(base, :fecha_registro, {:entre, {desde, hasta}})
-    end
+    Enum.reduce(columnas, %{}, fn columna, acc ->
+      campo = columna.schema_context_field
+      tipo = columna.schema_context_properties["tipo"]
+      agregar_filtro_ecto(acc, campo, tipo, filtros)
+    end)
   end
 
   defp agregar_filtro_ecto(acc, campo, "boolean", filtros) do
@@ -1499,13 +1462,6 @@ defmodule MetadataAppWeb.CatalogoLive do
           <div class="flex items-center gap-2">
             <.panel_campos campos={campos_selector_render(@columnas_render)} tabla_id="tabla-catalogo" />
           </div>
-        </div>
-
-        <div :if={@filtro_default_fecha_descripcion} class="flex items-center gap-1.5 text-[11px] font-medium text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-2.5 py-1.5 mb-4 w-fit">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="shrink-0">
-            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
-          </svg>
-          {@filtro_default_fecha_descripcion}
         </div>
 
         <.panel_parametros :if={@parametros_string != [] or @parametros_numerico != [] or @parametros_fecha != []}

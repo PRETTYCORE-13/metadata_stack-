@@ -1,14 +1,13 @@
 # SPEC-SYS-1109202606 — BC Motor: Tab Get Config
 
-**Documento:** Design · **Fase:** ✅ aprobada (2026-09-11) — con 1 fix real (§6, R14): código muerto eliminado a pedido explícito del usuario, ver `tasks.md`.
+**Documento:** Design · **Fase:** ✅ aprobada (2026-09-11) — con 1 fix real (§6, R14): código muerto eliminado a pedido explícito del usuario, ver `tasks.md`. **2026-09-12**: §5 completa ("Filtros por default") ELIMINADA del código a pedido explícito del usuario — ver §5 reescrita y `tasks.md` Grupo E.
 
 Documentación retroactiva — `panel_get_view/1`, `panel_orden_resultados/1`,
 `panel_campos_default/1` (`bc_motor_live.ex:2575-2851`) +
-`FiltrosDefaultComponents.panel_filtros_default/1`
-(`lib/metadata_app_web/live/filtros_default_components.ex`) +
-`MetadataApp.FiltrosDefault` (contexto de cálculo de rangos de
-fecha) + `Header.filtro_default_fecha_modo`/`cargar_todos_por_default`/
-`orden_columnas_tabla`/`orden_resultados`.
+`Header.cargar_todos_por_default`/`orden_columnas_tabla`/`orden_resultados`.
+`MetadataApp.FiltrosDefault` (contexto de cálculo de rangos de fecha)
+sigue existiendo — ahora exclusivo de
+`SPEC-SYS-0209202601-parametros-catalogo`, ver §5.
 
 ## 1. Visibilidad (R1)
 
@@ -98,77 +97,78 @@ Semántica real en `CatalogoLive.datos_solicitados?/1` (fuera de esta
 spec): con el flag activo, la tabla no espera ningún filtro/búsqueda
 para traer datos.
 
-## 5. Filtros por default — camino que SÍ funciona (R12-R14, parcial)
+## 5. Filtros por default — ELIMINADO 2026-09-12
 
-`FiltrosDefaultComponents.panel_filtros_default/1` ofrece los modos
-de `FiltrosDefault.modos_fecha/0`:
+Hasta esta fecha, `FiltrosDefaultComponents.panel_filtros_default/1`
+ofrecía un interruptor de modo (`FiltrosDefault.modos_fecha/0`: "",
+"actual", "mes_actual", "mes_a_fecha", "anio_actual", "formula") que
+`CatalogoLive.filtros_por_default/1` traducía a un filtro real sobre
+`fecha_registro`, aplicado automáticamente al abrir la tabla — con un
+fix real ya documentado antes de esta reescritura: un séptimo modo,
+`"rango"` (fecha fija con dos calendarios), era código muerto —
+ningún botón lo activaba ni `rango_fecha/3` lo implementaba — y se
+eliminó su rama de UI el 2026-09-11 (R14, ver `tasks.md` Grupo D).
 
-```elixir
-def modos_fecha do
-  [
-    {"", "Sin acotar"},
-    {"actual", "Fecha actual"},
-    {"mes_actual", "Mes actual completo"},
-    {"mes_a_fecha", "Mes actual a la fecha"},
-    {"anio_actual", "Año actual completo"},
-    {"formula", "Fórmula"}
-  ]
-end
-```
+**Eliminado por completo el 2026-09-12**, a pedido explícito del
+usuario, tras verificar dos cosas contra la base real y el código:
 
-Los primeros 5 son dinámicos de verdad — `FiltrosDefault.rango_fecha/3`
-tiene una cláusula propia para cada uno, recalculada contra
-`Date.utc_today()` en cada consulta, sin depender de ningún valor
-guardado. `"formula"` es el único que SÍ usa
-`filtro_default_fecha_valor`/`valor_hasta` — pero como TEXTO de
-fórmula (`FormulaFecha.parsear/1`), no como fecha literal; por eso su
-UI real (no mostrada en el fragmento leído acá, pero coherente con
-`cambiar_filtro_fecha_valor` aceptando cualquier string) no son los
-`<input type="date">` que sí se ven en el bloque de abajo.
+1. Ningún catálogo tenía `filtro_default_fecha_modo` configurado (0
+   filas en `meta_schema_header`) — a diferencia del caso de "rango"
+   (§ anterior), acá no había ni siquiera un caso de uso activo que
+   proteger.
+2. `SPEC-SYS-0209202601-parametros-catalogo` ya resuelve la misma
+   necesidad de forma estrictamente más amplia: cualquier campo Fecha
+   de negocio marcado `"es_parametro"` (no solo la columna de sistema
+   `fecha_registro`) puede tener el mismo tipo de default dinámico,
+   con el usuario final pudiendo ajustarlo desde el panel de filtros
+   — Parámetros reusa el MISMO motor de cálculo
+   (`ParametrosCatalogo.aplicar_filtros_fecha_estandar/4` llama a
+   `FiltrosDefault.rango_fecha/3`, línea `parametros_catalogo.ex:143`),
+   así que no se perdió ninguna capacidad de cálculo, solo la UI/
+   columnas de Header que la exponían a nivel catálogo completo.
 
-`cambiar_filtro_fecha_modo`/`cambiar_filtro_fecha_valor` (R14) — al
-cambiar de modo, limpia siempre `filtro_default_fecha_valor`/
-`valor_hasta`, sin importar el modo nuevo.
+**Qué se borró** (código, no solo UI):
 
-## 6. Fix real — modo "rango" era código muerto, eliminado
+- `Header.filtro_default_fecha_modo`/`valor`/`valor_hasta` — 3
+  columnas físicas de `meta_schema_header`, dropeadas por migración
+  (`20260912013436_quitar_filtro_default_fecha_de_header.exs`).
+- `MetadataAppWeb.FiltrosDefaultComponents` — módulo completo borrado
+  (`lib/metadata_app_web/live/filtros_default_components.ex`), solo
+  tenía esta función.
+- `BcMotorLive`: el import del módulo de arriba, el render
+  `<.panel_filtros_default header={@header} />`, y
+  `handle_event("cambiar_filtro_fecha_modo", ...)`.
+- `CatalogoLive`: `filtros_por_default/1`, su llamada en
+  `montar_catalogo/2`, el assign/badge morado
+  `filtro_default_fecha_descripcion`, la clave especial
+  `"__fecha_registro__"` en `construir_filtros_ecto/2`, y su condición
+  en `datos_solicitados?/1` (una tabla sin `cargar_todos_por_default`
+  activo y sin este filtro ya NO tenía otra forma de auto-cargar datos
+  al abrir salvo búsqueda/Parámetros — comportamiento sin cambio
+  observable porque ningún catálogo real dependía de esta rama).
+- `FiltrosDefault.modos_fecha/0` — quedó huérfana (era exclusiva del
+  panel borrado), se eliminó. `rango_fecha/3`, `descripcion/3`,
+  `modos_fecha_rango/0`, `modos_fecha_simple/0` NO se tocaron — los
+  sigue usando Parámetros activamente.
 
-`panel_filtros_default/1` (línea 52) tiene una rama completa
-(selectores de fecha "Desde"/"Hasta", `<input type="date">` +
-`AbrirCalendario`) condicionada a `@header.filtro_default_fecha_modo
-== "rango"` — pero **`"rango"` no es ninguno de los 6 valores que
-`FiltrosDefault.modos_fecha/0` ofrece como botón** (ver §5): no hay
-ningún control en la UI actual que pueda dejar ese campo en
-`"rango"`. Se buscó en todo `lib/` cualquier otro lugar que asigne
-ese valor — no aparece ninguno.
+**Hallazgo colateral, fuera de alcance**: `meta_schema_consulta` tiene
+2 columnas huérfanas (`filtro_fecha_catalogo`/`filtro_fecha_campo`,
+migración `20260826182124`) que su propio comentario describe como
+"reusa tal cual" los campos de `Header` que se acaban de borrar —
+pero ningún código real las lee ni las escribe (grep sin resultados
+en todo `lib/`). Parece un primer intento de filtro por fecha para
+Consulta, abandonado al día siguiente cuando se rediseñó Parámetros
+(2026-08-27). No se tocó: es otra tabla, otro catálogo, no forma
+parte de esta spec — candidato a un fix propio si hace falta.
 
-Más aún: **`FiltrosDefault.rango_fecha/3` tampoco tiene una cláusula
-para `"rango"`** — sus cláusulas cubren
-`"actual"`/`"mes_actual"`/`"mes_a_fecha"`/`"anio_actual"`/
-`"primer_dia_mes"`/`"primer_dia_anio"`/`"formula"`, y termina en un
-catch-all `rango_fecha(_modo, _valor, _valor_hasta), do: nil`. Si
-`"rango"` SE HUBIERA guardado por algún camino externo (ej. un dato
-migrado de una versión anterior de este campo, o escrito a mano), el
-resultado sería "sin acotar" de todas formas — la funcionalidad ni
-siquiera está implementada del lado del cálculo.
-
-El comentario de diseño en `Header` (`meta_schema/header.ex:23-36`)
-SÍ describe `"rango"` como una opción real e intencional ("por
-diseño, un rango es un par de fechas puntuales elegidas a propósito,
-no un período relativo a 'hoy'") junto con otros nombres de modo
-(`"primer_dia_anio"`, `"ultimo_dia_anio"`) que TAMPOCO coinciden 1:1
-con los 6 valores reales de `modos_fecha/0` hoy — todo apunta a que
-`FiltrosDefault` se refactorizó/renombró en algún momento (
-probablemente al construirse `SPEC-SYS-0209202601`, que reusa/expande
-este mismo vocabulario de modos de fecha para Parámetros) sin
-actualizar ni el comentario de `Header` ni la rama de UI de "rango"
-en `panel_filtros_default.ex`, que quedó huérfana.
-
-**Resuelto**: consultado el usuario entre restaurar `"rango"` de
-verdad o terminar de borrar la rama muerta, eligió borrar — quitada
-la rama de UI en `panel_filtros_default/1`, el
-`handle_event("cambiar_filtro_fecha_valor", ...)` (su único emisor
-real) y corregido el comentario de `Header` para que ya no describa
-un modo que nunca funcionó. Ver `tasks.md` Grupo D.
+Verificado: `mix compile --force` limpio (dev y test, mismos warnings
+preexistentes de siempre, ninguno nuevo), migración corrida en dev Y
+test, `mix test`: 517 tests, 0 failures — incluye
+`catalogo_live_filtros_test.exs` y los tests de Get Config
+(`bc_motor_live_orden_resultados_test.exs`,
+`bc_motor_live_parametros_test.exs`), que montan estos LiveViews
+completos y hubieran fallado con `KeyError` si algún assign hubiera
+quedado colgando.
 
 ## 7. Fuera de alcance
 

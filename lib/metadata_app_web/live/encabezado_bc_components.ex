@@ -2,8 +2,7 @@ defmodule MetadataAppWeb.EncabezadoBcComponents do
   @moduledoc """
   Panel "Encabezado" (etiqueta/navegación/ícono/visible) — extraído de
   BcMotorLive (2026-08-26) para que cualquier otra pantalla de
-  configuración de un BC lo reuse tal cual, mismo criterio que
-  `MetadataAppWeb.FiltrosDefaultComponents`. Funciona para CUALQUIER
+  configuración de un BC lo reuse tal cual. Funciona para CUALQUIER
   Header (catálogo normal o Consulta Ecto) — solo toca los 4 campos
   genéricos que ya comparten los dos (`schema_context_label/nav/icono`,
   `schema_visible`), nada específico de un tipo.

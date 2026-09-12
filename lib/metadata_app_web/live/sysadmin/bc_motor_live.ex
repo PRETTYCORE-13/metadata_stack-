@@ -23,7 +23,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   alias MetadataAppWeb.Sysadmin.FieldDesignerComponents
   alias MetadataAppWeb.AuditoriaContexto
 
-  import MetadataAppWeb.FiltrosDefaultComponents, only: [panel_filtros_default: 1]
   import MetadataAppWeb.EncabezadoBcComponents, only: [panel_encabezado: 1]
   import MetadataAppWeb.ParametrosCatalogoComponents, only: [celdas_parametro: 1, toggle_es_parametro: 1, celda_totales: 1, identificador: 1]
 
@@ -885,37 +884,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # Alcance de Datos (Fase 6, 2026-08-11; toggle relocado 2026-08-12 a
   # CatalogoPermisosLive/pestaña Permisos, ver ese módulo — "revuelve
   # mucho" tenerlo separado de la config por rol en otra pestaña).
-
-  # Sub-filtro de fecha de "Filtros por default" — 6 modos reales
-  # (`FiltrosDefault.modos_fecha/0`), todos dinámicos salvo "formula"
-  # (texto parseado por FormulaFecha, ver `rango_fecha/3`), o "" para
-  # apagarlo. `filtro_default_fecha_valor`/`valor_hasta` quedan en nil
-  # al cambiar de modo -- limpieza defensiva, ningún modo de la UI
-  # real los usa como fecha literal hoy.
-  #
-  # 2026-09-11 (SPEC-SYS-1109202606, hallazgo + decisión del usuario):
-  # existía un séptimo modo, "rango" (fecha fija desde/hasta con dos
-  # calendarios), que ningún botón de esta UI podía activar Y que
-  # `FiltrosDefault.rango_fecha/3` tampoco implementaba (caía al
-  # catch-all, no acotaba nada) -- código muerto de una versión
-  # anterior del vocabulario de modos. Se eliminó la rama de UI
-  # correspondiente en `FiltrosDefaultComponents.panel_filtros_default/1`
-  # y este `handle_event("cambiar_filtro_fecha_valor", ...)`, su único
-  # emisor real.
-  def handle_event("cambiar_filtro_fecha_modo", %{"modo" => modo}, socket) do
-    header = socket.assigns.header
-
-    attrs = %{
-      "filtro_default_fecha_modo" => if(modo == "", do: nil, else: modo),
-      "filtro_default_fecha_valor" => nil,
-      "filtro_default_fecha_valor_hasta" => nil
-    }
-
-    case MetaSchemaContext.actualizar_header(header, attrs) do
-      {:ok, header_actualizado} -> {:noreply, socket |> assign(:header, header_actualizado) |> cargar_motor()}
-      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar el filtro de fecha.")}
-    end
-  end
 
   # "Mín. Máx." de un filtro ya agregado — extra Mín/Máx: si está
   # prendido, CatalogoLive lo muestra siempre junto al cálculo principal
@@ -2071,7 +2039,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple}
           catalogos_referenciables={@catalogos_referenciables} detalles_por_catalogo={@detalles_por_catalogo} />
         <.panel_campos_default header={@header} />
-        <.panel_filtros_default header={@header} />
       </div>
 
       <div id="motor-panel-get" class="hidden">

@@ -20,23 +20,16 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # esto solo cambia el estado inicial.
     field :cargar_todos_por_default, :boolean, default: false
 
-    # "Filtros por default" (bc_motor_live.ex, independiente de
-    # cargar_todos_por_default) — acota lo que ve el usuario final por
-    # fecha de ALTA, filtrando directo sobre la columna real
-    # "fecha_registro" (ver MetaCatalogoGenerico, en TODA tabla de
-    # catálogo desde 2026-08-06). Modos reales: ver
-    # FiltrosDefault.modos_fecha/0 ("" = sin acotar, "actual",
-    # "mes_actual", "mes_a_fecha", "anio_actual" — dinámicos, se
-    # recalculan solos contra la fecha de hoy en cada consulta, ver
-    # FiltrosDefault.rango_fecha/3 — o "formula", texto parseado por
-    # FormulaFecha). filtro_default_fecha_valor/valor_hasta quedan sin
-    # uso real hoy (2026-09-11, SPEC-SYS-1109202606: un séptimo modo,
-    # "rango", que sí los usaba como fecha fija, era código muerto —
-    # ningún botón lo activaba ni rango_fecha/3 lo implementaba — y se
-    # eliminó la rama de UI correspondiente).
-    field :filtro_default_fecha_modo, :string
-    field :filtro_default_fecha_valor, :date
-    field :filtro_default_fecha_valor_hasta, :date
+    # "Filtros por default" (Get Config → filtraba directo sobre la
+    # columna real "fecha_registro" del catálogo) existió acá hasta
+    # 2026-09-11 (SPEC-SYS-1109202606 §5) y se eliminó a pedido
+    # explícito del usuario: ningún catálogo real lo tenía configurado,
+    # y SPEC-SYS-0209202601 (Parámetros) ya cubre la misma necesidad de
+    # forma estrictamente más flexible (cualquier campo Fecha de
+    # negocio, no solo "fecha_registro"; ajustable por el usuario
+    # final). Los 3 campos (modo/valor/valor_hasta) y sus columnas
+    # físicas se borraron junto con toda la UI/lógica que los leía —
+    # ver requirements.md R18 de esa spec para el detalle completo.
 
     # PrettyCore TRN (Transaction Reference Number) — separado a propósito
     # de schema_context_type (que ya usa 2 para "carpeta", una dimensión
@@ -53,8 +46,8 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :requiere_folio, :boolean, default: false
 
     # Get View → columnas ESTRUCTURALES (bc_motor_live.ex, 2026-08-06) — a
-    # diferencia de cargar_todos_por_default/filtro_default_fecha_* (qué
-    # filas trae), esto es qué COLUMNAS de sistema muestra CatalogoLive:
+    # diferencia de cargar_todos_por_default (qué filas trae), esto es
+    # qué COLUMNAS de sistema muestra CatalogoLive:
     # ID siempre existía sin ningún gate, Estado/TRN ya se ocultaban solos
     # cuando el catálogo no calificaba (sin motor de estados / no
     # transaccional) pero sin forma de que un admin los ocultara aunque
@@ -165,9 +158,6 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
           :schema_encabezado_id,
           :orden,
           :cargar_todos_por_default,
-          :filtro_default_fecha_modo,
-          :filtro_default_fecha_valor,
-          :filtro_default_fecha_valor_hasta,
           :mostrar_id_en_tabla,
           :mostrar_estado_en_tabla,
           :mostrar_trn_en_tabla,

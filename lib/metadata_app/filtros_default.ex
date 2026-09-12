@@ -1,26 +1,19 @@
 defmodule MetadataApp.FiltrosDefault do
   @moduledoc """
-  Toda la lógica de "Filtros por default" (Header.filtro_default_fecha_modo/
-  filtro_default_fecha_valor/filtro_default_fecha_valor_hasta, y el
-  "parametro" => "fecha" de MetaSchema.Consulta.campos) — separado de
-  `BcMotorLive`/`FiltrosDefaultComponents` (que solo dibujan) para que
-  cualquier otra pantalla de "filtro por default" reuse este módulo en vez
-  de duplicar los `case modo do`.
+  Toda la lógica de fechas relativas ("mes actual", "año actual", etc.) que
+  usa el "parametro" => "fecha" de MetaSchema.Consulta.campos (ver
+  `MetadataApp.ParametrosCatalogo`) — separado de las pantallas que solo
+  dibujan, para que cualquier otro consumidor de estos modos reuse este
+  módulo en vez de duplicar los `case modo do`.
+
+  Hasta 2026-09-11 también cubría "Filtros por default" de
+  `Header.filtro_default_fecha_modo` (BC Motor → Get Config) — eliminado
+  a pedido explícito del usuario (SPEC-SYS-1109202606 §5/§8): ningún
+  catálogo real lo usaba, y este mismo mecanismo ya cubre la necesidad de
+  forma más flexible.
   """
 
   alias MetadataApp.FormulaFecha
-
-  @doc "Los modos del botonera del filtro genérico del BC (Header.filtro_default_fecha_modo), en el orden que se muestran."
-  def modos_fecha do
-    [
-      {"", "Sin acotar"},
-      {"actual", "Fecha actual"},
-      {"mes_actual", "Mes actual completo"},
-      {"mes_a_fecha", "Mes actual a la fecha"},
-      {"anio_actual", "Año actual completo"},
-      {"formula", "Fórmula"}
-    ]
-  end
 
   @doc "Defaults de un campo Fecha ACOTADO (Consulta.campos, ver moduledoc de MetaSchema.Consulta) -- siempre un rango de dos extremos."
   def modos_fecha_rango do

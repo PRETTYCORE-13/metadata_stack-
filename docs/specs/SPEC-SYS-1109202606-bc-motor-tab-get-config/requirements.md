@@ -1,6 +1,6 @@
 # SPEC-SYS-1109202606 — BC Motor: Tab Get Config
 
-**Documento:** Requirements · **Fase:** ✅ aprobada (2026-09-11) — documentación retroactiva + 1 fix real (R14, código muerto eliminado, ver `tasks.md` Grupo D).
+**Documento:** Requirements · **Fase:** ✅ aprobada (2026-09-11) — documentación retroactiva + 1 fix real (R14, código muerto eliminado, ver `tasks.md` Grupo D) + 1 sección completa ELIMINADA (2026-09-12, §5, ver R18 y `tasks.md` Grupo E).
 
 **Alcance de esta spec**: documentar (retroactivo, ya implementado)
 el tab **"Get Config"** de `BcMotorLive` — todo lo que controla cómo
@@ -79,30 +79,28 @@ activado, la tabla trae TODOS los registros y columnas apenas se
 abre, sin esperar que el usuario final aplique un filtro o búsqueda
 primero.
 
-## 5. Filtros por default
+## 5. Filtros por default — ELIMINADO 2026-09-12 (histórico)
 
-R12. EL SISTEMA DEBE ofrecer, independiente de "Campos por default"
-(R11 — cualquiera de las dos funciona sola o ambas juntas), un
-interruptor de modo para acotar la tabla por fecha de alta apenas se
-abre, con 6 opciones reales: Sin acotar, Fecha actual, Mes actual
-completo, Mes actual a la fecha, Año actual completo, o Fórmula
-(texto libre parseado por `FormulaFecha`) — los primeros 5 son
-dinámicos, se recalculan solos contra la fecha de hoy en cada
-consulta, sin depender de ningún valor guardado.
+Esta sección completa (R12-R14) documentaba el interruptor "Filtros
+por default" — independiente de "Campos por default" (R11), acotaba
+la tabla por fecha de alta (`fecha_registro`) apenas se abría, con 6
+modos reales (Sin acotar / Fecha actual / Mes actual completo / Mes
+actual a la fecha / Año actual completo / Fórmula) más el fix de
+código muerto del modo `"rango"` (R14, 2026-09-11).
 
-R13. CUANDO se cambia de modo, EL SISTEMA DEBE limpiar cualquier
-valor fijo guardado de un modo anterior.
-
-R14. **Corregido 2026-09-11** (hallazgo real, no un requisito nuevo):
-el código tenía una rama completa (selectores de fecha "Desde"/
-"Hasta") para un séptimo modo, `"rango"`, que ningún botón real de
-la UI podía activar — no estaba entre las 6 opciones de R12 — y que
-`FiltrosDefault.rango_fecha/3` tampoco implementaba (caía a un
-catch-all que no acotaba nada). Código muerto de una versión
-anterior del vocabulario de modos. A pedido explícito del usuario
-(entre restaurarlo o terminar de borrarlo), se eliminó la rama de UI
-y el `handle_event` que era su único emisor — ver `design.md` §6 y
-`tasks.md` Grupo D.
+R18. **Eliminado 2026-09-12, a pedido explícito del usuario.**
+Motivo: verificado en vivo contra la base real, NINGÚN catálogo tenía
+`filtro_default_fecha_modo` configurado (0 filas) — y la
+funcionalidad que R12 ofrecía (acotar por fecha apenas se abre la
+tabla) ya está cubierta de forma estrictamente más flexible por
+`SPEC-SYS-0209202601-parametros-catalogo`: cualquier campo Fecha de
+negocio puede marcarse "es_parametro" con el mismo motor de cálculo
+de rangos (`FiltrosDefault.rango_fecha/3`, que NO se tocó — sigue
+sirviendo a Parámetros), ajustable por el usuario final, no limitado
+a la columna de sistema `fecha_registro`. R12/R13 quedan documentados
+arriba solo como registro histórico de lo que existió — no describen
+comportamiento actual. Ver `design.md` §5 (reescrita) y `tasks.md`
+Grupo E para el detalle completo del borrado.
 
 ## 6. Fuera de alcance de esta spec
 
