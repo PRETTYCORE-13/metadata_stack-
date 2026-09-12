@@ -37,7 +37,14 @@ export default {
     // abajo) -- más simple que recalcular en cada scroll/resize, y el
     // usuario la reabre con una tecla. `capture: true` en scroll porque
     // el contenedor que hace scroll (no window) no burbujea el evento.
-    this.alScrollOCerrar = () => this.abierta() && this.cerrar()
+    //
+    // Bug real (2026-09-12): con `capture: true` en window, esto también
+    // capta el scroll INTERNO de la propia lista (arrastrar su scrollbar
+    // cuando hay muchas opciones) y la cerraba de inmediato -- el usuario
+    // nunca llegaba a ver el resto de los resultados. `e.target` de un
+    // scroll disparado por la lista misma es la lista -- se ignora ese
+    // caso, solo cierra si lo que hizo scroll fue algo AFUERA de ella.
+    this.alScrollOCerrar = (e) => this.abierta() && !this.lista.contains(e.target) && this.cerrar()
     window.addEventListener("scroll", this.alScrollOCerrar, true)
     window.addEventListener("resize", this.alScrollOCerrar)
   },
