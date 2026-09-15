@@ -1763,11 +1763,33 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   # Propaga el resultado (antes se descartaba con Repo.delete/1 + :ok fijo,
   # así que un fallo de FK real quedaba como excepción sin capturar en vez
   # de un {:error, _} manejable).
+  #
+  # Bug real (2026-09-14, carpeta "Pedidos"): un campo tipo "referencia a
+  # meta_schema_header" genérico (ej. "tipo_transaccion" en
+  # pty_subtipos_transaccion, mismo patrón que "documento" en
+  # pty_folio_perfiles) puede dejar una FK real de Postgres apuntando a
+  # ESTE header — `Repo.delete/1` sin un `foreign_key_constraint/3`
+  # declarado en el changeset no convierte esa violación en `{:error,
+  # changeset}`, la deja pasar como `Postgrex.Error` crudo (mismo hueco ya
+  # resuelto para `CatalogoGenerador.eliminar/3`, ver ese comentario). Se
+  # captura acá con el mismo criterio.
   def eliminar_header(%Header{} = header) do
     case Repo.delete(header) do
       {:ok, _header} -> :ok
       {:error, changeset} -> {:error, changeset}
     end
+  rescue
+    e in Postgrex.Error ->
+      case e.postgres do
+        %{code: :foreign_key_violation, table: tabla, constraint: constraint} ->
+          {:error,
+           "no se puede borrar: la tabla \"#{tabla}\" todavía tiene un registro que referencia " <>
+             "este catálogo por llave foránea real (restricción \"#{constraint}\") -- hay que " <>
+             "borrar o desenganchar esa referencia primero."}
+
+        _ ->
+          {:error, "error de base de datos al borrar: #{Exception.message(e)}"}
+      end
   end
 
   # Igual que eliminar_header/1 pero por id, sin necesitar el struct
