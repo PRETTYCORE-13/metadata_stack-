@@ -349,6 +349,140 @@ defmodule MetadataApp.MetaConsultasTest do
     end
   end
 
+  # SPEC-SYS-1009202602 (endpoint API a partir de una Consulta) -- alcance
+  # por empresa SIN Usuario real detrás (design.md §4). A diferencia del
+  # describe de arriba, este SÍ prueba contra una columna real
+  # (`empresa_id`, agregada a meta_fixture_cliente en la migración
+  # 20260910120200 solo para poder probar esto de punta a punta dentro de
+  # este repo, sin depender de un catálogo generado en dev).
+  describe "alcance de datos -- {:empresa_fija, empresa_id} (SPEC-SYS-1009202602)" do
+    test "sin la columna empresa_id, es un no-op (mismo criterio permisivo que branch/sales_unit/etc.)" do
+      consulta = crear_consulta("meta_fixture_equipo")
+      total_sin_alcance = MetaConsultas.contar(consulta, :sistema)
+
+      assert MetaConsultas.contar(consulta, {:empresa_fija, 999_999}) == total_sin_alcance
+    end
+
+    test "con la columna empresa_id, solo devuelve filas de la empresa indicada" do
+      {:ok, empresa_a} = %Empresa{} |> Empresa.changeset(%{nombre: "Empresa A #{unique()}"}) |> Repo.insert()
+      {:ok, empresa_b} = %Empresa{} |> Empresa.changeset(%{nombre: "Empresa B #{unique()}"}) |> Repo.insert()
+
+      prefijo = "empresa_fija_#{unique()}"
+
+      %MetaFixtureCliente{}
+      |> MetaFixtureCliente.changeset(%{
+        meta_fixture_cliente_nombre: "#{prefijo}-a",
+        meta_fixture_cliente_edad: 1,
+        meta_fixture_cliente_venta: Decimal.new("1.00"),
+        empresa_id: empresa_a.id
+      })
+      |> Ecto.Changeset.put_change(:insert_guid, guid())
+      |> Repo.insert!()
+
+      %MetaFixtureCliente{}
+      |> MetaFixtureCliente.changeset(%{
+        meta_fixture_cliente_nombre: "#{prefijo}-b",
+        meta_fixture_cliente_edad: 2,
+        meta_fixture_cliente_venta: Decimal.new("1.00"),
+        empresa_id: empresa_b.id
+      })
+      |> Ecto.Changeset.put_change(:insert_guid, guid())
+      |> Repo.insert!()
+
+      %MetaFixtureCliente{}
+      |> MetaFixtureCliente.changeset(%{
+        meta_fixture_cliente_nombre: "#{prefijo}-sin-empresa",
+        meta_fixture_cliente_edad: 3,
+        meta_fixture_cliente_venta: Decimal.new("1.00")
+      })
+      |> Ecto.Changeset.put_change(:insert_guid, guid())
+      |> Repo.insert!()
+
+      consulta = crear_consulta("meta_fixture_cliente")
+
+      resultado_a = MetaConsultas.ejecutar(consulta, {:empresa_fija, empresa_a.id}, %{"meta_fixture_cliente_nombre" => {:ilike, prefijo}})
+      nombres_a = Enum.map(resultado_a.filas, & &1[:meta_fixture_cliente__meta_fixture_cliente_nombre])
+
+      # La fila sin empresa_id (nil) también entra -- mismo criterio
+      # permisivo que branch/sales_unit/inventory_location (is_nil o
+      # coincide, nunca "distinto de nil y distinto" se excluye de más).
+      assert Enum.sort(nombres_a) == Enum.sort(["#{prefijo}-a", "#{prefijo}-sin-empresa"])
+      assert resultado_a.total_filas == 2
+
+      resultado_b = MetaConsultas.ejecutar(consulta, {:empresa_fija, empresa_b.id}, %{"meta_fixture_cliente_nombre" => {:ilike, prefijo}})
+      nombres_b = Enum.map(resultado_b.filas, & &1[:meta_fixture_cliente__meta_fixture_cliente_nombre])
+
+      assert Enum.sort(nombres_b) == Enum.sort(["#{prefijo}-b", "#{prefijo}-sin-empresa"])
+      assert resultado_b.total_filas == 2
+    end
+  end
+
+  # SPEC-SYS-1009202602, R35-R38 (2026-09-11) -- paginación por CURSOR,
+  # ADICIONAL a limit/offset (esos siguen sin tocar, ver describe de
+  # arriba y el resto del archivo). Keyset sobre el id del catálogo
+  # base, nunca OFFSET.
+  describe "ejecutar/6 -- opciones[:despues_de_id] (cursor, SPEC-SYS-1009202602)" do
+    test "sin la llave, comportamiento de siempre (limit/offset), total_filas calculado" do
+      prefijo = "cursor_off_#{unique()}"
+      for n <- 1..3, do: fixture_cliente("#{prefijo}-#{n}", n)
+
+      consulta = crear_consulta("meta_fixture_cliente")
+      resultado = MetaConsultas.ejecutar(consulta, :sistema, %{"meta_fixture_cliente_nombre" => {:ilike, prefijo}})
+
+      assert resultado.total_filas == 3
+      assert length(resultado.filas) == 3
+    end
+
+    test "con la llave (aunque valga nil), pagina por id sin repetir ni saltear filas, y total_filas es nil" do
+      prefijo = "cursor_#{unique()}"
+      for n <- 1..5, do: fixture_cliente("#{prefijo}-#{n}", n)
+
+      consulta = crear_consulta("meta_fixture_cliente")
+      filtro = %{"meta_fixture_cliente_nombre" => {:ilike, prefijo}}
+
+      pagina1 = MetaConsultas.ejecutar(consulta, :sistema, filtro, [despues_de_id: nil, limit: 2])
+      assert length(pagina1.filas) == 2
+      assert pagina1.total_filas == nil
+
+      ultimo_id_pagina1 = pagina1.filas |> List.last() |> Map.fetch!(:id)
+
+      pagina2 = MetaConsultas.ejecutar(consulta, :sistema, filtro, [despues_de_id: ultimo_id_pagina1, limit: 2])
+      assert length(pagina2.filas) == 2
+
+      ultimo_id_pagina2 = pagina2.filas |> List.last() |> Map.fetch!(:id)
+      pagina3 = MetaConsultas.ejecutar(consulta, :sistema, filtro, [despues_de_id: ultimo_id_pagina2, limit: 2])
+      assert length(pagina3.filas) == 1
+
+      todas = pagina1.filas ++ pagina2.filas ++ pagina3.filas
+      nombres = Enum.map(todas, & &1[:meta_fixture_cliente__meta_fixture_cliente_nombre])
+
+      assert Enum.sort(nombres) == Enum.sort(for n <- 1..5, do: "#{prefijo}-#{n}")
+      assert Enum.uniq(todas |> Enum.map(& &1.id)) |> length() == 5
+
+      pagina4 = MetaConsultas.ejecutar(consulta, :sistema, filtro, [despues_de_id: (pagina3.filas |> List.last() |> Map.fetch!(:id)), limit: 2])
+      assert pagina4.filas == []
+    end
+
+    test "los ids quedan en orden ascendente, sin importar orden_por de la Consulta" do
+      prefijo = "cursor_orden_#{unique()}"
+      fixture_cliente("#{prefijo}-z", 1)
+      fixture_cliente("#{prefijo}-a", 2)
+
+      consulta = crear_consulta("meta_fixture_cliente")
+
+      {:ok, consulta} =
+        MetaConsultas.actualizar_orden_por(consulta, [
+          %{"catalogo" => "meta_fixture_cliente", "campo" => "meta_fixture_cliente_nombre", "direccion" => "asc"}
+        ])
+
+      resultado =
+        MetaConsultas.ejecutar(consulta, :sistema, %{"meta_fixture_cliente_nombre" => {:ilike, prefijo}}, despues_de_id: nil)
+
+      ids = Enum.map(resultado.filas, & &1.id)
+      assert ids == Enum.sort(ids)
+    end
+  end
+
   # Bug real 2026-08-27 (reporte "Clientes Core": columna "U.Venta" mostraba
   # el id crudo de la FK en vez de "Prev-Uriel"/"Prev-Jazmin") -- ejecutar/6
   # solo resolvía a nombre los 3 campos de CONTROL (branch/inventory_location/
@@ -421,6 +555,82 @@ defmodule MetadataApp.MetaConsultasTest do
         ])
 
       assert %{filas: _} = MetaConsultas.ejecutar(consulta, :sistema)
+    end
+  end
+
+  # SPEC-SYS-0909202605 (tarea B2) -- con un JOIN real de por medio, para
+  # confirmar que el `id in ids` filtra por la tabla BASE
+  # (meta_fixture_cliente), nunca por la tabla joineada
+  # (meta_schema_branch) -- y que sigue siendo acotado solo por ids, sin
+  # filtros/búsqueda/parámetros de la vista.
+  describe "agregar_seleccionados/5" do
+    # Mismo join que "motor multi-tabla" de arriba (unir_por_nombre/1) --
+    # meta_fixture_equipo es el fixture ya establecido para probar un
+    # join real, a diferencia de meta_schema_branch (nunca se registró
+    # como catálogo joineable, solo existe como destino de una
+    # "referencia" -- mecanismo distinto).
+    defp cliente_con_equipo(nombre, edad, venta) do
+      cliente =
+        %MetaFixtureCliente{}
+        |> MetaFixtureCliente.changeset(%{meta_fixture_cliente_nombre: nombre, meta_fixture_cliente_edad: edad, meta_fixture_cliente_venta: Decimal.new(venta)})
+        |> Ecto.Changeset.put_change(:insert_guid, guid())
+        |> Repo.insert!()
+
+      %MetaFixtureEquipo{}
+      |> MetaFixtureEquipo.changeset(%{meta_fixture_equipo_nombre_equipo: nombre})
+      |> Ecto.Changeset.put_change(:insert_guid, guid())
+      |> Repo.insert!()
+
+      cliente
+    end
+
+    defp consulta_con_join_a_equipo do
+      consulta = crear_consulta("meta_fixture_cliente")
+
+      MetaConsultas.agregar_tabla_manual(
+        consulta,
+        "meta_fixture_equipo",
+        "meta_fixture_equipo_nombre_equipo",
+        "meta_fixture_cliente",
+        "meta_fixture_cliente_nombre"
+      )
+    end
+
+    test "SUMA/PROMEDIO/MÍNIMO/MÁXIMO/CONTEO sobre solo los ids elegidos, con un join presente" do
+      {:ok, consulta} = consulta_con_join_a_equipo()
+
+      a = cliente_con_equipo("Sel Consulta A #{unique()}", 10, "100.00")
+      b = cliente_con_equipo("Sel Consulta B #{unique()}", 20, "200.00")
+      _c_no_seleccionado = cliente_con_equipo("Sel Consulta C #{unique()}", 999, "999999.00")
+
+      ids = [a.id, b.id]
+      clave_venta = "meta_fixture_cliente__meta_fixture_cliente_venta"
+
+      assert MetaConsultas.agregar_seleccionados(consulta, :sistema, clave_venta, :sum, ids) |> Decimal.compare(Decimal.new("300.00")) == :eq
+      assert MetaConsultas.agregar_seleccionados(consulta, :sistema, clave_venta, :count, ids) == 2
+      assert MetaConsultas.agregar_seleccionados(consulta, :sistema, clave_venta, :min, ids) |> Decimal.compare(Decimal.new("100.00")) == :eq
+      assert MetaConsultas.agregar_seleccionados(consulta, :sistema, clave_venta, :max, ids) |> Decimal.compare(Decimal.new("200.00")) == :eq
+    end
+
+    test "el `id` filtra por la tabla BASE, no por la tabla joineada (fila.id de ejecutar/6 coincide con el id real del cliente)" do
+      {:ok, consulta} = consulta_con_join_a_equipo()
+      a = cliente_con_equipo("Sel Consulta Id #{unique()}", 15, "150.00")
+
+      resultado = MetaConsultas.ejecutar(consulta, :sistema)
+      fila = Enum.find(resultado.filas, &(&1[:meta_fixture_cliente__meta_fixture_cliente_nombre] == a.meta_fixture_cliente_nombre))
+
+      refute is_nil(fila)
+      assert fila[:id] == a.id
+    end
+
+    test "lista de ids vacía da nil, sin consultar nada" do
+      {:ok, consulta} = consulta_con_join_a_equipo()
+      assert MetaConsultas.agregar_seleccionados(consulta, :sistema, "meta_fixture_cliente__meta_fixture_cliente_venta", :sum, []) == nil
+    end
+
+    test "clave_campo que no existe en la consulta da nil" do
+      {:ok, consulta} = consulta_con_join_a_equipo()
+      assert MetaConsultas.agregar_seleccionados(consulta, :sistema, "no_existe__no_existe", :sum, [1]) == nil
     end
   end
 end

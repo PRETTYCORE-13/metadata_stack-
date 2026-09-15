@@ -504,6 +504,10 @@ defmodule MetadataAppWeb.MenuLayout do
           <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">build</span></span>
           <span class="pc-admin-menu-label">Business Process Builder</span>
         </.link>
+        <.link :if={"sysadmin_bc" in @opciones_plataforma} navigate="/sysadmin/endpoints" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">api</span></span>
+          <span class="pc-admin-menu-label">Endpoints</span>
+        </.link>
         <.link :if={"sysadmin_tepache" in @opciones_plataforma} navigate="/sysadmin/tepache" class="pc-admin-menu-item">
           <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">sync_alt</span></span>
           <span class="pc-admin-menu-label">Tepache Exp/Imp</span>

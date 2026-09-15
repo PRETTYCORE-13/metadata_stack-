@@ -82,6 +82,12 @@ defmodule MetadataApp.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
       {:ulid, "~> 0.2.0"},
+      # SPEC-SYS-1009202602, R39-R41 (2026-09-11) -- ejecución asíncrona
+      # de un endpoint sobre un resultado grande, vía Job. Respaldado en
+      # el mismo Postgres que ya usa la app (sin infraestructura nueva
+      # que levantar/mantener), decisión explícita del usuario sobre un
+      # mecanismo propio a mano.
+      {:oban, "~> 2.19"},
       # Módulo de Importación de Datos (Fase 1, 2026-08-27) — puro
       # Elixir/BEAM, sin compilación nativa/Rust (a diferencia de
       # umya_spreadsheet, que necesita el toolchain de Rust — riesgo real

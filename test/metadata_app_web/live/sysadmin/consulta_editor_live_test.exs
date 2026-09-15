@@ -613,4 +613,30 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
     assert {:error, {:live_redirect, %{to: "/sysadmin/bc-list"}}} =
              live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
   end
+
+  # SPEC-SYS-0909202605 (tarea C4) -- mismos 5 eventos que bc_motor_live.ex,
+  # persistidos como elemento de Consulta.campos en vez de meta_schema_detail.
+  test "Resumen de selección: toggle + función + etiqueta + unidad + porcentaje, independiente de Totales", %{conn: conn} do
+    {header, _consulta} = criar_consulta()
+    id = "meta_fixture_cliente::meta_fixture_cliente_venta"
+
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
+    render_click(view, "cambiar_tab", %{"tab" => "get_config"})
+
+    render_click(view, "cambiar_resumen_seleccion_activo", %{"campo" => id, "activo" => "true"})
+    render_change(view, "cambiar_resumen_seleccion_funcion", %{"campo" => id, "funcion" => "maximo"})
+    render_change(view, "cambiar_resumen_seleccion_etiqueta", %{"campo" => id, "etiqueta" => "Venta máxima"})
+    render_change(view, "cambiar_formato_unidad", %{"campo" => id, "unidad" => "cajas"})
+    render_click(view, "cambiar_formato_porcentaje", %{"campo" => id, "activo" => "true"})
+
+    consulta_actualizada = MetaConsultas.obtener_por_header_id(header.id)
+    campo = Enum.find(consulta_actualizada.campos, &(&1["campo"] == "meta_fixture_cliente_venta"))
+
+    assert campo["resumen_seleccion_activo"] == true
+    assert campo["resumen_seleccion_funcion"] == "maximo"
+    assert campo["resumen_seleccion_etiqueta"] == "Venta máxima"
+    assert campo["formato_unidad"] == "cajas"
+    assert campo["formato_porcentaje"] == true
+    refute campo["agregacion_activa"] == true
+  end
 end

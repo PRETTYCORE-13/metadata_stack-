@@ -953,10 +953,26 @@ const DescargarArchivo = {
   },
 }
 
+// Checkbox de encabezado genérico ("Seleccionar todos") -- el propio
+// checkbox es el hook; `data-objetivo` es un selector CSS (scopeado por
+// el caller, ej. por name="campos_alta[]") de las casillas que debe
+// prender/apagar en conjunto. Sin round-trip al servidor a propósito
+// (es solo estado de formulario, previo al submit real) -- mismo
+// criterio que SelectorCampos de arriba para "seleccionar-todos"/
+// "deseleccionar-todos", pero genérico para cualquier tabla de
+// checkboxes en vez de acoplado al popover de columnas.
+const SeleccionarTodosCheckbox = {
+  mounted() {
+    this.el.addEventListener("change", () => {
+      document.querySelectorAll(this.el.dataset.objetivo).forEach((cb) => (cb.checked = this.el.checked))
+    })
+  },
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField, UnidadOperativaWatcher, RecordarSeccion, AutoImprimir, ZoomLienzo, DescargarArchivo},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField, UnidadOperativaWatcher, RecordarSeccion, AutoImprimir, ZoomLienzo, DescargarArchivo, SeleccionarTodosCheckbox},
 })
 
 // Show progress bar on live navigation and form submits

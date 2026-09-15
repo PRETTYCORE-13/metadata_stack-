@@ -67,6 +67,36 @@ defmodule MetadataAppWeb.Router do
     delete "/sesion", SesionController, :delete
   end
 
+  # SPEC-SYS-1009202602 -- endpoint API publicado a partir de una
+  # Consulta. Pipeline propio (solo `accepts`, SIN fetch_session/scope
+  # de usuario): a diferencia de :api de arriba, esta ruta NUNCA corre
+  # con identidad de Usuario -- se autentica exclusivamente con la API
+  # key del endpoint (Authorization: Bearer, ver ConsultaEndpointController),
+  # nunca con una cookie de sesión de admin.
+  pipeline :api_consulta_endpoint do
+    plug :accepts, ["json"]
+  end
+
+  # Va antes del scope "/api" genérico de abajo (mismo motivo que
+  # documentan api_movil/meta_schema_estados más arriba: rutas más
+  # específicas primero) -- en la práctica no colisiona igual, porque
+  # "/api/:tabla" solo matchea UN segmento después de "/api" y esto son
+  # dos o más, pero se ordena así por legibilidad y consistencia.
+  scope "/api/consultas", MetadataAppWeb.Api do
+    pipe_through :api_consulta_endpoint
+
+    # R39-R41 (2026-09-11) -- Job asíncrono, recurso propio sobre el
+    # mismo endpoint. Va ANTES del splat de abajo -- mismo motivo que
+    # el resto de este archivo: rutas literales antes de comodines
+    # (":ruta" acá es un solo segmento, `ruta` valida `^[a-z0-9-]+$`
+    # sin barras, R3 -- nunca ambiguo contra el splat de 2+ segmentos).
+    post "/:ruta/jobs", ConsultaEndpointJobController, :crear
+    get "/:ruta/jobs/:job_id", ConsultaEndpointJobController, :mostrar
+
+    get "/*ruta", ConsultaEndpointController, :invocar
+    post "/*ruta", ConsultaEndpointController, :invocar
+  end
+
   # Va antes del scope "/" browser: el catch-all "/*ruta" de más abajo matchea
   # cualquier GET (incluido "/api/..."), así que /api tiene que resolverse
   # primero o esas rutas GET nunca llegarían a la API.
@@ -214,6 +244,17 @@ defmodule MetadataAppWeb.Router do
         live "/sysadmin/bc-list/:nombre/plantilla", Sysadmin.PlantillaConstructorLive
         live "/sysadmin/bc-list/:nombre/importacion", Sysadmin.ImportacionConstructorLive
         live "/sysadmin/tepache", Sysadmin.TepacheLive
+
+        # SPEC-SYS-1009202602 (agregado 2026-09-14, a pedido explícito --
+        # "no quiero que dependa de una consulta") -- sección propia para
+        # crear/gestionar endpoints, sin pasar por BC List. Reemplaza el
+        # atajo "+ Endpoint" (ya retirado de BcListLive) y la pestaña
+        # "Endpoint API" (ya retirada de ConsultaEditorLive). "nuevo"
+        # ANTES de ":id" -- ruta literal antes de comodín, mismo criterio
+        # que el resto de este archivo.
+        live "/sysadmin/endpoints", Sysadmin.EndpointsLive, :index
+        live "/sysadmin/endpoints/nuevo", Sysadmin.EndpointsLive, :nuevo
+        live "/sysadmin/endpoints/:nombre", Sysadmin.EndpointsLive, :editar
       end
 
       # Buscar TRN: siempre disponible (2026-08-04, a pedido explícito) —

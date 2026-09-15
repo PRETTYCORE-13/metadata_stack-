@@ -40,7 +40,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
     %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"},
   %{tipo: :pagina, id: "panel_control", label: "Panel Control", nav: "/sysadmin/panel-control"},
-  %{tipo: :pagina, id: "sesiones_movil", label: "Sesiones móviles", nav: "/sysadmin/sesiones-movil"}
+  %{tipo: :pagina, id: "sesiones_movil", label: "Sesiones móviles", nav: "/sysadmin/sesiones-movil"},
+  %{tipo: :pagina, id: "endpoints", label: "Endpoints", nav: "/sysadmin/endpoints"}
   ]
 
   # Get View unificado (panel_get_view/1) — descriptores fijos de los
@@ -946,6 +947,64 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
       {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
       {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la máscara de \"#{campo}\".")}
+    end
+  end
+
+  # SPEC-SYS-0909202605 -- "Resumen de selección": independiente de
+  # "Totalizado" (agregacion_activa) -- un campo puede participar del uno,
+  # del otro, de los dos, o de ninguno.
+  def handle_event("cambiar_resumen_seleccion_activo", %{"campo" => campo, "activo" => activo}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "resumen_seleccion_activo", activo == "true")
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"Resumen de selección\" de \"#{campo}\".")}
+    end
+  end
+
+  def handle_event("cambiar_resumen_seleccion_funcion", %{"campo" => campo, "funcion" => funcion}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "resumen_seleccion_funcion", funcion)
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la operación del Resumen de selección de \"#{campo}\".")}
+    end
+  end
+
+  def handle_event("cambiar_resumen_seleccion_etiqueta", %{"campo" => campo, "etiqueta" => etiqueta}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "resumen_seleccion_etiqueta", etiqueta)
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la etiqueta del Resumen de selección de \"#{campo}\".")}
+    end
+  end
+
+  # "Unidad"/"Porcentaje" -- formato nuevo (R16.2/R16.3 de requirements.md)
+  # que antes no existía en ningún lado de la plataforma. Igual que
+  # mascara_separador/mascara_simbolo, aplican tanto a Totales como al
+  # Resumen de selección -- por eso el mini-form aparece con
+  # `agregacion_activa or resumen_seleccion_activo` (ver celda_totales/1).
+  def handle_event("cambiar_formato_unidad", %{"campo" => campo, "unidad" => unidad}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "formato_unidad", unidad)
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar la unidad de \"#{campo}\".")}
+    end
+  end
+
+  def handle_event("cambiar_formato_porcentaje", %{"campo" => campo, "activo" => activo}, socket) do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "formato_porcentaje", activo == "true")
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar el formato de porcentaje de \"#{campo}\".")}
     end
   end
 

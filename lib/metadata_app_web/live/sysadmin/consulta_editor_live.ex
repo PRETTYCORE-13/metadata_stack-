@@ -54,7 +54,8 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     %{tipo: :pagina, id: "acciones_externas", label: "Acciones externas", nav: "/sysadmin/acciones-externas"},
     %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"},
   %{tipo: :pagina, id: "panel_control", label: "Panel Control", nav: "/sysadmin/panel-control"},
-  %{tipo: :pagina, id: "sesiones_movil", label: "Sesiones móviles", nav: "/sysadmin/sesiones-movil"}
+  %{tipo: :pagina, id: "sesiones_movil", label: "Sesiones móviles", nav: "/sysadmin/sesiones-movil"},
+  %{tipo: :pagina, id: "endpoints", label: "Endpoints", nav: "/sysadmin/endpoints"}
   ]
 
   @tabs [
@@ -65,7 +66,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     {"sql", "SQL"}
   ]
 
-  def mount(%{"nombre" => nombre}, _session, socket) do
+  def mount(%{"nombre" => nombre} = params, _session, socket) do
     socket =
       socket
       |> assign(:current_page, "bc_list")
@@ -75,7 +76,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
       |> assign(:show_clientes_children, false)
       |> assign(:show_prettycore_children, false)
       |> assign(:tabs, @tabs)
-      |> assign(:tab, "configuracion")
+      |> assign(:tab, if(Enum.any?(@tabs, &(elem(&1, 0) == params["tab"])), do: params["tab"], else: "configuracion"))
       |> assign(:subtab_sql, "sql")
 
     case MetaSchemaContext.obtener_header_por_nombre(nombre) do
@@ -414,6 +415,33 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
   def handle_event("cambiar_mascara", %{"campo" => id, "separador" => separador, "simbolo" => simbolo}, socket) do
     campos = mapear_campo(socket, id, fn campo -> campo |> Map.put("mascara_separador", separador) |> Map.put("mascara_simbolo", simbolo) end)
     guardar_campos(socket, campos, "Máscara actualizada.")
+  end
+
+  # SPEC-SYS-0909202605 -- "Resumen de selección", mismo criterio que
+  # bc_motor_live.ex (independiente de agregacion_activa).
+  def handle_event("cambiar_resumen_seleccion_activo", %{"campo" => id, "activo" => activo}, socket) do
+    campos = mapear_campo(socket, id, fn campo -> Map.put(campo, "resumen_seleccion_activo", activo == "true") end)
+    guardar_campos(socket, campos, "Resumen de selección actualizado.")
+  end
+
+  def handle_event("cambiar_resumen_seleccion_funcion", %{"campo" => id, "funcion" => funcion}, socket) do
+    campos = mapear_campo(socket, id, fn campo -> Map.put(campo, "resumen_seleccion_funcion", funcion) end)
+    guardar_campos(socket, campos, "Operación del Resumen de selección actualizada.")
+  end
+
+  def handle_event("cambiar_resumen_seleccion_etiqueta", %{"campo" => id, "etiqueta" => etiqueta}, socket) do
+    campos = mapear_campo(socket, id, fn campo -> Map.put(campo, "resumen_seleccion_etiqueta", etiqueta) end)
+    guardar_campos(socket, campos, "Etiqueta del Resumen de selección actualizada.")
+  end
+
+  def handle_event("cambiar_formato_unidad", %{"campo" => id, "unidad" => unidad}, socket) do
+    campos = mapear_campo(socket, id, fn campo -> Map.put(campo, "formato_unidad", unidad) end)
+    guardar_campos(socket, campos, "Unidad actualizada.")
+  end
+
+  def handle_event("cambiar_formato_porcentaje", %{"campo" => id, "activo" => activo}, socket) do
+    campos = mapear_campo(socket, id, fn campo -> Map.put(campo, "formato_porcentaje", activo == "true") end)
+    guardar_campos(socket, campos, "Formato de porcentaje actualizado.")
   end
 
   # --- Configuración: SOLO etiqueta ------------------------------------

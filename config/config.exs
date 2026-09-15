@@ -78,6 +78,15 @@ config :metadata_app, MetadataAppWeb.Endpoint,
 # at the `config/runtime.exs`.
 config :metadata_app, MetadataApp.Mailer, adapter: Swoosh.Adapters.Local
 
+# SPEC-SYS-1009202602, R39-R41 (2026-09-11) -- Job asíncrono para
+# extraer el resultado COMPLETO de un endpoint sobre una Consulta
+# grande, sin bloquear ni saturar memoria. Una sola cola chica -- estos
+# jobs son pocos y pesados (streaming a disco), no muchos y livianos.
+config :metadata_app, Oban,
+  engine: Oban.Engines.Basic,
+  repo: MetadataApp.Repo,
+  queues: [consulta_endpoint_jobs: 2]
+
 # Configure esbuild (the version is required)
 config :esbuild,
   version: "0.25.4",

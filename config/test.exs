@@ -27,6 +27,12 @@ config :metadata_app, MetadataAppWeb.Endpoint,
 # In test we don't send emails
 config :metadata_app, MetadataApp.Mailer, adapter: Swoosh.Adapters.Test
 
+# SPEC-SYS-1009202602 -- :inline corre el Job en el mismo proceso que
+# lo encola, sincrónico, compartiendo la conexión de Sandbox del test
+# (sin esto, el worker correría en OTRO proceso, sin acceso a la
+# transacción de sandbox del test que lo disparó).
+config :metadata_app, Oban, testing: :inline
+
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
 

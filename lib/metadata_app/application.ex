@@ -29,6 +29,9 @@ defmodule MetadataApp.Application do
       # (SPEC-API-0409202601, R10/R11) -- mismo criterio que las cachés
       # de arriba, tabla ETS en su propio proceso.
       MetadataApp.Autenticacion.LimiteIntentos,
+      # SPEC-SYS-1009202602, R39-R41 -- Job asíncrono para extraer el
+      # resultado completo de un endpoint sobre una Consulta grande.
+      {Oban, Application.fetch_env!(:metadata_app, Oban)},
       # Start a worker by calling: MetadataApp.Worker.start_link(arg)
       # {MetadataApp.Worker, arg},
       # Start to serve requests, typically the last entry

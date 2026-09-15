@@ -649,6 +649,19 @@ defmodule MetadataApp.MetaConsultas do
     end
   end
 
+  # SPEC-SYS-1009202602 -- alcance por empresa sin Usuario real detrás
+  # (endpoint API publicado a partir de una Consulta, ver design.md §4).
+  # A propósito NO pasa por `Permissions.alcance_tipo_efectivo/2` (exige
+  # un rol de usuario real, acá no hay usuario) ni consulta
+  # `alcance_habilitado` del Header (esa bandera gobierna el alcance de
+  # un Usuario logueado, no este modo forzado) -- siempre filtra por
+  # `empresa_id` si la columna existe, sin importar esa bandera.
+  defp aplicar_alcance_de_datos(query, consulta, alias_por_catalogo, {:empresa_fija, empresa_id}) do
+    con_columna_alcance(query, consulta.catalogo_base, alias_por_catalogo, :empresa_id, fn alias_tabla, campo ->
+      where(query, [{^alias_tabla, r}], is_nil(field(r, ^campo)) or field(r, ^campo) == ^empresa_id)
+    end)
+  end
+
   defp aplicar_where_de_alcance(:global, query, _scope, _catalogo, _alias_por_catalogo), do: query
 
   defp aplicar_where_de_alcance(:empresa, query, scope, catalogo, alias_por_catalogo) do
@@ -708,10 +721,32 @@ defmodule MetadataApp.MetaConsultas do
   matchean filtros/búsqueda/alcance (no solo la página actual). Las
   claves de `filas`/`totales` son las de `clave_campo/1`, no el nombre
   de campo crudo.
+
+  `opciones[:timeout]` (SPEC-SYS-1009202602, R18) -- límite en
+  milisegundos para las consultas al Repo (conteo y select de filas);
+  `nil`/ausente usa el default del pool, como siempre. Postgrex cancela
+  la ejecución en curso cuando se excede, en vez de dejarla corriendo
+  del lado del servidor mientras el cliente ya recibió el error.
+
+  `opciones[:despues_de_id]` (SPEC-SYS-1009202602, R35-R38, agregado
+  2026-09-11) -- paginación por CURSOR, ADICIONAL a `limit:`/`offset:`
+  (nunca los reemplaza, decisión explícita: "no modifiques lo que ya
+  existe"). Con esta llave PRESENTE (aunque su valor sea `nil`, primera
+  página): ignora `orden_por` de la Consulta y ordena SIEMPRE por el
+  `id` del catálogo base (asc), filtra `id > despues_de_id` (no-op si
+  es `nil`), y NO calcula `total_filas` (queda `nil` -- contar
+  potencialmente millones de filas en cada lote sería el mismo
+  problema de fondo que este modo busca evitar, R35). `offset:` no
+  tiene sentido combinado con esto -- quien arma `opciones` no debería
+  mandar los dos a la vez, pero si lo hace, `offset:` simplemente no
+  hace nada (WHERE + ORDER BY por id ya deja la query en la posición
+  correcta antes de que `aplicar_paginacion/2` le agregue el LIMIT).
   """
   def ejecutar(%Consulta{} = consulta, scope, filtros \\ %{}, opciones \\ [], busqueda \\ nil, overrides_parametro \\ %{}) do
     {base, alias_por_catalogo} = construir_query_base(consulta)
     visibles = campos_visibles_ordenados(consulta)
+    repo_opts = opciones_timeout(opciones)
+    modo_cursor? = Keyword.has_key?(opciones, :despues_de_id)
 
     query =
       base
@@ -720,22 +755,45 @@ defmodule MetadataApp.MetaConsultas do
       |> ParametrosCatalogo.aplicar_filtros_parametro_estandar(consulta.campos, alias_por_catalogo, overrides_parametro)
       |> aplicar_alcance_de_datos(consulta, alias_por_catalogo, scope)
 
-    total_filas = Repo.aggregate(query, :count)
-    select_filas = select_dinamico(visibles, alias_por_catalogo)
+    total_filas = if modo_cursor?, do: nil, else: Repo.aggregate(query, :count, repo_opts)
+
+    # SPEC-SYS-0909202605 -- el `id` del catálogo BASE siempre viaja en
+    # cada fila, tenga o no el admin configurada esa columna como visible
+    # (era opcional, ver @claves_control_a_resolver) -- el casillero de
+    # selección de CatalogoLive lo necesita SIEMPRE para poder identificar
+    # la fila, sin depender de que alguien haya prendido "id" como columna
+    # a propósito. `:id` (átomo pelado) nunca choca con una clave de
+    # columna real -- esas siempre vienen namespaced "<catalogo>__<campo>"
+    # (ver clave_campo/1).
+    alias_base = Map.fetch!(alias_por_catalogo, consulta.catalogo_base)
+    select_filas = Map.put(select_dinamico(visibles, alias_por_catalogo), :id, dynamic([{^alias_base, t}], field(t, :id)))
 
     detalles_por_catalogo = MetaSchemaContext.listar_detalles_de_varios(catalogos_presentes(consulta))
 
     filas =
       query
-      |> aplicar_orden(consulta, alias_por_catalogo)
+      |> aplicar_orden_o_cursor(consulta, alias_por_catalogo, alias_base, opciones)
       |> select(^select_filas)
       |> CatalogoGenerico.aplicar_paginacion(opciones)
-      |> Repo.all()
+      |> Repo.all(repo_opts)
       |> resolver_campos_control(visibles, consulta.catalogo_base)
       |> resolver_campos_referencia(visibles, detalles_por_catalogo)
 
     %{filas: filas, total_filas: total_filas, totales: totales(query, consulta, alias_por_catalogo)}
   end
+
+  defp aplicar_orden_o_cursor(query, consulta, alias_por_catalogo, alias_base, opciones) do
+    if Keyword.has_key?(opciones, :despues_de_id) do
+      query
+      |> aplicar_filtro_cursor(alias_base, Keyword.get(opciones, :despues_de_id))
+      |> order_by([{^alias_base, t}], asc: field(t, :id))
+    else
+      aplicar_orden(query, consulta, alias_por_catalogo)
+    end
+  end
+
+  defp aplicar_filtro_cursor(query, _alias_base, nil), do: query
+  defp aplicar_filtro_cursor(query, alias_base, cursor_id), do: where(query, [{^alias_base, t}], field(t, :id) > ^cursor_id)
 
   # "Orden de resultados" (R1, admin) -- aplicado SOLO a la query de
   # `filas` (nunca a `query` en sí, que también alimenta total_filas/
@@ -760,6 +818,16 @@ defmodule MetadataApp.MetaConsultas do
           order_by(acc, [{^alias_tabla, t}], [{^direccion_atom, field(t, ^campo_atom)}])
       end
     end)
+  end
+
+  # SPEC-SYS-1009202602, R18 -- `opciones[:timeout]` (ms) se traduce al
+  # `opts` que ya acepta Repo.all/2 y Repo.aggregate/3; ausente/nil se
+  # comporta exactamente como antes (default del pool, sin límite extra).
+  defp opciones_timeout(opciones) do
+    case Keyword.get(opciones, :timeout) do
+      nil -> []
+      ms -> [timeout: ms]
+    end
   end
 
   defp campos_visibles_ordenados(%Consulta{campos: campos}) do
@@ -1013,6 +1081,61 @@ defmodule MetadataApp.MetaConsultas do
         |> select(^aplicar_funcion_agregada(funcion, expr))
         |> Repo.one()
     end
+  end
+
+  # SPEC-SYS-0909202605 -- "Resumen de selección": acotado ÚNICAMENTE por
+  # una lista de ids del catálogo BASE, nunca por filtros/búsqueda/
+  # parámetros de la vista (independiente de agregar/6 de arriba, mismo
+  # motivo que CatalogoGenerico.agregar_seleccionados/5). Sí aplica
+  # alcance de datos explícito -- a diferencia de agregar/6 de arriba,
+  # que no lo hace (gap real preexistente, fuera de esta spec).
+  def agregar_seleccionados(_consulta, _scope, _campo_clave, _funcion, []), do: nil
+
+  def agregar_seleccionados(%Consulta{} = consulta, scope, campo_clave, funcion, ids) do
+    case Enum.find(consulta.campos, &(to_string(clave_campo(&1)) == campo_clave)) do
+      nil ->
+        nil
+
+      campo ->
+        {base, alias_por_catalogo} = construir_query_base(consulta)
+        alias_tabla = Map.fetch!(alias_por_catalogo, campo["catalogo"])
+        alias_base = Map.fetch!(alias_por_catalogo, consulta.catalogo_base)
+        campo_atom = String.to_existing_atom(campo["campo"])
+        expr = dynamic([{^alias_tabla, t}], field(t, ^campo_atom))
+
+        base
+        |> where([{^alias_base, t}], field(t, :id) in ^ids)
+        |> aplicar_alcance_de_datos(consulta, alias_por_catalogo, scope)
+        |> exclude(:order_by)
+        |> select(^aplicar_funcion_agregada(funcion, expr))
+        |> Repo.one()
+    end
+  end
+
+  # SPEC-SYS-1009202601 -- "Descargar Excel: Solo seleccionados": mismo
+  # criterio que agregar_seleccionados/5 de arriba (acotado ÚNICAMENTE
+  # por ids del catálogo BASE + alcance, nunca por filtros/búsqueda/
+  # parámetros de la vista), pero trae las FILAS completas -- mismo
+  # pipeline de resolución que ejecutar/6 (select con :id incluido,
+  # resolver_campos_control/resolver_campos_referencia), sin paginar
+  # (la cantidad de seleccionados ya está acotada del lado del cliente).
+  def listar_seleccionados(_consulta, _scope, []), do: []
+
+  def listar_seleccionados(%Consulta{} = consulta, scope, ids) do
+    {base, alias_por_catalogo} = construir_query_base(consulta)
+    visibles = campos_visibles_ordenados(consulta)
+    alias_base = Map.fetch!(alias_por_catalogo, consulta.catalogo_base)
+    select_filas = Map.put(select_dinamico(visibles, alias_por_catalogo), :id, dynamic([{^alias_base, t}], field(t, :id)))
+    detalles_por_catalogo = MetaSchemaContext.listar_detalles_de_varios(catalogos_presentes(consulta))
+
+    base
+    |> where([{^alias_base, t}], field(t, :id) in ^ids)
+    |> aplicar_alcance_de_datos(consulta, alias_por_catalogo, scope)
+    |> aplicar_orden(consulta, alias_por_catalogo)
+    |> select(^select_filas)
+    |> Repo.all()
+    |> resolver_campos_control(visibles, consulta.catalogo_base)
+    |> resolver_campos_referencia(visibles, detalles_por_catalogo)
   end
 
   defp aplicar_funcion_agregada(:sum, expr), do: dynamic(sum(^expr))
