@@ -1047,7 +1047,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
         </button>
 
         <div :if={@modal_nueva_credencial_abierto} class="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div class="bg-white rounded-2xl shadow-xl p-5 w-full max-w-md" phx-click-away="cerrar_modal_nueva_credencial">
+          <div class="bg-white rounded-2xl shadow-xl p-5 w-full max-w-md max-h-[90vh] overflow-y-auto" phx-click-away="cerrar_modal_nueva_credencial">
             <div class="font-bold text-gray-900 mb-3">Nueva credencial</div>
             <form phx-submit="crear_credencial" class="flex flex-col gap-3">
               <label class="flex flex-col gap-1 text-xs font-semibold text-gray-600">
@@ -1062,9 +1062,20 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
                 </label>
                 <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1.5">Campos que puede exponer</div>
                 <div :if={@campos_visibles == []} class="text-xs text-gray-400">Todavía no marcaste ningún campo como visible.</div>
-                <label :for={campo <- @campos_visibles} class="flex items-center gap-1.5 text-xs text-gray-700 py-0.5">
-                  <input type="checkbox" name="campos_permitidos[]" value={campo["clave"]} /> {campo["etiqueta"] || campo["clave"]}
-                </label>
+                <!-- Bug real (2026-09-15): sin este límite/scroll propio, un
+                     catálogo con muchos campos (ej. "historico", 38) empuja
+                     el modal entero fuera de la pantalla, dejando el botón
+                     "Crear credencial" inalcanzable -- el modal en sí no
+                     tenía scroll, solo la página de atrás. -->
+                <div :if={@campos_visibles != []} class="max-h-56 overflow-y-auto border border-gray-100 rounded-lg px-2 py-1">
+                  <label class="flex items-center gap-1.5 text-xs font-semibold text-gray-600 py-0.5 border-b border-gray-100 mb-0.5 sticky top-0 bg-white">
+                    <input type="checkbox" phx-hook="SeleccionarTodosCheckbox" id="seleccionar-todos-campos-permitidos"
+                      data-objetivo="input[name='campos_permitidos[]']" /> Seleccionar todos
+                  </label>
+                  <label :for={campo <- @campos_visibles} class="flex items-center gap-1.5 text-xs text-gray-700 py-0.5">
+                    <input type="checkbox" name="campos_permitidos[]" value={campo["clave"]} /> {campo["etiqueta"] || campo["clave"]}
+                  </label>
+                </div>
               </div>
               <div class="flex justify-end gap-2 pt-2 border-t border-gray-100">
                 <button type="button" phx-click="cerrar_modal_nueva_credencial"
