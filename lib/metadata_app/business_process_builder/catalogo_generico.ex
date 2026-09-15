@@ -134,6 +134,41 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     |> Repo.aggregate(funcion, campo_atom)
   end
 
+  # SPEC-SYS-0909202605 -- "Resumen de selección": agregación acotada
+  # ÚNICAMENTE por una lista de ids (los registros que el usuario
+  # seleccionó a mano en la tabla), NUNCA por filtros/búsqueda/
+  # parámetros de la vista -- función NUEVA en vez de una sobrecarga de
+  # agregar/7 a propósito, para que sea estructuralmente imposible
+  # mezclar los dos cálculos (Total general vs. Resumen de selección son
+  # independientes, ver design.md).
+  @spec agregar_seleccionados(module(), Scope.t_ou_sistema(), atom() | String.t(), atom(), [integer()]) :: number() | nil
+  def agregar_seleccionados(_schema_mod, _scope, _campo, _funcion, []), do: nil
+
+  def agregar_seleccionados(schema_mod, scope, campo, funcion, ids) do
+    campo_atom = String.to_existing_atom(to_string(campo))
+
+    from(r in schema_mod, as: :t0, where: is_nil(r.delete_guid) and r.id in ^ids)
+    |> aplicar_alcance_de_datos(scope, schema_mod)
+    |> Repo.aggregate(funcion, campo_atom)
+  end
+
+  # SPEC-SYS-1009202601 -- "Descargar Excel: Solo seleccionados": mismo
+  # criterio que agregar_seleccionados/5 (acotado ÚNICAMENTE por ids +
+  # alcance, nunca por filtros/búsqueda/parámetros de la vista), pero
+  # trae los REGISTROS completos en vez de un agregado. `[]` da `[]`
+  # explícito en vez de traer todo -- acá "sin ids" significa "nada",
+  # nunca "sin filtro" (a diferencia de un filtro `:in` opcional).
+  @spec listar_seleccionados(module(), Scope.t_ou_sistema(), [integer()], keyword()) :: [struct()]
+  def listar_seleccionados(schema_mod, scope, ids, opciones \\ [])
+  def listar_seleccionados(_schema_mod, _scope, [], _opciones), do: []
+
+  def listar_seleccionados(schema_mod, scope, ids, opciones) do
+    from(r in schema_mod, as: :t0, where: is_nil(r.delete_guid) and r.id in ^ids)
+    |> aplicar_alcance_de_datos(scope, schema_mod)
+    |> aplicar_orden(Keyword.get(opciones, :orden, []))
+    |> Repo.all()
+  end
+
   # Público (no defp) — MetaConsultas.ejecutar/3 reusa exactamente esta
   # misma semántica de filtros para las Consultas Ecto (banda de filtros
   # idéntica a la de cualquier catálogo, en vez de reinventarla).

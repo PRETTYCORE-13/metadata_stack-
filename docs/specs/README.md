@@ -71,3 +71,13 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   spec de práctica: catálogo `pty_perros` con motor de estados
   (Activo/Baja/Reactivar), 100% armado con el Motor BC real (BPB +
   Sysadmin), sin publicar a ningún sistema (queda en developer).
+- [`SPEC-SYS-0909202604-importacion-actualiza-registros/`](SPEC-SYS-0909202604-importacion-actualiza-registros/) —
+  la importación por Excel también actualiza registros existentes (por
+  campo identificador configurable), en vez de solo dar de alta
+  (implementado, Grupos A-G completos).
+- [`SPEC-SYS-0909202605-resumen-seleccion/`](SPEC-SYS-0909202605-resumen-seleccion/) —
+  "Resumen de selección": selección de registros (casillero por fila) +
+  barra compacta con indicadores (SUMA/PROMEDIO/MÍNIMO/MÁXIMO/CONTEO)
+  calculados EXCLUSIVAMENTE sobre lo seleccionado, configurable por
+  catálogo/Consulta, independiente del "Total general" ya existente
+  (implementado, Grupos A-F completos).

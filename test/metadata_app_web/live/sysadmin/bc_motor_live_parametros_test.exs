@@ -101,4 +101,38 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLiveParametrosTest do
     render_click(view, "cambiar_minmax_recomendado", %{"campo" => "meta_fixture_cliente_venta", "recomendado" => "false"})
     render_click(view, "cambiar_total_general", %{"campo" => "meta_fixture_cliente_venta", "activo" => "false"})
   end
+
+  # SPEC-SYS-0909202605 (tareas C1/C2/C3/C5/C6) -- "Resumen de selección"
+  # es independiente de Totales (agregacion_activa): se prueba con Tot.
+  # APAGADO a propósito, para confirmar que Sel funciona solo.
+  test "Resumen de selección: toggle + función + etiqueta + unidad + porcentaje, independiente de Totales", %{conn: conn} do
+    header = MetaSchemaContext.obtener_header_por_nombre("meta_fixture_cliente")
+
+    {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/motor")
+
+    refute detalle(header, "meta_fixture_cliente_venta").schema_context_properties["agregacion_activa"] == true
+
+    render_click(view, "cambiar_resumen_seleccion_activo", %{"campo" => "meta_fixture_cliente_venta", "activo" => "true"})
+    assert detalle(header, "meta_fixture_cliente_venta").schema_context_properties["resumen_seleccion_activo"] == true
+
+    render_change(view, "cambiar_resumen_seleccion_funcion", %{"campo" => "meta_fixture_cliente_venta", "funcion" => "promedio"})
+    assert detalle(header, "meta_fixture_cliente_venta").schema_context_properties["resumen_seleccion_funcion"] == "promedio"
+
+    render_change(view, "cambiar_resumen_seleccion_etiqueta", %{"campo" => "meta_fixture_cliente_venta", "etiqueta" => "Venta promedio"})
+    assert detalle(header, "meta_fixture_cliente_venta").schema_context_properties["resumen_seleccion_etiqueta"] == "Venta promedio"
+
+    render_change(view, "cambiar_formato_unidad", %{"campo" => "meta_fixture_cliente_venta", "unidad" => "cajas"})
+    assert detalle(header, "meta_fixture_cliente_venta").schema_context_properties["formato_unidad"] == "cajas"
+
+    render_click(view, "cambiar_formato_porcentaje", %{"campo" => "meta_fixture_cliente_venta", "activo" => "true"})
+    assert detalle(header, "meta_fixture_cliente_venta").schema_context_properties["formato_porcentaje"] == true
+
+    # Totales sigue apagado -- las dos cosas son independientes (R... de design.md).
+    refute detalle(header, "meta_fixture_cliente_venta").schema_context_properties["agregacion_activa"] == true
+
+    # limpieza -- no dejar el fixture compartido con esto prendido para otros tests
+    render_click(view, "cambiar_resumen_seleccion_activo", %{"campo" => "meta_fixture_cliente_venta", "activo" => "false"})
+    render_change(view, "cambiar_formato_unidad", %{"campo" => "meta_fixture_cliente_venta", "unidad" => ""})
+    render_click(view, "cambiar_formato_porcentaje", %{"campo" => "meta_fixture_cliente_venta", "activo" => "false"})
+  end
 end

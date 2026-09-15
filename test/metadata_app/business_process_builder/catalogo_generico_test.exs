@@ -68,4 +68,40 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenericoTest do
       assert length(pagina) == 25
     end
   end
+
+  # SPEC-SYS-0909202605 (tarea B1) -- acotado ÚNICAMENTE por ids, nunca
+  # por filtros/búsqueda/parámetros de la vista.
+  describe "agregar_seleccionados/5" do
+    defp fixture_cliente(nombre, edad, venta) do
+      %MetaFixtureCliente{}
+      |> MetaFixtureCliente.changeset(%{meta_fixture_cliente_nombre: nombre, meta_fixture_cliente_edad: edad, meta_fixture_cliente_venta: Decimal.new(venta)})
+      |> put_change(:insert_guid, guid())
+      |> Repo.insert!()
+    end
+
+    test "SUMA/PROMEDIO/MÍNIMO/MÁXIMO/CONTEO se calculan SOLO sobre los ids elegidos" do
+      a = fixture_cliente("Sel A #{unique()}", 10, "100.00")
+      b = fixture_cliente("Sel B #{unique()}", 20, "200.00")
+      _c_no_seleccionado = fixture_cliente("Sel C #{unique()}", 999, "999999.00")
+
+      ids = [a.id, b.id]
+
+      assert CatalogoGenerico.agregar_seleccionados(MetaFixtureCliente, :sistema, :meta_fixture_cliente_edad, :sum, ids) == 30
+      assert CatalogoGenerico.agregar_seleccionados(MetaFixtureCliente, :sistema, :meta_fixture_cliente_edad, :avg, ids) |> Decimal.compare(Decimal.new(15)) == :eq
+      assert CatalogoGenerico.agregar_seleccionados(MetaFixtureCliente, :sistema, :meta_fixture_cliente_edad, :min, ids) == 10
+      assert CatalogoGenerico.agregar_seleccionados(MetaFixtureCliente, :sistema, :meta_fixture_cliente_edad, :max, ids) == 20
+      assert CatalogoGenerico.agregar_seleccionados(MetaFixtureCliente, :sistema, :meta_fixture_cliente_edad, :count, ids) == 2
+    end
+
+    test "lista de ids vacía da nil, sin consultar nada" do
+      assert CatalogoGenerico.agregar_seleccionados(MetaFixtureCliente, :sistema, :meta_fixture_cliente_edad, :sum, []) == nil
+    end
+
+    test "ignora un registro dado de baja aunque su id esté en la lista" do
+      a = fixture_cliente("Sel Baja #{unique()}", 10, "100.00")
+      a |> Ecto.Changeset.change(%{delete_guid: guid()}) |> Repo.update!()
+
+      assert CatalogoGenerico.agregar_seleccionados(MetaFixtureCliente, :sistema, :meta_fixture_cliente_edad, :sum, [a.id]) == nil
+    end
+  end
 end

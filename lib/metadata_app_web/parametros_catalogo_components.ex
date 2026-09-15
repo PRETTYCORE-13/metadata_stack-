@@ -16,10 +16,13 @@ defmodule MetadataAppWeb.ParametrosCatalogoComponents do
   `cambiar_defaults_valor_hasta`, `cambiar_defaults_valores`,
   `marcar_defaults_todos`, `limpiar_defaults_valores`,
   `cambiar_catalogo_referenciado`, `cambiar_minmax_recomendado`,
-  `cambiar_total_pagina`, `cambiar_total_general`, `cambiar_mascara`) SÍ
-  quedan fijos -- cada LiveView que use este módulo tiene que implementar
-  un `handle_event/3` con ese nombre exacto (mismo criterio que ya
-  documentaba `toggle_es_parametro/1`).
+  `cambiar_total_pagina`, `cambiar_total_general`, `cambiar_mascara`,
+  `cambiar_resumen_seleccion_activo`, `cambiar_resumen_seleccion_funcion`,
+  `cambiar_resumen_seleccion_etiqueta`, `cambiar_formato_unidad`,
+  `cambiar_formato_porcentaje` -- estos últimos 5, SPEC-SYS-0909202605)
+  SÍ quedan fijos -- cada LiveView que use este módulo tiene que
+  implementar un `handle_event/3` con ese nombre exacto (mismo criterio
+  que ya documentaba `toggle_es_parametro/1`).
   """
   use Phoenix.Component
 
@@ -358,18 +361,34 @@ defmodule MetadataAppWeb.ParametrosCatalogoComponents do
       |> assign(:minmax?, props["minmax_recomendado"] == true)
       |> assign(:pagina?, props["total_pagina_activo"] == true)
       |> assign(:general?, props["total_general_activo"] == true)
+      |> assign(:sel?, props["resumen_seleccion_activo"] == true)
+      |> assign(:sel_funcion, props["resumen_seleccion_funcion"] || "suma")
+      |> assign(:sel_etiqueta, props["resumen_seleccion_etiqueta"] || "")
+      |> assign(:porcentaje?, props["formato_porcentaje"] == true)
 
     ~H"""
     <div class="flex flex-col gap-1.5">
-      <button type="button" phx-click="cambiar_agregacion_activa" phx-value-campo={@id} phx-value-activo={to_string(!@activo?)}
-        title={if @activo?, do: "Totaliza -- clic para desactivar", else: "No totaliza -- clic para activar"}
-        class={[
-          "text-[10px] font-semibold rounded-full px-2 py-1 w-fit",
-          @activo? && "bg-purple-600 text-white",
-          !@activo? && "bg-gray-100 text-gray-500 hover:bg-gray-200"
-        ]}>
-        {if @activo?, do: "Tot", else: "No"}
-      </button>
+      <div class="flex items-center gap-1">
+        <button type="button" phx-click="cambiar_agregacion_activa" phx-value-campo={@id} phx-value-activo={to_string(!@activo?)}
+          title={if @activo?, do: "Totaliza -- clic para desactivar", else: "No totaliza -- clic para activar"}
+          class={[
+            "text-[10px] font-semibold rounded-full px-2 py-1 w-fit",
+            @activo? && "bg-purple-600 text-white",
+            !@activo? && "bg-gray-100 text-gray-500 hover:bg-gray-200"
+          ]}>
+          {if @activo?, do: "Tot", else: "No"}
+        </button>
+
+        <button type="button" phx-click="cambiar_resumen_seleccion_activo" phx-value-campo={@id} phx-value-activo={to_string(!@sel?)}
+          title={if @sel?, do: "Participa del Resumen de selección -- clic para desactivar", else: "No participa del Resumen de selección -- clic para activar"}
+          class={[
+            "text-[10px] font-semibold rounded-full px-2 py-1 w-fit",
+            @sel? && "bg-blue-600 text-white",
+            !@sel? && "bg-gray-100 text-gray-500 hover:bg-gray-200"
+          ]}>
+          {if @sel?, do: "Sel", else: "No"}
+        </button>
+      </div>
 
       <div :if={@activo?} class="flex items-center gap-1 flex-wrap">
         <button type="button" phx-click="cambiar_minmax_recomendado" phx-value-campo={@id} phx-value-recomendado={to_string(!@minmax?)}
@@ -389,7 +408,24 @@ defmodule MetadataAppWeb.ParametrosCatalogoComponents do
         </button>
       </div>
 
-      <form :if={@activo?} phx-change="cambiar_mascara" class="flex items-center gap-1">
+      <form :if={@sel?} phx-change="cambiar_resumen_seleccion_funcion" class="flex items-center gap-1 flex-wrap">
+        <input type="hidden" name="campo" value={@id} />
+        <select name="funcion" title="Operación del Resumen de selección" class="text-[9px] text-gray-600 border border-gray-200 rounded px-1 py-0.5">
+          <option value="suma" selected={@sel_funcion == "suma"}>Suma</option>
+          <option value="promedio" selected={@sel_funcion == "promedio"}>Promedio</option>
+          <option value="minimo" selected={@sel_funcion == "minimo"}>Mínimo</option>
+          <option value="maximo" selected={@sel_funcion == "maximo"}>Máximo</option>
+          <option value="conteo" selected={@sel_funcion == "conteo"}>Conteo</option>
+        </select>
+      </form>
+
+      <form :if={@sel?} phx-change="cambiar_resumen_seleccion_etiqueta" class="flex items-center gap-1">
+        <input type="hidden" name="campo" value={@id} />
+        <input type="text" name="etiqueta" value={@sel_etiqueta} placeholder="Etiqueta en el Resumen"
+          class="border border-gray-300 rounded px-1.5 py-0.5 text-[10px] w-28" />
+      </form>
+
+      <form :if={@activo? or @sel?} phx-change="cambiar_mascara" class="flex items-center gap-1 flex-wrap">
         <input type="hidden" name="campo" value={@id} />
         <select name="separador" title="Separador de miles" class="text-[9px] text-gray-600 border border-gray-200 rounded px-1 py-0.5">
           <option value="," selected={Map.get(@campo, "mascara_separador", ",") == ","}>1,234</option>
@@ -400,6 +436,18 @@ defmodule MetadataAppWeb.ParametrosCatalogoComponents do
           <option value="$" selected={Map.get(@campo, "mascara_simbolo", "") == "$"}>$</option>
         </select>
       </form>
+
+      <form :if={@activo? or @sel?} phx-change="cambiar_formato_unidad" class="flex items-center gap-1">
+        <input type="hidden" name="campo" value={@id} />
+        <input type="text" name="unidad" value={Map.get(@campo, "formato_unidad", "")} placeholder="Unidad (ej. cajas)"
+          class="border border-gray-300 rounded px-1.5 py-0.5 text-[10px] w-24" />
+      </form>
+
+      <button :if={@activo? or @sel?} type="button" phx-click="cambiar_formato_porcentaje" phx-value-campo={@id} phx-value-activo={to_string(!@porcentaje?)}
+        title="Mostrar el valor con símbolo de porcentaje (%)"
+        class={["text-[9px] font-semibold rounded-full px-1.5 py-0.5 w-fit", @porcentaje? && "bg-green-600 text-white", !@porcentaje? && "bg-gray-100 text-gray-500 hover:bg-gray-200"]}>
+        %
+      </button>
     </div>
     """
   end

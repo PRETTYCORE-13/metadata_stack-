@@ -7,7 +7,7 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
   alias MetadataApp.Autenticacion
   alias MetadataApp.Autenticacion.{Empresa, Rol, UsuarioEmpresa}
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
-  alias MetadataApp.MetaBusinessProcess.Catalogos.MetaFixtureCliente
+  alias MetadataApp.MetaBusinessProcess.Catalogos.{MetaFixtureCliente, MetaFixtureEquipo}
   alias MetadataApp.MetaConsultas
   alias MetadataApp.Permissions
 
@@ -376,5 +376,66 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
 
     consulta_sin_tocar = MetaConsultas.obtener_por_header_id(consulta.meta_schema_header_id)
     assert consulta_sin_tocar.orden_por == []
+  end
+
+  # SPEC-SYS-0909202605 (tarea F2) -- Resumen de selección en una Consulta
+  # CON JOIN real, mismo fixture que ya usa "motor multi-tabla" en
+  # meta_consultas_test.exs (meta_fixture_equipo, unión por nombre
+  # compartido) -- confirma que el casillero usa el `id` de la tabla BASE
+  # (fix real de la tarea A3) y que el cálculo del resumen funciona igual
+  # que en un catálogo normal.
+  test "Resumen de selección funciona en una Consulta con join real (F2)", %{conn: conn} do
+    {_header_cliente, consulta, nav} = criar_consulta_sobre_fixture()
+
+    {:ok, consulta} =
+      MetaConsultas.agregar_tabla_manual(consulta, "meta_fixture_equipo", "meta_fixture_equipo_nombre_equipo", "meta_fixture_cliente", "meta_fixture_cliente_nombre")
+
+    campos =
+      Enum.map(consulta.campos, fn c ->
+        cond do
+          c["campo"] == "meta_fixture_cliente_nombre" -> Map.put(c, "es_parametro", true)
+          c["campo"] == "meta_fixture_cliente_venta" -> Map.merge(c, %{"resumen_seleccion_activo" => true, "resumen_seleccion_funcion" => "suma", "resumen_seleccion_etiqueta" => "Total"})
+          true -> c
+        end
+      end)
+
+    {:ok, consulta} = MetaConsultas.actualizar_campos(consulta, campos)
+
+    sufijo = unique()
+
+    uno =
+      %MetaFixtureCliente{}
+      |> MetaFixtureCliente.changeset(%{meta_fixture_cliente_nombre: "F2 #{sufijo} Uno", meta_fixture_cliente_edad: 30, meta_fixture_cliente_venta: Decimal.new("100.00")})
+      |> Ecto.Changeset.put_change(:insert_guid, guid())
+      |> Repo.insert!()
+
+    dos =
+      %MetaFixtureCliente{}
+      |> MetaFixtureCliente.changeset(%{meta_fixture_cliente_nombre: "F2 #{sufijo} Dos", meta_fixture_cliente_edad: 30, meta_fixture_cliente_venta: Decimal.new("50.00")})
+      |> Ecto.Changeset.put_change(:insert_guid, guid())
+      |> Repo.insert!()
+
+    for %{nombre: nombre} <- [%{nombre: uno.meta_fixture_cliente_nombre}, %{nombre: dos.meta_fixture_cliente_nombre}] do
+      %MetaFixtureEquipo{}
+      |> MetaFixtureEquipo.changeset(%{meta_fixture_equipo_nombre_equipo: nombre})
+      |> Ecto.Changeset.put_change(:insert_guid, guid())
+      |> Repo.insert!()
+    end
+
+    clave_nombre = to_string(MetaConsultas.clave_campo(Enum.find(consulta.campos, &(&1["campo"] == "meta_fixture_cliente_nombre" and &1["catalogo"] == "meta_fixture_cliente"))))
+
+    {:ok, view, _html} = live(conn, nav)
+    html = render_change(view, "cambiar_override_valor", %{"valor" => %{clave_nombre => "F2 #{sufijo}"}})
+    assert html =~ uno.meta_fixture_cliente_nombre
+    assert html =~ dos.meta_fixture_cliente_nombre
+    refute html =~ "seleccionado"
+
+    html = render_click(view, "toggle_seleccion_fila", %{"id" => to_string(uno.id)})
+    assert html =~ "1 seleccionado"
+
+    html = render_click(view, "toggle_seleccion_fila", %{"id" => to_string(dos.id)})
+    assert html =~ "2 seleccionados"
+    assert html =~ "Total"
+    assert html =~ "150.00"
   end
 end

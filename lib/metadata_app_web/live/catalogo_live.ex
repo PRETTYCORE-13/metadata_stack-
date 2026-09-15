@@ -191,6 +191,8 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:agregaciones_valores, %{})
      |> assign(:minmax_valores, %{})
      |> assign(:totales_generales, %{})
+     |> assign(:seleccionados, MapSet.new())
+     |> assign(:resumen_seleccion_valores, %{})
      |> assign(:cargar_todos_por_default?, header.cargar_todos_por_default)
      |> cargar_filas()}
   end
@@ -296,6 +298,8 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> assign(:agregaciones_valores, %{})
      |> assign(:minmax_valores, %{})
      |> assign(:totales_generales, %{})
+     |> assign(:seleccionados, MapSet.new())
+     |> assign(:resumen_seleccion_valores, %{})
      |> assign(:cargar_todos_por_default?, false)
      |> cargar_filas()}
   end
@@ -398,7 +402,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   # propiedades REALES del catálogo dueño del campo (para "catalogo"/
   # "valores" de un tipo referencia), nunca la config propia de ESTA
   # Consulta.
-  @claves_totales_consulta ~w(agregacion_activa minmax_recomendado total_pagina_activo total_general_activo mascara_separador mascara_simbolo)
+  @claves_totales_consulta ~w(agregacion_activa minmax_recomendado total_pagina_activo total_general_activo mascara_separador mascara_simbolo resumen_seleccion_activo resumen_seleccion_funcion resumen_seleccion_etiqueta formato_unidad formato_porcentaje)
 
   defp columna_desde_campo_consulta(campo, detalles_por_catalogo) do
     props_totales = Map.take(campo, @claves_totales_consulta)
@@ -568,19 +572,41 @@ defmodule MetadataAppWeb.CatalogoLive do
     {:noreply, socket |> assign(:importar_modal, modal) |> assign(:pagina, 1) |> cargar_filas()}
   end
 
-  # "Descargar Excel" — vuelca EXACTAMENTE lo que la tabla está mostrando
-  # ahora mismo: mismos filtros/búsqueda/parámetros que @filas, pero SIN
-  # paginar (todas las filas que matchean, no solo la página actual) y con
-  # una fila "TOTAL" al pie usando lo que ya esté calculado en la banda de
-  # resumen (@agregaciones_valores del usuario, si no @totales_generales
-  # del admin) — nunca corre una agregación nueva acá, reusa la que ya
-  # está en pantalla. Techo de filas a propósito (@excel_max_filas): un
-  # catálogo de millones de registros sin filtro alguno no debería poder
-  # traer todo a memoria de una — se le pide al usuario acotar primero,
-  # mismo criterio que ya usa MetaImportacionDatos con archivos gigantes.
+  # "Descargar Excel" — 3 alcances (SPEC-SYS-1009202601): "todos" vuelca
+  # EXACTAMENTE lo que la tabla está mostrando ahora mismo (mismos
+  # filtros/búsqueda/parámetros que @filas, pero SIN paginar); "pagina"
+  # reusa @filas tal cual (ya cargadas, sin query nueva — mismo criterio
+  # que "Total 25"); "seleccionados" trae SOLO los ids de @seleccionados,
+  # ignorando filtros/búsqueda/parámetros (mismo criterio que el Resumen
+  # de selección, R10 de SPEC-SYS-0909202605 — nunca se mezclan). Todos
+  # con una fila "TOTAL" al pie usando lo que ya esté calculado en la
+  # banda de resumen (@agregaciones_valores del usuario, si no
+  # @totales_generales del admin) — nunca corre una agregación nueva
+  # acá, reusa la que ya está en pantalla (para "seleccionados" esto
+  # significa que la fila TOTAL sigue siendo la del catálogo entero, no
+  # una suma de lo seleccionado — el Resumen de selección de la barra ya
+  # cubre ese otro número, ver R... de esa spec). Techo de filas a
+  # propósito (@excel_max_filas): un catálogo de millones de registros
+  # sin filtro alguno no debería poder traer todo a memoria de una — se
+  # le pide al usuario acotar primero, mismo criterio que ya usa
+  # MetaImportacionDatos con archivos gigantes.
   @excel_max_filas 20_000
 
-  def handle_event("descargar_excel", _params, socket) do
+  def handle_event("descargar_excel", %{"alcance" => "pagina"}, socket) do
+    enviar_excel(socket, socket.assigns.filas)
+  end
+
+  def handle_event("descargar_excel", %{"alcance" => "seleccionados"}, socket) do
+    cantidad = MapSet.size(socket.assigns.seleccionados)
+
+    if cantidad > @excel_max_filas do
+      {:noreply, put_flash(socket, :error, "Hay #{cantidad} registros seleccionados — más de lo que Excel puede recibir de una.")}
+    else
+      enviar_excel(socket, filas_export_seleccionados(socket))
+    end
+  end
+
+  def handle_event("descargar_excel", %{"alcance" => "todos"}, socket) do
     if socket.assigns.total_filas > @excel_max_filas do
       {:noreply,
        put_flash(
@@ -589,13 +615,35 @@ defmodule MetadataAppWeb.CatalogoLive do
          "Hay #{socket.assigns.total_filas} registros para exportar — más de lo que Excel puede recibir de una. Filtrá más antes de descargar."
        )}
     else
-      filas = filas_export(socket)
-      binario = construir_excel_export(socket.assigns, filas)
-      href = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," <> Base.encode64(binario)
-      nombre = "#{socket.assigns.current_page}.xlsx"
-
-      {:noreply, push_event(socket, "descargar-archivo", %{href: href, nombre: nombre})}
+      enviar_excel(socket, filas_export(socket))
     end
+  end
+
+  defp enviar_excel(socket, filas) do
+    binario = construir_excel_export(socket.assigns, filas)
+    href = "data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64," <> Base.encode64(binario)
+    nombre = "#{socket.assigns.current_page}.xlsx"
+    {:noreply, push_event(socket, "descargar-archivo", %{href: href, nombre: nombre})}
+  end
+
+  defp filas_export_seleccionados(%{assigns: %{es_consulta?: true}} = socket) do
+    %{consulta: consulta, orden_usuario: orden_usuario, seleccionados: seleccionados} = socket.assigns
+    consulta_ordenada = if orden_usuario, do: %{consulta | orden_por: [orden_usuario]}, else: consulta
+    MetaConsultas.listar_seleccionados(consulta_ordenada, socket.assigns[:current_scope], MapSet.to_list(seleccionados))
+  end
+
+  defp filas_export_seleccionados(socket) do
+    %{modulo: modulo, current_page: catalogo, estados_por_id: estados_por_id, seleccionados: seleccionados} = socket.assigns
+    orden = orden_desde_header(socket.assigns.header, modulo)
+    ids = MapSet.to_list(seleccionados)
+
+    registros = CatalogoGenerico.listar_seleccionados(modulo, socket.assigns[:current_scope], ids, orden: orden)
+    acompanamiento = CatalogoGenerico.mapa_acompanamiento(catalogo, registros)
+
+    registros
+    |> Enum.map(&CatalogoGenerico.serializar(&1, estados_por_id, acompanamiento))
+    |> agregar_alcance_a_filas(socket.assigns)
+    |> agregar_creado_por_a_filas(socket.assigns)
   end
 
   defp filas_export(%{assigns: %{es_consulta?: true}} = socket) do
@@ -646,8 +694,18 @@ defmodule MetadataAppWeb.CatalogoLive do
     |> agregar_creado_por_a_filas(socket.assigns)
   end
 
-  defp construir_excel_export(assigns, filas) do
-    columnas = assigns.columnas_render
+  # SPEC-SYS-1009202601 -- bug real preexistente corregido acá:
+  # `assigns.columnas_render` solo existe para un catálogo normal
+  # (montar_catalogo/2) -- una Consulta (montar_consulta/2) nunca lo
+  # asigna, así que "Descargar Excel" crasheaba con KeyError SIEMPRE
+  # que se usaba desde una Consulta (nunca se había probado antes de
+  # esta spec). `@columnas` de una Consulta no trae `:tipo_columna`
+  # (ver columna_desde_campo_consulta/2) -- etiqueta_columna_export/1 y
+  # valor_columna_export/2 despachan por esa ausencia.
+  defp construir_excel_export(%{es_consulta?: true} = assigns, filas), do: construir_excel_export(assigns, assigns.columnas, filas)
+  defp construir_excel_export(assigns, filas), do: construir_excel_export(assigns, assigns.columnas_render, filas)
+
+  defp construir_excel_export(assigns, columnas, filas) do
     etiquetas = Enum.map(columnas, &etiqueta_columna_export/1)
 
     filas_datos =
@@ -670,7 +728,60 @@ defmodule MetadataAppWeb.CatalogoLive do
     end
   end
 
+  # SPEC-SYS-1009202601 -- "Descargar Excel" con menú de alcance en vez
+  # de un botón único: sin selección, "Todos los resultados"/"Página
+  # actual"; con selección, se suma "Solo seleccionados (N)" primero
+  # (R... de esa spec). Mismo patrón de popover que panel_campos/1 (JS.
+  # toggle/hide + phx-click-away, sin hook nuevo) -- JS.hide encadenado
+  # con JS.push en cada opción para que el menú se cierre solo al
+  # elegir, sin esperar el round-trip del servidor.
+  attr :seleccionados, :any, required: true
+
+  defp menu_descargar_excel(assigns) do
+    assigns = assign(assigns, :cantidad, MapSet.size(assigns.seleccionados))
+
+    ~H"""
+    <div class="relative">
+      <button type="button" phx-click={JS.toggle(to: "#descargar-excel-popover")}
+        class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50">
+        <span class="material-symbols-outlined" style="font-size:14px">download</span>
+        <span>Descargar Excel</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+
+      <div id="descargar-excel-popover"
+        class="hidden absolute right-0 top-full mt-1 w-60 bg-white rounded-lg shadow-xl border border-gray-200 z-50 p-1.5 text-xs flex flex-col gap-1"
+        phx-click-away={JS.hide(to: "#descargar-excel-popover")}>
+        <button :if={@cantidad > 0} type="button"
+          phx-click={JS.hide(to: "#descargar-excel-popover") |> JS.push("descargar_excel", value: %{"alcance" => "seleccionados"})}
+          class="w-full flex items-center gap-2 text-left px-2.5 py-2 rounded-md font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100">
+          <span class="material-symbols-outlined" style="font-size:18px">fact_check</span>
+          Solo seleccionados ({@cantidad})
+        </button>
+        <button type="button"
+          phx-click={JS.hide(to: "#descargar-excel-popover") |> JS.push("descargar_excel", value: %{"alcance" => "todos"})}
+          class="w-full flex items-center gap-2 text-left px-2.5 py-2 rounded-md text-gray-700 hover:bg-gray-50">
+          <span class="material-symbols-outlined text-gray-400" style="font-size:18px">cloud_download</span>
+          Todos los resultados
+        </button>
+        <button type="button"
+          phx-click={JS.hide(to: "#descargar-excel-popover") |> JS.push("descargar_excel", value: %{"alcance" => "pagina"})}
+          class="w-full flex items-center gap-2 text-left px-2.5 py-2 rounded-md text-gray-700 hover:bg-gray-50">
+          <span class="material-symbols-outlined text-gray-400" style="font-size:18px">description</span>
+          Página actual
+        </button>
+      </div>
+    </div>
+    """
+  end
+
   defp etiqueta_columna_export(%{tipo_columna: :negocio} = col), do: col.columna.schema_context_properties["etiqueta"]
+  # Columna de una Consulta (columna_desde_campo_consulta/2) -- nunca
+  # trae :tipo_columna, así que las cláusulas de arriba (catálogo
+  # normal) la saltan y cae acá.
+  defp etiqueta_columna_export(%{schema_context_properties: props}), do: props["etiqueta"]
   defp etiqueta_columna_export(col), do: col.etiqueta
 
   defp valor_columna_export(%{tipo_columna: :negocio} = col, fila) do
@@ -696,6 +807,14 @@ defmodule MetadataAppWeb.CatalogoLive do
   defp formatear_folio(nil, _numero), do: "—"
   defp formatear_folio(_serie, nil), do: "—"
   defp formatear_folio(serie, numero), do: "#{serie}-#{numero}"
+
+  # Columna de una Consulta -- `clave` es la clave namespaced bajo la
+  # que MetaConsultas.ejecutar/6/listar_seleccionados/3 exponen el
+  # valor en cada fila (mismo criterio que la tabla en pantalla,
+  # `formatear_celda/2` en el render/1 de es_consulta?: true).
+  defp valor_columna_export(%{clave: clave, schema_context_properties: props}, fila) do
+    formatear_valor_export(formatear_celda(Map.get(fila, clave), props))
+  end
 
   # Elixlsx no acepta Decimal ni DateTime directo en una celda (mismo
   # motivo que MetaImportacionDatos.formatear_valor_crudo/1) — formatear_celda/2
@@ -731,7 +850,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   # diferencia de los filtros de arriba (AND por columna, para acotar).
   # Conviven las dos — ver aplicar_busqueda/2 en CatalogoGenerico.
   def handle_event("buscar_general", %{"value" => valor}, socket) do
-    {:noreply, socket |> assign(:busqueda_general, valor) |> assign(:pagina, 1) |> cargar_filas()}
+    {:noreply, socket |> assign(:busqueda_general, valor) |> assign(:pagina, 1) |> assign(:seleccionados, MapSet.new()) |> assign(:resumen_seleccion_valores, %{}) |> cargar_filas()}
   end
 
   def handle_event("pagina_anterior", _params, socket) do
@@ -741,6 +860,41 @@ defmodule MetadataAppWeb.CatalogoLive do
   def handle_event("pagina_siguiente", _params, socket) do
     {:noreply, socket |> assign(:pagina, socket.assigns.pagina + 1) |> cargar_filas()}
   end
+
+  # SPEC-SYS-0909202605 -- selección de registros para el Resumen de
+  # selección. Solo guarda ids (MapSet) -- el cálculo del resumen (Grupo
+  # B) consulta la base por esos ids cuando haga falta, así que no
+  # importa si la fila ya no está cargada en @filas (persiste entre
+  # páginas, R3).
+  def handle_event("toggle_seleccion_fila", %{"id" => id}, socket) do
+    id = String.to_integer(id)
+    seleccionados = toggle_pertenencia(socket.assigns.seleccionados, id)
+    {:noreply, socket |> assign(:seleccionados, seleccionados) |> recalcular_resumen_seleccion()}
+  end
+
+  def handle_event("toggle_seleccion_pagina", _params, socket) do
+    ids_pagina = Enum.map(socket.assigns.filas, & &1.id)
+
+    seleccionados =
+      if pagina_toda_seleccionada?(socket.assigns.filas, socket.assigns.seleccionados) do
+        Enum.reduce(ids_pagina, socket.assigns.seleccionados, &MapSet.delete(&2, &1))
+      else
+        Enum.reduce(ids_pagina, socket.assigns.seleccionados, &MapSet.put(&2, &1))
+      end
+
+    {:noreply, socket |> assign(:seleccionados, seleccionados) |> recalcular_resumen_seleccion()}
+  end
+
+  def handle_event("limpiar_seleccion", _params, socket) do
+    {:noreply, socket |> assign(:seleccionados, MapSet.new()) |> assign(:resumen_seleccion_valores, %{})}
+  end
+
+  defp toggle_pertenencia(mapset, valor) do
+    if MapSet.member?(mapset, valor), do: MapSet.delete(mapset, valor), else: MapSet.put(mapset, valor)
+  end
+
+  defp pagina_toda_seleccionada?([], _seleccionados), do: false
+  defp pagina_toda_seleccionada?(filas, seleccionados), do: Enum.all?(filas, &MapSet.member?(seleccionados, &1.id))
 
   # Clic en un encabezado de Consulta Ecto (R2, usuario final) -- ciclo de
   # 3 estados en la MISMA columna (asc -> desc -> vuelve al "Orden de
@@ -760,7 +914,7 @@ defmodule MetadataAppWeb.CatalogoLive do
           %{"catalogo" => catalogo, "campo" => campo, "direccion" => "asc"}
       end
 
-    {:noreply, socket |> assign(:orden_usuario, nuevo) |> assign(:pagina, 1) |> cargar_filas()}
+    {:noreply, socket |> assign(:orden_usuario, nuevo) |> assign(:pagina, 1) |> assign(:seleccionados, MapSet.new()) |> assign(:resumen_seleccion_valores, %{}) |> cargar_filas()}
   end
 
   # --- Barra de Parámetros (Consulta Ecto, rediseño 2026-08-27) ---------
@@ -945,6 +1099,37 @@ defmodule MetadataAppWeb.CatalogoLive do
 
     assign(socket, :totales_generales, valores)
   end
+
+  # SPEC-SYS-0909202605 (tarea B3) -- "Resumen de selección": mismo
+  # criterio que recalcular_totales_generales/1, pero acotado por
+  # @seleccionados (ids) en vez de filtros/búsqueda/parámetros -- nunca
+  # se cruzan (R10 de requirements.md). Se invoca al final de cada
+  # handler que cambia la selección (toggle_seleccion_fila/
+  # toggle_seleccion_pagina); limpiar_seleccion asigna %{} directo, sin
+  # consultar nada.
+  defp recalcular_resumen_seleccion(socket) do
+    ids = MapSet.to_list(socket.assigns.seleccionados)
+
+    columnas_resumen_seleccion =
+      Enum.filter(socket.assigns.columnas, &(&1.schema_context_properties["resumen_seleccion_activo"] == true))
+
+    valores =
+      Map.new(columnas_resumen_seleccion, fn columna ->
+        clave = col_key(columna)
+        funcion = funcion_agregada(columna.schema_context_properties["resumen_seleccion_funcion"])
+        {clave, calcular_resumen_seleccion(socket, clave, funcion, ids)}
+      end)
+
+    assign(socket, :resumen_seleccion_valores, valores)
+  end
+
+  defp calcular_resumen_seleccion(%{assigns: %{es_consulta?: true, consulta: consulta} = assigns}, campo, funcion, ids),
+    do: MetaConsultas.agregar_seleccionados(consulta, assigns[:current_scope], campo, funcion, ids)
+
+  defp calcular_resumen_seleccion(%{assigns: %{modulo: nil}}, _campo, _funcion, _ids), do: nil
+
+  defp calcular_resumen_seleccion(%{assigns: %{modulo: modulo} = assigns}, campo, funcion, ids),
+    do: CatalogoGenerico.agregar_seleccionados(modulo, assigns[:current_scope], campo, funcion, ids)
 
   defp calcular_agregacion(
          %{assigns: %{es_consulta?: true, consulta: consulta, overrides_parametro: overrides_parametro}},
@@ -1251,7 +1436,10 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   defp aplicar_override_defaults_completo(socket, clave, defaults_nuevo) do
     override = Map.put(socket.assigns.overrides_parametro, clave, %{"defaults" => defaults_nuevo})
-    {:noreply, socket |> assign(:overrides_parametro, override) |> assign(:pagina, 1) |> cargar_filas()}
+    # SPEC-SYS-0909202605, R5 -- cambiar qué datos se están mirando limpia
+    # la selección (una selección hecha sobre un filtro no debe sobrevivir
+    # en silencio a otro filtro); cambiar de PÁGINA no pasa por acá.
+    {:noreply, socket |> assign(:overrides_parametro, override) |> assign(:pagina, 1) |> assign(:seleccionados, MapSet.new()) |> assign(:resumen_seleccion_valores, %{}) |> cargar_filas()}
   end
 
   defp convertir(nil, _tipo), do: nil
@@ -1296,9 +1484,12 @@ defmodule MetadataAppWeb.CatalogoLive do
             <span class="text-xs font-medium text-gray-500 bg-gray-100 rounded-full px-3 py-1 whitespace-nowrap">
               {@inicio}-{@fin} de {@total_filas}
             </span>
+            <.menu_descargar_excel seleccionados={@seleccionados} />
             <.panel_campos campos={campos_selector(@columnas)} tabla_id="tabla-catalogo" />
           </div>
         </div>
+
+        <.resumen_seleccion seleccionados={@seleccionados} columnas={@columnas} valores={@resumen_seleccion_valores} />
 
         <.panel_parametros :if={@parametros_string != [] or @parametros_numerico != [] or @parametros_fecha != []}
           id_seccion={"panel-parametros-#{@current_page}"}
@@ -1309,6 +1500,10 @@ defmodule MetadataAppWeb.CatalogoLive do
           <table id="tabla-catalogo" class="min-w-full divide-y divide-gray-200 text-xs">
             <thead class="bg-gray-50">
               <tr>
+                <th class="px-2 py-3 sm:px-4 w-8">
+                  <input type="checkbox" phx-click="toggle_seleccion_pagina" checked={pagina_toda_seleccionada?(@filas, @seleccionados)}
+                    class="rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+                </th>
                 <%= for columna <- @columnas do %>
                   <th
                     data-col={col_key(columna)}
@@ -1329,6 +1524,10 @@ defmodule MetadataAppWeb.CatalogoLive do
             <tbody class="divide-y divide-gray-100">
               <%= for fila <- @filas do %>
                 <tr class="hover:bg-purple-50/60 transition-colors">
+                  <td class="px-2 py-1.5 w-8">
+                    <input type="checkbox" phx-click="toggle_seleccion_fila" phx-value-id={fila.id} checked={MapSet.member?(@seleccionados, fila.id)}
+                      class="rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+                  </td>
                   <%= for columna <- @columnas do %>
                     <% valor = Map.get(fila, columna.clave) %>
                     <td data-col={col_key(columna)} class={[
@@ -1342,7 +1541,7 @@ defmodule MetadataAppWeb.CatalogoLive do
               <% end %>
               <%= if @filas == [] do %>
                 <tr>
-                  <td class="px-4 py-10 text-center text-gray-400 text-sm" colspan={max(length(@columnas), 1)}>
+                  <td class="px-4 py-10 text-center text-gray-400 text-sm" colspan={max(length(@columnas), 1) + 1}>
                     <%= if @sin_filtro? do %>
                       Seleccioná un filtro o buscá algo para ver los datos.
                     <% else %>
@@ -1360,6 +1559,7 @@ defmodule MetadataAppWeb.CatalogoLive do
             total_general_activo en el catálogo normal). --%>
             <tfoot class="bg-gray-50 border-t-2 border-gray-300">
               <tr>
+                <td></td>
                 <.celdas_resumen
                   columnas={@columnas}
                   agregaciones={@agregaciones}
@@ -1370,6 +1570,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                   es_consulta?={@es_consulta?}
                 />
               </tr>
+              <.fila_resumen_seleccion_tfoot seleccionados={@seleccionados} columnas={@columnas} valores={@resumen_seleccion_valores} colspan={length(@columnas) + 1} />
             </tfoot>
           </table>
         </div>
@@ -1410,11 +1611,7 @@ defmodule MetadataAppWeb.CatalogoLive do
               <span class="material-symbols-outlined" style="font-size:14px">upload_file</span>
               <span>Importar</span>
             </button>
-            <button type="button" phx-click="descargar_excel"
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50">
-              <span class="material-symbols-outlined" style="font-size:14px">download</span>
-              <span>Descargar Excel</span>
-            </button>
+            <.menu_descargar_excel seleccionados={@seleccionados} />
             <span class="text-xs font-medium text-gray-500 bg-gray-100 rounded-full px-3 py-1">
               {@inicio}-{@fin} de {@total_filas}
             </span>
@@ -1445,6 +1642,8 @@ defmodule MetadataAppWeb.CatalogoLive do
           </div>
         </div>
 
+        <.resumen_seleccion seleccionados={@seleccionados} columnas={@columnas} valores={@resumen_seleccion_valores} />
+
         <div class="flex flex-col gap-2 mb-4 sm:flex-row sm:items-center">
           <div class="relative sm:flex-1">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
@@ -1473,25 +1672,23 @@ defmodule MetadataAppWeb.CatalogoLive do
           <table id="tabla-catalogo" class="min-w-full divide-y divide-gray-200 text-xs">
             <thead class="bg-gray-50">
               <tr>
+                <th class="px-2 py-3 sm:px-4 w-8">
+                  <input type="checkbox" phx-click="toggle_seleccion_pagina" checked={pagina_toda_seleccionada?(@filas, @seleccionados)}
+                    class="rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
+                </th>
                 <.celda_encabezado :for={col <- @columnas_render} col={col} />
-                <th class="px-2 py-3 sm:px-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"></th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
               <%= for fila <- @filas do %>
                 <tr class="hover:bg-purple-50/60 transition-colors cursor-pointer"
-                  ondblclick={"window.location='/registro/#{@current_page}/#{fila.id}'"}
-                  onclick={"if (window.matchMedia('(pointer: coarse)').matches && !event.target.closest('a')) { window.location='/registro/#{@current_page}/#{fila.id}' }"}>
-                  <.celda_body :for={col <- @columnas_render} col={col} fila={fila} />
-                  <td class="px-4 py-1.5 text-xs text-right">
-                    <.link navigate={"/registro/#{@current_page}/#{fila.id}"}
-                      title="Ver ficha 360°"
-                      class="inline-flex items-center justify-center w-6 h-6 rounded-md text-gray-400 hover:bg-purple-50 hover:text-purple-700">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" /><circle cx="12" cy="12" r="3" />
-                      </svg>
-                    </.link>
+                  ondblclick={"if (!event.target.closest('input')) { window.location='/registro/#{@current_page}/#{fila.id}' }"}
+                  onclick={"if (window.matchMedia('(pointer: coarse)').matches && !event.target.closest('a') && !event.target.closest('input')) { window.location='/registro/#{@current_page}/#{fila.id}' }"}>
+                  <td class="px-2 py-1.5 w-8">
+                    <input type="checkbox" phx-click="toggle_seleccion_fila" phx-value-id={fila.id} checked={MapSet.member?(@seleccionados, fila.id)}
+                      class="rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
                   </td>
+                  <.celda_body :for={col <- @columnas_render} col={col} fila={fila} />
                 </tr>
               <% end %>
               <%= if @filas == [] do %>
@@ -1508,6 +1705,7 @@ defmodule MetadataAppWeb.CatalogoLive do
             </tbody>
             <tfoot class="bg-gray-50 border-t-2 border-gray-300">
               <tr>
+                <td></td>
                 <.celda_resumen_col
                   :for={col <- @columnas_render}
                   col={col}
@@ -1517,8 +1715,8 @@ defmodule MetadataAppWeb.CatalogoLive do
                   totales_generales={@totales_generales}
                   filas={@filas}
                 />
-                <td></td>
               </tr>
+              <.fila_resumen_seleccion_tfoot seleccionados={@seleccionados} columnas={@columnas} valores={@resumen_seleccion_valores} colspan={length(@columnas_render) + 1} />
             </tfoot>
           </table>
         </div>
@@ -2023,6 +2221,114 @@ defmodule MetadataAppWeb.CatalogoLive do
   # (eso es puramente numérico), to_string/1 alcanza — Date/DateTime ya
   # implementan String.Chars con un formato legible de por sí.
   defp formatear_agregacion(valor, _props), do: to_string(valor)
+
+  # SPEC-SYS-0909202605 (tareas E1/E2) -- barra compacta "N seleccionados
+  # · Etiqueta valor · ..." (R17), visualmente distinta de los botones de
+  # acción de la barra superior (R18 -- fondo azul, a diferencia del gris
+  # de "Importar"/"Descargar Excel"). Cálculo EXCLUSIVO sobre lo
+  # seleccionado (@valores viene de recalcular_resumen_seleccion/1, nunca
+  # de @totales_generales/@agregaciones_valores -- R10). Aparece/
+  # desaparece solo con el :if de más abajo (R7/R8), sin lógica aparte.
+  attr :seleccionados, :any, required: true
+  attr :columnas, :list, required: true
+  attr :valores, :map, required: true
+
+  defp resumen_seleccion(assigns) do
+    cantidad = MapSet.size(assigns.seleccionados)
+    columnas_activas = Enum.filter(assigns.columnas, &(&1.schema_context_properties["resumen_seleccion_activo"] == true))
+    assigns = assigns |> assign(:cantidad, cantidad) |> assign(:columnas_activas, columnas_activas)
+
+    ~H"""
+    <div :if={@cantidad > 0} class="flex items-center gap-3 flex-wrap px-3 py-2.5 rounded-lg bg-indigo-50 border border-indigo-200 mb-4 text-xs">
+      <span class="flex items-center gap-1.5 flex-none">
+        <span class="material-symbols-outlined text-indigo-600" style="font-size:18px">check_circle</span>
+        <span class="font-bold text-indigo-900 whitespace-nowrap">{@cantidad} seleccionado{if @cantidad != 1, do: "s"}</span>
+      </span>
+      <span :if={@columnas_activas != []} class="w-px h-4 bg-indigo-200 flex-none"></span>
+      <span :for={col <- @columnas_activas} class="flex items-center gap-1.5 text-indigo-800 whitespace-nowrap">
+        <span class="material-symbols-outlined text-indigo-500" style="font-size:16px">{icono_indicador_resumen(col.schema_context_properties)}</span>
+        <span class="font-semibold">{etiqueta_resumen_seleccion(col)}</span>
+        {formatear_indicador_resumen(Map.get(@valores, col_key(col)), col.schema_context_properties)}
+      </span>
+      <button type="button" phx-click="limpiar_seleccion" class="ml-auto flex-none text-indigo-600 hover:text-indigo-800 font-semibold underline whitespace-nowrap">
+        Limpiar
+      </button>
+    </div>
+    """
+  end
+
+  defp icono_indicador_resumen(props) do
+    cond do
+      Map.get(props, "formato_porcentaje") == true -> "percent"
+      Map.get(props, "formato_unidad", "") not in [nil, ""] -> "inventory_2"
+      Map.get(props, "mascara_simbolo", "") == "$" -> "payments"
+      true -> "tag"
+    end
+  end
+
+  # Mismo contenido que resumen_seleccion/1, en una línea dentro del pie
+  # de la tabla (tfoot) -- el usuario pidió verlo también sin tener que
+  # scrollear de vuelta arriba mientras revisa filas más abajo.
+  attr :seleccionados, :any, required: true
+  attr :columnas, :list, required: true
+  attr :valores, :map, required: true
+  attr :colspan, :integer, required: true
+
+  defp fila_resumen_seleccion_tfoot(assigns) do
+    cantidad = MapSet.size(assigns.seleccionados)
+    columnas_activas = Enum.filter(assigns.columnas, &(&1.schema_context_properties["resumen_seleccion_activo"] == true))
+    assigns = assigns |> assign(:cantidad, cantidad) |> assign(:columnas_activas, columnas_activas)
+
+    ~H"""
+    <tr :if={@cantidad > 0} class="bg-indigo-50/60 border-t border-indigo-200">
+      <td colspan={@colspan} class="px-4 py-2 text-xs text-indigo-900">
+        <span class="font-bold uppercase tracking-wide text-indigo-500 mr-2">Selección</span>
+        <span class="font-semibold">{@cantidad} seleccionado{if @cantidad != 1, do: "s"}</span>
+        <span :for={col <- @columnas_activas}>
+          &nbsp;·&nbsp;<span class="font-semibold">{etiqueta_resumen_seleccion(col)}</span>
+          {formatear_indicador_resumen(Map.get(@valores, col_key(col)), col.schema_context_properties)}
+        </span>
+      </td>
+    </tr>
+    """
+  end
+
+  defp etiqueta_resumen_seleccion(columna) do
+    case columna.schema_context_properties["resumen_seleccion_etiqueta"] do
+      etiqueta when is_binary(etiqueta) and etiqueta != "" -> etiqueta
+      _ -> columna.schema_context_properties["etiqueta"] || columna.schema_context_field
+    end
+  end
+
+  # SPEC-SYS-0909202605 (tarea D1) -- mismo dispatch por tipo que
+  # formatear_agregacion/2 de arriba (nil/Decimal/integer/float/otro),
+  # deliberadamente DUPLICADO en vez de reusar esa función: el último
+  # paso ahí siempre aplica el símbolo de moneda (aplicar_simbolo/2);
+  # acá el último paso puede ser también unidad o porcentaje (R16.2/
+  # R16.3), mutuamente excluyentes con el símbolo -- tocar
+  # formatear_agregacion/2 para agregar esa rama arriesgaría romper el
+  # formateo ya en producción de Total general y de cada celda de dato
+  # (formatear_celda/2 la llama para TODA columna integer/decimal, no
+  # solo el Resumen de selección).
+  defp formatear_indicador_resumen(nil, _props), do: "—"
+  defp formatear_indicador_resumen(%Decimal{} = valor, props), do: valor |> Decimal.to_float() |> formatear_indicador_resumen(props)
+  defp formatear_indicador_resumen(valor, props) when is_integer(valor), do: valor |> separar_miles(props) |> aplicar_formato_resumen(props)
+
+  defp formatear_indicador_resumen(valor, props) when is_float(valor) do
+    separador_decimal = if Map.get(props, "mascara_separador", ",") == ",", do: ".", else: ","
+    [entero, decimales] = valor |> :erlang.float_to_binary(decimals: 2) |> String.split(".")
+    (separar_miles(String.to_integer(entero), props) <> separador_decimal <> decimales) |> aplicar_formato_resumen(props)
+  end
+
+  defp formatear_indicador_resumen(valor, _props), do: to_string(valor)
+
+  defp aplicar_formato_resumen(texto, props) do
+    cond do
+      Map.get(props, "formato_porcentaje") == true -> texto <> "%"
+      Map.get(props, "formato_unidad", "") not in [nil, ""] -> texto <> " " <> props["formato_unidad"]
+      true -> aplicar_simbolo(texto, props)
+    end
+  end
 
   defp separar_miles(numero, props) when numero < 0, do: "-" <> separar_miles(-numero, props)
 
