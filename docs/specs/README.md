@@ -6,7 +6,7 @@ código directo sobre una idea suelta. El flujo es siempre:
 
 ```
 requirements.md  →  design.md  →  tasks.md  →  implementación
-      ↑                                              │
+      ↑                                               │
       └──────────────── se vuelve a leer ─────────────┘
 ```
 
@@ -81,3 +81,11 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   calculados EXCLUSIVAMENTE sobre lo seleccionado, configurable por
   catálogo/Consulta, independiente del "Total general" ya existente
   (implementado, Grupos A-F completos).
+- [`SPEC-TEST-1509202601-seed-masterdata/`](SPEC-TEST-1509202601-seed-masterdata/) —
+  herramienta de developer mode (`mix seed.vaciar`/`seed.cargar`/
+  `seed.reset`) para reiniciar y repoblar catálogos `pty_*`/
+  `demo100_*` de prueba: borrado en orden de dependencias reales
+  (ajustable) + carga atómica vía el camino real de alta (TRN/folio/
+  reglas), nunca INSERT directo. **Diseñada, todavía no construida**
+  (`requirements.md`/`design.md` completos, `tasks.md` es el
+  checklist de construcción, ningún grupo iniciado).
