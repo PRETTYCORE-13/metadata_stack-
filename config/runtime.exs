@@ -76,14 +76,20 @@ if config_env() == :prod do
   config :metadata_app, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
   config :metadata_app, MetadataAppWeb.Endpoint,
-    # No hay proxy reverso con TLS delante de este servidor — la app se
-    # accede directo en PORT (4000) por http. Con :443/https acá (el
-    # default de phx.gen.release, pensado para detrás de un proxy),
-    # cualquier URL absoluta generada por el código (como el link del
-    # magic-link del correo) apunta a un puerto/protocolo donde no hay
-    # nada escuchando, y el usuario cae en un 400 Bad Request al hacer
-    # clic. Si en el futuro se agrega HTTPS real, volver a ajustar esto.
-    url: [host: host, port: port, scheme: "http"],
+    # Desde la migración a k3s (2026-08-26, ver docs/onboarding-nuevo-
+    # sistema.md §3), Caddy es el único front-door público, en 80/443
+    # con HTTPS automático -- PORT (4000) es solo el puerto INTERNO del
+    # contenedor, nunca expuesto tal cual al usuario final (el Service
+    # es NodePort, Caddy le apunta al nodePort real, no a 4000). Por eso
+    # `url:` (lo que arma cualquier link absoluto, como el magic-link
+    # del correo) tiene que reflejar lo público -- https, sin puerto --
+    # aunque el bind interno (`http:` más abajo) siga en PORT. Antes acá
+    # decía `port: port, scheme: "http"` (correcto en el setup viejo,
+    # sin Caddy) y nunca se actualizó al migrar -- bug real encontrado
+    # 2026-09-17: el link de confirmación llegaba como
+    # "http://<sistema>.ventaenruta.com.mx:4000/...", inalcanzable desde
+    # afuera (nada escucha en 4000 públicamente).
+    url: [host: host, port: 443, scheme: "https"],
     http: [
       # Enable IPv6 and bind on all interfaces.
       # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
