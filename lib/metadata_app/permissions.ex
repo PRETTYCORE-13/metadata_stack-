@@ -822,6 +822,7 @@ defmodule MetadataApp.Permissions do
 
   @capacidades_sysadmin [
     {"sysadmin_bc", "acceso_sysadmin_bc", "Business Process Builder"},
+    {"sysadmin_endpoints", "acceso_sysadmin_endpoints", "Endpoints"},
     {"sysadmin_tepache", "acceso_sysadmin_tepache", "Tepache Exp/Imp"},
     {"sysadmin_roles", "acceso_sysadmin_roles", "Roles"},
     {"sysadmin_empresas", "acceso_sysadmin_empresas", "Empresas"},
@@ -834,7 +835,7 @@ defmodule MetadataApp.Permissions do
     {"sysadmin_panel_control", "acceso_sysadmin_panel_control", "Panel Control"}
   ]
 
-  @doc "Las 11 capacidades de Sysadmin, `{recurso, rol_nombre, etiqueta}` -- fuente única para la migración de seed y para la pestaña Sysadmin de UsuariosEmpresaLive."
+  @doc "Las 12 capacidades de Sysadmin, `{recurso, rol_nombre, etiqueta}` -- fuente única para la migración de seed y para la pestaña Sysadmin de UsuariosEmpresaLive."
   def capacidades_sysadmin, do: @capacidades_sysadmin
 
   @doc """

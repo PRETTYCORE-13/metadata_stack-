@@ -610,6 +610,20 @@ Job asíncrono con Oban (dependencia nueva).
       cero filas nuevas en la tabla. Suite completa: 599 tests, mismo
       baseline de 20 fallos preexistentes, cero regresiones nuevas.
 
+## N. Permiso propio "Endpoints" (R66)
+
+- [x] **N1.** `Permissions.@capacidades_sysadmin` -- agregar
+      `{"sysadmin_endpoints", "acceso_sysadmin_endpoints", "Endpoints"}`.
+- [x] **N2.** Migración `20260917180000_seed_permiso_capacidad_sysadmin_endpoints.exs`
+      -- permiso + rol nuevos, migra grants existentes de
+      `sysadmin_bc`/`editar`. Aplicada en dev y test.
+- [x] **N3.** `EndpointsLive.on_mount` -- `{"sysadmin_bc", "editar"}` →
+      `{"sysadmin_endpoints", "leer"}`.
+- [x] **N4.** `menu_layout.ex` -- link "Endpoints" gateado por
+      `"sysadmin_endpoints"`, agregado a `@recursos_plataforma_bpb`.
+- [x] **N5.** Suite completa: 612 tests, mismo baseline de 20 fallos
+      preexistentes, cero regresiones nuevas.
+
 ## Corrección aparte (no numerada) -- catálogo "Histórico": nombres de campo + tipos reales
 
 Durante las pruebas reales del usuario contra este endpoint se

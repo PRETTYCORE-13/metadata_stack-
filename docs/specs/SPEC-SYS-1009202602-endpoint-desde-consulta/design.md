@@ -850,3 +850,29 @@ con al menos un campo válido → sigue insertando normal. Test HTTP real
 (`consulta_endpoint_controller_alta_test.exs`): `POST .../ruta` con
 body `%{}` y credencial válida → `422`, cero filas nuevas en la
 tabla.
+
+## 12. Permiso propio para "Endpoints" (R66)
+
+`Permissions.@capacidades_sysadmin` (fuente única para la pestaña
+"Sysadmin" de `UsuariosEmpresaLive`) es una lista fija en código de
+`{recurso, rol_nombre, etiqueta}` -- cada capacidad es un permiso
+`{recurso, "leer"}` + un rol de sistema dedicado que se linkea a ESE
+único permiso. "Endpoints" se agrega como una entrada más:
+`{"sysadmin_endpoints", "acceso_sysadmin_endpoints", "Endpoints"}`.
+
+`EndpointsLive` cambia su `on_mount` de
+`{"sysadmin_bc", "editar"}` a `{"sysadmin_endpoints", "leer"}` --
+mismo criterio que ya usan Tepache/Credenciales/Ambientes/Panel
+Control (una pantalla, un recurso, acción `"leer"` alcanza porque no
+hay una acción más fina definida para estas pantallas de Sysadmin).
+El link "Endpoints" del menú (`menu_layout.ex`) pasa a depender de
+`"sysadmin_endpoints" in @opciones_plataforma` en vez de
+`"sysadmin_bc"`, y se agrega a `@recursos_plataforma_bpb` (sigue
+exigiendo `bpb_habilitado`, igual que antes).
+
+Migración `20260917180000`: siembra el permiso + rol nuevos, y migra
+automáticamente el acceso de cualquier rol que ya tuviera
+`sysadmin_bc`/`editar` concedido (mismo patrón de compatibilidad hacia
+atrás que usó `20260816014352` al separar Tepache) -- nadie pierde
+acceso a Endpoints que ya tenía por tener acceso a Business Process
+Builder.

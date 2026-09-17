@@ -549,3 +549,22 @@ sin avisar.
 Verificado con datos reales (dev, `endpoint_historico_127138`): un
 body real enviado con `Content-Type: text/plain` desde un cliente
 C#/RestClient generado por Postman fue la causa real de este hallazgo.
+
+### Permiso propio para la sección "Endpoints" (agregado 2026-09-17, a pedido explícito)
+
+Caso real: el usuario abrió la pestaña "Sysadmin" de un usuario
+(`UsuariosEmpresaLive`) esperando ver un switch "Endpoints" al lado de
+"Business Process Builder" y no estaba -- la sección "Endpoints"
+(R47-R51) nació dependiendo del mismo recurso `sysadmin_bc` que el
+resto de Business Process Builder, sin switch propio.
+
+**R66.** EL SISTEMA DEBE ofrecer "Endpoints" como una capacidad de
+Sysadmin propia, independiente de "Business Process Builder", con su
+propio switch en la pestaña "Sysadmin" de `UsuariosEmpresaLive` -- un
+usuario puede tener acceso a una sin la otra.
+
+Cualquier rol que ya tuviera acceso a Endpoints por tener
+`sysadmin_bc`/`editar` concedido (vía el switch viejo de "Business
+Process Builder") conserva ese acceso automáticamente al migrar --
+nadie pierde acceso que ya tenía (ver migración
+`20260917180000_seed_permiso_capacidad_sysadmin_endpoints.exs`).

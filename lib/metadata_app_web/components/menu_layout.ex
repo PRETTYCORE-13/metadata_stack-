@@ -504,7 +504,7 @@ defmodule MetadataAppWeb.MenuLayout do
           <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">build</span></span>
           <span class="pc-admin-menu-label">Business Process Builder</span>
         </.link>
-        <.link :if={"sysadmin_bc" in @opciones_plataforma} navigate="/sysadmin/endpoints" class="pc-admin-menu-item">
+        <.link :if={"sysadmin_endpoints" in @opciones_plataforma} navigate="/sysadmin/endpoints" class="pc-admin-menu-item">
           <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">api</span></span>
           <span class="pc-admin-menu-label">Endpoints</span>
         </.link>
@@ -864,7 +864,7 @@ defmodule MetadataAppWeb.MenuLayout do
   #   permiso RBAC concedido.
   @recursos_administrativos ~w(sysadmin_roles sysadmin_empresas sysadmin_usuarios sysadmin_catalogos_permisos sysadmin_jerarquia)
   @recursos_plataforma ~w(sysadmin_credenciales sysadmin_ambientes sysadmin_panel_control sysadmin_acciones_externas)
-  @recursos_plataforma_bpb ~w(sysadmin_bc sysadmin_tepache)
+  @recursos_plataforma_bpb ~w(sysadmin_bc sysadmin_endpoints sysadmin_tepache)
 
   defp opciones_administrativas_visibles(%MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa} = scope)
        when not is_nil(usuario) and not is_nil(empresa) do

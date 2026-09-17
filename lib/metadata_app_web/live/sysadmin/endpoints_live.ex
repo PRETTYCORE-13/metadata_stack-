@@ -30,7 +30,12 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
   use MetadataAppWeb, :live_view_admin
 
   on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
-  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "editar"}}
+  # Recurso PROPIO desde 2026-09-17 (a pedido explícito -- "en esta
+  # pantalla también debe estar Endpoint para permisos", viendo la
+  # pestaña Sysadmin sin un switch dedicado) -- antes compartía
+  # "sysadmin_bc"/"editar" con el resto de Business Process Builder,
+  # ver migración 20260917180000 para la migración de grants existentes.
+  on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_endpoints", "leer"}}
 
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaConsultas
@@ -160,9 +165,22 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
   # R54-R58 -- campos REALES del catálogo base (no de la Consulta, que
   # es un subconjunto/namespace distinto) elegibles para "Alta de
   # registros" -- el admin whitelistea cuáles puede mandar el caller.
+  # Bug real (2026-09-17): "fecha_registro" salía como opción
+  # seleccionable acá igual que cualquier campo de negocio, pero
+  # `MetaCatalogoGenerico` la excluye a propósito del cast del
+  # changeset (mismo criterio que `estado_id` -- se auto-estampa
+  # siempre, nadie la pisa por fuera) -- habilitarla en `campos_alta`
+  # no hacía nada útil, y de paso rompía la validación de R65
+  # (`body_sin_coincidencias`): como el caller sí mandaba esa clave
+  # (aunque el resto de nombres estuvieran mal), `Map.take` daba un
+  # mapa "no vacío" y la validación nunca se disparaba, aunque los
+  # campos reales de negocio quedaran todos en NULL igual. Mismo
+  # criterio de exclusión que ya usa `CatalogoGenerador.generar/1`
+  # para "id"/"fecha_registro" al armar la migración física.
   defp campos_reales_alta(catalogo_base) do
     catalogo_base
     |> MetaSchemaContext.listar_detalles()
+    |> Enum.reject(&(&1.schema_context_field in ["id", "fecha_registro"]))
     |> Enum.map(fn detalle ->
       props = detalle.schema_context_properties || %{}
 
