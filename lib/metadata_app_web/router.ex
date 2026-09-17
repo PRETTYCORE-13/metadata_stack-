@@ -244,18 +244,32 @@ defmodule MetadataAppWeb.Router do
         live "/sysadmin/bc-list/:nombre/plantilla", Sysadmin.PlantillaConstructorLive
         live "/sysadmin/bc-list/:nombre/importacion", Sysadmin.ImportacionConstructorLive
         live "/sysadmin/tepache", Sysadmin.TepacheLive
-
-        # SPEC-SYS-1009202602 (agregado 2026-09-14, a pedido explícito --
-        # "no quiero que dependa de una consulta") -- sección propia para
-        # crear/gestionar endpoints, sin pasar por BC List. Reemplaza el
-        # atajo "+ Endpoint" (ya retirado de BcListLive) y la pestaña
-        # "Endpoint API" (ya retirada de ConsultaEditorLive). "nuevo"
-        # ANTES de ":id" -- ruta literal antes de comodín, mismo criterio
-        # que el resto de este archivo.
-        live "/sysadmin/endpoints", Sysadmin.EndpointsLive, :index
-        live "/sysadmin/endpoints/nuevo", Sysadmin.EndpointsLive, :nuevo
-        live "/sysadmin/endpoints/:nombre", Sysadmin.EndpointsLive, :editar
       end
+
+      # SPEC-SYS-1009202602 (agregado 2026-09-14, a pedido explícito --
+      # "no quiero que dependa de una consulta") -- sección propia para
+      # crear/gestionar endpoints, sin pasar por BC List. Reemplaza el
+      # atajo "+ Endpoint" (ya retirado de BcListLive) y la pestaña
+      # "Endpoint API" (ya retirada de ConsultaEditorLive). "nuevo"
+      # ANTES de ":id" -- ruta literal antes de comodín, mismo criterio
+      # que el resto de este archivo.
+      #
+      # Corregido 2026-09-17 (design.md §14, R72): FUERA del bloque
+      # `bpb_habilitado` de arriba -- a diferencia de BC List, ninguna
+      # operación de Endpoints (crear header/detalle, publicar,
+      # despublicar, credenciales) pasa por CatalogoGenerador ni por
+      # Mix, es metadata pura (Repo.insert/update/delete). El gate se
+      # había heredado de cuando Endpoints vivía adentro de BC List y
+      # nunca se revisó al independizarse (R47-51/R66) -- hallazgo
+      # real: `/sysadmin/endpoints` daba "Catálogo no encontrado" en
+      # unstable (release compilado) justo cuando SPEC-SYS-1009202602
+      # (R67-R71) recién había logrado llevar la config del Endpoint
+      # hasta ahí, sin ninguna pantalla para generar su credencial. La
+      # protección real sigue siendo el permiso "sysadmin_endpoints"
+      # (R66), que no depende de esto.
+      live "/sysadmin/endpoints", Sysadmin.EndpointsLive, :index
+      live "/sysadmin/endpoints/nuevo", Sysadmin.EndpointsLive, :nuevo
+      live "/sysadmin/endpoints/:nombre", Sysadmin.EndpointsLive, :editar
 
       # Buscar TRN: siempre disponible (2026-08-04, a pedido explícito) —
       # a diferencia del resto del BPB de arriba, no depende de código que

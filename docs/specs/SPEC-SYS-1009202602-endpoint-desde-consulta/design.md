@@ -1021,3 +1021,41 @@ catálogo real del que depende la Consulta, no el Endpoint en sí), ese
 task hoy no sabe de `<consulta>.endpoint.json` -- quedaría un archivo
 huérfano sin efecto real. Cosmético, no peligroso; sumarlo a
 `despublicar.ex` queda para una vuelta futura si llega a molestar.
+
+## 14. `/sysadmin/endpoints` disponible en cualquier ambiente (R72, agregado 2026-09-17)
+
+**Hallazgo real, probando R67-R71 contra `unstable`:** el catálogo y su
+Endpoint llegaron bien, pero `/sysadmin/endpoints` daba "Catálogo no
+encontrado" ahí -- esa ruta vivía adentro del mismo bloque `if
+Application.compile_env(:metadata_app, :bpb_habilitado)` que apaga
+Business Process Builder entero en cualquier release compilado
+([router.ex:239](../../../lib/metadata_app_web/router.ex#L239),
+heredado de cuando Endpoints vivía adentro de BC List, nunca
+revisado al independizarse con R47-51/R66). Esto deja a R69/R70 sin
+ningún lugar real donde cumplirse: "crear/rotar una credencial directo
+en cada ambiente, vía `/sysadmin/endpoints`" describía una pantalla
+que en la práctica no existe fuera de dev/test.
+
+**Verificado leyendo el código (regla del proyecto, nunca asumir)
+antes de sacar el gate:** ni `EndpointsLive.mount/3` ni
+`ConsultaEndpoints.*` ni `MetaSchemaContext.crear_header_con_detalles/1`
+(usada para crear el Header oculto de un Endpoint nuevo) llaman a
+`CatalogoGenerador` ni a `Mix` en ningún punto -- a diferencia de un
+catálogo BPB real (que sí necesita generar un módulo Ecto y migrar una
+tabla física, imposible sin compilador), un `ConsultaEndpoint` es
+metadata pura de punta a punta. El gate de BC List nunca aplicó acá,
+solo se heredó por estar organizado en el mismo bloque del router.
+
+**Corrección:** las 3 rutas de `Sysadmin.EndpointsLive`
+(`router.ex:255-257` original) se sacaron del bloque `bpb_habilitado`
+-- siguen dentro de `live_session :app_autenticada`, protegidas
+únicamente por el permiso RBAC `sysadmin_endpoints` (R66), que ya era
+independiente de esto. `menu_layout.ex`: `"sysadmin_endpoints"` se
+movió de `@recursos_plataforma_bpb` a `@recursos_plataforma` -- el
+link del menú ahora aparece en cualquier ambiente donde el usuario
+tenga el permiso, sin depender de `bpb_habilitado`.
+
+Con esto, R72 queda resuelto: `/sysadmin/endpoints` existe y funciona
+igual en local, `unstable`, `testing`, `stable` y cualquier cliente --
+generar/rotar/revocar una credencial (R69/R70) ya tiene un lugar real
+donde pasar en cada ambiente.

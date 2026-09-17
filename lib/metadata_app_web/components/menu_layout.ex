@@ -863,8 +863,13 @@ defmodule MetadataAppWeb.MenuLayout do
   #   Sin super_admin, ninguna de estas aparece aunque el rol tenga el
   #   permiso RBAC concedido.
   @recursos_administrativos ~w(sysadmin_roles sysadmin_empresas sysadmin_usuarios sysadmin_catalogos_permisos sysadmin_jerarquia)
-  @recursos_plataforma ~w(sysadmin_credenciales sysadmin_ambientes sysadmin_panel_control sysadmin_acciones_externas)
-  @recursos_plataforma_bpb ~w(sysadmin_bc sysadmin_endpoints sysadmin_tepache)
+  # sysadmin_endpoints vive acá (no en @recursos_plataforma_bpb) desde
+  # 2026-09-17 (design.md §14 de SPEC-SYS-1009202602, R72) -- a
+  # diferencia de BC List/Tepache, ninguna operación de Endpoints
+  # depende del compilador, así que su link no puede seguir escondido
+  # en un ambiente sin bpb_habilitado (ver router.ex, mismo motivo).
+  @recursos_plataforma ~w(sysadmin_credenciales sysadmin_ambientes sysadmin_panel_control sysadmin_acciones_externas sysadmin_endpoints)
+  @recursos_plataforma_bpb ~w(sysadmin_bc sysadmin_tepache)
 
   defp opciones_administrativas_visibles(%MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa} = scope)
        when not is_nil(usuario) and not is_nil(empresa) do

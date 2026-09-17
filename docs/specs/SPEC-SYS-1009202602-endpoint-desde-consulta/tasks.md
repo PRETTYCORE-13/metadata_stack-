@@ -813,3 +813,34 @@ existe para catálogos -- ningún comando ni workflow nuevo.
 
 - [ ] **O10.** Suite completa (`mix test`) sin regresiones sobre el
       baseline vigente.
+
+## Grupo P — `/sysadmin/endpoints` disponible en cualquier ambiente (R72, agregado 2026-09-17)
+
+Ver design.md §14. Encontrado probando O8 en vivo contra `unstable`:
+`/sysadmin/endpoints` daba "Catálogo no encontrado" ahí -- estaba
+detrás del mismo flag que apaga BC List entero en un release
+compilado, heredado sin necesidad real (Endpoints nunca usa el
+compilador).
+
+- [x] **P1.** `router.ex`: sacar las 3 rutas de `Sysadmin.EndpointsLive`
+      del bloque `if Application.compile_env(:metadata_app,
+      :bpb_habilitado)` -- siguen dentro de `live_session
+      :app_autenticada`, protegidas solo por el permiso
+      `sysadmin_endpoints` (R66). Verificado: `mix compile` limpio
+      (sin warnings/errores nuevos).
+
+- [x] **P2.** `menu_layout.ex`: mover `"sysadmin_endpoints"` de
+      `@recursos_plataforma_bpb` a `@recursos_plataforma` -- el link
+      del menú deja de depender de `bpb_habilitado`. Verificado: `mix
+      compile` limpio.
+
+- [ ] **P3.** Suite completa (`mix test`) sin regresiones -- en
+      particular `endpoints_live_test.exs` y cualquier test de
+      `menu_layout`/navegación, ya que corren con `bpb_habilitado =
+      true` en `:test` (no debería cambiar nada ahí, pero confirmar).
+
+- [ ] **P4.** Verificación end-to-end real: tras el deploy a
+      `unstable`, `/sysadmin/endpoints` deja de dar "Catálogo no
+      encontrado" -- aparece la lista, se puede abrir el Endpoint de
+      `pty_h_historico` y generar una credencial nueva ahí. Retoma O8
+      desde el punto donde se había frenado.

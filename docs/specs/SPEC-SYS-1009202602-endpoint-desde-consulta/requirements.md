@@ -623,3 +623,22 @@ donde ya se había llevado -- mismo criterio que `mix motor.despublicar`
 ya exige para un catálogo borrado; esto deja huérfanas (y por lo tanto
 inválidas) las credenciales que dependían de ese Endpoint en ese
 ambiente.
+
+## La pantalla de administración de Endpoints en cualquier ambiente (agregado 2026-09-17, a pedido explícito)
+
+Hallazgo real, probando R67-R71 de punta a punta contra `unstable`: el
+catálogo y su Endpoint llegaron bien (vía `mix motor.publicar`), pero
+`/sysadmin/endpoints` respondía "Catálogo no encontrado" ahí -- esa
+pantalla está detrás del mismo flag que apaga TODO Business Process
+Builder en un release compilado (`bpb_habilitado`), así que R69/R70
+(generar/rotar una credencial "directo en cada ambiente, vía
+`/sysadmin/endpoints`") describían un lugar que en la práctica no
+existe en `unstable`/`testing`/`stable`/un cliente. Contradicción
+encontrada dentro del propio spec, corregida acá antes de seguir.
+
+**R72.** EL SISTEMA DEBE permitir crear, editar, publicar/despublicar
+un Endpoint y administrar sus credenciales en CUALQUIER ambiente,
+incluido un release compilado donde Business Process Builder esté
+apagado -- a diferencia de un catálogo nuevo hecho con BPB, ninguna de
+estas operaciones depende de generar un módulo Ecto ni de migrar una
+tabla física.
