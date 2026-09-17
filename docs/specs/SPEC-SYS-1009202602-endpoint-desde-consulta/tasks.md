@@ -624,6 +624,38 @@ Job asíncrono con Oban (dependencia nueva).
 - [x] **N5.** Suite completa: 612 tests, mismo baseline de 20 fallos
       preexistentes, cero regresiones nuevas.
 
+## Corrección aparte (no numerada) -- CI roto por drift real en `meta_fixture_cliente` (empresa_id)
+
+Al correr `mix gen.catalogos` localmente (a pedido explícito, para
+verificar el catálogo "historico") se encontró que regeneraba
+`meta_fixture_cliente.ex` SIN el campo `empresa_id` -- la migración
+`20260910120200` que agregó esa columna física lo hizo "sin
+meta_schema_detail a propósito" (mismo criterio que branch_id/
+sales_unit_id), pero en algún momento posterior alguien agregó
+`empresa_id` a mano al `campos:` del `.ex`, violando la invariante real
+de `CatalogoGenerador.crear_schema/4` (`campos:` se regenera ENTERO
+desde `meta_schema_detail`). Confirmado con `gh run view` que CI venía
+fallando por este mismo drift desde ANTES de esta sesión (2 corridas
+previas al primer push de hoy ya estaban rojas en el mismo paso).
+
+Mismo bug, mismo patrón, ya documentado una vez antes para
+`meta_fixture_cliente_sucursal_id` (ver comentario de la migración
+`20260826190000`) -- se repitió porque `empresa_id` no recibió el mismo
+tratamiento en su momento.
+
+Corregido con una migración nueva
+(`20260917190000_registrar_meta_schema_detail_empresa_id_meta_fixture_cliente.exs`)
+que agrega la fila de `meta_schema_detail` faltante -- `campos:` vuelve
+a coincidir con la metadata real, el drift desaparece, y el test R55
+sigue pasando (ahora por la vía correcta, no por un campo huérfano en
+el `.ex`). Aplicada en dev y test, `priv/repo/catalogos/meta_fixture_cliente.meta.json`
+actualizado para reflejar la metadata real completa (también le
+faltaba `meta_fixture_cliente_sucursal_id`, drift menor preexistente
+sin impacto en CI porque el header de este fixture nace de una
+migración, no de este archivo). Suite completa tras el fix: 612 tests,
+mismo baseline de 20 fallos preexistentes por nombre, cero
+regresiones.
+
 ## Corrección aparte (no numerada) -- catálogo "Histórico": nombres de campo + tipos reales
 
 Durante las pruebas reales del usuario contra este endpoint se

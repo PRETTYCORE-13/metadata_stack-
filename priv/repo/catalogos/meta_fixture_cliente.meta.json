@@ -52,6 +52,29 @@
       }
     },
     {
+      "schema_context_field": "meta_fixture_cliente_sucursal_id",
+      "schema_context_properties": {
+        "catalogo": "meta_schema_branch",
+        "editable": true,
+        "etiqueta": "Sucursal",
+        "opcional": true,
+        "orden": 4,
+        "tipo": "referencia",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "empresa_id",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Empresa",
+        "opcional": true,
+        "orden": 5,
+        "tipo": "integer",
+        "visible": true
+      }
+    },
+    {
       "schema_context_field": "fecha_registro",
       "schema_context_properties": {
         "editable": false,
