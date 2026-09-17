@@ -1,6 +1,6 @@
 # SPEC-SYS-1109202605 — BC Motor: Tab Permisos y Alcance de Datos
 
-**Documento:** Requirements · **Fase:** ✅ aprobada (2026-09-11) — documentación retroactiva, sin cambios de código.
+**Documento:** Requirements · **Fase:** ✅ aprobada (2026-09-11) — documentación retroactiva. R8a agregado 2026-09-17 (bug real corregido, ver `design.md` §4).
 
 **Alcance de esta spec**: documentar (retroactivo, ya implementado)
 el tab **"Permisos"** de `BcMotorLive` — quinta spec del módulo BC
@@ -76,6 +76,13 @@ tabla física propia), EL SISTEMA DEBE mostrar Alcance de Datos como
 informativo de solo lectura, heredado de su catálogo base — sin
 ningún control propio, con el texto explícito de que para cambiarlo
 hay que ir a Permisos del catálogo base.
+
+R8a. CUANDO la Consulta NO tiene su configuración armada (dato
+inconsistente: existe el catálogo pero no su fila de configuración de
+Consulta, así que no se puede resolver cuál es su catálogo base), EL
+SISTEMA DEBE mostrar un aviso explícito en vez de romper la pantalla
+— **corregido 2026-09-17, bug real**: antes esto tumbaba la pantalla
+entera con un error técnico.
 
 R9. CUANDO el catálogo NO es una Consulta, EL SISTEMA DEBE ofrecer un
 botón "+ Alcance de datos" / "✓ Alcance de datos — Quitar" que

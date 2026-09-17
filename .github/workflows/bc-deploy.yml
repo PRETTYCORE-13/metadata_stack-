@@ -1,5 +1,12 @@
 name: BC Deploy
 
+# run-name (2026-09-17, a pedido explícito): reemplaza el "BC Deploy #53"
+# genérico de la lista de Actions por un texto que identifica la
+# publicación de un vistazo -- mismo espíritu que un mensaje de commit en
+# CI. `mensaje` es opcional (ver input más abajo); sin él, cae a
+# "<catálogo> → <sistema>" (siempre informativo, nunca un run-name vacío).
+run-name: "BC Deploy: ${{ inputs.mensaje || inputs.catalogo }} → ${{ inputs.sistema }}"
+
 # Despliega UN Business Context (BC) construido localmente por ADN con el
 # BPB, directo a Linux Trixie (producción) -- SIN pasar por el repo
 # compartido metadata_stack-. Disparado por `mix motor.publicar <catalogo>`
@@ -24,6 +31,9 @@ on:
       bundle_b64:
         description: "Bundle .tar.gz (schema + migraciones + meta/motor.json + reglas) en base64, armado por mix motor.publicar"
         required: true
+      mensaje:
+        description: "Texto libre describiendo esta publicación (opcional) — aparece como nombre del run en la lista de Actions, ver run-name arriba"
+        required: false
 
 env:
   ELIXIR_VERSION: "1.18.4"

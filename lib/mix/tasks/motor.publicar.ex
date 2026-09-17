@@ -5,7 +5,13 @@ defmodule Mix.Tasks.Motor.Publicar do
   @shortdoc "Empaqueta uno o más BC (schema+migraciones+autómata+reglas) y los despliega directo a producción"
 
   @moduledoc """
-  Uso: mix motor.publicar --sistema=<sistema> <catalogo> [<catalogo2> ...]
+  Uso: mix motor.publicar --sistema=<sistema> [--mensaje="texto"] <catalogo> [<catalogo2> ...]
+
+  `--mensaje` (opcional, 2026-09-17, a pedido explícito) es texto libre
+  que identifica esta publicación en la lista de GitHub Actions (el
+  `run-name` de "BC Deploy", reemplaza el "#53" genérico) — mismo
+  espíritu que un mensaje de commit en CI. Sin `--mensaje`, el run queda
+  identificado por catálogo + sistema igual.
 
   Lleva uno o más Business Context (BC) construidos localmente con el BPB
   a Linux Trixie (producción) — **sin** pasar por el repo compartido
@@ -73,15 +79,16 @@ defmodule Mix.Tasks.Motor.Publicar do
   def run(args) do
     Mix.Task.run("app.config")
 
-    {switches, nombres, _} = OptionParser.parse(args, strict: [sistema: :string])
+    {switches, nombres, _} = OptionParser.parse(args, strict: [sistema: :string, mensaje: :string])
     sistema = switches[:sistema]
+    mensaje = switches[:mensaje]
 
     cond do
       is_nil(sistema) ->
-        Mix.raise("Falta --sistema=<sistema>, obligatorio. Uso: mix motor.publicar --sistema=<sistema> <catalogo> [<catalogo2> ...]")
+        Mix.raise("Falta --sistema=<sistema>, obligatorio. Uso: mix motor.publicar --sistema=<sistema> [--mensaje=\"texto\"] <catalogo> [<catalogo2> ...]")
 
       nombres == [] ->
-        Mix.raise("Uso: mix motor.publicar --sistema=<sistema> <catalogo> [<catalogo2> ...]")
+        Mix.raise("Uso: mix motor.publicar --sistema=<sistema> [--mensaje=\"texto\"] <catalogo> [<catalogo2> ...]")
 
       not MetadataApp.MotorAlta.publicable?(sistema) ->
         Mix.raise(
@@ -90,11 +97,11 @@ defmodule Mix.Tasks.Motor.Publicar do
         )
 
       true ->
-        publicar(sistema, nombres)
+        publicar(sistema, nombres, mensaje)
     end
   end
 
-  defp publicar(sistema, nombres) do
+  defp publicar(sistema, nombres, mensaje) do
     Mix.shell().info("== validando #{Enum.join(nombres, ", ")} ==")
 
     {:ok, resultado, _apps} =
@@ -128,11 +135,15 @@ defmodule Mix.Tasks.Motor.Publicar do
         Mix.Task.rerun("endpoint.export")
 
         Mix.shell().info("\n== armando bundle ==")
-        armar_y_desplegar(sistema, nombres, catalogos)
+        armar_y_desplegar(sistema, nombres, catalogos, mensaje)
     end
   end
 
-  defp armar_y_desplegar(sistema, nombres, catalogos) do
+  # `mensaje_run` (no "mensaje" a secas -- ya está tomado más abajo por los
+  # `{:error, mensaje}` de armar_bundle/persistir_bundle, nombres distintos
+  # a propósito para no confundir el texto descriptivo del run con un
+  # mensaje de error).
+  defp armar_y_desplegar(sistema, nombres, catalogos, mensaje_run) do
     case MetaPublicador.armar_bundle(catalogos) do
       {:error, mensaje} ->
         Mix.raise(mensaje)
@@ -149,7 +160,7 @@ defmodule Mix.Tasks.Motor.Publicar do
             Mix.shell().info("  #{Enum.join(tags, ", ")}")
             Mix.shell().info("\n== disparando BC Deploy en GitHub Actions para \"#{sistema}\" ==")
 
-            case MetaPublicador.disparar_deploy(sistema, nombres, bundle_path) do
+            case MetaPublicador.disparar_deploy(sistema, nombres, bundle_path, mensaje_run) do
               {:ok, salida} ->
                 Mix.shell().info(salida)
 

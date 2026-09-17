@@ -487,21 +487,38 @@ defmodule MetadataApp.Permissions do
 
   def buscar_catalogos("", _limite), do: []
 
+  # SPEC-SYS-1709202602 R9 (2026-09-17, a pedido explícito): "*" es un
+  # pedido EXPLÍCITO de "mostrame lo que haya" -- distinto de dejar el
+  # buscador vacío (clause de arriba, a propósito no lista nada sin que
+  # el admin pida algo puntual). Mismo query base que la búsqueda por
+  # texto, sin el ilike -- sigue respetando `limite`, "*" no es una forma
+  # de saltarse el tope de escala pensado para +1000 catálogos.
+  def buscar_catalogos("*", limite), do: query_catalogos(true, limite)
+
   def buscar_catalogos(query, limite) do
     texto = "%#{query}%"
+    query_catalogos(dynamic([header: h], ilike(h.schema_context_name, ^texto) or ilike(h.schema_context_label, ^texto)), limite)
+  end
 
+  # `where:` repetido a propósito (Ecto los combina con AND) -- un
+  # `dynamic/2` pineado (`^condicion_texto`) solo es válido a nivel TOP
+  # LEVEL de where/having/etc., no mezclado dentro de un `and` armado a
+  # mano junto a otras condiciones (Ecto.QueryError real, encontrado al
+  # agregar el comodín "*" -- "dynamic expressions can only be
+  # interpolated at the top level of where...").
+  defp query_catalogos(condicion_texto, limite) do
     Repo.all(
       from h in Header,
         as: :header,
+        where: is_nil(h.delete_guid) and h.schema_context_type != 2 and is_nil(h.schema_encabezado_id),
+        where: ^condicion_texto,
         where:
-          is_nil(h.delete_guid) and h.schema_context_type != 2 and is_nil(h.schema_encabezado_id) and
-            (ilike(h.schema_context_name, ^texto) or ilike(h.schema_context_label, ^texto)) and
-            (h.schema_context_type == 3 or
-               exists(
-                 from t in "meta_schema_transiciones",
-                   where: t.meta_schema_header_id == parent_as(:header).id and is_nil(t.delete_guid),
-                   select: 1
-               )),
+          h.schema_context_type == 3 or
+            exists(
+              from t in "meta_schema_transiciones",
+                where: t.meta_schema_header_id == parent_as(:header).id and is_nil(t.delete_guid),
+                select: 1
+            ),
         order_by: h.schema_context_label,
         limit: ^limite,
         select: %{recurso: h.schema_context_name, label: h.schema_context_label, es_consulta: h.schema_context_type == 3}

@@ -91,3 +91,24 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   camino un bug real de Postgres (`TRUNCATE` rechaza vaciar una tabla
   referenciada por CUALQUIER otra de la base, sin importar el orden;
   se usa `DELETE` + reinicio de secuencia).
+- [`SPEC-SYS-1709202601-sysadmin-usuarios/`](SPEC-SYS-1709202601-sysadmin-usuarios/) —
+  documentación retroactiva de `/sysadmin/usuarios` (administrador de
+  usuarios de la empresa: alta, roles, capacidades de Sysadmin,
+  catálogos por herencia, y Alcance de Datos Empresa/Sucursal/Almacén/
+  Unidad de venta), implementado. Incrementos reales (2026-09-17,
+  completos): eliminación total de un usuario del ambiente (con
+  confirmación y guardas de auto-eliminación/sysadmin de plataforma) +
+  picker de doble lista para la pestaña Roles (reemplaza el buscador
+  por 2 listas + flechas, con filtro client-side por lista) — ver
+  `tasks.md`.
+- [`SPEC-SYS-1709202602-sysadmin-catalogos-permisos/`](SPEC-SYS-1709202602-sysadmin-catalogos-permisos/) —
+  documentación retroactiva del uso STANDALONE de `CatalogoPermisosLive`
+  en `/sysadmin/catalogos/permisos` ("Permission Sets": picker de
+  catálogo + navegación por URL), implementado. La matriz de permisos/
+  Alcance de Datos en sí (mismo LiveView, también embebido en BC Motor)
+  ya está documentada en `SPEC-SYS-1109202605-bc-motor-tab-permisos-
+  alcance` — esta spec no la repite, solo cubre lo exclusivo del uso
+  standalone. Incremento real completo (2026-09-17): el picker deja de
+  perder el filtro al elegir un catálogo/asignar un permiso (el texto
+  buscado viaja como query param `?q=` en vez de perderse en el
+  remount) + comodín `*` para listar sin substring — ver `tasks.md`.
