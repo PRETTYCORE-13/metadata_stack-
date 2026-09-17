@@ -478,7 +478,22 @@ defmodule MetadataApp.MetaImportExport do
   def importar_motor(dir \\ "priv/repo/catalogos") do
     dir
     |> leer_json(".motor.json")
-    |> Enum.flat_map(&importar_catalogo_motor/1)
+    |> Enum.flat_map(&importar_catalogo_motor_tolerante/1)
+  end
+
+  # Mismo criterio que importar_contexto_tolerante/1 arriba: crear_estado_importado/
+  # crear_transicion/actualizar_transicion_si_cambio hacen raise ante cualquier
+  # error, y sin este rescue un solo catálogo roto (encontrado real, 2026-09-17:
+  # deploy a "unstable" con TODOS los pty_ch_* bien configurados en dev pero sin
+  # botón "Nuevo registro" tras publicar) corta Enum.flat_map/2 y deja SIN
+  # estados/transiciones a todo catálogo que venga después en la lista -- no solo
+  # al que rompió. Release.setup/0 encima traga la excepción con solo un log de
+  # advertencia, así que el deploy parece exitoso mientras el autómata de medio
+  # sistema nunca se sincronizó.
+  defp importar_catalogo_motor_tolerante(%{"catalogo" => nombre} = datos) do
+    importar_catalogo_motor(datos)
+  rescue
+    error -> ["! #{nombre}: #{Exception.message(error)}"]
   end
 
   defp importar_catalogo_motor(%{"catalogo" => nombre} = datos) do
