@@ -656,6 +656,46 @@ migración, no de este archivo). Suite completa tras el fix: 612 tests,
 mismo baseline de 20 fallos preexistentes por nombre, cero
 regresiones.
 
+## Corrección aparte (no numerada) -- "historico" pasa a ser "pty_h_historico" (catálogo local, fuera de git)
+
+A pedido explícito (2026-09-17, viendo la pantalla "Bisness Context"
+junto a pty_ch_areas/pty_ch_empleados/pty_ch_puestos/pty_ch_roles):
+"historico" no seguía el estándar `pty_<carpeta>_<nombre>` del resto de
+catálogos de esa carpeta. Se renombró la tabla física y sus 38 campos
+de negocio (de `historico_<campo>` a `pty_h_historico_<campo>`) más
+`meta_schema_header`/`meta_schema_detail`, la Consulta interna del
+endpoint (`catalogo_base` + `campos` jsonb), `campos_alta` y
+`campos_permitidos` de la credencial -- todo en la base de dev local.
+
+Al confirmar el nombre se encontró un efecto real del `.gitignore`:
+todo archivo `pty_*.ex`/`pty_*.json`/migración con "pty_" en el nombre
+está EXCLUIDO de git a propósito (son "micro-apps" que arma cada
+ambiente por su cuenta vía el BPB, no algo versionado) -- salvo un
+puñado de excepciones explícitas (`pty_folio_perfiles`,
+`pty_subtipos_transaccion`). "historico" se había creado SIN ese
+prefijo justamente para poder vivir en git/CI. Consultado el usuario
+(`AskUserQuestion`), eligió **dejarlo fuera de git, como cualquier otro
+pty_\***, en vez de agregar una excepción nueva al `.gitignore`.
+
+Consecuencia real: `pty_h_historico.ex`, sus `.meta.json`/`.motor.json`
+y la migración del rename (`20260917200000_renombrar_historico_a_pty_h_historico.exs`)
+quedan como archivos LOCALES (ignorados), igual que cualquier
+migración de un catálogo pty_* -- no viajan a otro ambiente ni a un
+checkout limpio. Se retiraron de git los 3 archivos que sí estaban
+commiteados bajo el nombre viejo (`historico.ex`,
+`priv/repo/catalogos/historico.{meta,motor}.json`). Las migraciones
+VIEJAS que crearon la tabla "historico" (2026-09-15 en adelante) siguen
+commiteadas sin tocar -- un checkout limpio/CI las sigue corriendo y
+termina con una tabla "historico" física, pero sin ningún catálogo de
+aplicación detrás (sin header, sin schema Ecto) -- inerte, no la usa
+nada. El endpoint publicado sobre este catálogo (`endpoint-historico-127138`,
+con sus campos de alta y su credencial) sigue existiendo solo en la
+base de dev local, igual que antes de este cambio -- nunca viajó a
+ningún lado.
+
+Suite completa tras el rename: 612 tests, mismo baseline de 20 fallos
+preexistentes, cero regresiones (ningún test depende de "historico").
+
 ## Corrección aparte (no numerada) -- catálogo "Histórico": nombres de campo + tipos reales
 
 Durante las pruebas reales del usuario contra este endpoint se
