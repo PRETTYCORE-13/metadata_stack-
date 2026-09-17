@@ -16,8 +16,11 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLiveTest do
 
   import Phoenix.LiveViewTest
   import MetadataApp.AutenticacionFixtures
+  import Ecto.Query
 
   alias MetadataApp.Autenticacion
+  alias MetadataApp.Autenticacion.{Usuario, UsuarioEmpresa, UsuarioRol, UsuarioBranch}
+  alias MetadataApp.Repo
 
   setup %{conn: conn} do
     admin = usuario_fixture()
@@ -44,6 +47,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLiveTest do
 
     %{
       conn: conn,
+      admin: admin,
       empresa: empresa,
       objetivo: objetivo,
       branch: branch,
@@ -226,6 +230,184 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLiveTest do
       assert MetadataApp.Permissions.can?(scope_de(objetivo, empresa), "leer", "sysadmin_credenciales")
       refute MetadataApp.Permissions.can?(scope_de(objetivo, empresa), "leer", "sysadmin_roles")
       refute MetadataApp.Permissions.can?(scope_de(objetivo, empresa), "leer", "sysadmin_jerarquia")
+    end
+  end
+
+  describe "eliminar usuario (borrado total, SPEC-SYS-1709202601 R13a-e)" do
+    test "elimina la cuenta por completo, sale de la lista y no puede volver a autenticarse", %{
+      conn: conn,
+      objetivo: objetivo
+    } do
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+      seleccionar(view, objetivo)
+
+      html = view |> element("button[phx-click=eliminar_usuario]") |> render_click()
+
+      # El flash de confirmación repite el email a propósito (le confirma
+      # al admin A QUIÉN borró) -- lo que no debe quedar es el renglón de
+      # la lista ni el panel de detalle abierto para ese usuario.
+      refute html =~ "phx-value-id=\"#{objetivo.id}\""
+      assert html =~ "Elegí un usuario de la izquierda."
+      refute Repo.get(Usuario, objetivo.id)
+    end
+
+    test "eliminar un usuario con VARIAS empresas lo borra de todas, sin filas huérfanas", %{
+      conn: conn,
+      objetivo: objetivo
+    } do
+      {:ok, _otra_empresa} =
+        Autenticacion.crear_empresa_para_usuario("Otra empresa del objetivo #{System.unique_integer()}", objetivo.id)
+
+      assert length(Autenticacion.empresas_de_usuario(objetivo.id)) == 2
+
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+      seleccionar(view, objetivo)
+      view |> element("button[phx-click=eliminar_usuario]") |> render_click()
+
+      refute Repo.get(Usuario, objetivo.id)
+      assert Repo.all(from ue in UsuarioEmpresa, where: ue.usuario_id == ^objetivo.id) == []
+      assert Repo.all(from ur in UsuarioRol, where: ur.usuario_id == ^objetivo.id) == []
+      assert Repo.all(from ub in UsuarioBranch, where: ub.usuario_id == ^objetivo.id) == []
+    end
+
+    test "el botón no aparece y el evento no tiene efecto sobre uno mismo", %{conn: conn, admin: admin} do
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+      html = seleccionar(view, admin)
+
+      refute html =~ "phx-click=\"eliminar_usuario\""
+
+      render_click(view, "eliminar_usuario", %{})
+      assert Repo.get(Usuario, admin.id)
+    end
+
+    test "el botón no aparece y el evento no tiene efecto sobre un sysadmin de plataforma", %{
+      conn: conn,
+      objetivo: objetivo
+    } do
+      objetivo = objetivo |> Ecto.Changeset.change(super_admin: true) |> Repo.update!()
+
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+      html = seleccionar(view, objetivo)
+
+      refute html =~ "phx-click=\"eliminar_usuario\""
+
+      render_click(view, "eliminar_usuario", %{})
+      assert Repo.get(Usuario, objetivo.id)
+    end
+  end
+
+  describe "pestaña Roles (picker de doble lista, SPEC-SYS-1709202601 R14-R16c)" do
+    setup %{empresa: empresa} do
+      {:ok, rol} = MetadataApp.Permissions.crear_rol(%{empresa_id: empresa.id, nombre: "Rol picker #{System.unique_integer()}"})
+      %{rol: rol}
+    end
+
+    test "seleccionar un rol disponible y mover con -> lo concede de verdad", %{
+      conn: conn,
+      empresa: empresa,
+      objetivo: objetivo,
+      rol: rol
+    } do
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+      html = seleccionar(view, objetivo)
+      assert html =~ ~s(phx-click="seleccionar_rol_disponible" phx-value-id="#{rol.id}")
+
+      view |> element(~s(li[phx-click=seleccionar_rol_disponible][phx-value-id="#{rol.id}"])) |> render_click()
+      html = view |> element("button[phx-click=mover_rol_a_concedidos]") |> render_click()
+
+      assert rol.id in Enum.map(MetadataApp.Permissions.roles_de_usuario(objetivo.id, empresa.id), & &1.id)
+      assert html =~ ~s(phx-click="seleccionar_rol_concedido" phx-value-id="#{rol.id}")
+      refute html =~ ~s(phx-click="seleccionar_rol_disponible" phx-value-id="#{rol.id}")
+    end
+
+    test "seleccionar un rol concedido y mover con <- lo revoca de verdad", %{
+      conn: conn,
+      empresa: empresa,
+      objetivo: objetivo,
+      rol: rol
+    } do
+      MetadataApp.Permissions.asignar_rol(objetivo.id, rol.id, empresa.id)
+
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+      seleccionar(view, objetivo)
+
+      view |> element(~s(li[phx-click=seleccionar_rol_concedido][phx-value-id="#{rol.id}"])) |> render_click()
+      html = view |> element("button[phx-click=mover_rol_a_disponibles]") |> render_click()
+
+      refute rol.id in Enum.map(MetadataApp.Permissions.roles_de_usuario(objetivo.id, empresa.id), & &1.id)
+      assert html =~ ~s(phx-click="seleccionar_rol_disponible" phx-value-id="#{rol.id}")
+      refute html =~ ~s(phx-click="seleccionar_rol_concedido" phx-value-id="#{rol.id}")
+    end
+
+    test "un click de flecha sin nada seleccionado no concede ni revoca nada", %{
+      conn: conn,
+      empresa: empresa,
+      objetivo: objetivo,
+      rol: rol
+    } do
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+      seleccionar(view, objetivo)
+
+      render_click(view, "mover_rol_a_concedidos", %{})
+      render_click(view, "mover_rol_a_disponibles", %{})
+
+      refute rol.id in Enum.map(MetadataApp.Permissions.roles_de_usuario(objetivo.id, empresa.id), & &1.id)
+    end
+
+    test "\"Quitar todos\" revoca TODOS los roles concedidos de una sola vez", %{
+      conn: conn,
+      empresa: empresa,
+      objetivo: objetivo,
+      rol: rol
+    } do
+      {:ok, otro_rol} = MetadataApp.Permissions.crear_rol(%{empresa_id: empresa.id, nombre: "Rol picker 2 #{System.unique_integer()}"})
+      MetadataApp.Permissions.asignar_rol(objetivo.id, rol.id, empresa.id)
+      MetadataApp.Permissions.asignar_rol(objetivo.id, otro_rol.id, empresa.id)
+
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+      seleccionar(view, objetivo)
+
+      html = view |> element("button[phx-click=quitar_todos_los_roles]") |> render_click()
+
+      assert MetadataApp.Permissions.roles_de_usuario(objetivo.id, empresa.id) == []
+      assert html =~ "Sin roles todavía."
+    end
+
+    test "\"Quitar todos\" sale deshabilitado cuando el usuario no tiene roles", %{conn: conn, objetivo: objetivo} do
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+      html = seleccionar(view, objetivo)
+
+      assert html =~ ~s(phx-click="quitar_todos_los_roles" disabled)
+    end
+
+    # R16f: después de asignar con "→", el foco pasa solo al PRIMER rol que
+    # queda disponible -- así clickear la flecha otra vez (sin volver a
+    # seleccionar nada a mano) asigna el rol SIGUIENTE, no ninguno.
+    test "después de asignar un rol, clickear -> otra vez asigna el próximo sin volver a seleccionar", %{
+      conn: conn,
+      empresa: empresa,
+      objetivo: objetivo,
+      rol: rol
+    } do
+      {:ok, otro_rol} = MetadataApp.Permissions.crear_rol(%{empresa_id: empresa.id, nombre: "AAA rol picker 2 #{System.unique_integer()}"})
+
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/usuarios")
+      seleccionar(view, objetivo)
+
+      view |> element(~s(li[phx-click=seleccionar_rol_disponible][phx-value-id="#{rol.id}"])) |> render_click()
+      view |> element("button[phx-click=mover_rol_a_concedidos]") |> render_click()
+
+      # Sin seleccionar nada a mano -- si el foco quedó puesto solo, este
+      # segundo click también tiene que asignar (el botón no debe seguir
+      # disabled, y del lado servidor rol_disponible_seleccionado_id no es
+      # nil). NO se puede aserter "Sin roles disponibles." acá -- "administrador"
+      # es un rol global (empresa_id nil, sembrado por migración) que SIEMPRE
+      # queda disponible salvo que se lo asignen explícitamente.
+      view |> element("button[phx-click=mover_rol_a_concedidos]") |> render_click()
+
+      concedidos_ids = Enum.map(MetadataApp.Permissions.roles_de_usuario(objetivo.id, empresa.id), & &1.id)
+      assert rol.id in concedidos_ids
+      assert otro_rol.id in concedidos_ids
     end
   end
 end

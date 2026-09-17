@@ -969,10 +969,39 @@ const SeleccionarTodosCheckbox = {
   },
 }
 
+// Filtro de texto client-side del picker de doble lista de Roles
+// (usuarios_empresa_live.ex, SPEC-SYS-1709202601 R16c) -- mismo espíritu
+// que FiltroMenu (sin round-trip al servidor), pero montado en la LISTA
+// (<ul>), no en el <input>: así updated() -- que dispara cuando LiveView
+// repatchea ESTA lista por un assign nuevo del servidor (ej. después de
+// mover un rol con la flecha) -- puede reaplicar el último texto tipeado
+// sobre los <li> recién renderizados. El texto del filtro vive solo acá
+// (this.filtro), nunca en socket.assigns -- dos listas independientes,
+// cada una con su propio <input data-input-id> apuntando a esta <ul>.
+const FiltrarListaRoles = {
+  mounted() {
+    this.filtro = ""
+    this.input = document.getElementById(this.el.dataset.inputId)
+    this.input?.addEventListener("input", (e) => {
+      this.filtro = e.target.value.trim().toLowerCase()
+      this.aplicar()
+    })
+    this.aplicar()
+  },
+  updated() {
+    this.aplicar()
+  },
+  aplicar() {
+    this.el.querySelectorAll("li[data-nombre]").forEach((li) => {
+      li.style.display = li.dataset.nombre.toLowerCase().includes(this.filtro) ? "" : "none"
+    })
+  },
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField, UnidadOperativaWatcher, RecordarSeccion, AutoImprimir, ZoomLienzo, DescargarArchivo, SeleccionarTodosCheckbox},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField, UnidadOperativaWatcher, RecordarSeccion, AutoImprimir, ZoomLienzo, DescargarArchivo, SeleccionarTodosCheckbox, FiltrarListaRoles},
 })
 
 // Show progress bar on live navigation and form submits

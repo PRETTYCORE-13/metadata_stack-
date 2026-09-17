@@ -106,8 +106,9 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
      |> assign(:busqueda, "")
      |> assign(:usuario_seleccionado, nil)
      |> assign(:roles_concedidos, [])
-     |> assign(:busqueda_rol, "")
-     |> assign(:roles_busqueda_resultado, [])
+     |> assign(:roles_disponibles, [])
+     |> assign(:rol_disponible_seleccionado_id, nil)
+     |> assign(:rol_concedido_seleccionado_id, nil)
      |> assign(:bcs_lectura, [])
      |> assign(:capacidades_sysadmin, Permissions.capacidades_sysadmin())
      |> assign(:capacidades_sysadmin_roles, Permissions.roles_de_capacidades_sysadmin())
@@ -141,8 +142,9 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
        |> assign(
          usuario_seleccionado: nil,
          roles_concedidos: [],
-         busqueda_rol: "",
-         roles_busqueda_resultado: [],
+         roles_disponibles: [],
+         rol_disponible_seleccionado_id: nil,
+         rol_concedido_seleccionado_id: nil,
          bcs_lectura: [],
          capacidades_sysadmin_concedidas: MapSet.new(),
          alcance: @alcance_vacio
@@ -261,8 +263,9 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
      assign(socket,
        usuario_seleccionado: nil,
        roles_concedidos: [],
-       busqueda_rol: "",
-       roles_busqueda_resultado: [],
+       roles_disponibles: [],
+       rol_disponible_seleccionado_id: nil,
+       rol_concedido_seleccionado_id: nil,
        bcs_lectura: [],
        capacidades_sysadmin_concedidas: MapSet.new(),
        alcance: @alcance_vacio
@@ -283,18 +286,50 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     {:noreply, put_flash(socket, :info, "Se cerraron todas las sesiones de #{usuario.email}.")}
   end
 
-  def handle_event("quitar_rol_de_usuario", %{"rol_id" => rol_id}, socket) do
-    %{usuario_seleccionado: usuario, empresa_en_foco: empresa} = socket.assigns
-    Permissions.revocar_rol(usuario.id, String.to_integer(rol_id), empresa.id)
-    {:noreply, cargar_detalle_usuario(socket)}
+  # Borrado TOTAL de la cuenta (SPEC-SYS-1709202601 R13a-e, 2026-09-17, a
+  # pedido explícito -- "hice un usuario y lo digité mal, lo quiero
+  # borrar"): a diferencia de "Quitar" en la pestaña Alcance (que solo
+  # desvincula de UNA empresa), esto es Autenticacion.eliminar_usuario/1
+  # -- un Repo.delete/1 liso, sin cascada manual acá, porque todas las FK
+  # hacia meta_schema_usuario ya son :delete_all/:nilify_all a nivel de
+  # Postgres (confirmado en las migraciones, ver design.md §10). Las dos
+  # guardas (no auto-eliminarse, no tocar un super_admin) se revalidan acá
+  # del lado servidor -- el botón del render ya las esconde, pero un
+  # phx-click armado a mano no puede saltearlas (mismo criterio que
+  # cambiar_empresa_en_foco/2).
+  def handle_event("eliminar_usuario", _params, socket) do
+    %{usuario_seleccionado: usuario, current_scope: scope} = socket.assigns
+
+    if usuario.id == scope.usuario.id or usuario.super_admin do
+      {:noreply, socket}
+    else
+      email = usuario.email
+      Autenticacion.eliminar_usuario(usuario)
+
+      {:noreply,
+       socket
+       |> assign(
+         usuario_seleccionado: nil,
+         roles_concedidos: [],
+         roles_disponibles: [],
+         rol_disponible_seleccionado_id: nil,
+         rol_concedido_seleccionado_id: nil,
+         bcs_lectura: [],
+         capacidades_sysadmin_concedidas: MapSet.new(),
+         alcance: @alcance_vacio
+       )
+       |> cargar_usuarios()
+       |> put_flash(:info, "Se eliminó la cuenta de #{email} por completo.")}
+    end
   end
 
   # Switch de la pestaña "Sysadmin" -- concede/revoca el rol de sistema
   # dedicado de esa capacidad puntual, ni más ni menos que lo que ya hacen
-  # agregar_rol_a_usuario/quitar_rol_de_usuario de la pestaña "Roles" de al
-  # lado (misma tabla, mismas funciones). Si la migración de seed no corrió
-  # todavía, la capacidad no tiene rol resuelto en @capacidades_sysadmin_roles
-  # y el click no hace nada -- no hay nada que togglear.
+  # mover_rol_a_concedidos/mover_rol_a_disponibles de la pestaña "Roles" de
+  # al lado (misma tabla, mismas funciones). Si la migración de seed no
+  # corrió todavía, la capacidad no tiene rol resuelto en
+  # @capacidades_sysadmin_roles y el click no hace nada -- no hay nada que
+  # togglear.
   def handle_event("toggle_capacidad_sysadmin", %{"recurso" => recurso}, socket) do
     %{usuario_seleccionado: usuario, empresa_en_foco: empresa, capacidades_sysadmin_roles: roles_por_recurso} = socket.assigns
 
@@ -313,22 +348,57 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     end
   end
 
-  def handle_event("buscar_rol", %{"value" => texto}, socket) do
-    %{empresa_en_foco: empresa} = socket.assigns
-    concedidos_ids = MapSet.new(socket.assigns.roles_concedidos, & &1.id)
-
-    resultado =
-      empresa.id
-      |> Permissions.buscar_roles(texto)
-      |> Enum.reject(&MapSet.member?(concedidos_ids, &1.id))
-
-    {:noreply, assign(socket, busqueda_rol: texto, roles_busqueda_resultado: resultado)}
+  # Picker de doble lista (SPEC-SYS-1709202601 R14-R16c, 2026-09-17, a
+  # pedido explícito con mockup) -- reemplaza el buscador anterior
+  # (buscar_rol/agregar_rol_a_usuario). Seleccionar/mover son eventos
+  # separados a propósito: la selección es puramente de UI (qué renglón
+  # está resaltado en CADA lista, independiente entre las dos), mover es
+  # lo único que toca la base -- mismo Permissions.asignar_rol/3 /
+  # revocar_rol/3 que ya usaba el diseño viejo, ningún mecanismo nuevo.
+  def handle_event("seleccionar_rol_disponible", %{"id" => id}, socket) do
+    {:noreply, assign(socket, :rol_disponible_seleccionado_id, String.to_integer(id))}
   end
 
-  def handle_event("agregar_rol_a_usuario", %{"rol_id" => rol_id}, socket) do
-    %{usuario_seleccionado: usuario, empresa_en_foco: empresa} = socket.assigns
-    Permissions.asignar_rol(usuario.id, String.to_integer(rol_id), empresa.id)
-    {:noreply, socket |> assign(busqueda_rol: "", roles_busqueda_resultado: []) |> cargar_detalle_usuario()}
+  def handle_event("seleccionar_rol_concedido", %{"id" => id}, socket) do
+    {:noreply, assign(socket, :rol_concedido_seleccionado_id, String.to_integer(id))}
+  end
+
+  # Guard `if id` -- defensa del lado servidor contra un click de flecha
+  # sin nada seleccionado (el botón ya sale `disabled` del lado cliente en
+  # ese caso, ver render, pero un phx-click armado a mano no debe poder
+  # ejecutar asignar_rol/revocar_rol con un id inventado).
+  #
+  # R16f (2026-09-17, a pedido explícito): después de asignar, el foco NO
+  # se limpia -- pasa solo al primer rol de la lista de disponibles que
+  # queda (la lista ya se recalculó en cargar_detalle_usuario/1, sin el
+  # que se acaba de mover). Así clickear "→" N veces seguidas asigna N
+  # roles consecutivos sin tener que volver a elegir cada uno a mano.
+  def handle_event("mover_rol_a_concedidos", _params, socket) do
+    %{usuario_seleccionado: usuario, empresa_en_foco: empresa, rol_disponible_seleccionado_id: id} = socket.assigns
+    if id, do: Permissions.asignar_rol(usuario.id, id, empresa.id)
+
+    socket = cargar_detalle_usuario(socket)
+    proximo_id = socket.assigns.roles_disponibles |> List.first() |> then(&(&1 && &1.id))
+
+    {:noreply, assign(socket, :rol_disponible_seleccionado_id, proximo_id)}
+  end
+
+  def handle_event("mover_rol_a_disponibles", _params, socket) do
+    %{usuario_seleccionado: usuario, empresa_en_foco: empresa, rol_concedido_seleccionado_id: id} = socket.assigns
+    if id, do: Permissions.revocar_rol(usuario.id, id, empresa.id)
+
+    {:noreply, socket |> assign(:rol_concedido_seleccionado_id, nil) |> cargar_detalle_usuario()}
+  end
+
+  # R16e (2026-09-17, a pedido explícito): quita TODOS los roles
+  # concedidos de un tirón -- mismo Permissions.revocar_rol/3 que el
+  # resto, uno por rol (no hay un "revocar_todos" en Permissions, y no
+  # hace falta: son decenas de roles por empresa como mucho, no miles).
+  def handle_event("quitar_todos_los_roles", _params, socket) do
+    %{usuario_seleccionado: usuario, empresa_en_foco: empresa, roles_concedidos: roles} = socket.assigns
+    Enum.each(roles, &Permissions.revocar_rol(usuario.id, &1.id, empresa.id))
+
+    {:noreply, cargar_detalle_usuario(socket)}
   end
 
   # Simplificado 2026-08-12 (era un ida y vuelta de 2 eventos --
@@ -359,8 +429,9 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
        |> assign(
          usuario_seleccionado: nil,
          roles_concedidos: [],
-         busqueda_rol: "",
-         roles_busqueda_resultado: [],
+         roles_disponibles: [],
+         rol_disponible_seleccionado_id: nil,
+         rol_concedido_seleccionado_id: nil,
          bcs_lectura: [],
          capacidades_sysadmin_concedidas: MapSet.new(),
          alcance: @alcance_vacio
@@ -484,6 +555,15 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
     roles_concedidos = Permissions.roles_de_usuario(usuario.id, empresa.id)
     rol_ids_concedidos = MapSet.new(roles_concedidos, & &1.id)
 
+    # Picker de doble lista (R14): TODOS los roles de la empresa (propios +
+    # sistema, sin filtrar por tipo -- incluir_sysadmin?: true a propósito,
+    # ver design.md §4) menos los que el usuario ya tiene.
+    roles_disponibles =
+      empresa.id
+      |> Permissions.listar_roles(true)
+      |> Enum.reject(&MapSet.member?(rol_ids_concedidos, &1.id))
+      |> Enum.sort_by(& &1.nombre)
+
     capacidades_sysadmin_concedidas =
       for {recurso, rol} <- roles_por_recurso, MapSet.member?(rol_ids_concedidos, rol.id), into: MapSet.new(), do: recurso
 
@@ -498,8 +578,9 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
 
     socket
     |> assign(:roles_concedidos, roles_concedidos)
-    |> assign(:busqueda_rol, "")
-    |> assign(:roles_busqueda_resultado, [])
+    |> assign(:roles_disponibles, roles_disponibles)
+    |> assign(:rol_disponible_seleccionado_id, nil)
+    |> assign(:rol_concedido_seleccionado_id, nil)
     |> assign(:bcs_lectura, bcs_lectura)
     |> assign(:capacidades_sysadmin_concedidas, capacidades_sysadmin_concedidas)
     |> assign(:alcance, cargar_alcance(usuario))
@@ -845,6 +926,14 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
                     Cerrar todas las sesiones
                   </button>
                 </div>
+                <div :if={@usuario_seleccionado.id != @current_scope.usuario.id and !@usuario_seleccionado.super_admin}>
+                  <dt class="text-xs text-gray-400 mb-1">Zona de riesgo</dt>
+                  <button type="button" phx-click="eliminar_usuario"
+                    data-confirm={"¿Eliminar la cuenta de #{@usuario_seleccionado.email} POR COMPLETO del ambiente, sin importar a cuántas empresas pertenezca? Esta acción no se puede deshacer."}
+                    class="px-3 py-1 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700">
+                    Eliminar usuario
+                  </button>
+                </div>
               </dl>
               <p class="text-xs text-gray-400 mt-4">Desactivar/bloquear cuenta: próximamente.</p>
             </div>
@@ -852,39 +941,101 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
             <div id="usuario-detalle-panel-roles" class="hidden">
               <p class="text-xs text-gray-400 mb-2">Roles en {@empresa_en_foco.nombre}.</p>
 
-              <ul class="divide-y divide-gray-100 border border-gray-100 rounded-lg mb-3">
-                <li :for={rol <- @roles_concedidos} class="flex items-center justify-between px-3 py-2 text-sm">
-                  <span class="text-gray-800">
-                    {rol.nombre}<span :if={rol.es_sistema} class="text-[10px] text-gray-400 ml-1">(sistema)</span>
-                  </span>
-                  <button type="button" phx-click="quitar_rol_de_usuario" phx-value-rol_id={rol.id}
-                    class="text-xs text-red-600 hover:underline">
-                    Quitar
-                  </button>
-                </li>
-                <li :if={@roles_concedidos == []} class="px-3 py-4 text-center text-xs text-gray-400">Sin roles todavía.</li>
-              </ul>
+              <div class="flex gap-3 items-stretch" style="height: 70vh">
+                <div class="flex-1 min-w-0 flex flex-col">
+                  <p class="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1">Disponibles</p>
+                  <input
+                    type="text"
+                    id="roles-disponibles-filtro"
+                    placeholder="Filtrar..."
+                    class="w-full border border-gray-300 rounded-lg px-2 py-1 text-xs text-gray-900 mb-1"
+                  />
+                  <ul
+                    id="roles-disponibles-lista"
+                    phx-hook="FiltrarListaRoles"
+                    data-input-id="roles-disponibles-filtro"
+                    class="divide-y divide-gray-100 border border-gray-200 rounded-lg flex-1 min-h-0 overflow-y-auto"
+                  >
+                    <li
+                      :for={rol <- @roles_disponibles}
+                      phx-click="seleccionar_rol_disponible"
+                      phx-value-id={rol.id}
+                      data-nombre={rol.nombre}
+                      class={[
+                        "px-3 py-1.5 text-sm cursor-pointer",
+                        rol.id == @rol_disponible_seleccionado_id && "bg-purple-50 text-purple-700 font-semibold",
+                        rol.id != @rol_disponible_seleccionado_id && "text-gray-700 hover:bg-gray-50"
+                      ]}
+                    >
+                      {rol.nombre}<span :if={rol.es_sistema} class="text-[10px] text-gray-400 ml-1">(sistema)</span>
+                    </li>
+                    <li :if={@roles_disponibles == []} class="px-3 py-4 text-center text-xs text-gray-400">Sin roles disponibles.</li>
+                  </ul>
+                </div>
 
-              <input
-                type="text"
-                value={@busqueda_rol}
-                phx-keyup="buscar_rol"
-                phx-debounce="200"
-                placeholder="Buscar rol para agregar..."
-                class="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-gray-900 mb-2"
-              />
-              <ul :if={@busqueda_rol != ""} class="divide-y divide-gray-100 border border-gray-100 rounded-lg">
-                <li :for={rol <- @roles_busqueda_resultado} class="flex items-center justify-between px-3 py-2 text-sm">
-                  <span class="text-gray-800">
-                    {rol.nombre}<span :if={rol.es_sistema} class="text-[10px] text-gray-400 ml-1">(sistema)</span>
-                  </span>
-                  <button type="button" phx-click="agregar_rol_a_usuario" phx-value-rol_id={rol.id}
-                    class="text-xs text-purple-700 hover:underline">
-                    Agregar
+                <div class="flex flex-col gap-2 pt-16 shrink-0">
+                  <button
+                    type="button"
+                    phx-click="mover_rol_a_concedidos"
+                    disabled={is_nil(@rol_disponible_seleccionado_id)}
+                    title="Asignar el rol seleccionado"
+                    class="w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                  >
+                    →
                   </button>
-                </li>
-                <li :if={@roles_busqueda_resultado == []} class="px-3 py-4 text-center text-xs text-gray-400">Sin resultados.</li>
-              </ul>
+                  <button
+                    type="button"
+                    phx-click="mover_rol_a_disponibles"
+                    disabled={is_nil(@rol_concedido_seleccionado_id)}
+                    title="Quitar el rol seleccionado"
+                    class="w-8 h-8 rounded-lg border border-gray-200 flex items-center justify-center text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                  >
+                    ←
+                  </button>
+                </div>
+
+                <div class="flex-1 min-w-0 flex flex-col">
+                  <div class="flex items-center justify-between mb-1">
+                    <p class="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Asignados</p>
+                    <button
+                      type="button"
+                      phx-click="quitar_todos_los_roles"
+                      disabled={@roles_concedidos == []}
+                      data-confirm={"¿Quitarle a #{@usuario_seleccionado.email} TODOS sus roles en #{@empresa_en_foco.nombre}? Esta acción no se puede deshacer."}
+                      class="text-[11px] text-red-600 hover:underline disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:no-underline"
+                    >
+                      Quitar todos
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    id="roles-concedidos-filtro"
+                    placeholder="Filtrar..."
+                    class="w-full border border-gray-300 rounded-lg px-2 py-1 text-xs text-gray-900 mb-1"
+                  />
+                  <ul
+                    id="roles-concedidos-lista"
+                    phx-hook="FiltrarListaRoles"
+                    data-input-id="roles-concedidos-filtro"
+                    class="divide-y divide-gray-100 border border-gray-200 rounded-lg flex-1 min-h-0 overflow-y-auto"
+                  >
+                    <li
+                      :for={rol <- @roles_concedidos}
+                      phx-click="seleccionar_rol_concedido"
+                      phx-value-id={rol.id}
+                      data-nombre={rol.nombre}
+                      class={[
+                        "px-3 py-1.5 text-sm cursor-pointer",
+                        rol.id == @rol_concedido_seleccionado_id && "bg-purple-50 text-purple-700 font-semibold",
+                        rol.id != @rol_concedido_seleccionado_id && "text-gray-700 hover:bg-gray-50"
+                      ]}
+                    >
+                      {rol.nombre}<span :if={rol.es_sistema} class="text-[10px] text-gray-400 ml-1">(sistema)</span>
+                    </li>
+                    <li :if={@roles_concedidos == []} class="px-3 py-4 text-center text-xs text-gray-400">Sin roles todavía.</li>
+                  </ul>
+                </div>
+              </div>
             </div>
 
             <div id="usuario-detalle-panel-sysadmin" class="hidden">
