@@ -1,6 +1,6 @@
 # SPEC-TEST-1509202601 — Seed Masterdata (developer mode)
 
-**Documento:** Requirements · **Fase:** en definición.
+**Documento:** Requirements · **Fase:** ✅ implementada (2026-09-17) — ver `design.md`/`tasks.md` para el detalle de construcción y verificación.
 
 **Alcance de esta spec**: una herramienta de dos fases, exclusiva para
 modo developer, que le permite a un desarrollador reiniciar y volver a
@@ -97,7 +97,7 @@ registros ya creados en esa misma corrida (no solo detener los que
 faltaban) e informar con precisión cuál registro falló y por qué —
 al terminar una corrida fallida, el estado de los catálogos debe ser
 idéntico al que tenían antes de empezarla, nunca uno parcialmente
-poblado. Decidido en conversación previa (2026-09-15).
+poblado.
 
 ## 3. Operación combinada
 

@@ -86,6 +86,8 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   `seed.reset`) para reiniciar y repoblar catálogos `pty_*`/
   `demo100_*` de prueba: borrado en orden de dependencias reales
   (ajustable) + carga atómica vía el camino real de alta (TRN/folio/
-  reglas), nunca INSERT directo. **Diseñada, todavía no construida**
-  (`requirements.md`/`design.md` completos, `tasks.md` es el
-  checklist de construcción, ningún grupo iniciado).
+  reglas), nunca INSERT directo. Implementada y verificada contra
+  Postgres real (Grupos A-E completos) — encontró y corrigió en el
+  camino un bug real de Postgres (`TRUNCATE` rechaza vaciar una tabla
+  referenciada por CUALQUIER otra de la base, sin importar el orden;
+  se usa `DELETE` + reinicio de secuencia).
