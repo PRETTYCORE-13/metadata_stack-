@@ -1,0 +1,523 @@
+{
+  "schema_context_type": 1,
+  "schema_context_name": "historico",
+  "schema_context_label": "Histórico",
+  "schema_context_icono": null,
+  "schema_visible": true,
+  "schema_context_nav": "/historico",
+  "schema_set_permissions": null,
+  "schema_profiles": null,
+  "cargar_todos_por_default": true,
+  "mostrar_id_en_tabla": true,
+  "mostrar_estado_en_tabla": true,
+  "mostrar_trn_en_tabla": true,
+  "mostrar_empresa_en_tabla": true,
+  "mostrar_branch_en_tabla": true,
+  "mostrar_inventory_location_en_tabla": true,
+  "mostrar_sales_unit_en_tabla": true,
+  "schema_es_transaccional": false,
+  "codigo_trn": null,
+  "detalles": [
+    {
+      "schema_context_field": "historico_sysudn_codigo_k",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Sysudn Codigo K",
+        "longitud": 50,
+        "opcional": true,
+        "orden": 1,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_empleado",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Empleado",
+        "longitud": 100,
+        "opcional": true,
+        "orden": 2,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_preventa",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Preventa",
+        "longitud": 50,
+        "opcional": true,
+        "orden": 3,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_liquid_referencia",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Liquid Referencia",
+        "longitud": 50,
+        "opcional": true,
+        "orden": 4,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_liquid_fechaent",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Liquid Fechaent",
+        "opcional": true,
+        "orden": 5,
+        "tipo": "date",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_facdoc_referencia",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Facdoc Referencia",
+        "longitud": 50,
+        "opcional": true,
+        "orden": 6,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_pedcte_referencia",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Pedcte Referencia",
+        "longitud": 50,
+        "opcional": true,
+        "orden": 7,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_vtarut_codigo_k",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Vtarut Codigo K",
+        "longitud": 50,
+        "opcional": true,
+        "orden": 8,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_systts_codigo_k",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Systts Codigo K",
+        "longitud": 50,
+        "opcional": true,
+        "orden": 9,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_cred",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Cred",
+        "longitud": 100,
+        "opcional": true,
+        "orden": 10,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_ctecli_fechaalta",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Ctecli Fechaalta",
+        "opcional": true,
+        "orden": 11,
+        "tipo": "date",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_ctecli_rfc",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Ctecli Rfc",
+        "longitud": 20,
+        "opcional": true,
+        "orden": 12,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_ctecli_codigo_k",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Ctecli Codigo K",
+        "longitud": 50,
+        "opcional": true,
+        "orden": 13,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_ctedir_codigo_k",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Ctedir Codigo K",
+        "longitud": 50,
+        "opcional": true,
+        "orden": 14,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_ctecli_dencomercia",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Ctecli Dencomercia",
+        "longitud": 200,
+        "opcional": true,
+        "orden": 15,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_cadena",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Cadena",
+        "longitud": 100,
+        "opcional": true,
+        "orden": 16,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_tipo",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Tipo",
+        "longitud": 50,
+        "opcional": true,
+        "orden": 17,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_canal",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Canal",
+        "longitud": 50,
+        "opcional": true,
+        "orden": 18,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_paquete",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Paquete",
+        "longitud": 50,
+        "opcional": true,
+        "orden": 19,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_frecuencia",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Frecuencia",
+        "longitud": 50,
+        "opcional": true,
+        "orden": 20,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_pround_codigo_k",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Pround Codigo K",
+        "longitud": 50,
+        "opcional": true,
+        "orden": 21,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_produc_codigo_k",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Produc Codigo K",
+        "longitud": 50,
+        "opcional": true,
+        "orden": 22,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_produc_descripcion",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Produc Descripcion",
+        "longitud": 200,
+        "opcional": true,
+        "orden": 23,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_marca",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Marca",
+        "longitud": 100,
+        "opcional": true,
+        "orden": 24,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_presentacion",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Presentacion",
+        "longitud": 100,
+        "opcional": true,
+        "orden": 25,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_sabor",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Sabor",
+        "longitud": 100,
+        "opcional": true,
+        "orden": 26,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_fabricante",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Fabricante",
+        "longitud": 100,
+        "opcional": true,
+        "orden": 27,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_segmento",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Segmento",
+        "longitud": 100,
+        "opcional": true,
+        "orden": 28,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_linea",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Linea",
+        "longitud": 100,
+        "opcional": true,
+        "orden": 29,
+        "tipo": "string",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_pzaprev",
+      "schema_context_properties": {
+        "editable": true,
+        "escala": 4,
+        "etiqueta": "Pzaprev",
+        "maximo": null,
+        "minimo": null,
+        "opcional": true,
+        "orden": 30,
+        "precision": 15,
+        "tipo": "decimal",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_vtaprev",
+      "schema_context_properties": {
+        "editable": true,
+        "escala": 2,
+        "etiqueta": "Vtaprev",
+        "opcional": true,
+        "orden": 31,
+        "precision": 15,
+        "tipo": "decimal",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_vtaliq",
+      "schema_context_properties": {
+        "editable": true,
+        "escala": 2,
+        "etiqueta": "Vtaliq",
+        "opcional": true,
+        "orden": 33,
+        "precision": 15,
+        "tipo": "decimal",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_map_x",
+      "schema_context_properties": {
+        "editable": true,
+        "escala": 6,
+        "etiqueta": "Map X",
+        "opcional": true,
+        "orden": 35,
+        "precision": 15,
+        "tipo": "decimal",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_map_y",
+      "schema_context_properties": {
+        "editable": true,
+        "escala": 6,
+        "etiqueta": "Map Y",
+        "opcional": true,
+        "orden": 36,
+        "precision": 15,
+        "tipo": "decimal",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_rechazo",
+      "schema_context_properties": {
+        "editable": true,
+        "escala": 2,
+        "etiqueta": "Rechazo",
+        "opcional": true,
+        "orden": 37,
+        "precision": 15,
+        "tipo": "decimal",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_descuento",
+      "schema_context_properties": {
+        "editable": true,
+        "escala": 2,
+        "etiqueta": "Descuento",
+        "opcional": true,
+        "orden": 38,
+        "precision": 15,
+        "tipo": "decimal",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_pedcted_desc1",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "pedcted_desc1",
+        "formato_captura": {
+          "decimales": 6,
+          "estricto": true,
+          "habilitada": true,
+          "mensaje_invalido": "",
+          "modo": "numero",
+          "permitir_incompleto": false,
+          "permitir_negativos": false,
+          "separador_miles": false,
+          "simbolo": null,
+          "simbolo_posicion": "prefijo"
+        },
+        "opcional": true,
+        "orden": 39,
+        "tipo": "decimal",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "historico_pzaliq",
+      "schema_context_properties": {
+        "editable": true,
+        "escala": 4,
+        "etiqueta": "pzaliq",
+        "formato_captura": {
+          "decimales": 6,
+          "estricto": true,
+          "habilitada": true,
+          "mensaje_invalido": "",
+          "modo": "numero",
+          "permitir_incompleto": false,
+          "permitir_negativos": false,
+          "separador_miles": false,
+          "simbolo": null,
+          "simbolo_posicion": "prefijo"
+        },
+        "maximo": null,
+        "minimo": null,
+        "opcional": true,
+        "orden": 39,
+        "precision": 15,
+        "tipo": "decimal",
+        "visible": true
+      }
+    },
+    {
+      "schema_context_field": "fecha_registro",
+      "schema_context_properties": {
+        "editable": false,
+        "etiqueta": "Fecha de registro",
+        "orden": 9999,
+        "tipo": "date",
+        "visible": true
+      }
+    }
+  ],
+  "schema_encabezado_catalogo": null,
+  "mostrar_folio_en_tabla": true
+}
