@@ -1,6 +1,10 @@
 # SPEC-SYS-1109202605 — BC Motor: Tab Permisos y Alcance de Datos
 
-**Documento:** Design · **Fase:** ✅ aprobada (2026-09-11).
+**Documento:** Design · **Fase:** ✅ aprobada (2026-09-11). **§4
+actualizada 2026-09-17** — bug real corregido (R8a nuevo en
+`requirements.md`), encontrado navegando desde el uso standalone
+(`SPEC-SYS-1709202602`), pero el fix vive en el módulo COMPARTIDO —
+aplica también acá.
 
 Documentación retroactiva — describe el mecanismo tal como existe en
 `lib/metadata_app_web/live/sysadmin/catalogo_permisos_live.ex`
@@ -103,6 +107,22 @@ muestra lo que ESE usuario realmente tiene, sea lo que sea).
 + `MetaSchemaContext.obtener_header_por_nombre/1`) — el render (R8)
 muestra ese estado heredado en modo informativo puro, sin ningún
 `phx-click`.
+
+**Bug real encontrado y corregido (2026-09-17, R8a)**: un header
+`es_consulta: true` sin ninguna fila en `meta_schema_consulta` (dato
+huérfano — encontrado en vivo con un catálogo real,
+`consulta_croac_masterdata_clientes_baseclientes` id 22, sin
+`meta_schema_consulta` asociada) hacía que
+`MetaConsultas.obtener_por_header_id/1` devolviera `nil`, y el código
+de entonces asumía que siempre había una fila —
+`consulta.catalogo_base` sobre `nil` tumbaba la pantalla ENTERA con
+`KeyError`, tanto en el uso embebido (este tab) como en el standalone.
+Corregido con un `case` en `catalogo_base_de_consulta/1`: `nil` →
+`nil` (en vez de crashear), y el render agrega una rama `:if` para
+`@catalogo_base_de_consulta == nil` con un aviso en rojo en vez de dar
+por sentado que el mapa siempre está poblado. No se intenta reparar el
+dato solo — es un caso real de datos inconsistentes que el admin tiene
+que revisar a mano desde BC Motor.
 
 `toggle_alcance_habilitado` (R9-R10):
 

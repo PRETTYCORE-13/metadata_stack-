@@ -72,7 +72,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   # `:not_mounted_at_router`, así que ahí el dato viaja por `session`) — y
   # el picker de abajo usa push_navigate/2 (remonta entero) en vez de
   # push_patch/2 (que dependía de handle_params para reaccionar).
-  def mount(%{"recurso" => recurso}, _session, socket) do
+  def mount(%{"recurso" => recurso} = params, _session, socket) do
     socket =
       socket
       |> montar_base()
@@ -83,6 +83,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
       |> assign(:show_programacion_children, false)
       |> assign(:show_clientes_children, false)
       |> assign(:show_prettycore_children, false)
+      |> restaurar_busqueda_picker(params["q"])
       |> montar_catalogo(recurso)
 
     socket =
@@ -142,6 +143,25 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     |> assign(:mostrar_sysadmin?, false)
   end
 
+  # SPEC-SYS-1709202602 R4/R4a-b (2026-09-17, a pedido explícito):
+  # restaura el picker desde el query param "q" -- intento inicial fue
+  # push_patch/2 + montar_catalogo/2 en el evento (sin remount), pero un
+  # push_patch disparado desde una sesión YA conectada pasa por
+  # Phoenix.LiveView.Channel.sync_handle_params_with_live_redirect/5, que
+  # llama handle_params/3 SIN el resguardo "not lifecycle.any?" que sí
+  # tiene el mount inicial -- revienta con UndefinedFunctionError porque
+  # este módulo a propósito nunca define handle_params/3 (ver comentario
+  # de mount/3 más abajo, es compartido con el uso embebido en
+  # BcMotorLive). Confirmado con un test real, no asumido. Este enfoque
+  # (query param + push_navigate normal) no toca esa área en absoluto: el
+  # picker vuelve a poblarse en mount/3, mismo camino que un F5 directo a
+  # esa URL, sin ningún mecanismo de vida nueva.
+  defp restaurar_busqueda_picker(socket, texto) when texto in [nil, ""], do: socket
+
+  defp restaurar_busqueda_picker(socket, texto) do
+    assign(socket, busqueda_catalogo_picker: texto, resultados_catalogo_picker: Permissions.buscar_catalogos(texto))
+  end
+
   defp montar_catalogo(socket, recurso) do
     case Permissions.obtener_catalogo(recurso) do
       nil ->
@@ -161,10 +181,23 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   # (ver MetaConsultas.aplicar_alcance_de_datos/4). Esta pantalla, para
   # una Consulta, muestra ese estado en modo solo-lectura en vez de la
   # sección de toggle+config por rol (ver :if en render/1 de más abajo).
+  #
+  # `nil` (2026-09-17, bug real encontrado en vivo): un header
+  # es_consulta:true sin fila meta_schema_consulta (huérfano -- se
+  # abandonó a mitad de crear, o se borró la Consulta sin borrar el
+  # header) reventaba acá con KeyError ("key :catalogo_base not found
+  # in: nil"), tumbando la pantalla entera. Ahora se degrada a un aviso
+  # (ver render/1) en vez de crashear -- no se intenta reparar el dato
+  # solo, es un caso real que el admin tiene que revisar a mano.
   defp catalogo_base_de_consulta(%{es_consulta: true, id: header_id}) do
-    consulta = MetaConsultas.obtener_por_header_id(header_id)
-    header_base = MetaSchemaContext.obtener_header_por_nombre(consulta.catalogo_base)
-    %{nombre: consulta.catalogo_base, label: header_base.schema_context_label, alcance_habilitado: header_base.alcance_habilitado}
+    case MetaConsultas.obtener_por_header_id(header_id) do
+      nil ->
+        nil
+
+      consulta ->
+        header_base = MetaSchemaContext.obtener_header_por_nombre(consulta.catalogo_base)
+        %{nombre: consulta.catalogo_base, label: header_base.schema_context_label, alcance_habilitado: header_base.alcance_habilitado}
+    end
   end
 
   defp catalogo_base_de_consulta(_catalogo), do: nil
@@ -178,8 +211,24 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     {:noreply, socket |> assign(:busqueda_catalogo_picker, texto) |> assign(:resultados_catalogo_picker, resultados)}
   end
 
+  # SPEC-SYS-1709202602 R4/R4a-b (2026-09-17, a pedido explícito): sigue
+  # siendo push_navigate/2 (remonta entero) -- pero ahora lleva el texto
+  # buscado como query param "q", que mount/3 (arriba) usa para restaurar
+  # el picker de una. Antes remontaba y vaciaba
+  # busqueda_catalogo_picker/resultados_catalogo_picker de paso, obligando
+  # a re-tipear el mismo filtro para elegir el próximo catálogo de una
+  # tanda ya buscada (ej. varios "pty_ch_*" seguidos). Sin texto tipeado,
+  # la URL queda igual que siempre (sin "?q="). El estado NO vive en
+  # sessionStorage ni en ningún lado del cliente -- la URL es la única
+  # fuente de verdad, mismo criterio que el resto de esta pantalla (R6).
   def handle_event("elegir_catalogo", %{"recurso" => recurso}, socket) do
-    {:noreply, push_navigate(socket, to: ~p"/sysadmin/catalogos/#{recurso}/permisos")}
+    destino =
+      case socket.assigns.busqueda_catalogo_picker do
+        "" -> ~p"/sysadmin/catalogos/#{recurso}/permisos"
+        texto -> ~p"/sysadmin/catalogos/#{recurso}/permisos?#{[q: texto]}"
+      end
+
+    {:noreply, push_navigate(socket, to: destino)}
   end
 
   def handle_event("ver_todos_los_roles", _params, socket) do
@@ -573,19 +622,26 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
 
       <div :if={@catalogo && @catalogo.es_consulta} class="mt-6 rounded-xl border border-gray-200 p-4 bg-gray-50">
         <h2 class="text-xs font-bold text-gray-700 uppercase tracking-wide">Alcance de datos</h2>
-        <p class="text-[11px] text-gray-500 mt-0.5 max-w-2xl">
-          Una Consulta no tiene Alcance de Datos propio — sigue el de su catálogo base,
-          <span class="font-semibold">{@catalogo_base_de_consulta.label}</span>
-          (<code class="font-mono">{@catalogo_base_de_consulta.nombre}</code>).
-        </p>
-        <p class="text-[11px] mt-2">
-          <%= if @catalogo_base_de_consulta.alcance_habilitado do %>
-            <span class="text-purple-700 font-semibold">✓ Activado</span> en el catálogo base — esta Consulta ya queda acotada igual.
-          <% else %>
-            <span class="text-gray-500">Sin activar</span> en el catálogo base — esta Consulta no filtra filas por alcance.
-          <% end %>
-          Para cambiarlo, ir a Permisos del catálogo base.
-        </p>
+        <%= if @catalogo_base_de_consulta do %>
+          <p class="text-[11px] text-gray-500 mt-0.5 max-w-2xl">
+            Una Consulta no tiene Alcance de Datos propio — sigue el de su catálogo base,
+            <span class="font-semibold">{@catalogo_base_de_consulta.label}</span>
+            (<code class="font-mono">{@catalogo_base_de_consulta.nombre}</code>).
+          </p>
+          <p class="text-[11px] mt-2">
+            <%= if @catalogo_base_de_consulta.alcance_habilitado do %>
+              <span class="text-purple-700 font-semibold">✓ Activado</span> en el catálogo base — esta Consulta ya queda acotada igual.
+            <% else %>
+              <span class="text-gray-500">Sin activar</span> en el catálogo base — esta Consulta no filtra filas por alcance.
+            <% end %>
+            Para cambiarlo, ir a Permisos del catálogo base.
+          </p>
+        <% else %>
+          <p class="text-[11px] text-red-600 mt-0.5 max-w-2xl">
+            Esta Consulta no tiene su configuración armada (falta la fila en
+            <code class="font-mono">meta_schema_consulta</code>) — no se puede resolver su catálogo base ni su Alcance de Datos. Revisala desde BC Motor antes de seguir configurando sus permisos.
+          </p>
+        <% end %>
       </div>
 
       <div :if={@catalogo && not @catalogo.es_consulta} class="mt-6 rounded-xl border border-gray-200 p-4">

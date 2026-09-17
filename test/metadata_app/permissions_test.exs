@@ -3,6 +3,7 @@ defmodule MetadataApp.PermissionsTest do
 
   alias MetadataApp.Permissions
   alias MetadataApp.Autenticacion.{Empresa, Rol, Scope}
+  alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
 
   import MetadataApp.AutenticacionFixtures
 
@@ -283,6 +284,48 @@ defmodule MetadataApp.PermissionsTest do
       refute Permissions.can?(scope2, "leer", "pty_demo_reemplazo")
       assert Permissions.can?(scope1, "editar", "pty_demo_reemplazo")
       assert Permissions.can?(scope2, "editar", "pty_demo_reemplazo")
+    end
+  end
+
+  # Consulta Ecto (schema_context_type: 3) -- bypasea la exigencia de tener
+  # una transición real (ver moduledoc de buscar_catalogos/2), la forma más
+  # chica de armar un catálogo válido para este buscador sin montar un
+  # motor de estados completo.
+  defp catalogo_fixture(prefijo) do
+    nombre = "#{prefijo}_#{System.unique_integer([:positive])}"
+
+    {:ok, {header, _detalles}} =
+      MetaSchemaContext.crear_header_con_detalles(%{
+        "schema_context_name" => nombre,
+        "schema_context_label" => "Catálogo de prueba #{nombre}",
+        "schema_context_nav" => "/catalogo_permisos_test_#{nombre}",
+        "schema_visible" => true,
+        "schema_context_type" => 3,
+        "detalles" => []
+      })
+
+    header
+  end
+
+  describe "buscar_catalogos/2 (SPEC-SYS-1709202602 R9, comodín \"*\")" do
+    test "texto vacío sigue sin devolver nada (R2 intacto)" do
+      catalogo_fixture("pty_wildtest")
+      assert Permissions.buscar_catalogos("") == []
+    end
+
+    test "\"*\" lista catálogos sin exigir ningún substring" do
+      c1 = catalogo_fixture("pty_wildtest_a")
+      c2 = catalogo_fixture("pty_wildtest_b")
+
+      recursos = Permissions.buscar_catalogos("*") |> Enum.map(& &1.recurso)
+
+      assert c1.schema_context_name in recursos
+      assert c2.schema_context_name in recursos
+    end
+
+    test "\"*\" respeta el límite igual que una búsqueda por texto" do
+      for _ <- 1..3, do: catalogo_fixture("pty_wildtest_limite")
+      assert length(Permissions.buscar_catalogos("*", 2)) == 2
     end
   end
 end
