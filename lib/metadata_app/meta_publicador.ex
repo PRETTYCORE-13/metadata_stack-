@@ -212,10 +212,13 @@ defmodule MetadataApp.MetaPublicador do
   (SPEC-SYS-0309202601, R5/R6 — obligatorio, sin default, ya validado por
   el caller contra `priv/sistemas.json`). `nombres_raiz` es solo para la
   etiqueta legible del run (image tag / mensaje) — el contenido real del
-  bundle ya tiene todo el paquete completo adentro.
+  bundle ya tiene todo el paquete completo adentro. `mensaje` (opcional,
+  2026-09-17, a pedido explícito) es texto libre que el workflow usa como
+  `run-name` en la lista de Actions -- sin él, cae al catálogo+sistema
+  (ver `run-name:` en bc-deploy.yml).
   {:ok, mensaje} | {:error, mensaje}
   """
-  def disparar_deploy(sistema, nombres_raiz, bundle_path) do
+  def disparar_deploy(sistema, nombres_raiz, bundle_path, mensaje \\ nil) do
     b64_path = bundle_path <> ".b64"
     File.write!(b64_path, Base.encode64(File.read!(bundle_path)))
 
@@ -231,17 +234,18 @@ defmodule MetadataApp.MetaPublicador do
     # y System.cmd/3 no tiene forma de pasar stdin. "gh workflow run" lee
     # "-F campo=@archivo" como el CONTENIDO de ese archivo (mismo mecanismo
     # que "gh api", ver "gh help api").
-    args = [
-      "workflow",
-      "run",
-      "bc-deploy.yml",
-      "-f",
-      "sistema=#{sistema}",
-      "-f",
-      "catalogo=#{etiqueta}",
-      "-F",
-      "bundle_b64=@#{b64_path}"
-    ]
+    args =
+      [
+        "workflow",
+        "run",
+        "bc-deploy.yml",
+        "-f",
+        "sistema=#{sistema}",
+        "-f",
+        "catalogo=#{etiqueta}",
+        "-F",
+        "bundle_b64=@#{b64_path}"
+      ] ++ if(mensaje not in [nil, ""], do: ["-f", "mensaje=#{mensaje}"], else: [])
 
     resultado = ejecutar("gh", args)
     File.rm(bundle_path)
