@@ -16,6 +16,7 @@ defmodule MetadataApp.MetaImportExport do
 
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaEstadosAdmin
+  alias MetadataApp.MetaPlantillas
 
   @doc "Importa cada `*.meta.json` de `dir` — crea el Header+Detalles si el catálogo no existe todavía; si ya existe, sincroniza campos nuevos que no tenía."
   def importar_meta(dir \\ "priv/repo/catalogos") do
@@ -146,6 +147,13 @@ defmodule MetadataApp.MetaImportExport do
           Enum.reject(
             [
               if(sincronizar_icono(existente, contexto["schema_context_icono"]), do: "ícono actualizado"),
+              if(sincronizar_orden(existente, contexto["orden"]), do: "orden de menú actualizado"),
+              if(sincronizar_orden_columnas_tabla(existente, contexto["orden_columnas_tabla"]),
+                do: "orden de columnas (Get Config) actualizado"
+              ),
+              if(sincronizar_orden_resultados(existente, contexto["orden_resultados"]),
+                do: "orden de resultados actualizado"
+              ),
               case sincronizar_detalles_nuevos(existente, contexto["detalles"] || []) do
                 [] -> nil
                 campos -> "campo(s) nuevo(s) sincronizado(s): #{Enum.join(campos, ", ")}"
@@ -153,6 +161,10 @@ defmodule MetadataApp.MetaImportExport do
               case sincronizar_etiquetas_campos(existente, contexto["detalles"] || []) do
                 [] -> nil
                 campos -> "etiqueta(s) actualizada(s): #{Enum.join(campos, ", ")}"
+              end,
+              case sincronizar_visible_y_orden_campos(existente, contexto["detalles"] || []) do
+                [] -> nil
+                campos -> "visible/orden actualizado: #{Enum.join(campos, ", ")}"
               end,
               case sincronizar_obligatorio_campos(existente, contexto["detalles"] || []) do
                 [] -> nil
@@ -207,6 +219,60 @@ defmodule MetadataApp.MetaImportExport do
     end
   end
 
+  # Encontrado real (2026-09-17): "orden" (drag-and-drop manual entre
+  # hermanos del árbol, ver Header.orden) nunca viajaba en el .meta.json --
+  # exportar_header/2 no lo incluía -- así que un BC ya publicado con orden
+  # manual asignado en dev volvía a caer al alfabético de siempre en
+  # unstable/producción al republicar. Mismo criterio que sincronizar_icono/2.
+  defp sincronizar_orden(_header, nil), do: false
+
+  defp sincronizar_orden(%{orden: mismo}, mismo), do: false
+
+  defp sincronizar_orden(header, orden_nuevo) do
+    case MetaSchemaContext.actualizar_header(header, %{"orden" => orden_nuevo}) do
+      {:ok, _header} ->
+        true
+
+      {:error, changeset} ->
+        raise "Error sincronizando orden de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+    end
+  end
+
+  # Encontrado real (2026-09-17, mismo barrido que "orden" arriba):
+  # orden_columnas_tabla (orden combinado de la grilla Get Config) y
+  # orden_resultados (orden de filas por default) tampoco viajaban en el
+  # .meta.json -- exportar_header/2 no los incluía. `nil` (bundle viejo,
+  # sin la clave) se ignora; `[]` (el default real del campo, o vaciado a
+  # propósito) sí se sincroniza -- mismo gotcha de los booleanos `false`
+  # en columnas estructurales, acá con listas vacías.
+  defp sincronizar_orden_columnas_tabla(_header, nil), do: false
+
+  defp sincronizar_orden_columnas_tabla(%{orden_columnas_tabla: mismo}, mismo), do: false
+
+  defp sincronizar_orden_columnas_tabla(header, orden_nuevo) do
+    case MetaSchemaContext.actualizar_header(header, %{"orden_columnas_tabla" => orden_nuevo}) do
+      {:ok, _header} ->
+        true
+
+      {:error, changeset} ->
+        raise "Error sincronizando orden_columnas_tabla de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+    end
+  end
+
+  defp sincronizar_orden_resultados(_header, nil), do: false
+
+  defp sincronizar_orden_resultados(%{orden_resultados: mismo}, mismo), do: false
+
+  defp sincronizar_orden_resultados(header, orden_nuevo) do
+    case MetaSchemaContext.actualizar_header(header, %{"orden_resultados" => orden_nuevo}) do
+      {:ok, _header} ->
+        true
+
+      {:error, changeset} ->
+        raise "Error sincronizando orden_resultados de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+    end
+  end
+
   # "Traer todos los registros y columnas apenas se abre la tabla" (2026-08-04)
   # -- mismo criterio que sincronizar_icono/2: es un flag que sólo cambia
   # cómo arranca el GET genérico, no toca estructura ni datos, así que es
@@ -247,7 +313,8 @@ defmodule MetadataApp.MetaImportExport do
       {:mostrar_empresa_en_tabla, "mostrar_empresa_en_tabla", "Empresa"},
       {:mostrar_branch_en_tabla, "mostrar_branch_en_tabla", "Sucursal"},
       {:mostrar_inventory_location_en_tabla, "mostrar_inventory_location_en_tabla", "Almacén"},
-      {:mostrar_sales_unit_en_tabla, "mostrar_sales_unit_en_tabla", "Unidad de venta"}
+      {:mostrar_sales_unit_en_tabla, "mostrar_sales_unit_en_tabla", "Unidad de venta"},
+      {:mostrar_creado_por_en_tabla, "mostrar_creado_por_en_tabla", "Creado por"}
     ]
 
     # OJO: nunca "valor = Map.get(...)" como cláusula de un for -- Elixir
@@ -366,6 +433,50 @@ defmodule MetadataApp.MetaImportExport do
         end
       else
         []
+      end
+    end)
+  end
+
+  # "visible" y "orden" de un campo YA existente (2026-09-17, mismo barrido
+  # que orden_columnas_tabla/orden_resultados arriba) -- mismo criterio que
+  # sincronizar_etiquetas_campos/2: presentación pura del Get Config
+  # (columna oculta/visible, posición en la grilla de campos), nunca toca
+  # la columna física. Antes de esto, ocultar o reordenar un campo YA
+  # publicado y volver a publicar no se sincronizaba -- solo un campo
+  # NUEVO se creaba con su visible/orden correctos (sincronizar_detalles_nuevos/2).
+  # Map.has_key? en vez de comparar contra nil: "visible" es booleano
+  # legítimamente `false` (mismo gotcha ya documentado en columnas
+  # estructurales) y "orden" legítimamente `0`.
+  defp sincronizar_visible_y_orden_campos(header, detalles_json) do
+    existentes =
+      header.schema_context_name
+      |> MetaSchemaContext.listar_detalles()
+      |> Map.new(&{&1.schema_context_field, &1})
+
+    detalles_json
+    |> Enum.filter(&Map.has_key?(existentes, &1["schema_context_field"]))
+    |> Enum.flat_map(fn detalle_json ->
+      detalle = Map.fetch!(existentes, detalle_json["schema_context_field"])
+      props_nuevas = detalle_json["schema_context_properties"] || %{}
+
+      cambios =
+        for clave <- ["visible", "orden"],
+            Map.has_key?(props_nuevas, clave),
+            Map.get(props_nuevas, clave) != Map.get(detalle.schema_context_properties, clave),
+            do: clave
+
+      if cambios == [] do
+        []
+      else
+        props = Map.merge(detalle.schema_context_properties, Map.take(props_nuevas, cambios))
+
+        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+          {:ok, _detalle} ->
+            [detalle.schema_context_field]
+
+          {:error, changeset} ->
+            raise "Error sincronizando visible/orden de \"#{detalle.schema_context_field}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+        end
       end
     end)
   end
@@ -620,6 +731,139 @@ defmodule MetadataApp.MetaImportExport do
     case Map.fetch(estados_por_nombre, nombre) do
       {:ok, estado} -> estado.id
       :error -> raise "Estado \"#{nombre}\" no encontrado — ¿faltó en la lista de estados del JSON?"
+    end
+  end
+
+  @doc """
+  Importa cada `*.plantillas.json` de `dir` -- crea/sincroniza las
+  plantillas del Constructor (Post Config: Vistas + Impresión) de cada
+  catálogo, resolviendo el catálogo por NOMBRE (igual que `importar_motor/1`).
+  Idempotente por (nombre, propósito) dentro de cada catálogo -- coincide
+  con el criterio que ya usa la propia app (`regenerar_plantilla_automatica/1`
+  matchea "Plantilla automática" por nombre).
+
+  Encontrado real (2026-09-17): las plantillas custom armadas a mano en el
+  Constructor (Post Config) nunca viajaban al publicar un catálogo -- solo
+  la plantilla AUTOMÁTICA se autogeneraba en cada ambiente por separado
+  (`CatalogoGenerador.generar/1`), así que un diseño a medida en dev jamás
+  llegaba a unstable/producción.
+  """
+  def importar_plantillas(dir \\ "priv/repo/catalogos") do
+    dir
+    |> leer_json(".plantillas.json")
+    |> Enum.flat_map(&importar_catalogo_plantillas_tolerante/1)
+  end
+
+  # Mismo criterio que importar_catalogo_motor_tolerante/1: un catálogo con
+  # una plantilla rota (ej. changeset inválido) no puede tumbar el import
+  # de los demás.
+  defp importar_catalogo_plantillas_tolerante(%{"catalogo" => nombre} = datos) do
+    importar_catalogo_plantillas(datos)
+  rescue
+    error -> ["! #{nombre}: #{Exception.message(error)}"]
+  end
+
+  defp importar_catalogo_plantillas(%{"catalogo" => nombre} = datos) do
+    case MetaSchemaContext.obtener_header_por_nombre(nombre) do
+      nil ->
+        ["- #{nombre}: catálogo no encontrado, saltado (¿faltó importar_meta antes?)"]
+
+      header ->
+        existentes =
+          header.id
+          |> MetaPlantillas.listar_plantillas()
+          |> Map.new(&{{&1.nombre, &1.proposito}, &1})
+
+        Enum.map(datos["plantillas"] || [], &importar_plantilla(header, existentes, &1))
+    end
+  end
+
+  defp importar_plantilla(header, existentes, attrs) do
+    proposito = attrs["proposito"] || "vista"
+
+    case Map.get(existentes, {attrs["nombre"], proposito}) do
+      nil -> crear_plantilla_importada(header, attrs, proposito)
+      plantilla -> actualizar_plantilla_si_cambio(header, plantilla, attrs)
+    end
+  end
+
+  defp crear_plantilla_importada(header, attrs, proposito) do
+    atributos = %{
+      "nombre" => attrs["nombre"],
+      "descripcion" => attrs["descripcion"],
+      "estado" => "borrador",
+      "definicion" => attrs["definicion"],
+      "disponible_multi_vista" => attrs["disponible_multi_vista"] || false,
+      "proposito" => proposito
+    }
+
+    case MetaPlantillas.crear_plantilla(header.id, atributos) do
+      {:ok, plantilla} ->
+        if attrs["estado"] == "publicada", do: publicar_plantilla_o_raise!(header, plantilla)
+        "+ #{header.schema_context_name} plantilla \"#{attrs["nombre"]}\" (#{proposito}): creada"
+
+      {:error, changeset} ->
+        raise "Error importando plantilla \"#{attrs["nombre"]}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+    end
+  end
+
+  # A diferencia de importar_estados/2 (deja lo existente intacto), acá SÍ
+  # conviene actualizar si cambió -- mismo criterio que
+  # actualizar_transicion_si_cambio/6: es contenido de presentación, sin
+  # pérdida de datos al pisarlo. "estado" (publicar) se maneja aparte de
+  # descripción/definición/disponible_multi_vista porque publicar tiene que
+  # pasar por MetaPlantillas.publicar_plantilla/1 -- el índice único parcial
+  # de la migración exige despublicar cualquier otra del mismo (header,
+  # propósito) en la MISMA transacción, no un UPDATE directo del estado.
+  defp actualizar_plantilla_si_cambio(header, plantilla, attrs) do
+    cambios = %{
+      "descripcion" => attrs["descripcion"],
+      "definicion" => attrs["definicion"] || plantilla.definicion,
+      "disponible_multi_vista" => attrs["disponible_multi_vista"] || false
+    }
+
+    contenido_cambio? =
+      plantilla.descripcion != cambios["descripcion"] or plantilla.definicion != cambios["definicion"] or
+        plantilla.disponible_multi_vista != cambios["disponible_multi_vista"]
+
+    plantilla =
+      if contenido_cambio? do
+        case MetaPlantillas.actualizar_plantilla(plantilla, cambios) do
+          {:ok, actualizada} ->
+            actualizada
+
+          {:error, changeset} ->
+            raise "Error actualizando plantilla \"#{plantilla.nombre}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+        end
+      else
+        plantilla
+      end
+
+    se_publico? = attrs["estado"] == "publicada" and plantilla.estado != "publicada"
+    if se_publico?, do: publicar_plantilla_o_raise!(header, plantilla)
+
+    cond do
+      contenido_cambio? and se_publico? ->
+        "~ #{header.schema_context_name} plantilla \"#{plantilla.nombre}\": actualizada + publicada"
+
+      contenido_cambio? ->
+        "~ #{header.schema_context_name} plantilla \"#{plantilla.nombre}\": actualizada"
+
+      se_publico? ->
+        "~ #{header.schema_context_name} plantilla \"#{plantilla.nombre}\": publicada"
+
+      true ->
+        "= #{header.schema_context_name} plantilla \"#{plantilla.nombre}\": ya existía, sin cambios"
+    end
+  end
+
+  defp publicar_plantilla_o_raise!(header, plantilla) do
+    case MetaPlantillas.publicar_plantilla(plantilla) do
+      {:ok, _publicada} ->
+        :ok
+
+      {:error, changeset} ->
+        raise "Error publicando plantilla \"#{plantilla.nombre}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
     end
   end
 

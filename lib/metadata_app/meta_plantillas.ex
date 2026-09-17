@@ -91,6 +91,14 @@ defmodule MetadataApp.MetaPlantillas do
     |> Repo.update()
   end
 
+  @doc "Update genérico (descripción/definición/disponible_multi_vista) -- usado por MetaImportExport.importar_plantillas/1 al republicar una plantilla YA existente."
+  def actualizar_plantilla(%Plantilla{} = plantilla, attrs) do
+    plantilla
+    |> Plantilla.changeset(attrs)
+    |> Ecto.Changeset.change(%{update_guid: generar_guid()})
+    |> Repo.update()
+  end
+
   # Publicar ésta implica despublicar cualquier otra del mismo catálogo —
   # el índice único parcial de la migración es la garantía real; esto es
   # la operación de aplicación que la mantiene consistente en el camino
@@ -300,6 +308,46 @@ defmodule MetadataApp.MetaPlantillas do
       n ->
         n
     end)
+  end
+
+  @doc """
+  Exporta TODAS las plantillas (Vista + Impresión, borrador y publicada)
+  de `header` a `<catalogo>.plantillas.json` -- mismo criterio que
+  `MetaEstadosAdmin.exportar_header/2` para el autómata: un archivo por
+  catálogo (no un dump único), resuelto por NOMBRE de catálogo (los ids
+  no coinciden entre bases). `nil` si el catálogo nunca tuvo ninguna --
+  no debería pasar en la práctica (todo catálogo nuevo arranca con la
+  "Plantilla automática" vía `crear_plantilla_default/1`), pero cubre
+  datos viejos/inconsistentes sin reventar el export.
+  """
+  def exportar_header(header, dir \\ "priv/repo/catalogos") do
+    plantillas = listar_plantillas(header.id)
+
+    if plantillas == [] do
+      nil
+    else
+      File.mkdir_p!(dir)
+
+      contenido =
+        Jason.encode!(
+          %{catalogo: header.schema_context_name, plantillas: Enum.map(plantillas, &exportar_plantilla/1)},
+          pretty: true
+        )
+
+      File.write!(Path.join(dir, "#{header.schema_context_name}.plantillas.json"), contenido)
+      header.schema_context_name
+    end
+  end
+
+  defp exportar_plantilla(p) do
+    %{
+      nombre: p.nombre,
+      descripcion: p.descripcion,
+      estado: p.estado,
+      definicion: p.definicion,
+      disponible_multi_vista: p.disponible_multi_vista,
+      proposito: p.proposito
+    }
   end
 
   @doc """

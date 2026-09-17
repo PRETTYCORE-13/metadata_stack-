@@ -37,7 +37,7 @@ defmodule MetadataApp.MetaTepache do
   """
 
   alias MetadataApp.BusinessProcessBuilder.{CatalogoGenerador, MetaSchemaContext}
-  alias MetadataApp.{MetaEstadosAdmin, MetaImportExport, MetaPublicador, Permissions}
+  alias MetadataApp.{MetaEstadosAdmin, MetaImportExport, MetaPlantillas, MetaPublicador, Permissions}
 
   @doc """
   Orquesta el export completo — valida, re-sincroniza schemas, exporta
@@ -74,6 +74,7 @@ defmodule MetadataApp.MetaTepache do
     headers = MetaSchemaContext.listar_headers()
     Enum.each(headers, &MetaSchemaContext.exportar_header(&1, "priv/repo/catalogos"))
     Enum.each(headers, &MetaEstadosAdmin.exportar_header(&1, "priv/repo/catalogos"))
+    Enum.each(headers, &MetaPlantillas.exportar_header(&1, "priv/repo/catalogos"))
   end
 
   defp armar_y_publicar(nombres, catalogos, problemas, descripcion) do
@@ -133,7 +134,8 @@ defmodule MetadataApp.MetaTepache do
         File.rm(bundle_path)
         MetadataApp.Release.migrate()
 
-        mensajes = MetaImportExport.importar_meta() ++ MetaImportExport.importar_motor()
+        mensajes =
+          MetaImportExport.importar_meta() ++ MetaImportExport.importar_motor() ++ MetaImportExport.importar_plantillas()
 
         Enum.each(campos_removidos, fn {nombre, campos} ->
           Enum.each(campos, &eliminar_campo_local(nombre, &1))

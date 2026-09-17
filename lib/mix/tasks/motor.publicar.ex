@@ -42,12 +42,15 @@ defmodule Mix.Tasks.Motor.Publicar do
        el schema Ecto — la tabla física sí los tenía, pero el módulo
        compilado no). Sin este paso, `motor.publicar` empaqueta ciegamente
        lo que haya en disco, esté o no al día.
-    3. `mix meta.export` + `mix motor.export` (de TODOS los catálogos, como
-       siempre — solo cambia en disco el archivo del que de verdad se tocó).
+    3. `mix meta.export` + `mix motor.export` + `mix plantillas.export` (de
+       TODOS los catálogos, como siempre — solo cambia en disco el archivo
+       del que de verdad se tocó).
     4. `MetaPublicador.armar_bundle/1` — un `.tar.gz` con, por cada catálogo
        en alcance: su schema, sus migraciones, su `.meta.json`
-       (+ `.motor.json` si tiene autómata propio — un detalle no), y su
-       carpeta de reglas de negocio si existe.
+       (+ `.motor.json` si tiene autómata propio, `.plantillas.json` si
+       tiene alguna plantilla del Constructor — un detalle no tiene ninguno
+       de los dos necesariamente), y su carpeta de reglas de negocio si
+       existe.
     5. `MetaPublicador.disparar_deploy/3` — dispara
        `.github/workflows/bc-deploy.yml` (GitHub Actions) vía
        `gh workflow run`, mandando el bundle en base64 como input — ese
@@ -115,9 +118,10 @@ defmodule Mix.Tasks.Motor.Publicar do
         Mix.shell().info("\n== re-sincronizando schemas contra la metadata actual ==")
         Mix.Task.rerun("gen.catalogos")
 
-        Mix.shell().info("\n== exportando catálogos + autómata ==")
+        Mix.shell().info("\n== exportando catálogos + autómata + plantillas ==")
         Mix.Task.rerun("meta.export")
         Mix.Task.rerun("motor.export")
+        Mix.Task.rerun("plantillas.export")
 
         Mix.shell().info("\n== armando bundle ==")
         armar_y_desplegar(sistema, nombres, catalogos)

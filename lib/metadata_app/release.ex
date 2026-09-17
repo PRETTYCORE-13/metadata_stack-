@@ -40,7 +40,8 @@ defmodule MetadataApp.Release do
 
     {:ok, mensajes, _apps} =
       Ecto.Migrator.with_repo(MetadataApp.Repo, fn _repo ->
-        MetadataApp.MetaImportExport.importar_meta(dir) ++ MetadataApp.MetaImportExport.importar_motor(dir)
+        MetadataApp.MetaImportExport.importar_meta(dir) ++
+          MetadataApp.MetaImportExport.importar_motor(dir) ++ MetadataApp.MetaImportExport.importar_plantillas(dir)
       end)
 
     Enum.each(mensajes, &IO.puts/1)

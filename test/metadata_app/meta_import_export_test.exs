@@ -2,7 +2,7 @@ defmodule MetadataApp.MetaImportExportTest do
   use MetadataApp.DataCase, async: false
 
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
-  alias MetadataApp.MetaImportExport
+  alias MetadataApp.{MetaImportExport, MetaPlantillas}
 
   defp unique, do: System.unique_integer([:positive])
 
@@ -13,6 +13,15 @@ defmodule MetadataApp.MetaImportExportTest do
 
   defp escribir_motor_json(dir, catalogo, contenido) do
     File.write!(Path.join(dir, "#{catalogo}.motor.json"), Jason.encode!(Map.put(contenido, "catalogo", catalogo)))
+  end
+
+  defp escribir_plantillas_json(dir, catalogo, plantillas) do
+    contenido = %{"catalogo" => catalogo, "plantillas" => plantillas}
+    File.write!(Path.join(dir, "#{catalogo}.plantillas.json"), Jason.encode!(contenido))
+  end
+
+  defp definicion_simple(texto) do
+    %{"tipo" => "raiz", "propiedades" => %{"filas" => 1, "columnas" => 1, "gap" => "normal", "nota" => texto}, "hijos" => []}
   end
 
   test "republicar un catálogo ya existente sincroniza es_parametro/defaults/totales de un campo YA existente" do
@@ -83,6 +92,156 @@ defmodule MetadataApp.MetaImportExportTest do
     assert detalle.schema_context_properties["es_parametro"] == true
     assert detalle.schema_context_properties["defaults"] == %{"modo" => "mes_actual"}
     assert detalle.schema_context_properties["acotado"] == true
+  end
+
+  # Encontrado real (2026-09-17): captura mostrando el orden de Get Config
+  # (grilla de columnas + orden de filas por default) sin efecto tras
+  # publicar -- exportar_header/2 no incluía orden_columnas_tabla ni
+  # orden_resultados en el .meta.json.
+  test "republicar un catálogo ya existente sincroniza orden_columnas_tabla y orden_resultados" do
+    nombre = "pty_test_orden_columnas_#{unique()}"
+
+    {:ok, {header, _detalles}} =
+      MetaSchemaContext.crear_header_con_detalles(%{
+        "schema_context_name" => nombre,
+        "schema_context_label" => "Test",
+        "schema_context_nav" => "/#{nombre}",
+        "schema_visible" => true,
+        "schema_context_type" => 1,
+        "detalles" => []
+      })
+
+    assert header.orden_columnas_tabla == []
+    assert header.orden_resultados == []
+
+    dir = Path.join(System.tmp_dir!(), "meta_import_export_test_#{unique()}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    escribir_meta_json(dir, %{
+      "schema_context_name" => nombre,
+      "schema_context_label" => "Test",
+      "schema_context_nav" => "/#{nombre}",
+      "schema_visible" => true,
+      "schema_context_type" => 1,
+      "orden_columnas_tabla" => ["id", "estado", "nombre"],
+      "orden_resultados" => [%{"campo" => "nombre", "direccion" => "asc"}],
+      "detalles" => []
+    })
+
+    mensajes = MetaImportExport.importar_meta(dir)
+
+    assert Enum.any?(mensajes, &(&1 =~ "orden de columnas (Get Config) actualizado"))
+    assert Enum.any?(mensajes, &(&1 =~ "orden de resultados actualizado"))
+
+    actualizado = MetaSchemaContext.obtener_header_por_nombre(nombre)
+    assert actualizado.orden_columnas_tabla == ["id", "estado", "nombre"]
+    assert actualizado.orden_resultados == [%{"campo" => "nombre", "direccion" => "asc"}]
+  end
+
+  # Encontrado real (2026-09-17): un campo YA publicado que se oculta o
+  # reordena en dev (Get Config → checkbox visible / drag-and-drop) y se
+  # vuelve a publicar no se sincronizaba -- solo sincronizar_detalles_nuevos/2
+  # cubría un campo recién creado, nunca uno existente.
+  test "republicar un catálogo ya existente sincroniza visible/orden de un campo YA existente" do
+    nombre = "pty_test_visible_orden_#{unique()}"
+
+    {:ok, {_header, _detalles}} =
+      MetaSchemaContext.crear_header_con_detalles(%{
+        "schema_context_name" => nombre,
+        "schema_context_label" => "Test",
+        "schema_context_nav" => "/#{nombre}",
+        "schema_visible" => true,
+        "schema_context_type" => 1,
+        "detalles" => [
+          %{
+            "schema_context_field" => "campo1",
+            "schema_context_properties" => %{
+              "tipo" => "string",
+              "etiqueta" => "Campo 1",
+              "orden" => 0,
+              "visible" => true,
+              "editable" => true,
+              "opcional" => false
+            }
+          }
+        ]
+      })
+
+    dir = Path.join(System.tmp_dir!(), "meta_import_export_test_#{unique()}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    escribir_meta_json(dir, %{
+      "schema_context_name" => nombre,
+      "schema_context_label" => "Test",
+      "schema_context_nav" => "/#{nombre}",
+      "schema_visible" => true,
+      "schema_context_type" => 1,
+      "detalles" => [
+        %{
+          "schema_context_field" => "campo1",
+          "schema_context_properties" => %{
+            "tipo" => "string",
+            "etiqueta" => "Campo 1",
+            "orden" => 5,
+            "visible" => false,
+            "editable" => true,
+            "opcional" => false
+          }
+        }
+      ]
+    })
+
+    mensajes = MetaImportExport.importar_meta(dir)
+
+    assert Enum.any?(mensajes, &(&1 =~ "visible/orden actualizado"))
+
+    [detalle] = MetaSchemaContext.listar_detalles(nombre)
+    assert detalle.schema_context_properties["visible"] == false
+    assert detalle.schema_context_properties["orden"] == 5
+  end
+
+  # Encontrado real (2026-09-17): captura de un catálogo publicado mostrando
+  # el orden alfabético de siempre en vez del orden manual (drag-and-drop)
+  # configurado en dev -- exportar_header/2 no incluía "orden" en el
+  # .meta.json, y aunque lo incluyera, importar_contexto/1 no lo
+  # sincronizaba para un catálogo YA existente (mismo patrón que
+  # sincronizar_icono/2, ver #sincronizar_orden/2 arriba).
+  test "republicar un catálogo ya existente sincroniza el orden manual del menú" do
+    nombre = "pty_test_orden_#{unique()}"
+
+    {:ok, {header, _detalles}} =
+      MetaSchemaContext.crear_header_con_detalles(%{
+        "schema_context_name" => nombre,
+        "schema_context_label" => "Test Orden",
+        "schema_context_nav" => "/#{nombre}",
+        "schema_visible" => true,
+        "schema_context_type" => 1,
+        "orden" => 0,
+        "detalles" => []
+      })
+
+    assert header.orden == 0
+
+    dir = Path.join(System.tmp_dir!(), "meta_import_export_test_#{unique()}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    escribir_meta_json(dir, %{
+      "schema_context_name" => nombre,
+      "schema_context_label" => "Test Orden",
+      "schema_context_nav" => "/#{nombre}",
+      "schema_visible" => true,
+      "schema_context_type" => 1,
+      "orden" => 4,
+      "detalles" => []
+    })
+
+    mensajes = MetaImportExport.importar_meta(dir)
+
+    assert Enum.any?(mensajes, &(&1 =~ "orden de menú actualizado"))
+    assert MetaSchemaContext.obtener_header_por_nombre(nombre).orden == 4
   end
 
   # SPEC-SYS-0309202601, auditoría de replay desde cero (2026-09-04):
@@ -312,5 +471,128 @@ defmodule MetadataApp.MetaImportExportTest do
     assert MetadataApp.MetaStateEngine.campos_editables(sano, transicion_sana) == ["campo1"]
 
     assert MetadataApp.MetaEstadosAdmin.listar_estados(header_sano.id) != []
+  end
+
+  # Encontrado real (2026-09-17): las plantillas custom del Constructor
+  # (Post Config) nunca viajaban al publicar un catálogo -- solo la
+  # plantilla AUTOMÁTICA se autogeneraba en cada ambiente por separado, así
+  # que un diseño a medida en dev jamás llegaba a unstable/producción.
+  # Mismo criterio de tolerancia por catálogo que importar_motor/1.
+  test "un catálogo con plantillas.json roto no tumba el import de los demás" do
+    sufijo = unique()
+    roto = "pty_a_plantilla_rota_#{sufijo}"
+    sano = "pty_z_plantilla_sana_#{sufijo}"
+
+    {:ok, {_header_roto, _}} =
+      MetaSchemaContext.crear_header_con_detalles(%{
+        "schema_context_name" => roto,
+        "schema_context_label" => "Roto",
+        "schema_context_nav" => "/#{roto}",
+        "schema_visible" => true,
+        "schema_context_type" => 1,
+        "detalles" => []
+      })
+
+    {:ok, {header_sano, _}} =
+      MetaSchemaContext.crear_header_con_detalles(%{
+        "schema_context_name" => sano,
+        "schema_context_label" => "Sano",
+        "schema_context_nav" => "/#{sano}",
+        "schema_visible" => true,
+        "schema_context_type" => 1,
+        "detalles" => []
+      })
+
+    dir = Path.join(System.tmp_dir!(), "meta_import_export_test_#{sufijo}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    escribir_plantillas_json(dir, roto, [
+      %{
+        "nombre" => "Plantilla automática",
+        "descripcion" => nil,
+        "estado" => "publicada",
+        "definicion" => nil,
+        "disponible_multi_vista" => false,
+        "proposito" => "vista"
+      }
+    ])
+
+    escribir_plantillas_json(dir, sano, [
+      %{
+        "nombre" => "Plantilla automática",
+        "descripcion" => "desc",
+        "estado" => "publicada",
+        "definicion" => definicion_simple("sano"),
+        "disponible_multi_vista" => false,
+        "proposito" => "vista"
+      }
+    ])
+
+    mensajes = MetaImportExport.importar_plantillas(dir)
+
+    assert Enum.any?(mensajes, &(String.starts_with?(&1, "!") and &1 =~ roto))
+
+    [plantilla] = MetaPlantillas.listar_plantillas(header_sano.id)
+    assert plantilla.definicion == definicion_simple("sano")
+    assert plantilla.estado == "publicada"
+  end
+
+  test "republicar sincroniza el contenido de una plantilla existente y respeta la unicidad de publicada" do
+    nombre = "pty_test_plantilla_sync_#{unique()}"
+
+    {:ok, {header, _}} =
+      MetaSchemaContext.crear_header_con_detalles(%{
+        "schema_context_name" => nombre,
+        "schema_context_label" => "Test",
+        "schema_context_nav" => "/#{nombre}",
+        "schema_visible" => true,
+        "schema_context_type" => 1,
+        "detalles" => []
+      })
+
+    {:ok, vieja} = MetaPlantillas.crear_plantilla(header.id, %{"nombre" => "Manual", "estado" => "borrador", "definicion" => definicion_simple("vieja")})
+    {:ok, _vieja} = MetaPlantillas.publicar_plantilla(vieja)
+
+    dir = Path.join(System.tmp_dir!(), "meta_import_export_test_#{unique()}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    escribir_plantillas_json(dir, nombre, [
+      %{
+        "nombre" => "Manual",
+        "descripcion" => "actualizada",
+        "estado" => "borrador",
+        "definicion" => definicion_simple("nueva"),
+        "disponible_multi_vista" => true,
+        "proposito" => "vista"
+      },
+      %{
+        "nombre" => "Nueva del bundle",
+        "descripcion" => nil,
+        "estado" => "publicada",
+        "definicion" => definicion_simple("bundle"),
+        "disponible_multi_vista" => false,
+        "proposito" => "vista"
+      }
+    ])
+
+    mensajes = MetaImportExport.importar_plantillas(dir)
+
+    assert Enum.any?(mensajes, &(&1 =~ "\"Manual\": actualizada"))
+    assert Enum.any?(mensajes, &(&1 =~ "\"Nueva del bundle\" (vista): creada"))
+
+    plantillas = MetaPlantillas.listar_plantillas(header.id) |> Map.new(&{&1.nombre, &1})
+
+    assert plantillas["Manual"].definicion == definicion_simple("nueva")
+    assert plantillas["Manual"].disponible_multi_vista == true
+    # "Manual" venía publicada de antes; el bundle no pide publicarla (trae
+    # "borrador"), así que su propio sync no la toca -- pero "Nueva del
+    # bundle" SÍ pide "publicada", y publicar_plantilla/1 demota a
+    # cualquier otra del mismo (header, propósito) en la misma transacción
+    # -- por eso termina en "borrador", sin haberlo pedido su propia entrada.
+    assert plantillas["Manual"].estado == "borrador"
+    assert plantillas["Nueva del bundle"].estado == "publicada"
+    assert Enum.count(Map.values(plantillas), &(&1.estado == "publicada")) == 1
   end
 end

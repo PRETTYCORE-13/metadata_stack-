@@ -102,9 +102,10 @@ defmodule MetadataApp.MetaPublicador do
     migraciones = Path.wildcard("priv/repo/migrations/*#{catalogo}*.exs")
     meta = "priv/repo/catalogos/#{catalogo}.meta.json"
     motor = "priv/repo/catalogos/#{catalogo}.motor.json"
+    plantillas = "priv/repo/catalogos/#{catalogo}.plantillas.json"
     reglas = Path.join(["lib", "metadata_app", "meta_business_process", "reglas", catalogo])
 
-    ([schema, meta, motor] ++ migraciones ++ [reglas])
+    ([schema, meta, motor, plantillas] ++ migraciones ++ [reglas])
     |> Enum.filter(&File.exists?/1)
   end
 
