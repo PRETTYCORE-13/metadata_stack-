@@ -66,15 +66,18 @@ defmodule Mix.Tasks.Endpoint.Despublicar do
     {:ok, resultado, _apps} =
       Ecto.Migrator.with_repo(MetadataApp.Repo, fn _repo ->
         case MetaConsultas.obtener_por_catalogo(consulta_nombre) do
-          nil -> :no_encontrada
+          # ConsultaEndpoints.eliminar/1 borra el Header ENTERO (cascada real
+          # sobre Consulta/Endpoint/credenciales, ver design.md §13) -- que
+          # ya no se encuentre acá es exactamente el estado esperado
+          # DESPUÉS de "Eliminar" en la UI, no un error. Tratarlo como
+          # error (versión anterior de este task) bloqueaba el flujo real
+          # de despublicar justo en el caso para el que existe.
+          nil -> :ok
           consulta -> if ConsultaEndpoints.obtener_por_consulta(consulta.id), do: :tiene_endpoint, else: :ok
         end
       end)
 
     case resultado do
-      :no_encontrada ->
-        Mix.raise("\"#{consulta_nombre}\" no existe.")
-
       :tiene_endpoint ->
         Mix.raise(
           "\"#{consulta_nombre}\" todavía tiene un Endpoint vivo -- despublicar es para uno YA borrado " <>
