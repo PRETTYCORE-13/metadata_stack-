@@ -723,7 +723,7 @@ mismo catálogo de ejemplo:
 Ver design.md §13. Reusa el pipeline de `mix motor.publicar` que ya
 existe para catálogos -- ningún comando ni workflow nuevo.
 
-- [ ] **O1.** `mix endpoint.export` (tarea nueva, mismo patrón que
+- [x] **O1.** `mix endpoint.export` (tarea nueva, mismo patrón que
       `meta.export`/`lib/mix/tasks/meta.export.ex`): por cada Consulta
       con un `ConsultaEndpoint` vivo, escribe
       `priv/repo/catalogos/<consulta>.endpoint.json` con
@@ -741,7 +741,7 @@ existe para catálogos -- ningún comando ni workflow nuevo.
       el archivo con `empresa_nombre` (no un id), sin ninguna clave
       adentro.
 
-- [ ] **O2.** `MetaImportExport.importar_endpoint/1`: por cada
+- [x] **O2.** `MetaImportExport.importar_endpoint/1`: por cada
       `<consulta>.endpoint.json` con forma normal (no tombstone),
       resuelve el header por nombre + la Empresa DEL DESTINO por
       `empresa_nombre` (si no existe ninguna con ese nombre ahí,
@@ -753,7 +753,7 @@ existe para catálogos -- ningún comando ni workflow nuevo.
       sin una Empresa con ese nombre en destino, mensaje de error
       claro y ninguna excepción.
 
-- [ ] **O3.** `MetadataApp.Release.import_meta/0` llama
+- [x] **O3.** `MetadataApp.Release.import_meta/0` llama
       `importar_endpoint/1` DESPUÉS de `importar_meta/1` (necesita el
       header ya insertado) y junto a `importar_motor/1`/
       `importar_plantillas/1`. Verificable: contra una base de test
@@ -761,13 +761,13 @@ existe para catálogos -- ningún comando ni workflow nuevo.
       el `.endpoint.json` presentes deja la fila de `ConsultaEndpoint`
       creada.
 
-- [ ] **O4.** `MetaPublicador.rutas_de/1` suma
+- [x] **O4.** `MetaPublicador.rutas_de/1` suma
       `priv/repo/catalogos/#{catalogo}.endpoint.json`, con el mismo
       filtro `File.exists?/1` que ya usan `meta`/`motor`/`plantillas`.
       Test unitario: para un catálogo con endpoint, la lista incluye
       el archivo; para uno sin, no cambia nada respecto a hoy.
 
-- [ ] **O5.** `Mix.Tasks.Motor.Publicar.publicar/2` suma
+- [x] **O5.** `Mix.Tasks.Motor.Publicar.publicar/2` suma
       `Mix.Task.rerun("endpoint.export")` a la cadena de exports que
       ya corre antes de armar el bundle (junto a `meta.export`/
       `motor.export`/`plantillas.export`).
@@ -795,7 +795,7 @@ existe para catálogos -- ningún comando ni workflow nuevo.
       si ya no existía, para que despublicar dos veces sea idempotente.
       Test unitario cubriendo ambos casos.
 
-- [ ] **O8.** Verificación end-to-end real, resolviendo el caso que
+- [x] **O8.** Verificación end-to-end real, resolviendo el caso que
       originó este grupo: `mix motor.publicar --sistema=unstable
       pty_h_historico` (el catálogo Y su endpoint viajan en el mismo
       comando) -- confirmar que el bundle incluye
@@ -803,7 +803,10 @@ existe para catálogos -- ningún comando ni workflow nuevo.
       termine, crear una credencial NUEVA directo en `unstable` (nunca
       viaja una existente, R69) y confirmar que el POST que antes daba
       `404 "Endpoint no encontrado"` ahora responde `2xx` con datos
-      reales.
+      reales. **Confirmado 2026-09-17**: `POST
+      https://unstable.ventaenruta.com.mx/api/consultas/endpoint-pty-h-historico-499`
+      con la credencial nueva generada en `unstable` → `201 Created`,
+      `{"data": {"id": 1}}`.
 
 - [ ] **O9.** Verificación de R71 (borrado) end-to-end: eliminar el
       endpoint en local (`ConsultaEndpoints.eliminar/1`), correr `mix
@@ -839,7 +842,7 @@ compilador).
       `menu_layout`/navegación, ya que corren con `bpb_habilitado =
       true` en `:test` (no debería cambiar nada ahí, pero confirmar).
 
-- [ ] **P4.** Verificación end-to-end real: tras el deploy a
+- [x] **P4.** Verificación end-to-end real: tras el deploy a
       `unstable`, `/sysadmin/endpoints` deja de dar "Catálogo no
       encontrado" -- aparece la lista, se puede abrir el Endpoint de
       `pty_h_historico` y generar una credencial nueva ahí. Retoma O8
