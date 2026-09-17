@@ -971,28 +971,30 @@ implementar -- regla del proyecto, nunca asumir:**
    `Mix.Task.rerun("endpoint.export")` a la cadena de exports que ya
    corre antes de armar el bundle.
 
-5. **Despublicar (corregido dos veces: sin migración de DROP que
-   reusar, Y sin poder tocar el release `bc-<consulta>` como un
-   reemplazo total)** -- `mix endpoint.despublicar --sistema=<sistema>
-   <consulta>` (tarea nueva). Exige que el Endpoint YA esté borrado
-   local (`ConsultaEndpoints.obtener_por_consulta/1` == `nil` para esa
-   Consulta) -- si todavía existe, error explícito ("usá
-   `motor.publicar` para lo que sí existe"). Escribe a mano el
-   tombstone `priv/repo/catalogos/<consulta>.endpoint.json` =
-   `{"catalogo": "<consulta>", "eliminado": true}`, y ahí termina su
-   trabajo propio: delega el resto en `Mix.Task.rerun("motor.publicar",
-   ["--sistema=#{sistema}", consulta])` -- el pipeline normal
-   (validar/gen.catalogos/meta.export/motor.export/plantillas.export/
-   armar_bundle/persistir_bundle/disparar_deploy) corre sin cambios,
-   con el tombstone viajando DENTRO del mismo bundle completo de la
-   Consulta (mismo tag `bc-<consulta>`, todo lo demás intacto). Que
-   `endpoint.export` (que corre como parte de ESE mismo
-   `motor.publicar`) no borre el tombstone recién escrito lo garantiza
-   la excepción del punto 1. `importar_endpoint/1` (punto 2), al ver
-   `"eliminado" => true` en vez de la forma normal, hace `Repo.delete`
-   real del `ConsultaEndpoint` del destino si existe (nunca error si
-   ya no existía -- despublicar dos veces es idempotente, mismo
-   criterio que el resto del proyecto).
+5. **Despublicar (corregido TRES veces sobre el borrador original,
+   probado en vivo 2026-09-17)** -- `mix endpoint.despublicar
+   --sistema=<sistema> <consulta>` (tarea nueva). Exige que el Endpoint
+   YA esté borrado local (`ConsultaEndpoints.obtener_por_consulta/1`
+   == `nil` para esa Consulta) -- si todavía existe, error explícito.
+   Escribe a mano el tombstone `priv/repo/catalogos/<consulta>.endpoint.json`
+   = `{"catalogo": "<consulta>", "eliminado": true}`, y arma/sube/dispara
+   el deploy llamando DIRECTO a `MetaPublicador.armar_bundle/1` +
+   `persistir_bundle/2` + `disparar_deploy/3` -- el MISMO patrón que ya
+   usa `mix motor.despublicar` para un catálogo real. **Se descartó
+   delegar en `mix motor.publicar`** (segundo borrador): ese task
+   arranca con `MetaPublicador.validar/1`, que exige que el header
+   EXISTA -- imposible acá, porque `ConsultaEndpoints.eliminar/1` ya lo
+   borró en cascada (Header + Consulta + Endpoint + credenciales, ver
+   arriba). Reemplazar el release `bc-<consulta>` entero (en vez de
+   preservarlo, como decía el primer borrador) es seguro en este caso
+   puntual: la Consulta detrás de un Endpoint de esta sección SIEMPRE
+   es interna y descartable junto con él (nunca una Consulta de
+   usuario reusada, ver R47-51: "no quiero que dependa de una
+   consulta") -- no hay nada más bajo ese tag que preservar.
+   `importar_endpoint/1` (punto 2), al ver `"eliminado" => true` en vez
+   de la forma normal, hace `Repo.delete` real del `ConsultaEndpoint`
+   del destino si existe (nunca error si ya no existía -- despublicar
+   dos veces es idempotente).
 
 ### Cómo quedan resueltos R67-R71
 

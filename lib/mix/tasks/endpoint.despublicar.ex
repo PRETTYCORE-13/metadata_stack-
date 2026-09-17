@@ -2,6 +2,7 @@ defmodule Mix.Tasks.Endpoint.Despublicar do
   use Mix.Task
   alias MetadataApp.ConsultaEndpoints
   alias MetadataApp.MetaConsultas
+  alias MetadataApp.MetaPublicador
 
   @shortdoc "Lleva a un ambiente el borrado de un Endpoint ya eliminado en dev"
 
@@ -18,20 +19,26 @@ defmodule Mix.Tasks.Endpoint.Despublicar do
   LOCAL (sección Endpoints -> Eliminar, `ConsultaEndpoints.eliminar/1`)
   -- SPEC-SYS-1009202602, design.md §13, R71.
 
-  A diferencia de `mix motor.despublicar` (para un catálogo real, que
-  reusa la migración de DROP que deja `CatalogoGenerador.eliminar/4`),
-  acá NO hay ninguna migración que reusar -- `ConsultaEndpoints.
-  eliminar/1` es un `Repo.delete` directo sin generar nada en disco. Y
-  a diferencia de un catálogo real, esta tarea NO puede reemplazar el
-  release `bc-<consulta>` entero: adentro sigue viviendo la Consulta,
-  que no se borró -- solo su Endpoint. Por eso el mecanismo es propio:
-  escribe a mano el tombstone `<consulta>.endpoint.json` =
-  `{"catalogo": "<consulta>", "eliminado": true}` y delega TODO lo
-  demás en `mix motor.publicar` (que reconstruye el bundle completo de
-  la Consulta con ese tombstone adentro, sin tocar nada más). `mix
-  endpoint.export` -- que corre como parte de ESE `motor.publicar` --
-  reconoce el tombstone y no lo borra ni lo regenera (ver su propio
-  moduledoc).
+  **Corregido dos veces sobre el diseño original (probado en vivo,
+  2026-09-17):**
+  1. No hay ninguna migración de DROP que reusar como sí hace `mix
+     motor.despublicar` con un catálogo real -- `ConsultaEndpoints.
+     eliminar/1` es un `Repo.delete` directo, sin generar nada en disco.
+  2. NO se puede delegar en `mix motor.publicar` (primer intento): ese
+     task arranca con `MetaPublicador.validar/1`, que EXIGE que el
+     header exista -- y acá el header ya no existe (`eliminar/1` lo
+     borra en cascada junto con la Consulta interna, el Endpoint y sus
+     credenciales). Delegar ahí siempre fallaba con "no existe".
+
+  El mecanismo real: escribe a mano el tombstone `<consulta>.endpoint.json`
+  = `{"catalogo": "<consulta>", "eliminado": true}` y arma/sube/dispara el
+  deploy con las funciones de bajo nivel de `MetaPublicador`
+  directamente (`armar_bundle/1`, `persistir_bundle/2`,
+  `disparar_deploy/3`) -- el MISMO patrón que ya usa `mix
+  motor.despublicar` para un catálogo real. Reemplazar el release
+  `bc-<consulta>` entero es seguro acá porque esta Consulta es la
+  interna y descartable del propio Endpoint (nunca una Consulta de
+  usuario reusada) -- no hay nada más que preservar bajo ese tag.
 
   `MetadataApp.MetaImportExport.importar_endpoint/1`, en destino, ve
   `"eliminado" => true` y hace `Repo.delete!` real del `ConsultaEndpoint`
@@ -94,8 +101,33 @@ defmodule Mix.Tasks.Endpoint.Despublicar do
     File.mkdir_p!(dir)
     tombstone = Jason.encode!(%{catalogo: consulta_nombre, eliminado: true}, pretty: true)
     File.write!(Path.join(dir, "#{consulta_nombre}.endpoint.json"), tombstone)
+    Mix.shell().info("== tombstone escrito para \"#{consulta_nombre}\" ==")
 
-    Mix.shell().info("== tombstone escrito para \"#{consulta_nombre}\" -- delegando en mix motor.publicar ==")
-    Mix.Task.rerun("motor.publicar", ["--sistema=#{sistema}", consulta_nombre])
+    case MetaPublicador.armar_bundle([consulta_nombre]) do
+      {:error, mensaje} ->
+        Mix.raise(mensaje)
+
+      {:ok, bundle_path} ->
+        Mix.shell().info("  #{bundle_path} (#{MetaPublicador.tamanio_legible(bundle_path)})")
+        Mix.shell().info("\n== reemplazando bc-#{consulta_nombre} en GitHub Releases ==")
+
+        case MetaPublicador.persistir_bundle([consulta_nombre], bundle_path) do
+          {:error, mensaje} ->
+            Mix.raise(mensaje)
+
+          {:ok, tags} ->
+            Mix.shell().info("  #{Enum.join(tags, ", ")}")
+            Mix.shell().info("\n== disparando BC Deploy para aplicar el borrado en \"#{sistema}\" ==")
+
+            case MetaPublicador.disparar_deploy(sistema, [consulta_nombre], bundle_path) do
+              {:ok, salida} ->
+                Mix.shell().info(salida)
+                Mix.shell().info("Disparado -- el borrado de #{consulta_nombre} va camino a \"#{sistema}\". Seguí con \"gh run list\" / \"gh run watch\".")
+
+              {:error, mensaje} ->
+                Mix.raise(mensaje)
+            end
+        end
+    end
   end
 end
