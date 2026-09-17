@@ -581,3 +581,53 @@ Job asíncrono con Oban (dependencia nueva).
       `:referencia_no_encontrada`. Ningún caso de error insertó nada.
       Corrida acotada de `consulta_endpoint_controller_alta_test.exs` +
       `endpoints_live_test.exs`: 11 tests, 0 fallos.
+
+## Grupo M — Alta: rechazar body sin coincidencias en vez de insertar vacío (R65, agregado 2026-09-17)
+
+- [x] **M1.** `ConsultaEndpoints.crear_registro/3` -- si
+      `Map.take(attrs_externos, endpoint.campos_alta)` da `%{}` y
+      `campos_alta` no está vacío, corta con
+      `{:error, {:body_sin_coincidencias, campos_alta}}` ANTES de tocar
+      `CatalogoGenerico.crear/4` -- cubre tanto un body que nunca se
+      parseó (Content-Type incorrecto) como uno con nombres de campo
+      que no matchean, con el mismo chequeo.
+
+- [x] **M2.** Controller -- `mensaje_error_alta/1` arma un mensaje que
+      incluye el Content-Type esperado y la lista completa de
+      `campos_alta`, responde `422`.
+
+- [x] **M3.** Hallazgo real que motivó esto: un cliente C#/RestClient
+      (Postman) mandaba `Content-Type: text/plain` -- el endpoint
+      respondía `201` igual y creaba una fila real con todos los
+      campos de negocio en NULL, sin ningún aviso. Verificado el fix
+      con ese caso real (dev, `endpoint_historico_127138`,
+      `Repo.transaction` + rollback): body vacío y body con nombres
+      viejos rechazan con `422`; body con al menos un campo válido
+      sigue insertando normal.
+
+- [x] **M4.** Test nuevo en `consulta_endpoint_controller_alta_test.exs`
+      -- `POST .../ruta` con body `%{}` y credencial válida → `422`,
+      cero filas nuevas en la tabla. Suite completa: 599 tests, mismo
+      baseline de 20 fallos preexistentes, cero regresiones nuevas.
+
+## Corrección aparte (no numerada) -- catálogo "Histórico": nombres de campo + tipos reales
+
+Durante las pruebas reales del usuario contra este endpoint se
+encontraron y corrigieron, fuera del alcance de R52-R65 pero sobre el
+mismo catálogo de ejemplo:
+
+- Los 36 campos de negocio de "historico" se habían creado SIN el
+  prefijo `<catalogo>_` que usa todo el resto del sistema (a pedido
+  explícito: "cuando creaste el catálogo debieron crearse con el
+  nombre del catálogo + el nombre del campo") -- corregido con
+  `RENAME COLUMN` real (sin pérdida de datos) + actualización de
+  `meta_schema_detail`, el schema Ecto generado, `Consulta.campos`,
+  `campos_alta` del endpoint y `campos_permitidos` de su credencial.
+- `pzaprev`/`pzaliq` se habían tipado como `:integer`, pero el sistema
+  fuente real los manda como decimal (`6.0000`) -- corregido a
+  `:decimal` (migración `ALTER COLUMN TYPE`, `meta_schema_detail` y
+  schema Ecto actualizados).
+- `cargar_todos_por_default` del header estaba en `false` -- la tabla
+  no mostraba ninguna fila hasta aplicar un filtro, lo que parecía
+  "no hay datos" con datos reales ya cargados. Activado a pedido del
+  usuario.

@@ -815,3 +815,38 @@ y crea el renglón; descripción compartida por los dos productos →
 `{:error, {:referencia_ambigua, ...}}`; descripción inexistente →
 `{:error, {:referencia_no_encontrada, ...}}`. Ninguno de los dos casos
 de error insertó nada.
+
+## 11. Alta: rechazar body sin coincidencias en vez de insertar vacío (R65, agregado 2026-09-17)
+
+Hallazgo real usando el endpoint de "historico" en producción de
+pruebas: un cliente C#/RestClient (generado por Postman) mandaba
+`request.AddParameter("text/plain", body, ParameterType.RequestBody)`
+-- el pipeline `:api_consulta_endpoint` (`Plug.Parsers`, `pass:
+["*/*"]`) nunca intenta el parser `:json` sobre un body con
+`Content-Type: text/plain`, así que `conn.params` llegaba al
+controller sin ninguna clave del body (solo el `"ruta"` del path). El
+alta igual respondía `201` (todo campo es opcional) y creaba una fila
+real con TODOS los campos de negocio en NULL -- exactamente el
+síntoma que reportó el usuario ("no me salen datos"), sin ningún error
+visible.
+
+`ConsultaEndpoints.crear_registro/3` ahora corta ANTES de llegar a
+`CatalogoGenerico.crear/4`: calcula `Map.take(attrs_externos,
+endpoint.campos_alta)` y, si el resultado es `%{}` mientras
+`campos_alta` sí tiene algo configurado, devuelve
+`{:error, {:body_sin_coincidencias, campos_alta}}` sin insertar nada.
+Este único chequeo cubre los dos escenarios reales (Content-Type
+incorrecto → `attrs_externos` llega vacío; nombres de campo viejos/mal
+escritos → `attrs_externos` no vacío pero ninguna clave matchea) con
+la misma lógica. El controller (`mensaje_error_alta/1`) arma un
+mensaje que incluye Content-Type esperado + la lista completa de
+`campos_alta`, para que el caller pueda comparar de una contra lo que
+mandó, y responde `422`.
+
+Verificado con datos reales (dev, `endpoint_historico_127138`, vía
+`Repo.transaction` + rollback): body vacío → rechaza;
+body con los nombres de campo viejos (pre-R54-R61) → rechaza; body
+con al menos un campo válido → sigue insertando normal. Test HTTP real
+(`consulta_endpoint_controller_alta_test.exs`): `POST .../ruta` con
+body `%{}` y credencial válida → `422`, cero filas nuevas en la
+tabla.

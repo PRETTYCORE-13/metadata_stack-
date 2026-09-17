@@ -145,6 +145,23 @@ defmodule MetadataAppWeb.Api.ConsultaEndpointControllerAltaTest do
     refute registro.meta_fixture_cliente_sucursal_id == 987_654
   end
 
+  test "body sin ninguna coincidencia con campos_alta -> 422 explícito, no inserta una fila vacía (R65)", %{conn: conn} do
+    fixture_estado_inicial!()
+    empresa = empresa!()
+    {endpoint, key} = endpoint_con_alta!(empresa)
+
+    total_antes = Repo.aggregate(MetaFixtureCliente, :count)
+
+    conn =
+      conn
+      |> put_req_header("authorization", "Bearer #{key}")
+      |> post("/api/consultas/#{endpoint.ruta}", %{})
+
+    assert %{"error" => mensaje} = json_response(conn, 422)
+    assert mensaje =~ "no coincide con ningún campo"
+    assert Repo.aggregate(MetaFixtureCliente, :count) == total_antes
+  end
+
   test "falta un campo obligatorio del catálogo -> 422, no inserta nada", %{conn: conn} do
     fixture_estado_inicial!()
     empresa = empresa!()

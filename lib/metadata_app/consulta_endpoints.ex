@@ -266,6 +266,17 @@ defmodule MetadataApp.ConsultaEndpoints do
   con el sentinel `:sistema` (no hay un Scope real de un llamador
   externo) -- por eso el estampado de empresa es manual acá, `:sistema`
   no lo hace solo.
+
+  R65 (agregado 2026-09-17, a pedido explícito -- "puedes enviar los
+  errores en vez de insertar campos vacios"): si `endpoint.campos_alta`
+  tiene algo configurado pero NINGUNA clave de `attrs_externos` coincide
+  con la whitelist, rechaza con `{:error, {:body_sin_coincidencias, campos_alta}}`
+  en vez de insertar una fila con todos los campos de negocio en NULL.
+  Caso real que motivó esto: un caller externo mandó el body con
+  `Content-Type: text/plain` en vez de `application/json` -- el
+  servidor nunca llegó a parsear el body (queda `attrs_externos == %{}`),
+  el endpoint respondía `201` igual (todos los campos son opcionales)
+  y creaba una fila vacía sin ningún aviso.
   """
   def crear_registro(%ConsultaEndpoint{permite_alta: true} = endpoint, consulta, attrs_externos) do
     case MetaSchemaContext.modulo_por_nombre(consulta.catalogo_base) do
@@ -273,13 +284,16 @@ defmodule MetadataApp.ConsultaEndpoints do
         {:error, :catalogo_no_disponible}
 
       modulo ->
-        with {:ok, attrs} <-
-               attrs_externos
-               |> Map.take(endpoint.campos_alta)
-               |> resolver_referencias_por_descripcion(consulta.catalogo_base),
-             {:ok, renglones} <- renglones_spec_desde_externos(endpoint.renglones_alta, attrs_externos) do
-          attrs = estampar_empresa_fija(attrs, modulo, endpoint.empresa_id)
-          CatalogoGenerico.crear(modulo, :sistema, attrs, renglones: renglones)
+        attrs_filtrados = Map.take(attrs_externos, endpoint.campos_alta)
+
+        if attrs_filtrados == %{} and endpoint.campos_alta != [] do
+          {:error, {:body_sin_coincidencias, endpoint.campos_alta}}
+        else
+          with {:ok, attrs} <- resolver_referencias_por_descripcion(attrs_filtrados, consulta.catalogo_base),
+               {:ok, renglones} <- renglones_spec_desde_externos(endpoint.renglones_alta, attrs_externos) do
+            attrs = estampar_empresa_fija(attrs, modulo, endpoint.empresa_id)
+            CatalogoGenerico.crear(modulo, :sistema, attrs, renglones: renglones)
+          end
         end
     end
   end

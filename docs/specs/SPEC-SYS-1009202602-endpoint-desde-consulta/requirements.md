@@ -529,3 +529,23 @@ Ninguno de los dos casos de error insertó nada.
   con unión autodetectada. Un caso que necesite una unión manual o más
   de dos tablas sigue el camino de "Nueva consulta" en BC List, no
   esta sección.
+
+### Alta: rechazar en vez de insertar vacío si el body no coincide con nada (agregado 2026-09-17, a pedido explícito)
+
+Caso real: un caller externo integrando el endpoint de "historico"
+mandó el body con `Content-Type: text/plain` (no `application/json`)
+-- Phoenix nunca llegó a parsear nada, el endpoint igual respondía
+`201` (todos los campos son opcionales) y creaba una fila con TODOS
+los campos de negocio en NULL, sin ningún aviso. Mismo síntoma posible
+con nombres de campo viejos/mal escritos que no matchean la whitelist.
+
+**R65.** Si `endpoint.campos_alta` tiene algo configurado pero NINGUNA
+clave del body coincide con esa whitelist, EL SISTEMA DEBE rechazar el
+alta completa con `422` y un mensaje que incluya los nombres de campo
+que sí acepta (para que el caller pueda comparar contra lo que mandó)
+-- nunca debe insertar una fila con todos los campos de negocio vacíos
+sin avisar.
+
+Verificado con datos reales (dev, `endpoint_historico_127138`): un
+body real enviado con `Content-Type: text/plain` desde un cliente
+C#/RestClient generado por Postman fue la causa real de este hallazgo.
