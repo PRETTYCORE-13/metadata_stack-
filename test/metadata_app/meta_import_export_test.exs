@@ -2,7 +2,8 @@ defmodule MetadataApp.MetaImportExportTest do
   use MetadataApp.DataCase, async: false
 
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
-  alias MetadataApp.{MetaImportExport, MetaPlantillas}
+  alias MetadataApp.{MetaImportExport, MetaPlantillas, MetaConsultas, ConsultaEndpoints, Repo}
+  alias MetadataApp.Autenticacion.Empresa
 
   defp unique, do: System.unique_integer([:positive])
 
@@ -594,5 +595,150 @@ defmodule MetadataApp.MetaImportExportTest do
     assert plantillas["Manual"].estado == "borrador"
     assert plantillas["Nueva del bundle"].estado == "publicada"
     assert Enum.count(Map.values(plantillas), &(&1.estado == "publicada")) == 1
+  end
+
+  describe "importar_endpoint/1 (SPEC-SYS-1009202602, design.md §13, R67-R71)" do
+    defp empresa!(nombre) do
+      {:ok, empresa} = %Empresa{} |> Empresa.changeset(%{nombre: nombre}) |> Repo.insert()
+      empresa
+    end
+
+    defp consulta_vacia!(nombre) do
+      {:ok, {header, _detalles}} =
+        MetaSchemaContext.crear_header_con_detalles(%{
+          "schema_context_name" => nombre,
+          "schema_context_label" => nombre,
+          "schema_context_nav" => "/#{nombre}",
+          "schema_visible" => true,
+          "schema_context_type" => 3,
+          "detalles" => []
+        })
+
+      {:ok, consulta} = MetaConsultas.crear(header, "meta_fixture_cliente")
+      consulta
+    end
+
+    defp escribir_endpoint_json(dir, atributos) do
+      File.write!(Path.join(dir, "#{atributos["catalogo"]}.endpoint.json"), Jason.encode!(atributos))
+    end
+
+    test "crea el endpoint cuando la Consulta y la Empresa ya existen en destino" do
+      nombre = "meta_import_export_endpoint_#{unique()}"
+      empresa = empresa!("Empresa import endpoint #{unique()}")
+      consulta = consulta_vacia!(nombre)
+
+      dir = Path.join(System.tmp_dir!(), "meta_import_export_endpoint_test_#{unique()}")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      escribir_endpoint_json(dir, %{
+        "catalogo" => nombre,
+        "nombre" => "Reporte de prueba",
+        "metodo" => "get",
+        "ruta" => "reporte-#{unique()}",
+        "estado" => "publicado",
+        "empresa_nombre" => empresa.nombre
+      })
+
+      mensajes = MetaImportExport.importar_endpoint(dir)
+      assert Enum.any?(mensajes, &(&1 =~ "creado"))
+
+      endpoint = ConsultaEndpoints.obtener_por_consulta(consulta.id)
+      assert endpoint.nombre == "Reporte de prueba"
+      assert endpoint.estado == "publicado"
+      assert endpoint.empresa_id == empresa.id
+    end
+
+    test "una segunda importación actualiza en vez de duplicar" do
+      nombre = "meta_import_export_endpoint_#{unique()}"
+      empresa = empresa!("Empresa import endpoint #{unique()}")
+      consulta = consulta_vacia!(nombre)
+
+      dir = Path.join(System.tmp_dir!(), "meta_import_export_endpoint_test_#{unique()}")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      atributos = %{
+        "catalogo" => nombre,
+        "nombre" => "Reporte v1",
+        "metodo" => "get",
+        "ruta" => "reporte-#{unique()}",
+        "estado" => "borrador",
+        "empresa_nombre" => empresa.nombre
+      }
+
+      escribir_endpoint_json(dir, atributos)
+      MetaImportExport.importar_endpoint(dir)
+      primero = ConsultaEndpoints.obtener_por_consulta(consulta.id)
+
+      escribir_endpoint_json(dir, Map.put(atributos, "nombre", "Reporte v2"))
+      mensajes = MetaImportExport.importar_endpoint(dir)
+      assert Enum.any?(mensajes, &(&1 =~ "actualizado"))
+
+      segundo = ConsultaEndpoints.obtener_por_consulta(consulta.id)
+      assert segundo.id == primero.id
+      assert segundo.nombre == "Reporte v2"
+    end
+
+    test "sin una Empresa con ese nombre en destino, mensaje de error y no crea nada" do
+      nombre = "meta_import_export_endpoint_#{unique()}"
+      consulta = consulta_vacia!(nombre)
+
+      dir = Path.join(System.tmp_dir!(), "meta_import_export_endpoint_test_#{unique()}")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      escribir_endpoint_json(dir, %{
+        "catalogo" => nombre,
+        "nombre" => "Reporte",
+        "metodo" => "get",
+        "ruta" => "reporte-#{unique()}",
+        "estado" => "borrador",
+        "empresa_nombre" => "Empresa que no existe #{unique()}"
+      })
+
+      mensajes = MetaImportExport.importar_endpoint(dir)
+      assert Enum.any?(mensajes, &(&1 =~ "no existe ninguna Empresa"))
+      assert ConsultaEndpoints.obtener_por_consulta(consulta.id) == nil
+    end
+
+    test "el tombstone {\"eliminado\": true} borra el endpoint existente en destino" do
+      nombre = "meta_import_export_endpoint_#{unique()}"
+      empresa = empresa!("Empresa import endpoint #{unique()}")
+      consulta = consulta_vacia!(nombre)
+
+      {:ok, endpoint} =
+        ConsultaEndpoints.crear_o_actualizar(consulta, %{
+          "nombre" => "Reporte",
+          "metodo" => "get",
+          "ruta" => "reporte-#{unique()}",
+          "empresa_id" => empresa.id
+        })
+
+      dir = Path.join(System.tmp_dir!(), "meta_import_export_endpoint_test_#{unique()}")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      escribir_endpoint_json(dir, %{"catalogo" => nombre, "eliminado" => true})
+
+      mensajes = MetaImportExport.importar_endpoint(dir)
+      assert Enum.any?(mensajes, &(&1 =~ "eliminado"))
+      assert ConsultaEndpoints.obtener_por_consulta(consulta.id) == nil
+      refute Repo.get(MetadataApp.MetaSchema.ConsultaEndpoint, endpoint.id)
+    end
+
+    test "el tombstone es idempotente cuando ya no existía ningún endpoint" do
+      nombre = "meta_import_export_endpoint_#{unique()}"
+      consulta_vacia!(nombre)
+
+      dir = Path.join(System.tmp_dir!(), "meta_import_export_endpoint_test_#{unique()}")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      escribir_endpoint_json(dir, %{"catalogo" => nombre, "eliminado" => true})
+
+      mensajes = MetaImportExport.importar_endpoint(dir)
+      assert Enum.any?(mensajes, &(&1 =~ "ya no existía"))
+    end
   end
 end

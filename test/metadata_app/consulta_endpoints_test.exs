@@ -311,4 +311,38 @@ defmodule MetadataApp.ConsultaEndpointsTest do
                ConsultaEndpoints.construir_overrides(consulta, endpoint, %{})
     end
   end
+
+  describe "exportar_endpoint/2 (SPEC-SYS-1009202602, design.md §13, R67/R69)" do
+    defp dir_temporal! do
+      dir = Path.join(System.tmp_dir!(), "consulta_endpoints_export_test_#{unique()}")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      dir
+    end
+
+    test "escribe <consulta>.endpoint.json con empresa_nombre, nunca empresa_id ni credenciales" do
+      empresa = empresa!()
+      consulta = consulta_con_parametro!()
+      {:ok, endpoint} = ConsultaEndpoints.crear_o_actualizar(consulta, attrs_base(consulta, empresa))
+      clave = "meta_fixture_cliente__meta_fixture_cliente_nombre"
+      {:ok, _credencial, _key} = ConsultaEndpoints.crear_credencial(endpoint, consulta, %{"nombre" => "ERP", "campos_permitidos" => [clave]})
+
+      dir = dir_temporal!()
+      nombre_consulta = ConsultaEndpoints.exportar_endpoint(endpoint, dir)
+
+      header = MetaSchemaContext.obtener_header!(consulta.meta_schema_header_id)
+      assert nombre_consulta == header.schema_context_name
+
+      contenido = dir |> Path.join("#{nombre_consulta}.endpoint.json") |> File.read!() |> Jason.decode!()
+
+      assert contenido["catalogo"] == nombre_consulta
+      assert contenido["nombre"] == endpoint.nombre
+      assert contenido["metodo"] == "get"
+      assert contenido["estado"] == "borrador"
+      assert contenido["empresa_nombre"] == empresa.nombre
+      refute Map.has_key?(contenido, "empresa_id")
+      refute Map.has_key?(contenido, "api_key_hash")
+      refute Map.has_key?(contenido, "api_key_sufijo")
+    end
+  end
 end

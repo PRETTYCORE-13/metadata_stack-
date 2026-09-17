@@ -14,9 +14,15 @@ defmodule MetadataApp.MetaImportExport do
   script vía `IO.puts/1`) decide cómo mostrarlos.
   """
 
+  import Ecto.Query, only: [from: 2]
+
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.MetaPlantillas
+  alias MetadataApp.MetaConsultas
+  alias MetadataApp.ConsultaEndpoints
+  alias MetadataApp.Autenticacion.Empresa
+  alias MetadataApp.Repo
 
   @doc "Importa cada `*.meta.json` de `dir` — crea el Header+Detalles si el catálogo no existe todavía; si ya existe, sincroniza campos nuevos que no tenía."
   def importar_meta(dir \\ "priv/repo/catalogos") do
@@ -864,6 +870,83 @@ defmodule MetadataApp.MetaImportExport do
 
       {:error, changeset} ->
         raise "Error publicando plantilla \"#{plantilla.nombre}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+    end
+  end
+
+  @doc """
+  Importa cada `*.endpoint.json` de `dir` (SPEC-SYS-1009202602,
+  design.md §13, R67-R71) -- crea/actualiza el `ConsultaEndpoint` de la
+  Consulta si el archivo trae la forma normal, o lo borra (`Repo.delete!`
+  real, idempotente) si trae el tombstone que deja `mix
+  endpoint.despublicar` (`"eliminado" => true`). NUNCA toca
+  `ConsultaEndpointCredencial` (R69) -- las credenciales se crean
+  directo en cada ambiente, nunca viajan acá.
+
+  Corre DESPUÉS de `importar_meta/1` -- necesita que el header (y la
+  Consulta que cuelga de él) ya exista.
+  """
+  def importar_endpoint(dir \\ "priv/repo/catalogos") do
+    dir
+    |> leer_json(".endpoint.json")
+    |> Enum.map(&importar_endpoint_tolerante/1)
+  end
+
+  # Mismo criterio que importar_contexto_tolerante/1: un endpoint roto
+  # (Consulta inexistente, Empresa ambigua/inexistente, changeset
+  # inválido) no puede tumbar el import de los demás.
+  defp importar_endpoint_tolerante(%{"catalogo" => nombre} = datos) do
+    importar_endpoint_datos(datos)
+  rescue
+    error -> "! #{nombre}: #{Exception.message(error)}"
+  end
+
+  defp importar_endpoint_datos(%{"catalogo" => nombre, "eliminado" => true}) do
+    case MetaConsultas.obtener_por_catalogo(nombre) do
+      nil ->
+        "- #{nombre}: consulta no encontrada, nada que despublicar"
+
+      consulta ->
+        case ConsultaEndpoints.obtener_por_consulta(consulta.id) do
+          nil ->
+            "= #{nombre} endpoint: ya no existía"
+
+          endpoint ->
+            Repo.delete!(endpoint)
+            "- #{nombre} endpoint: eliminado"
+        end
+    end
+  end
+
+  defp importar_endpoint_datos(%{"catalogo" => nombre} = datos) do
+    case MetaConsultas.obtener_por_catalogo(nombre) do
+      nil ->
+        "- #{nombre}: consulta no encontrada, saltado (¿faltó importar_meta antes?)"
+
+      consulta ->
+        case resolver_empresa_por_nombre(datos["empresa_nombre"]) do
+          {:error, mensaje} ->
+            "! #{nombre} endpoint: #{mensaje}"
+
+          {:ok, empresa} ->
+            existia? = ConsultaEndpoints.obtener_por_consulta(consulta.id) != nil
+            attrs = Map.put(datos, "empresa_id", empresa.id)
+
+            case ConsultaEndpoints.crear_o_actualizar(consulta, attrs) do
+              {:ok, _endpoint} when existia? -> "~ #{nombre} endpoint: actualizado"
+              {:ok, _endpoint} -> "+ #{nombre} endpoint: creado"
+              {:error, changeset} -> raise "Error importando endpoint de #{nombre}: #{inspect(changeset.errors)}"
+            end
+        end
+    end
+  end
+
+  defp resolver_empresa_por_nombre(nil), do: {:error, "el archivo no trae \"empresa_nombre\""}
+
+  defp resolver_empresa_por_nombre(nombre) do
+    case Repo.all(from(e in Empresa, where: e.nombre == ^nombre and is_nil(e.delete_guid))) do
+      [] -> {:error, "no existe ninguna Empresa \"#{nombre}\" en este ambiente"}
+      [empresa] -> {:ok, empresa}
+      _varias -> {:error, "hay más de una Empresa \"#{nombre}\" en este ambiente, ambiguo"}
     end
   end
 

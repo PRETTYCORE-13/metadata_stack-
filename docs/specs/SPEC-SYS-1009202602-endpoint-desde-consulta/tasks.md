@@ -717,3 +717,99 @@ mismo catálogo de ejemplo:
   no mostraba ninguna fila hasta aplicar un filtro, lo que parecía
   "no hay datos" con datos reales ya cargados. Activado a pedido del
   usuario.
+
+## Grupo O — Publicar Endpoints entre ambientes (R67-R71, agregado 2026-09-17)
+
+Ver design.md §13. Reusa el pipeline de `mix motor.publicar` que ya
+existe para catálogos -- ningún comando ni workflow nuevo.
+
+- [ ] **O1.** `mix endpoint.export` (tarea nueva, mismo patrón que
+      `meta.export`/`lib/mix/tasks/meta.export.ex`): por cada Consulta
+      con un `ConsultaEndpoint` vivo, escribe
+      `priv/repo/catalogos/<consulta>.endpoint.json` con
+      nombre/método/ruta/parámetros/campos_alta/renglones_alta/estado
+      y **`empresa_nombre`** (resuelto desde `empresa_id`, NUNCA el id
+      crudo -- no es portable entre bases). NUNCA
+      `api_key_hash`/`api_key_sufijo` (viven solo en
+      `ConsultaEndpointCredencial`, que este export ni toca). Sincroniza
+      el directorio (borra el `.endpoint.json` huérfano si el Endpoint
+      ya no existe) -- EXCEPTO si el archivo ya es el tombstone
+      `{"eliminado": true}` de O6, ese nunca se toca acá. Verificable:
+      correrlo en dev sobre
+      `pty_h_historico` (que ya tiene el endpoint
+      `endpoint-historico-127138` publicado) y confirmar que aparece
+      el archivo con `empresa_nombre` (no un id), sin ninguna clave
+      adentro.
+
+- [ ] **O2.** `MetaImportExport.importar_endpoint/1`: por cada
+      `<consulta>.endpoint.json` con forma normal (no tombstone),
+      resuelve el header por nombre + la Empresa DEL DESTINO por
+      `empresa_nombre` (si no existe ninguna con ese nombre ahí,
+      mensaje de error explícito, se salta ese archivo sin tumbar el
+      resto) y llama `ConsultaEndpoints.crear_o_actualizar/2` (ya
+      existe, B1). Test unitario: importar contra una Consulta ya
+      existente con su Empresa homónima crea la fila; volver a
+      importar el mismo archivo no duplica (misma fila, actualizada);
+      sin una Empresa con ese nombre en destino, mensaje de error
+      claro y ninguna excepción.
+
+- [ ] **O3.** `MetadataApp.Release.import_meta/0` llama
+      `importar_endpoint/1` DESPUÉS de `importar_meta/1` (necesita el
+      header ya insertado) y junto a `importar_motor/1`/
+      `importar_plantillas/1`. Verificable: contra una base de test
+      limpia, correr `import_meta/0` con el header + la Empresa +
+      el `.endpoint.json` presentes deja la fila de `ConsultaEndpoint`
+      creada.
+
+- [ ] **O4.** `MetaPublicador.rutas_de/1` suma
+      `priv/repo/catalogos/#{catalogo}.endpoint.json`, con el mismo
+      filtro `File.exists?/1` que ya usan `meta`/`motor`/`plantillas`.
+      Test unitario: para un catálogo con endpoint, la lista incluye
+      el archivo; para uno sin, no cambia nada respecto a hoy.
+
+- [ ] **O5.** `Mix.Tasks.Motor.Publicar.publicar/2` suma
+      `Mix.Task.rerun("endpoint.export")` a la cadena de exports que
+      ya corre antes de armar el bundle (junto a `meta.export`/
+      `motor.export`/`plantillas.export`).
+
+- [ ] **O6.** `mix endpoint.despublicar --sistema=<sistema> <consulta>`
+      (tarea nueva, R71 -- corregido DOS veces: sin migración de DROP
+      que reusar, y sin poder reemplazar el release `bc-<consulta>`
+      entero como hace `motor.despublicar` con un catálogo real --
+      acá adentro sigue viviendo la Consulta, que no se borró). Exige
+      que el Endpoint YA esté borrado local
+      (`ConsultaEndpoints.obtener_por_consulta/1` da `nil` para esa
+      Consulta) -- si todavía existe, error explícito. Escribe a mano
+      `priv/repo/catalogos/<consulta>.endpoint.json` con el único
+      contenido `{"eliminado": true}`, y delega el resto en
+      `Mix.Task.rerun("motor.publicar", ["--sistema=#{sistema}",
+      consulta])` -- el tombstone viaja DENTRO del mismo bundle
+      completo de siempre (mismo tag, todo lo demás de la Consulta
+      intacto). Verificable: correrlo sobre una Consulta sin Endpoint
+      deja el bundle con el tombstone Y con el resto de los archivos
+      de esa Consulta (`.meta.json`, etc.) sin tocar.
+
+- [ ] **O7.** `importar_endpoint/1` reconoce la forma tombstone
+      (`%{"eliminado" => true}`) y hace `Repo.delete` real del
+      `ConsultaEndpoint` del destino si existe -- no-op (nunca error)
+      si ya no existía, para que despublicar dos veces sea idempotente.
+      Test unitario cubriendo ambos casos.
+
+- [ ] **O8.** Verificación end-to-end real, resolviendo el caso que
+      originó este grupo: `mix motor.publicar --sistema=unstable
+      pty_h_historico` (el catálogo Y su endpoint viajan en el mismo
+      comando) -- confirmar que el bundle incluye
+      `pty_h_historico.endpoint.json`. Después de que el deploy
+      termine, crear una credencial NUEVA directo en `unstable` (nunca
+      viaja una existente, R69) y confirmar que el POST que antes daba
+      `404 "Endpoint no encontrado"` ahora responde `2xx` con datos
+      reales.
+
+- [ ] **O9.** Verificación de R71 (borrado) end-to-end: eliminar el
+      endpoint en local (`ConsultaEndpoints.eliminar/1`), correr `mix
+      endpoint.despublicar --sistema=unstable pty_h_historico`,
+      confirmar que en `unstable` el mismo POST que funcionó en O8
+      vuelve a responder `404`.
+
+- [ ] **O10.** Suite completa (`mix test`) sin regresiones sobre el
+      baseline vigente.

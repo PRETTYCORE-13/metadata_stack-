@@ -42,9 +42,12 @@ defmodule Mix.Tasks.Motor.Publicar do
        el schema Ecto — la tabla física sí los tenía, pero el módulo
        compilado no). Sin este paso, `motor.publicar` empaqueta ciegamente
        lo que haya en disco, esté o no al día.
-    3. `mix meta.export` + `mix motor.export` + `mix plantillas.export` (de
-       TODOS los catálogos, como siempre — solo cambia en disco el archivo
-       del que de verdad se tocó).
+    3. `mix meta.export` + `mix motor.export` + `mix plantillas.export` +
+       `mix endpoint.export` (de TODOS los catálogos, como siempre — solo
+       cambia en disco el archivo del que de verdad se tocó).
+       `endpoint.export` es nuevo (SPEC-SYS-1009202602, design.md §13,
+       2026-09-17): si la Consulta publicada tiene un Endpoint API, su
+       config (nunca sus credenciales, R69) viaja en el mismo bundle.
     4. `MetaPublicador.armar_bundle/1` — un `.tar.gz` con, por cada catálogo
        en alcance: su schema, sus migraciones, su `.meta.json`
        (+ `.motor.json` si tiene autómata propio, `.plantillas.json` si
@@ -118,10 +121,11 @@ defmodule Mix.Tasks.Motor.Publicar do
         Mix.shell().info("\n== re-sincronizando schemas contra la metadata actual ==")
         Mix.Task.rerun("gen.catalogos")
 
-        Mix.shell().info("\n== exportando catálogos + autómata + plantillas ==")
+        Mix.shell().info("\n== exportando catálogos + autómata + plantillas + endpoints ==")
         Mix.Task.rerun("meta.export")
         Mix.Task.rerun("motor.export")
         Mix.Task.rerun("plantillas.export")
+        Mix.Task.rerun("endpoint.export")
 
         Mix.shell().info("\n== armando bundle ==")
         armar_y_desplegar(sistema, nombres, catalogos)

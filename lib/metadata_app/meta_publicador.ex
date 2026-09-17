@@ -103,9 +103,13 @@ defmodule MetadataApp.MetaPublicador do
     meta = "priv/repo/catalogos/#{catalogo}.meta.json"
     motor = "priv/repo/catalogos/#{catalogo}.motor.json"
     plantillas = "priv/repo/catalogos/#{catalogo}.plantillas.json"
+    # SPEC-SYS-1009202602, design.md §13 (R67) -- solo existe si esta
+    # Consulta tiene un Endpoint API publicado (o su tombstone de "mix
+    # endpoint.despublicar"); ausente para cualquier catálogo normal.
+    endpoint = "priv/repo/catalogos/#{catalogo}.endpoint.json"
     reglas = Path.join(["lib", "metadata_app", "meta_business_process", "reglas", catalogo])
 
-    ([schema, meta, motor, plantillas] ++ migraciones ++ [reglas])
+    ([schema, meta, motor, plantillas, endpoint] ++ migraciones ++ [reglas])
     |> Enum.filter(&File.exists?/1)
   end
 

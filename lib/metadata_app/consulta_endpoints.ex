@@ -20,6 +20,7 @@ defmodule MetadataApp.ConsultaEndpoints do
   import Ecto.Query
 
   alias MetadataApp.Repo
+  alias MetadataApp.Autenticacion.Empresa
   alias MetadataApp.MetaSchema.ConsultaEndpoint
   alias MetadataApp.MetaSchema.ConsultaEndpointCredencial
   alias MetadataApp.MetaSchema.ConsultaEndpointJob
@@ -111,6 +112,49 @@ defmodule MetadataApp.ConsultaEndpoints do
     |> ConsultaEndpoint.changeset(attrs, consulta)
     |> Ecto.Changeset.change(update_guid: generar_guid())
     |> Repo.update()
+  end
+
+  @doc """
+  Exporta la config de un Endpoint a JSON (SPEC-SYS-1009202602, R67) --
+  NUNCA incluye nada de `ConsultaEndpointCredencial` (R69): esa tabla
+  ni se lee acá, las credenciales se crean directo en cada ambiente.
+
+  `empresa_id` se exporta como `empresa_nombre` -- un id crudo de
+  Empresa no es portable entre bases (cada ambiente tiene sus propias
+  filas con sus propios ids), mismo criterio que ya usa
+  `MetaSchemaContext.exportar_header/2` para el maestro de un catálogo
+  detalle (exporta el NOMBRE, nunca el id).
+
+  Devuelve el nombre de la Consulta (mismo valor que
+  `MetaSchemaContext.exportar_header/2`, para poder sincronizar
+  huérfanos con el mismo criterio que `mix meta.export`).
+  """
+  def exportar_endpoint(%ConsultaEndpoint{} = endpoint, dir \\ "priv/repo/catalogos") do
+    File.mkdir_p!(dir)
+    endpoint = Repo.preload(endpoint, consulta: :header)
+    empresa = Repo.get!(Empresa, endpoint.empresa_id)
+    nombre_consulta = endpoint.consulta.header.schema_context_name
+
+    contenido =
+      Jason.encode!(
+        %{
+          catalogo: nombre_consulta,
+          nombre: endpoint.nombre,
+          metodo: endpoint.metodo,
+          ruta: endpoint.ruta,
+          descripcion: endpoint.descripcion,
+          parametros: endpoint.parametros,
+          estado: endpoint.estado,
+          permite_alta: endpoint.permite_alta,
+          campos_alta: endpoint.campos_alta,
+          renglones_alta: endpoint.renglones_alta,
+          empresa_nombre: empresa.nombre
+        },
+        pretty: true
+      )
+
+    File.write!(Path.join(dir, "#{nombre_consulta}.endpoint.json"), contenido)
+    nombre_consulta
   end
 
   @doc """

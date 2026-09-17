@@ -25,6 +25,11 @@ defmodule MetadataApp.Release do
   # reconozca esa tabla como un Business Context real. Sin esto la tabla
   # existe pero la API responde "no encontrado" — nadie le avisó a la
   # metadata que el catálogo existe.
+  #
+  # importar_endpoint/1 (SPEC-SYS-1009202602, design.md §13, agregado
+  # 2026-09-17) va AL FINAL, después de importar_meta/1 -- necesita que
+  # el header (y su Consulta) ya exista para poder engancharle el
+  # ConsultaEndpoint.
   def import_meta do
     load_app()
 
@@ -41,7 +46,9 @@ defmodule MetadataApp.Release do
     {:ok, mensajes, _apps} =
       Ecto.Migrator.with_repo(MetadataApp.Repo, fn _repo ->
         MetadataApp.MetaImportExport.importar_meta(dir) ++
-          MetadataApp.MetaImportExport.importar_motor(dir) ++ MetadataApp.MetaImportExport.importar_plantillas(dir)
+          MetadataApp.MetaImportExport.importar_motor(dir) ++
+          MetadataApp.MetaImportExport.importar_plantillas(dir) ++
+          MetadataApp.MetaImportExport.importar_endpoint(dir)
       end)
 
     Enum.each(mensajes, &IO.puts/1)

@@ -568,3 +568,58 @@ Cualquier rol que ya tuviera acceso a Endpoints por tener
 Process Builder") conserva ese acceso automáticamente al migrar --
 nadie pierde acceso que ya tenía (ver migración
 `20260917180000_seed_permiso_capacidad_sysadmin_endpoints.exs`).
+
+## Publicar Endpoints entre ambientes (agregado 2026-09-17, a pedido explícito)
+
+Hallazgo real: un endpoint creado y publicado en local respondía 404
+("Endpoint no encontrado") al invocarlo contra `unstable` -- la
+configuración nunca llegó a esa base, y la pantalla de administración
+(`/sysadmin/endpoints`) tampoco existe ahí (queda detrás del mismo
+flag que apaga todo Business Process Builder en cualquier release
+compilado). A diferencia de un catálogo, que sí tiene un camino
+explícito para viajar de local a cualquier ambiente
+(`mix motor.publicar`/`motor.despublicar`), un Endpoint no tenía
+ninguno -- hueco no contemplado en el diseño original de esta spec.
+
+Modelo acordado con el usuario (separa tres cosas que hoy conviven
+implícitas en un solo mecanismo):
+
+- **Endpoint** -- su ciclo borrador ⇄ publicado ya existe (R24/R30),
+  sin cambios acá.
+- **Promoción** -- lleva el Endpoint (config + la Consulta de la que
+  depende) entre ambientes.
+- **Credenciales/Tokens** -- se crean directo en cada ambiente, nunca
+  viajan con la promoción; activarlas/rotarlas/revocarlas es
+  independiente del ciclo del Endpoint. El alcance de acceso sigue
+  siendo por pertenencia (1 credencial = 1 Endpoint, ya implementado
+  en `ConsultaEndpointCredencial`, R19.1/R42-R46) -- confirmado con el
+  usuario, sin cambio de modelo ahí (se evaluó y se descartó pasar a
+  que un mismo token autorice varios Endpoints).
+
+**R67.** EL SISTEMA DEBE ofrecer un mecanismo para llevar la
+configuración de un Endpoint (nombre, método, ruta, parámetros, campos
+visibles/de alta) y la Consulta de la que depende (si todavía no
+existe en el destino) desde donde se construyó hacia cualquier
+ambiente donde deba responder, sin requerir que la pantalla de
+administración de Endpoints exista en ese ambiente.
+
+**R68.** CUANDO se lleve un Endpoint a un ambiente donde ya existe uno
+con el mismo nombre, EL SISTEMA DEBE reemplazar su configuración
+completa (incluyendo su estado borrador/publicado), nunca duplicarla.
+
+**R69.** EL SISTEMA NO DEBE incluir ninguna credencial existente como
+parte de lo que se traslada entre ambientes -- cada ambiente exige que
+sus credenciales se generen directamente ahí, nunca heredadas ni
+copiadas de otro.
+
+**R70.** Activar, rotar o revocar una credencial de un Endpoint DEBE
+ser independiente del ciclo borrador/publicado de ese Endpoint y de
+cualquier evento de promoción -- ninguna de las dos operaciones
+requiere ni provoca la otra.
+
+**R71.** CUANDO se elimine un Endpoint en el origen, EL SISTEMA DEBE
+ofrecer una forma explícita de reflejar esa baja en cualquier ambiente
+donde ya se había llevado -- mismo criterio que `mix motor.despublicar`
+ya exige para un catálogo borrado; esto deja huérfanas (y por lo tanto
+inválidas) las credenciales que dependían de ese Endpoint en ese
+ambiente.

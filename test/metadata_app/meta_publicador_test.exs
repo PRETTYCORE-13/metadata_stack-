@@ -8,6 +8,23 @@ defmodule MetadataApp.MetaPublicadorTest do
       assert {:error, mensaje} = MetaPublicador.armar_bundle(["catalogo_que_no_existe_nunca_jamas"])
       assert mensaje =~ "Ningún archivo encontrado"
     end
+
+    # SPEC-SYS-1009202602, design.md §13 (R67) -- rutas_de/1 (privada)
+    # ahora suma priv/repo/catalogos/<catalogo>.endpoint.json si existe.
+    # Se prueba indirecto vía armar_bundle/1: un catálogo sin NINGÚN otro
+    # archivo (.ex/meta/motor/plantillas/migración) pero CON un
+    # .endpoint.json ya no debe caer en "Ningún archivo encontrado".
+    test "incluye <catalogo>.endpoint.json si existe (aunque no haya ningún otro archivo)" do
+      nombre = "meta_publicador_endpoint_test_#{System.unique_integer([:positive])}"
+      archivo = Path.join("priv/repo/catalogos", "#{nombre}.endpoint.json")
+      File.write!(archivo, Jason.encode!(%{"catalogo" => nombre, "eliminado" => true}))
+      on_exit(fn -> File.rm(archivo) end)
+
+      case MetaPublicador.armar_bundle([nombre]) do
+        {:ok, bundle_path} -> File.rm(bundle_path)
+        {:error, mensaje} -> refute mensaje =~ "Ningún archivo encontrado"
+      end
+    end
   end
 
   # PATH vacío simula "gh"/"tar" no instalado o no en el PATH del proceso --

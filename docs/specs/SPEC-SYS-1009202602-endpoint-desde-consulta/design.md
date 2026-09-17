@@ -876,3 +876,148 @@ automáticamente el acceso de cualquier rol que ya tuviera
 atrás que usó `20260816014352` al separar Tepache) -- nadie pierde
 acceso a Endpoints que ya tenía por tener acceso a Business Process
 Builder.
+
+## 13. Publicar Endpoints entre ambientes (R67-R71, agregado 2026-09-17)
+
+### Decisión: reusar el pipeline de `mix motor.publicar`, no crear uno nuevo
+
+Un `ConsultaEndpoint` es metadata pura -- una fila de tabla, sin módulo
+Ecto compilado ni migración propia -- igual que la Consulta de la que
+depende (`schema_context_type: 3`, que "no tiene módulo Ecto propio",
+ver comentario de `CatalogoController.index/2`). El pipeline de
+catálogos YA exporta/importa metadata pura por este mismo camino:
+`mix meta.export` escribe `<catalogo>.meta.json`, ese archivo viaja
+adentro del bundle de `mix motor.publicar`, y
+`MetadataApp.Release.import_meta/0` lo lee de vuelta en el release
+target, después de `migrate/0`. Un Endpoint es un caso más de lo
+mismo -- no justifica un comando propio, ni un workflow de GitHub
+Actions aparte, ni tocar `bpb_habilitado` (la pantalla
+`Sysadmin.EndpointsLive` sigue sin existir en destino, y no hace
+falta que exista: nunca es ella la que escribe la fila ahí).
+
+**Tres correcciones sobre el borrador anterior, encontradas leyendo el
+código real (`ConsultaEndpoints.eliminar/1`, `MetaSchema.
+ConsultaEndpoint`, `MetaPublicador.persistir_bundle/2`) antes de
+implementar -- regla del proyecto, nunca asumir:**
+
+- `ConsultaEndpoints.eliminar/1` NO hace soft-delete: es un
+  `Repo.delete` real sobre el Header oculto que sostiene la Consulta
+  interna, con `on_delete: :delete_all` cascadeando a la Consulta, el
+  Endpoint y sus credenciales. `delete_guid` en `ConsultaEndpoint`
+  nunca se setea en la práctica (solo se LEE con `is_nil`, ver
+  `obtener_publicado/2`/`listar_todos/0`) -- no hay ninguna fila de la
+  que "exportar el borrado" después de eliminar. El plan original de
+  R71 (republicar y que el `delete_guid` viaje solo) no aplica acá.
+- `ConsultaEndpoint.empresa_id` es un id crudo de `Empresa`, no
+  portable entre bases -- cada ambiente tiene sus propias filas de
+  Empresa con sus propios ids. Exportarlo tal cual e insertarlo en
+  otro ambiente apuntaría a la empresa equivocada (o a ninguna).
+  Mismo problema que ya resolvió `MetaSchemaContext.exportar_header/2`
+  para el maestro de un catálogo detalle -- exporta
+  `schema_encabezado_catalogo` (el NOMBRE), nunca el id crudo. Acá se
+  aplica el mismo criterio: se exporta `empresa_nombre`, se resuelve
+  contra el destino al importar.
+- El tombstone de despublicar (punto 5) NO puede viajar en un release
+  de GitHub separado con el mismo tag `bc-<consulta>` que ya usa el
+  bundle NORMAL de esa Consulta -- `persistir_bundle/2` reemplaza
+  (`--clobber`) el asset entero de ese tag, y `ci.yml` restaura
+  SIEMPRE el último asset de cada `bc-*` en todo deploy futuro. Si el
+  tombstone reemplazara ese asset con SOLO el archivo de borrado, el
+  próximo deploy dejaría de recibir el `.ex`/migraciones/`.meta.json`
+  de la Consulta -- "despublicar el Endpoint" terminaría
+  "despublicando la Consulta entera" por accidente. Corregido: el
+  tombstone viaja DENTRO del mismo bundle completo de siempre (mismo
+  tag, sin reemplazar nada de lo demás) -- ver punto 5.
+
+### Piezas nuevas
+
+1. **Export** -- `mix endpoint.export` (tarea nueva, mismo patrón que
+   `meta.export`): por cada Consulta que tenga un `ConsultaEndpoint`
+   VIVO, escribe `priv/repo/catalogos/<consulta>.endpoint.json` con
+   `catalogo` (el nombre de la Consulta -- mismo motivo que ya usan
+   `.motor.json`/`.plantillas.json`: `leer_json/2` descarta el nombre
+   de archivo, así que el nombre tiene que viajar DENTRO del JSON),
+   nombre/método/ruta/parámetros/campos_alta/renglones_alta/estado y
+   **`empresa_nombre`** (resuelto desde `empresa_id` vía `Repo.get!
+   (Empresa, ...).nombre`, nunca el id crudo). Nunca serializa nada de
+   `ConsultaEndpointCredencial` (R69) -- esa tabla ni se toca acá.
+   Mismo criterio que `meta.export`: sincroniza el directorio, borra
+   el `.endpoint.json` huérfano de una Consulta que ya no tiene
+   Endpoint -- EXCEPTO si el contenido actual del archivo ya es el
+   tombstone del punto 5 (`"eliminado": true`): ESE nunca se borra ni
+   se regenera acá, es responsabilidad exclusiva de `mix
+   endpoint.despublicar`.
+
+2. **Import** -- `MetaImportExport.importar_endpoint/1`, llamada desde
+   `MetadataApp.Release.import_meta/0` junto a `importar_meta/1`,
+   `importar_motor/1` e `importar_plantillas/1` (en ESE orden --
+   necesita que el header de la Consulta ya exista). Por cada
+   `<consulta>.endpoint.json` encontrado: resuelve el header por
+   nombre, resuelve `empresa_nombre` contra la tabla `Empresa` DEL
+   DESTINO (si no existe ninguna con ese nombre ahí, mensaje de error
+   explícito y ese archivo se salta -- mismo criterio tolerante que
+   `importar_contexto_tolerante/1`, un endpoint roto no tumba el resto
+   del import) y hace `ConsultaEndpoints.crear_o_actualizar/2` (ya
+   existe, B1) -- upsert por `meta_schema_consulta_id` (único, R8),
+   reemplaza la fila completa (R68).
+
+3. **Bundle** -- `MetaPublicador.rutas_de/1` suma
+   `priv/repo/catalogos/#{catalogo}.endpoint.json` a la lista de
+   archivos, con el mismo filtro `File.exists?/1` que ya usan
+   `meta`/`motor`/`plantillas` -- se incluye solo si existe, cero
+   cambio de comportamiento para un catálogo sin endpoint.
+
+4. **CLI publicar** -- `Mix.Tasks.Motor.Publicar.publicar/2` suma
+   `Mix.Task.rerun("endpoint.export")` a la cadena de exports que ya
+   corre antes de armar el bundle.
+
+5. **Despublicar (corregido dos veces: sin migración de DROP que
+   reusar, Y sin poder tocar el release `bc-<consulta>` como un
+   reemplazo total)** -- `mix endpoint.despublicar --sistema=<sistema>
+   <consulta>` (tarea nueva). Exige que el Endpoint YA esté borrado
+   local (`ConsultaEndpoints.obtener_por_consulta/1` == `nil` para esa
+   Consulta) -- si todavía existe, error explícito ("usá
+   `motor.publicar` para lo que sí existe"). Escribe a mano el
+   tombstone `priv/repo/catalogos/<consulta>.endpoint.json` =
+   `{"catalogo": "<consulta>", "eliminado": true}`, y ahí termina su
+   trabajo propio: delega el resto en `Mix.Task.rerun("motor.publicar",
+   ["--sistema=#{sistema}", consulta])` -- el pipeline normal
+   (validar/gen.catalogos/meta.export/motor.export/plantillas.export/
+   armar_bundle/persistir_bundle/disparar_deploy) corre sin cambios,
+   con el tombstone viajando DENTRO del mismo bundle completo de la
+   Consulta (mismo tag `bc-<consulta>`, todo lo demás intacto). Que
+   `endpoint.export` (que corre como parte de ESE mismo
+   `motor.publicar`) no borre el tombstone recién escrito lo garantiza
+   la excepción del punto 1. `importar_endpoint/1` (punto 2), al ver
+   `"eliminado" => true` en vez de la forma normal, hace `Repo.delete`
+   real del `ConsultaEndpoint` del destino si existe (nunca error si
+   ya no existía -- despublicar dos veces es idempotente, mismo
+   criterio que el resto del proyecto).
+
+### Cómo quedan resueltos R67-R71
+
+- **R67** -- `mix motor.publicar --sistema=<sistema> <consulta>` (el
+  MISMO comando que ya existe para cualquier catálogo) alcanza: la
+  fila llega vía `import_meta`, sin que `/sysadmin/endpoints` tenga
+  que existir en destino.
+- **R68** -- `crear_o_actualizar/2` (upsert por
+  `meta_schema_consulta_id`), nunca un insert ciego que duplique.
+- **R69** -- satisfecho por construcción: el export nunca lee ni
+  escribe nada de `ConsultaEndpointCredencial`.
+- **R70** -- consecuencia directa de R69: como la credencial nunca
+  viaja, activarla/rotarla/revocarla en destino es un acto puramente
+  local ahí (vía `/sysadmin/endpoints` DE ESE ambiente), sin relación
+  con publicar.
+- **R71** -- `mix endpoint.despublicar --sistema=<sistema> <consulta>`
+  (comando nuevo, chico, mismo estilo que `motor.despublicar` ya
+  existente para catálogos) -- necesario porque, a diferencia de lo
+  que se asumió en el primer borrador, acá no hay un `delete_guid`
+  real que viaje solo.
+
+### Riesgo conocido, fuera de esta ronda
+
+Si la Consulta ENTERA se borra vía `mix motor.despublicar` (borra el
+catálogo real del que depende la Consulta, no el Endpoint en sí), ese
+task hoy no sabe de `<consulta>.endpoint.json` -- quedaría un archivo
+huérfano sin efecto real. Cosmético, no peligroso; sumarlo a
+`despublicar.ex` queda para una vuelta futura si llega a molestar.
