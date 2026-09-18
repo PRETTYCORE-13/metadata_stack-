@@ -22,6 +22,7 @@ defmodule MetadataApp.MetaImportExport do
   alias MetadataApp.MetaConsultas
   alias MetadataApp.ConsultaEndpoints
   alias MetadataApp.Autenticacion.Empresa
+  alias MetadataApp.MetaSchema.Consulta
   alias MetadataApp.Repo
 
   @doc "Importa cada `*.meta.json` de `dir` — crea el Header+Detalles si el catálogo no existe todavía; si ya existe, sincroniza campos nuevos que no tenía."
@@ -918,11 +919,13 @@ defmodule MetadataApp.MetaImportExport do
   end
 
   defp importar_endpoint_datos(%{"catalogo" => nombre} = datos) do
-    case MetaConsultas.obtener_por_catalogo(nombre) do
+    case MetaSchemaContext.obtener_header_por_nombre(nombre) do
       nil ->
-        "- #{nombre}: consulta no encontrada, saltado (¿faltó importar_meta antes?)"
+        "- #{nombre}: header no encontrado, saltado (¿faltó importar_meta antes?)"
 
-      consulta ->
+      header ->
+        consulta = asegurar_consulta(header, datos)
+
         case resolver_empresa_por_nombre(datos["empresa_nombre"]) do
           {:error, mensaje} ->
             "! #{nombre} endpoint: #{mensaje}"
@@ -937,6 +940,35 @@ defmodule MetadataApp.MetaImportExport do
               {:error, changeset} -> raise "Error importando endpoint de #{nombre}: #{inspect(changeset.errors)}"
             end
         end
+    end
+  end
+
+  # Corregido en vivo (2026-09-17): mix meta.export/importar_meta (el
+  # mecanismo genérico preexistente) solo maneja Header+Detail, NUNCA
+  # `meta_schema_consulta` -- MetaConsultas.obtener_por_catalogo/1
+  # seguía dando nil en destino aunque el header ya hubiera llegado
+  # bien ("consulta no encontrada", visto real en el log de
+  # bc-deploy.yml). Acá se crea/actualiza esa fila a mano con lo que
+  # ya trae el `.endpoint.json` (catalogo_base/campos/joins/orden_por,
+  # agregados a exportar_endpoint/2 por el mismo motivo).
+  defp asegurar_consulta(header, datos) do
+    attrs = %{
+      "meta_schema_header_id" => header.id,
+      "catalogo_base" => datos["catalogo_base"],
+      "campos" => datos["campos"] || [],
+      "joins" => datos["joins"] || [],
+      "orden_por" => datos["orden_por"] || []
+    }
+
+    resultado =
+      case MetaConsultas.obtener_por_header_id(header.id) do
+        nil -> %Consulta{} |> Consulta.changeset(attrs) |> Repo.insert()
+        existente -> existente |> Consulta.changeset(attrs) |> Repo.update()
+      end
+
+    case resultado do
+      {:ok, consulta} -> consulta
+      {:error, changeset} -> raise "Error creando/actualizando la Consulta de #{header.schema_context_name}: #{inspect(changeset.errors)}"
     end
   end
 

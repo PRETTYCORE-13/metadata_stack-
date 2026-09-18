@@ -895,10 +895,26 @@ Actions aparte, ni tocar `bpb_habilitado` (la pantalla
 `Sysadmin.EndpointsLive` sigue sin existir en destino, y no hace
 falta que exista: nunca es ella la que escribe la fila ahí).
 
-**Tres correcciones sobre el borrador anterior, encontradas leyendo el
-código real (`ConsultaEndpoints.eliminar/1`, `MetaSchema.
-ConsultaEndpoint`, `MetaPublicador.persistir_bundle/2`) antes de
-implementar -- regla del proyecto, nunca asumir:**
+**Cuatro correcciones sobre el borrador anterior -- las primeras tres
+encontradas leyendo el código real antes de implementar, la cuarta
+recién en la prueba end-to-end contra `unstable` (regla del proyecto,
+nunca asumir):**
+
+- **`mix meta.export`/`importar_meta` (mecanismo genérico preexistente,
+  no escrito para esta spec) solo maneja Header+Detail -- NUNCA toca
+  `meta_schema_consulta`.** Hallazgo real, log de `bc-deploy.yml`: el
+  header de un Endpoint llegaba bien (`+ ...: creado`) pero
+  `MetaConsultas.obtener_por_catalogo/1` seguía devolviendo `nil` en
+  destino, y el Endpoint nunca se creaba (`- ...: consulta no
+  encontrada`). Nadie había publicado una Consulta antes de esta spec,
+  así que este hueco de la plataforma nunca se había notado.
+  Corregido DENTRO del mecanismo de Endpoints (sin tocar el
+  `meta.export`/`.meta.json` genérico, que no lo necesita para nada
+  más hoy): `exportar_endpoint/2` suma
+  `catalogo_base`/`campos`/`joins`/`orden_por` de la Consulta al
+  `.endpoint.json`, y `importar_endpoint/1` crea o actualiza esa fila
+  a mano (`asegurar_consulta/2`) ANTES de resolver la Empresa y crear
+  el `ConsultaEndpoint`.
 
 - `ConsultaEndpoints.eliminar/1` NO hace soft-delete: es un
   `Repo.delete` real sobre el Header oculto que sostiene la Consulta

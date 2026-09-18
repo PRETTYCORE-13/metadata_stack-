@@ -128,12 +128,22 @@ defmodule MetadataApp.ConsultaEndpoints do
   Devuelve el nombre de la Consulta (mismo valor que
   `MetaSchemaContext.exportar_header/2`, para poder sincronizar
   huérfanos con el mismo criterio que `mix meta.export`).
+
+  **Corregido en vivo (2026-09-17)**: también exporta
+  `catalogo_base`/`campos`/`joins`/`orden_por` de la Consulta interna
+  -- `mix meta.export`/`importar_meta` (el mecanismo genérico
+  preexistente) solo maneja Header+Detail, NUNCA toca
+  `meta_schema_consulta`. Sin esto, el header llegaba a destino pero
+  `MetaConsultas.obtener_por_catalogo/1` seguía sin encontrar nada ahí
+  y el Endpoint nunca se creaba ("consulta no encontrada", visto real
+  en el log de `bc-deploy.yml`).
   """
   def exportar_endpoint(%ConsultaEndpoint{} = endpoint, dir \\ "priv/repo/catalogos") do
     File.mkdir_p!(dir)
     endpoint = Repo.preload(endpoint, consulta: :header)
     empresa = Repo.get!(Empresa, endpoint.empresa_id)
-    nombre_consulta = endpoint.consulta.header.schema_context_name
+    consulta = endpoint.consulta
+    nombre_consulta = consulta.header.schema_context_name
 
     contenido =
       Jason.encode!(
@@ -148,7 +158,11 @@ defmodule MetadataApp.ConsultaEndpoints do
           permite_alta: endpoint.permite_alta,
           campos_alta: endpoint.campos_alta,
           renglones_alta: endpoint.renglones_alta,
-          empresa_nombre: empresa.nombre
+          empresa_nombre: empresa.nombre,
+          catalogo_base: consulta.catalogo_base,
+          campos: consulta.campos,
+          joins: consulta.joins,
+          orden_por: consulta.orden_por
         },
         pretty: true
       )
