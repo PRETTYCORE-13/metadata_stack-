@@ -55,6 +55,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # BUG REAL encontrado en vivo (2026-09-17): a diferencia de
+      # build-image en ci.yml (que SÍ restaura todos los "bc-*" antes de
+      # armar la imagen, ver el comentario largo ahí), este workflow solo
+      # extraía el bundle de ESTE publish -- publicar un catálogo nuevo
+      # armaba una imagen que NO incluía el código ya compilado de
+      # catálogos publicados antes (nunca viven en el checkout de `main`,
+      # ver docs/roadmap.md). Síntoma real reportado: publicar
+      # pty_ch_empleados anduvo bien, publicar otro BC después dejó la
+      # tabla de Empleados visualmente vacía (columnas SÍ se ven porque
+      # su metadata sigue en la base, pero MetaSchemaContext.
+      # modulo_por_nombre/1 devuelve `nil` en vez de crashear cuando el
+      # módulo Ecto no está compilado en el release actual -- se ve como
+      # "sin datos", no como un error). Mismo fix que ci.yml: restaurar
+      # TODOS los "bc-*" ANTES de extraer el bundle de este publish
+      # puntual (que se extrae DESPUÉS, para que la versión recién
+      # armada de ESTE catálogo gane si por algo difiriera de su propio
+      # Release ya persistido).
+      - name: Restaurar BCs publicados (bc-*) para que este deploy no los olvide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TAGS=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[] | select(.tagName | startswith("bc-")) | .tagName')
+
+          if [ -z "$TAGS" ]; then
+            echo "Ningún BC publicado todavía -- nada que restaurar."
+          else
+            for tag in $TAGS; do
+              echo "== restaurando $tag =="
+              gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern '*.tar.gz' --output "/tmp/$tag.tar.gz" --clobber
+              tar xzf "/tmp/$tag.tar.gz"
+              rm "/tmp/$tag.tar.gz"
+            done
+            echo "--- BCs restaurados sobre el checkout ---"
+            git status --porcelain
+          fi
+
       - name: Extraer el bundle del BC sobre el checkout del BPB
         run: |
           echo "${{ inputs.bundle_b64 }}" | base64 -d > /tmp/bc-bundle.tar.gz
