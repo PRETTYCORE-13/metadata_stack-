@@ -23,14 +23,14 @@ siguiente. Se implementa con "seguí tasks.md, tarea N".
 
 ## Grupo B — Verificación real con el caso que motivó esto
 
-- [ ] **B1.** Generar la migración para `historico`:
+- [x] **B1.** Generar la migración para `historico`:
       ```
       mix motor.generar_drop_huerfano historico --confirmar=historico
       ```
       Confirmar que corre limpio en local (no hay tabla `historico`
       física local que romper, o si la hay, que se dropea sin error).
 
-- [ ] **B2.** Propagar a `unstable`, reusando `motor.despublicar` SIN
+- [x] **B2.** Propagar a `unstable`, reusando `motor.despublicar` SIN
       NINGÚN CAMBIO:
       ```
       mix motor.despublicar --sistema=unstable historico
