@@ -691,7 +691,9 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
         modal_nueva_credencial_abierto={@modal_nueva_credencial_abierto} parametros_elegibles={@parametros_elegibles_endpoint}
         campos_visibles={@campos_visibles_endpoint} campos_reales_alta={@campos_reales_alta} catalogos_detalle_alta={@catalogos_detalle_alta}
         endpoint_resultado_prueba={@endpoint_resultado_prueba}
-        endpoint_error_prueba={@endpoint_error_prueba} prefijo={@prefijo} />
+        endpoint_error_prueba={@endpoint_error_prueba} prefijo={@prefijo} bpb_habilitado={@bpb_habilitado}
+        sistemas_disponibles={@sistemas_disponibles} ambiente_sistema={@ambiente_sistema}
+        ambiente_procesando?={@ambiente_procesando?} ambiente_error={@ambiente_error} />
     </div>
     """
   end
@@ -836,6 +838,11 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
   attr :endpoint_resultado_prueba, :map, default: nil
   attr :endpoint_error_prueba, :string, default: nil
   attr :prefijo, :string, required: true
+  attr :bpb_habilitado, :boolean, default: false
+  attr :sistemas_disponibles, :list, default: []
+  attr :ambiente_sistema, :string, default: nil
+  attr :ambiente_procesando?, :boolean, default: false
+  attr :ambiente_error, :string, default: nil
 
   defp vista_editar(assigns) do
     activos = if assigns.endpoint, do: MapSet.new(assigns.endpoint.parametros, & &1["campo"]), else: MapSet.new()
