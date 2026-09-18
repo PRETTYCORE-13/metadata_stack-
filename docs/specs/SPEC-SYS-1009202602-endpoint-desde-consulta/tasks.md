@@ -913,7 +913,7 @@ cualquier ambiente.
       particular `endpoints_live_test.exs` (corre con
       `bpb_habilitado = true` en `:test`, no debería cambiar nada ahí).
 
-- [ ] **R5.** Verificación end-to-end real: en `unstable`,
+- [x] **R5.** Verificación end-to-end real: en `unstable`,
       `/sysadmin/endpoints` ya NO muestra "+ Nuevo endpoint" ni
       "Eliminar", y al entrar a "Configurar" un endpoint solo se ven
       Credenciales + Documentación (con el aviso de "solo se edita en
