@@ -54,6 +54,19 @@ Datos (`alcance_habilitado`), columnas de control
 (`schema_es_transaccional`/`requiere_folio`), visibilidad
 (`schema_visible`).
 
+R4a. **Agregado 2026-09-18, bug real encontrado probando "Copiar" sobre
+un catálogo transaccional ("Clusters")**: `codigo_trn` es único por
+catálogo (constraint de base) y obligatorio cuando
+`schema_es_transaccional: true` — CUANDO el original es transaccional,
+EL SISTEMA DEBE generarle al clon un `codigo_trn` NUEVO (nunca copiar
+el del original, chocaría contra el unique constraint) — mismo
+mecanismo que ya usa "Nuevo catálogo" (aleatorio de 4
+letras/dígitos, reintentando unas pocas veces si choca contra uno ya
+usado por otro catálogo). `requiere_folio` no necesita nada
+adicional acá — la asignación real de un perfil de folio es
+configuración posterior aparte (Administrador de Folios), no un
+requisito de creación del Header.
+
 ## 4. Qué se clona de los campos (Detalles)
 
 R5. EL SISTEMA DEBE clonar todos los campos de negocio del original,

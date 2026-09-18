@@ -4,7 +4,7 @@ defmodule MetadataApp.MetaClonador do
   (SPEC-SYS-1809202602) — clona header + detalles + autómata (si lo
   tiene), renombrando el prefijo propio de cada campo, y genera la
   tabla física + plantilla automática con el mismo camino que ya usa
-  "Nuevo catálogo" (`MetaEstadosAdmin.crear_proceso_completo/1` +
+  "Nuevo catálogo" (`MetaEstadosAdmin.insertar_proceso/1` +
   `CatalogoGenerador.generar/1`).
 
   Alcance v1 (`design.md` §1): solo catálogos maestro simples --
@@ -25,7 +25,7 @@ defmodule MetadataApp.MetaClonador do
   """
   def clonar(nombre_original, atributos_nuevos) do
     with {:ok, attrs_base} <- construir_plan(nombre_original, atributos_nuevos),
-         {:ok, %{header: header_nuevo}} <- crear(attrs_base),
+         {:ok, %{header: header_nuevo}} <- crear_con_reintento(attrs_base),
          {:ok, _resultado} <- CatalogoGenerador.generar(header_nuevo.schema_context_name) do
       {:ok, header_nuevo}
     else
@@ -204,6 +204,46 @@ defmodule MetadataApp.MetaClonador do
   # original que nunca adoptó el motor de estados se clona igual de "sin
   # motor" (R10 de requirements.md), sin inventarle un autómata para
   # pasar esa regla.
+  #
+  # Bug real (2026-09-18, R4a): copiar "Clusters" (transaccional) sin
+  # esto rechazaba con "codigo_trn: es obligatorio para un catálogo
+  # transaccional" -- armar_attrs/4 clona schema_es_transaccional pero
+  # nunca puede clonar codigo_trn (único por catálogo, copiar el del
+  # original chocaría contra su unique_constraint de todos modos).
+  # Mismo mecanismo que BcNuevoCompletoLive.crear_con_reintento_codigo_trn/2
+  # + generar_codigo_trn_aleatorio/0: generar uno aleatorio, reintentar
+  # solo si el error es justo ESE choque (nunca a ciegas ante cualquier
+  # otro error real).
+  @intentos_codigo_trn 5
+
+  defp crear_con_reintento(%{"header" => %{"schema_es_transaccional" => true}} = attrs_base) do
+    crear_con_reintento(attrs_base, 1)
+  end
+
+  defp crear_con_reintento(attrs_base), do: crear(attrs_base)
+
+  defp crear_con_reintento(attrs_base, intento) do
+    attrs = put_in(attrs_base, ["header", "codigo_trn"], generar_codigo_trn_aleatorio())
+
+    case crear(attrs) do
+      {:error, :header, changeset, _cambios} = error ->
+        if intento < @intentos_codigo_trn and Keyword.has_key?(changeset.errors, :codigo_trn) do
+          crear_con_reintento(attrs_base, intento + 1)
+        else
+          error
+        end
+
+      resultado ->
+        resultado
+    end
+  end
+
+  defp generar_codigo_trn_aleatorio do
+    1..4
+    |> Enum.map(fn _ -> Enum.random(~c"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") end)
+    |> List.to_string()
+  end
+
   defp crear(attrs_base), do: MetaEstadosAdmin.insertar_proceso(attrs_base)
 
   defp formatear_error(%Ecto.Changeset{} = changeset) do

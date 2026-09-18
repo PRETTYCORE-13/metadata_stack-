@@ -48,9 +48,18 @@ Pasos internos de `clonar/2`:
    `validar_nav_libre/1`) — mismo mensaje de error, misma UX que
    "Nuevo catálogo".
 3. **Armar `attrs_base`** con `renombrar_para_clon/3` (§3) sobre
-   detalles + estados + transiciones del original.
-4. **Crear** con `MetaEstadosAdmin.crear_proceso_completo/1` (mismo
-   que usa `BcNuevoCompletoLive`) — todo o nada, transaccional.
+   detalles + estados + transiciones del original. `codigo_trn`
+   queda `nil` en este paso a propósito (nunca el del original,
+   R4a) — se genera recién en el paso 4.
+4. **Crear** con `MetaEstadosAdmin.insertar_proceso/1` (§2a) — todo o
+   nada, transaccional. CUANDO `schema_es_transaccional: true`
+   (R4a), envuelto en `crear_con_reintento/2`: genera un
+   `codigo_trn` aleatorio (4 letras/dígitos, mismo alfabeto y mismo
+   límite de 5 intentos que `BcNuevoCompletoLive.generar_codigo_trn_aleatorio/0`
+   + `crear_con_reintento_codigo_trn/2`) y reintenta SOLO si el error
+   es específicamente `unique_constraint(:codigo_trn)` — cualquier
+   otro error de `insertar_proceso/1` corta al primer intento, nunca
+   reintenta a ciegas un error real.
 5. **Generar físico**: `CatalogoGenerador.generar(nombre_nuevo)` —
    migración + módulo Ecto + corre la migración + plantilla
    automática (R11/R12). Si falla ACÁ (después de 4), el header ya

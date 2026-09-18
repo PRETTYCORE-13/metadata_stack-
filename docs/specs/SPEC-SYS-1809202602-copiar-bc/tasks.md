@@ -1,6 +1,6 @@
 # SPEC-SYS-1809202602 — Copiar un BC desde BC List
 
-**Documento:** Tasks · **Fase:** ✅ completa (2026-09-18) — Grupos A-E, código+tests+verificación real, todo pasando.
+**Documento:** Tasks · **Fase:** ✅ completa (2026-09-18) — Grupos A-F, código+tests+verificación real, todo pasando.
 
 ## Grupo A — `MetadataApp.MetaClonador` (núcleo puro + orquestación) ✅
 
@@ -156,3 +156,33 @@ lo use directo.
       (real, ver R8) sigue sin clonarse — fuera de alcance v1, un
       admin puede agregarla a mano con una migración propia si hace
       falta.
+
+## Grupo F — Bug real: `codigo_trn` en un catálogo transaccional (R4a)
+
+Encontrado probando "Copiar" en vivo sobre "Clusters"
+(`pty_dsd_cs_cluster`, transaccional): `codigo_trn: es obligatorio
+para un catálogo transaccional` — `armar_attrs/4` copiaba
+`schema_es_transaccional: true` pero nunca generaba un `codigo_trn`
+(y copiar el del original habría chocado contra su unique
+constraint de todos modos).
+
+- [x] F1. `MetaClonador.crear_con_reintento/1,2` + `generar_codigo_trn_aleatorio/0`
+      (privadas) — cuando `schema_es_transaccional: true`, genera un
+      `codigo_trn` aleatorio antes de `insertar_proceso/1`,
+      reintentando hasta 5 veces SOLO si el error es
+      `unique_constraint(:codigo_trn)` (cualquier otro error corta al
+      primer intento) — mismo mecanismo que
+      `BcNuevoCompletoLive.crear_con_reintento_codigo_trn/2`.
+- [ ] F2. **Sin test automatizado a propósito** — el retry vive en
+      `crear_con_reintento/1,2`, que solo se ejecuta como parte de
+      `clonar/2` completo (con `CatalogoGenerador.generar/1`, DDL) —
+      no hay forma de aislarlo sin pasar por ahí, mismo motivo que ya
+      excluyó el happy path de cobertura automatizada en D1/D2.
+      Cubierto por F3 (verificación real).
+- [x] F3. Verificado en vivo (4 corridas, `pty_e2e_trn_<sufijo>` →
+      `pty_e2e_trn_copia_<sufijo>`, catálogo descartable, limpiado
+      después): el clon queda con `schema_es_transaccional: true` +
+      un `codigo_trn` propio, válido (`~r/^[A-Z0-9]{4}$/`) y distinto
+      del original en las 4 corridas. Cero residuo. El "Clusters"
+      real de la captura del usuario ya puede reintentarse desde la
+      UI.
