@@ -583,34 +583,17 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   defp formatear_error_creacion({:error, _paso, motivo, _cambios}) when is_binary(motivo), do: motivo
   defp formatear_error_creacion(_), do: "No se pudo crear el Business Process."
 
-  @identificador ~r/^[a-z][a-z0-9_]{0,49}$/
-  @nav ~r/^\/[a-z0-9\-\/]{0,49}$/
-
+  # nombre/nav (regex + nav libre) viven en MetaSchemaContext desde
+  # SPEC-SYS-1809202602 -- "Copiar" (MetaClonador) usa el MISMO criterio,
+  # sin duplicar el regex/mensaje en dos lugares que podrían
+  # desincronizarse. La etiqueta sigue acá: es específica del placeholder
+  # de ESTE wizard ("Catálogo de ..."), "Copiar" pre-carga la etiqueta real
+  # del original, no un placeholder que defender.
   defp validar_contexto(nombre, nav, etiqueta) do
-    with :ok <- validar_regex(nombre, @identificador, "Nombre de sistema"),
-         :ok <- validar_regex(nav, @nav, "Navegación"),
-         :ok <- validar_completado(etiqueta, "Catálogo de", "Etiqueta") do
-      validar_nav_libre(nav)
-    end
-  end
+    nombre_sistema = nombre_sistema_desde(nombre)
 
-  defp validar_regex(valor, regex, etiqueta) do
-    if valor && Regex.match?(regex, valor) do
-      :ok
-    else
-      {:error, "#{etiqueta} inválido: '#{valor}'. Debe cumplir el formato requerido."}
-    end
-  end
-
-  # Mismo chequeo que el de "Editar encabezado" en BcMotorLive — acá
-  # aplicado antes de crear, para que crear un catálogo nuevo no pueda
-  # pisar silenciosamente la ruta de uno que ya existe (ver
-  # construir_arbol/1: un nav duplicado hace que uno de los dos
-  # "desaparezca" del menú, aunque siga vivo en la base).
-  defp validar_nav_libre(nav) do
-    case MetaSchemaContext.obtener_header_por_nav(nav) do
-      nil -> :ok
-      _otro -> {:error, "Esa ruta de navegación ya la usa otro catálogo o carpeta — elegí otra."}
+    with :ok <- MetaSchemaContext.validar_nombre_y_nav(nombre_sistema, nav) do
+      validar_completado(etiqueta, "Catálogo de", "Etiqueta")
     end
   end
 
@@ -619,24 +602,9 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     if resto == "", do: {:error, "#{etiqueta} no puede quedarse solo con el valor por default."}, else: :ok
   end
 
-  defp nombre_sistema_desde(nombre) do
-    n = normalizar_identificador(nombre)
-    if n == "", do: "", else: String.slice("pty_#{n}", 0, 50)
-  end
+  defdelegate nombre_sistema_desde(nombre), to: MetaSchemaContext
 
-  # El segmento de nav se deriva del mismo "nombre" que arma el nombre de
-  # sistema — normalizar_identificador ya lo deja en minúsculas/sin
-  # acentos/solo [a-z0-9_]; para nav se usan guiones en vez de guion_bajo
-  # (convención de URL ya establecida en el resto de la app).
-  defp componer_nav(carpeta_padre, nombre) do
-    segmento = normalizar_identificador(nombre) |> String.replace("_", "-")
-
-    cond do
-      segmento == "" -> ""
-      carpeta_padre in [nil, ""] -> "/" <> segmento
-      true -> String.slice("/" <> carpeta_padre <> "/" <> segmento, 0, 50)
-    end
-  end
+  defdelegate componer_nav(carpeta_padre, nombre), to: MetaSchemaContext
 
   defp detalle_attrs(c) do
     propiedades =
