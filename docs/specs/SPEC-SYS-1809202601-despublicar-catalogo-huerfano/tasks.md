@@ -39,8 +39,11 @@ siguiente. Se implementa con "seguí tasks.md, tarea N".
       desaparecen, `/historico` deja de dar `Ecto.MultipleResultsError`
       y navega a `pty_h_historico` sin ambigüedad.
 
-- [ ] **B3.** Commitear la migración generada a git (no es `pty_*`, no
+- [x] **B3.** Commitear la migración generada a git (no es `pty_*`, no
       está gitignored) -- así llega a `testing`/`stable` por promoción
       normal, no solo a `unstable`.
 
-- [ ] **B4.** Suite completa (`mix test`) sin regresiones.
+- [x] **B4.** Suite completa (`mix test`) sin regresiones. Verificado
+      por el job `Test` de CI en verde (commit `f969fbd`/merge
+      `e216ceb`), junto con el deploy normal a `unstable` -- ambos
+      limpios.
