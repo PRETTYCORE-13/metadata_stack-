@@ -81,6 +81,17 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   calculados EXCLUSIVAMENTE sobre lo seleccionado, configurable por
   catálogo/Consulta, independiente del "Total general" ya existente
   (implementado, Grupos A-F completos).
+- [`SPEC-SYS-1009202602-endpoint-desde-consulta/`](SPEC-SYS-1009202602-endpoint-desde-consulta/) —
+  expone una Consulta (Reporte) como API HTTP propia bajo un prefijo
+  reservado, con API key propia por endpoint (sin atarla a ningún
+  Usuario). Implementado, y luego extendido en vivo (R67-R76) con
+  publicar/despublicar un Endpoint entre ambientes por CLI
+  (`mix endpoint.export`/`endpoint.despublicar`, reusando
+  `MetaPublicador` directo — nunca `motor.publicar`, que exige el
+  header vivo), `/sysadmin/endpoints` disponible en cualquier ambiente,
+  botones sin terminal para publicar/despublicar, y autoría (crear/
+  editar el endpoint) restringida a local — credenciales y
+  documentación quedan universales.
 - [`SPEC-TEST-1509202601-seed-masterdata/`](SPEC-TEST-1509202601-seed-masterdata/) —
   herramienta de developer mode (`mix seed.vaciar`/`seed.cargar`/
   `seed.reset`) para reiniciar y repoblar catálogos `pty_*`/
@@ -112,6 +123,17 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   perder el filtro al elegir un catálogo/asignar un permiso (el texto
   buscado viaja como query param `?q=` en vez de perderse en el
   remount) + comodín `*` para listar sin substring — ver `tasks.md`.
+- [`SPEC-SYS-1809202601-despublicar-catalogo-huerfano/`](SPEC-SYS-1809202601-despublicar-catalogo-huerfano/) —
+  mecanismo general para borrar un catálogo "huérfano" (vivo en algún
+  ambiente desplegado, ausente en TODOS lados local — típico de un
+  rename hecho en el mismo registro en vez de crear+eliminar):
+  `mix motor.generar_drop_huerfano <catalogo> --confirmar=<catalogo>`
+  genera y corre local la migración de DROP sin exigir header local,
+  y `mix motor.despublicar` (sin ningún cambio) la propaga a un
+  ambiente puntual. Implementado y verificado en vivo contra `unstable`
+  con dos casos reales (`historico`, el caso que lo motivó, y de paso
+  `pty_dsd_mat_material_precios`, un catálogo huérfano ajeno que
+  bloqueaba todos los deploys).
 - [`SPEC-SYS-1809202602-copiar-bc/`](SPEC-SYS-1809202602-copiar-bc/) —
   acción "Copiar" en BC List (junto a Editar/Eliminar) para clonar un
   catálogo maestro simple bajo un nombre nuevo: campos, autómata (si
