@@ -5,14 +5,14 @@ siguiente. Se implementa con "seguí tasks.md, tarea N".
 
 ## Grupo A — Generar la migración de DROP sin header local (R1, R3, R5)
 
-- [ ] **A1.** `CatalogoGenerador.generar_migracion_drop/1` (pública) --
+- [x] **A1.** `CatalogoGenerador.generar_migracion_drop/1` (pública) --
       se extrae el cuerpo de la `crear_migracion_drop/1` privada tal
       cual (sin exigir un header local), `eliminar/4` pasa a llamarla
       en vez de tener su propia copia. Verificable: `mix test`
       sobre los tests existentes de `CatalogoGenerador.eliminar/4`
       sigue pasando igual (mismo comportamiento, solo reorganizado).
 
-- [ ] **A2.** `mix motor.generar_drop_huerfano <catalogo>
+- [x] **A2.** `mix motor.generar_drop_huerfano <catalogo>
       --confirmar=<catalogo>` -- rechaza si el catálogo existe local
       (apunta a "BC List → Eliminar"), rechaza si `--confirmar` no
       coincide con `<catalogo>`, si no genera la migración y la corre
