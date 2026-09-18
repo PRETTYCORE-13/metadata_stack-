@@ -637,7 +637,8 @@ defmodule MetadataApp.MetaImportExportTest do
         "metodo" => "get",
         "ruta" => "reporte-#{unique()}",
         "estado" => "publicado",
-        "empresa_nombre" => empresa.nombre
+        "empresa_nombre" => empresa.nombre,
+        "catalogo_base" => "meta_fixture_cliente"
       })
 
       mensajes = MetaImportExport.importar_endpoint(dir)
@@ -664,7 +665,8 @@ defmodule MetadataApp.MetaImportExportTest do
         "metodo" => "get",
         "ruta" => "reporte-#{unique()}",
         "estado" => "borrador",
-        "empresa_nombre" => empresa.nombre
+        "empresa_nombre" => empresa.nombre,
+        "catalogo_base" => "meta_fixture_cliente"
       }
 
       escribir_endpoint_json(dir, atributos)
@@ -694,7 +696,8 @@ defmodule MetadataApp.MetaImportExportTest do
         "metodo" => "get",
         "ruta" => "reporte-#{unique()}",
         "estado" => "borrador",
-        "empresa_nombre" => "Empresa que no existe #{unique()}"
+        "empresa_nombre" => "Empresa que no existe #{unique()}",
+        "catalogo_base" => "meta_fixture_cliente"
       })
 
       mensajes = MetaImportExport.importar_endpoint(dir)
