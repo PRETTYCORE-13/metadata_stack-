@@ -531,6 +531,90 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     )
   end
 
+  # --- Validación de nombre/nav compartida ("Nuevo catálogo" y "Copiar",
+  # SPEC-SYS-1809202602) -- movidos acá desde BcNuevoCompletoLive para que
+  # los dos caminos de creación usen EXACTAMENTE el mismo criterio, sin
+  # duplicar el regex/mensaje en dos lugares que podrían desincronizarse.
+
+  @identificador ~r/^[a-z][a-z0-9_]{0,49}$/
+  @nav ~r/^\/[a-z0-9\-\/]{0,49}$/
+
+  @doc "\"topic\" corto tipeado por el admin -> nombre técnico completo (\"pty_\" + normalizado, hasta 50 chars)."
+  def nombre_sistema_desde(nombre) do
+    n = normalizar_identificador(nombre)
+    if n == "", do: "", else: String.slice("pty_#{n}", 0, 50)
+  end
+
+  @doc "carpeta_padre (nav ya existente, o vacío) + topic corto -> nav completa (segmento final con guiones, no guion_bajo)."
+  def componer_nav(carpeta_padre, nombre) do
+    segmento = normalizar_identificador(nombre) |> String.replace("_", "-")
+
+    cond do
+      segmento == "" -> ""
+      carpeta_padre in [nil, ""] -> "/" <> segmento
+      true -> String.slice("/" <> carpeta_padre <> "/" <> segmento, 0, 50)
+    end
+  end
+
+  @doc """
+  Nombre de sistema (ya con "pty_") + nav ya compuestos -> :ok |
+  {:error, mensaje}. No valida la etiqueta -- cada caller decide su
+  propio criterio ahí (ver BcNuevoCompletoLive.validar_completado/3,
+  específico de su placeholder).
+
+  Encontrado real armando "Copiar" (SPEC-SYS-1809202602): antes de
+  este chequeo, un nombre YA existente solo se rechazaba tarde -- el
+  unique_constraint de la base al insertar el Header, dentro de
+  insertar_proceso/1 -- nunca antes, aunque "Nuevo catálogo" y "Copiar"
+  digan en su UI que validan "nombre único" de entrada.
+  """
+  def validar_nombre_y_nav(nombre_sistema, nav) do
+    with :ok <- validar_regex(nombre_sistema, @identificador, "Nombre de sistema"),
+         :ok <- validar_regex(nav, @nav, "Navegación"),
+         :ok <- validar_nombre_libre(nombre_sistema) do
+      validar_nav_libre(nav)
+    end
+  end
+
+  defp validar_nombre_libre(nombre_sistema) do
+    case obtener_header_por_nombre(nombre_sistema) do
+      nil -> :ok
+      _otro -> {:error, "\"#{nombre_sistema}\" ya existe — elegí otro nombre."}
+    end
+  end
+
+  defp validar_regex(valor, regex, etiqueta) do
+    if valor && Regex.match?(regex, valor) do
+      :ok
+    else
+      {:error, "#{etiqueta} inválido: '#{valor}'. Debe cumplir el formato requerido."}
+    end
+  end
+
+  # Mismo chequeo que el de "Editar encabezado" en BcMotorLive — crear un
+  # catálogo nuevo (o clonar uno) no puede pisar silenciosamente la ruta de
+  # uno que ya existe (ver construir_arbol/1: un nav duplicado hace que uno
+  # de los dos "desaparezca" del menú, aunque siga vivo en la base).
+  defp validar_nav_libre(nav) do
+    case obtener_header_por_nav(nav) do
+      nil -> :ok
+      _otro -> {:error, "Esa ruta de navegación ya la usa otro catálogo o carpeta — elegí otra."}
+    end
+  end
+
+  defp normalizar_identificador(valor) do
+    (valor || "")
+    |> String.downcase()
+    |> quitar_acentos()
+    |> String.replace(~r/[^a-z0-9_]/, "")
+    |> String.replace(~r/^[^a-z]+/, "")
+    |> String.slice(0, 50)
+  end
+
+  defp quitar_acentos(valor) do
+    valor |> String.normalize(:nfd) |> String.replace(~r/\p{Mn}/u, "")
+  end
+
   # Resuelve el módulo Ecto (ej. MetadataApp.MetaBusinessProcess.Catalogos.PtyMoto)
   # a partir del nombre — se deriva en el momento, no se guarda: es determinista.
   def modulo_por_nombre(schema_context_name) do

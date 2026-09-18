@@ -257,4 +257,98 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveTest do
       refute html =~ "casi seguro no es correcto acá"
     end
   end
+
+  # SPEC-SYS-1809202602 — "Copiar" un BC. El happy path completo (con
+  # CatalogoGenerador.generar/1 real, DDL) NO se testea acá a propósito
+  # -- mismo criterio ya documentado en alcance_por_catalogo_ui_test.exs:
+  # DDL en caliente bajo el Sandbox transaccional de los tests deja
+  # residuo permanente (archivo .ex generado + módulo recompilado, que un
+  # rollback de DB no deshace) sin cubrir ningún caso nuevo que
+  # meta_clonador_test.exs no cubra ya sobre la parte pura. Estos tests
+  # cubren solo lo que es seguro probar automatizado: visibilidad del
+  # botón, y el camino de error (nunca llega a generar/1).
+  # Nav de 2 segmentos a propósito -- un nav de UN solo segmento (lo que
+  # usan header_vacio/header_detalle_de arriba) hace que
+  # MetaSchemaContext.segmentos_con_carpeta/1 envuelva el catálogo en una
+  # carpeta IMPLÍCITA con su propio nombre (nunca se deja un catálogo
+  # suelto en la raíz del menú) -- el botón "Copiar" quedaría anidado
+  # adentro de esa carpeta colapsada, invisible sin togglearla primero.
+  # Estos tests SÍ necesitan que la fila del catálogo sea una hoja
+  # directa, para poder ubicar su botón por selector CSS.
+  defp header_leaf(nombre, tipo \\ 1, maestro_id \\ nil) do
+    {:ok, {header, _}} =
+      MetaSchemaContext.crear_header_con_detalles(%{
+        "schema_context_name" => nombre,
+        "schema_context_label" => nombre,
+        "schema_context_nav" => "/pruebas_copiar_bc/#{nombre}",
+        "schema_visible" => true,
+        "schema_context_type" => tipo,
+        "schema_encabezado_id" => maestro_id,
+        "detalles" => []
+      })
+
+    header
+  end
+
+  describe "Copiar un BC" do
+    test "el botón \"Copiar\" no aparece en un catálogo detalle ni en una Consulta, ni en un maestro con detalles propios", %{conn: conn} do
+      nombre_elegible = "bclist_copiar_elegible_#{unique()}"
+      nombre_maestro_con_detalle = "bclist_copiar_maestro_#{unique()}"
+      nombre_detalle = "bclist_copiar_detalle_#{unique()}"
+      nombre_consulta = "bclist_copiar_consulta_#{unique()}"
+
+      header_leaf(nombre_elegible)
+      maestro = header_leaf(nombre_maestro_con_detalle)
+      header_leaf(nombre_detalle, 1, maestro.id)
+      header_leaf(nombre_consulta, 3)
+
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
+      view |> element("button[phx-click=toggle_carpeta][phx-value-ruta=pruebas_copiar_bc]") |> render_click()
+
+      refute has_element?(view, "button[phx-click=abrir_copiar][phx-value-tabla=#{nombre_detalle}]")
+      refute has_element?(view, "button[phx-click=abrir_copiar][phx-value-tabla=#{nombre_consulta}]")
+      # El maestro tiene un detalle propio -- v1 lo excluye (requirements.md
+      # §1, maestro-detalle completo queda para un incremento futuro).
+      refute has_element?(view, "button[phx-click=abrir_copiar][phx-value-tabla=#{nombre_maestro_con_detalle}]")
+      assert has_element?(view, "button[phx-click=abrir_copiar][phx-value-tabla=#{nombre_elegible}]")
+    end
+
+    test "abrir \"Copiar\" precarga la etiqueta con \"(copia)\" y el nombre técnico vacío", %{conn: conn} do
+      nombre_original = "bclist_copiar_origen_#{unique()}"
+      header_leaf(nombre_original)
+
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
+      view |> element("button[phx-click=toggle_carpeta][phx-value-ruta=pruebas_copiar_bc]") |> render_click()
+
+      html = view |> element("button[phx-click=abrir_copiar][phx-value-tabla=#{nombre_original}]") |> render_click()
+
+      assert html =~ "Copiar &quot;#{nombre_original}&quot;"
+      assert html =~ "#{nombre_original} (copia)"
+      assert has_element?(view, "input[name='contexto[nombre]'][value='']")
+    end
+
+    test "nombre ya existente rechaza sin crear nada, modal sigue abierto", %{conn: conn} do
+      # "pty_" a propósito -- así el "topic" que se manda de vuelta
+      # (sin ese prefijo) reproduce EXACTAMENTE el mismo nombre técnico
+      # al pasar por MetaSchemaContext.nombre_sistema_desde/1.
+      nombre_original = "pty_bclist_copiar_choque_#{unique()}"
+      header_leaf(nombre_original)
+
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
+      view |> element("button[phx-click=toggle_carpeta][phx-value-ruta=pruebas_copiar_bc]") |> render_click()
+      view |> element("button[phx-click=abrir_copiar][phx-value-tabla=#{nombre_original}]") |> render_click()
+
+      topic = String.trim_leading(nombre_original, "pty_")
+
+      html =
+        view
+        |> form("form[phx-submit=guardar_copiar]", %{
+          "contexto" => %{"nombre" => topic, "etiqueta" => "Choque", "carpeta_padre" => "", "icono" => ""}
+        })
+        |> render_submit()
+
+      assert html =~ "ya existe"
+      assert has_element?(view, "form[phx-submit=guardar_copiar]")
+    end
+  end
 end

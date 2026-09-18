@@ -112,3 +112,10 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   perder el filtro al elegir un catálogo/asignar un permiso (el texto
   buscado viaja como query param `?q=` en vez de perderse en el
   remount) + comodín `*` para listar sin substring — ver `tasks.md`.
+- [`SPEC-SYS-1809202602-copiar-bc/`](SPEC-SYS-1809202602-copiar-bc/) —
+  acción "Copiar" en BC List (junto a Editar/Eliminar) para clonar un
+  catálogo maestro simple bajo un nombre nuevo: campos, autómata (si
+  lo tiene) y plantilla automática, con el prefijo propio renombrado —
+  nunca datos, plantillas custom del Constructor, ni permisos ya
+  otorgados (implementado, Grupos A-E completos, verificado contra
+  Postgres real).

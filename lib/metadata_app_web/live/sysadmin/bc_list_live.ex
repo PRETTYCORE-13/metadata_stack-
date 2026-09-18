@@ -8,6 +8,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.MetaConsultas
+  alias MetadataApp.MetaClonador
   alias MetadataApp.MetaPublicador
   alias MetadataAppWeb.AdminNav
   alias MetadataAppWeb.AuditoriaContexto
@@ -85,6 +86,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:carpetas_disponibles, [])
      |> assign(:carpeta_editar, nil)
      |> assign(:carpeta_editar_error, nil)
+     |> assign(:copiar, nil)
+     |> assign(:copiar_error, nil)
      |> assign(:consulta_form, nil)
      |> assign(:consulta_error, nil)
      |> assign(:catalogos_base_disponibles, [])
@@ -858,6 +861,95 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     end
   end
 
+  # "Copiar" (SPEC-SYS-1809202602) — clona un catálogo maestro simple bajo
+  # un nombre nuevo. Mismo patrón visual/de eventos que "Editar carpeta"
+  # arriba, pero el nombre técnico SIEMPRE arranca vacío (a diferencia de
+  # la etiqueta, copiarlo a ciegas invitaría a no cambiarlo y chocar con
+  # el original al guardar).
+  def handle_event("abrir_copiar", %{"tabla" => nombre}, socket) do
+    case MetaSchemaContext.obtener_header_por_nombre(nombre) do
+      nil ->
+        {:noreply, put_flash(socket, :error, "Ese catálogo ya no existe.")}
+
+      header ->
+        contexto = %{
+          "nombre" => "",
+          "etiqueta" => "#{header.schema_context_label} (copia)",
+          "carpeta_padre" => carpeta_padre_desde_nav(header.schema_context_nav),
+          "icono" => header.schema_context_icono || ""
+        }
+
+        {:noreply,
+         socket
+         |> assign(:copiar, %{header_original: header, contexto: contexto})
+         |> assign(:copiar_error, nil)}
+    end
+  end
+
+  def handle_event("cerrar_copiar", _params, socket) do
+    {:noreply, socket |> assign(:copiar, nil) |> assign(:copiar_error, nil)}
+  end
+
+  def handle_event("validar_copiar", %{"contexto" => contexto}, socket) do
+    {:noreply, update(socket, :copiar, &Map.put(&1, :contexto, contexto))}
+  end
+
+  def handle_event("elegir_icono_copiar", %{"icono" => icono}, socket) do
+    {:noreply, update(socket, :copiar, fn copiar -> Map.update!(copiar, :contexto, &Map.put(&1, "icono", icono)) end)}
+  end
+
+  def handle_event("guardar_copiar", %{"contexto" => contexto}, socket) do
+    %{header_original: header_original} = socket.assigns.copiar
+
+    atributos = %{
+      "schema_context_name" => contexto["nombre"],
+      "schema_context_label" => contexto["etiqueta"],
+      "carpeta_padre" => contexto["carpeta_padre"],
+      "schema_context_icono" => nil_si_vacio_carpeta(contexto["icono"])
+    }
+
+    case MetaClonador.clonar(header_original.schema_context_name, atributos) do
+      {:ok, header_nuevo} ->
+        Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:bc_creado, header_nuevo})
+
+        {:noreply,
+         socket
+         |> assign(:copiar, nil)
+         |> assign(:copiar_error, nil)
+         |> put_flash(:info, "\"#{header_nuevo.schema_context_label}\" copiado de \"#{header_original.schema_context_label}\".")
+         |> push_navigate(to: ~p"/sysadmin/bc-list/#{header_nuevo.schema_context_name}/motor")}
+
+      {:error, mensaje} ->
+        {:noreply,
+         socket
+         |> update(:copiar, &Map.put(&1, :contexto, contexto))
+         |> assign(:copiar_error, mensaje)}
+    end
+  end
+
+  # Todo lo que NO sea el último segmento de la nav del original — mismo
+  # criterio que MetaSchemaContext.componer_nav/2 espera para "carpeta_padre"
+  # (ruta SIN "/" inicial, segmentos ya con guiones). Catálogo en la raíz
+  # (nav de un solo segmento) devuelve "" ("— Sin carpeta —").
+  defp carpeta_padre_desde_nav(nav) do
+    nav
+    |> String.trim_leading("/")
+    |> String.split("/")
+    |> Enum.drop(-1)
+    |> Enum.join("/")
+  end
+
+  # Chequeo BARATO para decidir si mostrar el botón "Copiar" en la fila --
+  # mismo criterio que MetaClonador.elegible?/1 pero sobre el `nodo`
+  # aplanado de item_de_header/1 (sin traer el Header entero para cada
+  # fila). La validación REAL (revalidada, por si el árbol quedó
+  # desactualizado) vive en MetaClonador.clonar/2, mismo espíritu que
+  # pedir_eliminar_carpeta/2 ya usa para "Eliminar".
+  defp puede_copiar?(nodo) do
+    not Map.get(nodo, :es_carpeta, false) and not Map.get(nodo, :es_consulta, false) and
+      is_nil(nodo.schema_encabezado_id) and MetaSchemaContext.listar_catalogos_detalle(nodo.header_id) == []
+  end
+
   # "Nueva carpeta"/"Editar carpeta" ya se resuelven solos, arriba, sin
   # depender de este PubSub — sigue transmitiéndose igual por si algo más
   # llega a escucharlo más adelante.
@@ -1480,6 +1572,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     <.modal_publicar wizard={@wizard_publicar} />
     <.modal_carpeta form={@carpeta_form} error={@carpeta_error} carpetas={@carpetas_disponibles} />
     <.modal_editar_carpeta editar={@carpeta_editar} error={@carpeta_editar_error} />
+    <.modal_copiar copiar={@copiar} error={@copiar_error} carpetas={@carpetas_disponibles} />
     <.modal_consulta
       form={@consulta_form}
       error={@consulta_error}
@@ -2023,6 +2116,134 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     """
   end
 
+  # "Copiar" (SPEC-SYS-1809202602) — mismo patrón visual que modal_carpeta/
+  # modal_editar_carpeta. Nombre técnico SIEMPRE con el mismo badge "pty_"
+  # + vista previa que ya usa BcNuevoCompletoLive (MetaSchemaContext.nombre_sistema_desde/1
+  # + componer_nav/2, movidos a ese módulo justo por esto: mismo criterio,
+  # sin duplicar el regex/preview en un tercer lugar).
+  attr :copiar, :map, default: nil
+  attr :error, :string, default: nil
+  attr :carpetas, :list, default: []
+
+  defp modal_copiar(%{copiar: nil} = assigns), do: ~H""
+
+  defp modal_copiar(%{copiar: %{header_original: header_original, contexto: contexto}} = assigns) do
+    assigns = assign(assigns, :header_original, header_original)
+    assigns = assign(assigns, :contexto, contexto)
+    assigns = assign(assigns, :iconos_sugeridos, @iconos_sugeridos)
+    assigns = assign(assigns, :nombre_preview, MetaSchemaContext.nombre_sistema_desde(contexto["nombre"]))
+    assigns = assign(assigns, :nav_preview, MetaSchemaContext.componer_nav(contexto["carpeta_padre"], contexto["nombre"]))
+
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-lg w-full max-h-[90vh] overflow-y-auto overflow-x-hidden">
+        <div class="flex items-center gap-1.5 bg-[#fafafa] border-b border-gray-200 px-4 py-2.5 rounded-t-xl">
+          <span class="material-symbols-outlined text-gray-400" style="font-size: 18px">content_copy</span>
+          <span class="text-sm font-semibold text-gray-900">Copiar "{@header_original.schema_context_label}"</span>
+        </div>
+
+        <%= if @error do %>
+          <div class="px-4 py-1.5 text-xs font-medium border-b border-gray-200 bg-red-50 text-red-700">
+            {@error}
+          </div>
+        <% end %>
+
+        <form phx-submit="guardar_copiar" phx-change="validar_copiar" class="p-4 space-y-3 text-xs">
+          <fieldset class="border border-gray-200 rounded-lg">
+            <legend class="px-1.5 ml-2 font-bold uppercase tracking-wide text-[11px] text-gray-500">Catálogo nuevo</legend>
+            <div class="grid grid-cols-1 sm:grid-cols-[110px_1fr] gap-y-1.5 gap-x-2 p-2.5 items-start">
+              <label class="font-medium text-gray-900 pt-1">Etiqueta:</label>
+              <input type="text" name="contexto[etiqueta]" value={@contexto["etiqueta"]} required maxlength="100"
+                class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" />
+
+              <label class="font-medium text-gray-900 pt-1">Nombre:</label>
+              <div class="min-w-0">
+                <div class="flex items-center gap-1">
+                  <span class="border border-gray-200 rounded-lg bg-gray-100 text-gray-500 px-1.5 py-1 select-none">pty_</span>
+                  <input type="text" name="contexto[nombre]" value={@contexto["nombre"]} required maxlength="45"
+                    title="Minúsculas, sin acentos ni espacios."
+                    class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 flex-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="vigencias_frec" />
+                </div>
+                <div class="mt-1 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg px-1.5 py-0.5 flex flex-wrap items-center gap-1 max-w-full">
+                  <span class="text-purple-400">Vista previa:</span>
+                  <span class="font-mono break-all">{@nombre_preview}</span>
+                </div>
+              </div>
+
+              <label class="font-medium text-gray-900 pt-1">Carpeta:</label>
+              <div class="min-w-0">
+                <select name="contexto[carpeta_padre]"
+                  class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 min-w-0 max-w-full focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors">
+                  <option value="" selected={@contexto["carpeta_padre"] in [nil, ""]}>— Sin carpeta (raíz) —</option>
+                  <%= for carpeta <- @carpetas do %>
+                    <option value={carpeta.ruta} selected={@contexto["carpeta_padre"] == carpeta.ruta}>{carpeta.etiqueta}</option>
+                  <% end %>
+                </select>
+                <div class="mt-1 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg px-1.5 py-0.5 flex flex-wrap items-center gap-1 max-w-full">
+                  <span class="text-purple-400">Ruta:</span>
+                  <span class="font-mono break-all">{@nav_preview}</span>
+                </div>
+              </div>
+
+              <label class="font-medium text-gray-900 pt-1">Ícono:</label>
+              <div>
+                <div class="flex items-center gap-4">
+                  <input type="hidden" name="contexto[icono]" value={@contexto["icono"]} />
+                  <button
+                    type="button"
+                    phx-click={JS.toggle(to: "#selector-iconos-copiar")}
+                    class="w-6 h-6 flex items-center justify-center border border-gray-300 rounded-lg bg-gray-50 hover:bg-gray-100 text-gray-700 transition-colors"
+                    title="Elegir ícono"
+                  >
+                    <%= if @contexto["icono"] not in [nil, ""] do %>
+                      <span class="material-symbols-outlined" style="font-size: 16px">{@contexto["icono"]}</span>
+                    <% else %>
+                      <span class="material-symbols-outlined text-gray-400" style="font-size: 16px">apps</span>
+                    <% end %>
+                  </button>
+                </div>
+
+                <div id="selector-iconos-copiar" class="hidden mt-1 border border-gray-200 rounded-lg bg-white shadow-lg p-1.5">
+                  <div class="grid grid-cols-10 gap-0.5 max-h-40 overflow-y-auto">
+                    <%= for icono <- @iconos_sugeridos do %>
+                      <button
+                        type="button"
+                        title={icono}
+                        phx-click={JS.push("elegir_icono_copiar", value: %{icono: icono}) |> JS.hide(to: "#selector-iconos-copiar")}
+                        class={[
+                          "w-6 h-6 flex items-center justify-center rounded-lg text-gray-700 hover:bg-purple-50 hover:text-purple-700 transition-colors",
+                          @contexto["icono"] == icono && "bg-purple-100 text-purple-700"
+                        ]}
+                      >
+                        <span class="material-symbols-outlined" style="font-size: 16px">{icono}</span>
+                      </button>
+                    <% end %>
+                  </div>
+                </div>
+
+                <p class="mt-0.5 text-[11px] text-gray-500">Opcional — si se deja vacío, hereda el del original.</p>
+              </div>
+            </div>
+          </fieldset>
+
+          <p class="text-[11px] text-gray-500">
+            Clona campos y, si tiene, el autómata (Estados/Transiciones) — nunca datos, plantillas del Constructor, ni permisos ya otorgados.
+          </p>
+
+          <div class="flex justify-end gap-2 border-t border-gray-200 pt-3">
+            <button type="button" phx-click="cerrar_copiar" class="px-3.5 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50 transition-colors">
+              Cancelar
+            </button>
+            <button type="submit" class="px-3.5 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
+              Copiar
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+    """
+  end
+
   # Modal de confirmación de borrado — dos variantes según lo que haya
   # contestado CatalogoGenerador.impacto/1 en "pedir_eliminar":
   # :confirmar (sin dependientes, puede seguir) o :bloqueado (hay otro
@@ -2519,6 +2740,15 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               >
                 Editar
               </.link>
+              <button
+                :if={puede_copiar?(nodo)}
+                type="button"
+                phx-click="abrir_copiar"
+                phx-value-tabla={nodo.id}
+                class="text-purple-600 hover:text-purple-800 text-xs font-semibold"
+              >
+                Copiar
+              </button>
               <button
                 :if={Map.get(nodo, :es_consulta, false)}
                 type="button"

@@ -300,23 +300,34 @@ defmodule MetadataApp.MetaEstadosAdmin do
   # Devuelve {:ok, %{header:, detalles:, estados:, transiciones:}} |
   # {:error, motivo} (guarda de completitud, antes de tocar la base) |
   # {:error, paso_fallido, valor, cambios_previos} (falla de Multi).
-  def crear_proceso_completo(%{"header" => header_attrs, "estados" => estados_attrs, "transiciones" => transiciones_attrs}) do
+  def crear_proceso_completo(%{"header" => header_attrs, "estados" => estados_attrs, "transiciones" => transiciones_attrs} = attrs) do
     case validar_completo(header_attrs, estados_attrs, transiciones_attrs) do
-      :ok ->
-        Multi.new()
-        |> Multi.run(:header, fn repo, _cambios -> insertar_header(repo, header_attrs) end)
-        |> Multi.run(:detalles, fn repo, %{header: header} ->
-          insertar_detalles(repo, header, header_attrs["detalles"] || [])
-        end)
-        |> Multi.run(:estados, fn repo, %{header: header} -> insertar_estados(repo, header, estados_attrs) end)
-        |> Multi.run(:transiciones, fn repo, %{header: header, estados: estados_por_nombre} ->
-          insertar_transiciones(repo, header, transiciones_attrs, estados_por_nombre)
-        end)
-        |> Repo.transaction()
-
-      {:error, _motivo} = error ->
-        error
+      :ok -> insertar_proceso(attrs)
+      {:error, _motivo} = error -> error
     end
+  end
+
+  @doc """
+  Mismo `Ecto.Multi` que `crear_proceso_completo/1`, pero SIN la
+  validación de negocio (`validar_completo/3`: "hace falta un estado
+  inicial o una transición de alta") -- para callers que replican un
+  proceso YA válido en otro lado (`MetadataApp.MetaClonador`,
+  SPEC-SYS-1809202602: un original SIN autómata adoptado se clona
+  igual de "sin motor", nunca se le inventa uno para pasar una regla
+  pensada para un admin armando algo de CERO). Mismo shape de entrada
+  y de retorno que `crear_proceso_completo/1`.
+  """
+  def insertar_proceso(%{"header" => header_attrs, "estados" => estados_attrs, "transiciones" => transiciones_attrs}) do
+    Multi.new()
+    |> Multi.run(:header, fn repo, _cambios -> insertar_header(repo, header_attrs) end)
+    |> Multi.run(:detalles, fn repo, %{header: header} ->
+      insertar_detalles(repo, header, header_attrs["detalles"] || [])
+    end)
+    |> Multi.run(:estados, fn repo, %{header: header} -> insertar_estados(repo, header, estados_attrs) end)
+    |> Multi.run(:transiciones, fn repo, %{header: header, estados: estados_por_nombre} ->
+      insertar_transiciones(repo, header, transiciones_attrs, estados_por_nombre)
+    end)
+    |> Repo.transaction()
   end
 
   # Mismo criterio que validar_alta_o_inicial/2 (más abajo, para autómatas ya
