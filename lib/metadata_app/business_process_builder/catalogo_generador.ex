@@ -122,13 +122,13 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
          :ok <- validar_confirmacion(schema_context_name, confirmar_tabla),
          :ok <- validar_confirmacion_filas(schema_context_name, confirmar_filas),
          :ok <- validar_sin_dependientes(schema_context_name) do
-      # La migración generada (crear_migracion_drop/1) purga la metadata
+      # La migración generada (generar_migracion_drop/1) purga la metadata
       # (header/detail/historial/TRN) POR NOMBRE antes de dropear la tabla
       # -- así, cuando esta misma migración corra vía CI/CD contra
       # producción, el borrado queda completo ahí también, no solo en el
       # ambiente donde se pidió. No se purga acá aparte para no duplicar
       # (y porque el header ya no existiría cuando migrar/0 termine).
-      path = crear_migracion_drop(schema_context_name)
+      path = generar_migracion_drop(schema_context_name)
 
       case migrar_capturando_fk() do
         :ok ->
@@ -174,7 +174,14 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   # legible, señalando la tabla/constraint real que todavía referencia este
   # catálogo -- no reemplaza el chequeo de metadata (que sigue siendo más
   # rápido y da mejor mensaje para el caso común), solo cubre el hueco.
-  defp migrar_capturando_fk do
+  @doc """
+  Corre las migraciones pendientes (`up`), traduciendo un
+  `foreign_key_violation` real de Postgres a un `{:error, mensaje}`
+  legible en vez de dejar propagar la excepción cruda -- pública desde
+  SPEC-SYS-1809202601 para que `mix motor.generar_drop_huerfano` la
+  reuse tal cual (mismo camino que ya usa `eliminar/4`).
+  """
+  def migrar_capturando_fk do
     migrar()
     :ok
   rescue
@@ -195,7 +202,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   Purga TODA la metadata (header, detail en cascada, historial de
   transiciones, registro TRN central) de un catálogo por NOMBRE -- pensada
   para correr desde DENTRO de la migración `up/0` que genera
-  `crear_migracion_drop/1`, así el borrado de metadata queda completo en
+  `generar_migracion_drop/1`, así el borrado de metadata queda completo en
   cualquier ambiente donde esa migración corra (dev al generarla,
   producción al desplegarla vía CI/CD) y no solo en el ambiente donde se
   pidió el borrado -- `header.id` es un autoincremental distinto por base,
@@ -289,7 +296,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
   # Quita un campo de un catálogo YA generado: soft-delete del Detail +
   # DROP COLUMN real (migración hacia adelante, mismo criterio que
-  # crear_migracion_drop/1 — nunca se toca la migración de creación) +
+  # generar_migracion_drop/1 — nunca se toca la migración de creación) +
   # regenera el schema .ex sin el campo. confirmar_campo repite el mismo
   # criterio de validar_confirmacion/2 que ya usa eliminar/3 (escribir el
   # nombre exacto, no una frase fija) — acá alcanza con el nombre del campo
@@ -316,7 +323,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     end
   end
 
-  # Mismo motivo que crear_migracion_drop/1 y agregar_columnas/2: migración
+  # Mismo motivo que generar_migracion_drop/1 y agregar_columnas/2: migración
   # hacia adelante (nunca se toca la de creación), sufijo con timestamp para
   # que el nombre descriptivo no choque si se repite la operación.
   defp quitar_columna(schema_context_name, campo) do
@@ -779,7 +786,21 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   # (una por cada regeneración del mismo catálogo) choquen: Ecto exige que el
   # nombre descriptivo del archivo (todo lo que sigue a la versión) sea único
   # en toda la carpeta de migraciones, no solo el número de versión.
-  defp crear_migracion_drop(schema_context_name) do
+  @doc """
+  Arma y escribe la migración de `DROP` de un catálogo, por NOMBRE --
+  NO exige que exista un header local (SPEC-SYS-1809202601, design.md
+  §1). Extraída de lo que antes era una función privada usada solo
+  desde `eliminar/4` (que sí exige un header local vía `buscar_header/1`
+  antes de llegar acá) -- el cuerpo de la migración generada ya
+  funcionaba por nombre desde siempre (`purgar_metadata_por_nombre/1`
+  no-opea si el header no existe), así que exponerla no cambió nada de
+  su comportamiento real, solo permite invocarla para un catálogo que
+  quedó huérfano en ALGÚN ambiente sin existir en NINGUNO local (ver
+  `mix motor.generar_drop_huerfano`).
+
+  Devuelve la ruta del archivo `.exs` escrito.
+  """
+  def generar_migracion_drop(schema_context_name) do
     timestamp = timestamp_utc()
     modulo_migracion = "Eliminar" <> Macro.camelize(schema_context_name) <> timestamp
     path = "priv/repo/migrations/#{timestamp}_eliminar_#{schema_context_name}_#{timestamp}.exs"
@@ -1050,7 +1071,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   # obligatorio, como siempre fue.
   defp nulo?(opciones), do: opciones[:opcional] == true
 
-  # Mismo motivo que en crear_migracion_drop/1: el sufijo hace único el
+  # Mismo motivo que en generar_migracion_drop/1: el sufijo hace único el
   # nombre descriptivo aunque el catálogo se regenere varias veces.
   # `header` (agregado 2026-07-21, TRN Fase 1) decide si se agregan las
   # columnas trn/ulid — nil o schema_es_transaccional: false = catálogo
