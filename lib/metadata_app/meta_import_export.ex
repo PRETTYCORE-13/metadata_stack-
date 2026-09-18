@@ -942,11 +942,30 @@ defmodule MetadataApp.MetaImportExport do
 
   defp resolver_empresa_por_nombre(nil), do: {:error, "el archivo no trae \"empresa_nombre\""}
 
+  # Corregido 2026-09-17 (probado en vivo): exigir el mismo NOMBRE de
+  # empresa en origen y destino es poco realista -- unstable y
+  # cualquier cliente real típicamente tienen una sola Empresa, con un
+  # nombre que no tiene por qué coincidir con el de dev (hallazgo real:
+  # "DemoCore Sa. de C.V" en local vs. "Unstable" en unstable, el
+  # import fallaba en silencio y el Endpoint nunca se creaba). Si no
+  # hay ninguna coincidencia por nombre pero el destino tiene
+  # EXACTAMENTE una Empresa viva, se usa esa -- cubre el caso real de
+  # casi todo ambiente desplegado. Ambiguo (0 o 2+ sin nombre exacto)
+  # sigue siendo error explícito, nunca una adivinanza.
   defp resolver_empresa_por_nombre(nombre) do
     case Repo.all(from(e in Empresa, where: e.nombre == ^nombre and is_nil(e.delete_guid))) do
-      [] -> {:error, "no existe ninguna Empresa \"#{nombre}\" en este ambiente"}
-      [empresa] -> {:ok, empresa}
-      _varias -> {:error, "hay más de una Empresa \"#{nombre}\" en este ambiente, ambiguo"}
+      [empresa] ->
+        {:ok, empresa}
+
+      [] ->
+        case Repo.all(from(e in Empresa, where: is_nil(e.delete_guid))) do
+          [unica] -> {:ok, unica}
+          [] -> {:error, "no existe ninguna Empresa \"#{nombre}\" en este ambiente, y no hay ninguna otra para usar como default"}
+          _varias -> {:error, "no existe ninguna Empresa \"#{nombre}\" en este ambiente, y hay más de una para elegir un default"}
+        end
+
+      _varias ->
+        {:error, "hay más de una Empresa \"#{nombre}\" en este ambiente, ambiguo"}
     end
   end
 

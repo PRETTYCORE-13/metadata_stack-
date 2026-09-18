@@ -954,10 +954,16 @@ implementar -- regla del proyecto, nunca asumir:**
    necesita que el header de la Consulta ya exista). Por cada
    `<consulta>.endpoint.json` encontrado: resuelve el header por
    nombre, resuelve `empresa_nombre` contra la tabla `Empresa` DEL
-   DESTINO (si no existe ninguna con ese nombre ahí, mensaje de error
-   explícito y ese archivo se salta -- mismo criterio tolerante que
+   DESTINO -- **corregido en vivo** (2026-09-17, "DemoCore Sa. de C.V"
+   en local vs. "Unstable" en unstable: el import fallaba en silencio,
+   0 filas, sin error visible en la UI): exigir el mismo NOMBRE es poco
+   realista, unstable/cualquier cliente real suelen tener una sola
+   Empresa. Si no hay coincidencia por nombre pero el destino tiene
+   EXACTAMENTE una Empresa viva, se usa esa como default. 0 o 2+ sin
+   nombre exacto sigue siendo error explícito (nunca una adivinanza) y
+   ese archivo se salta -- mismo criterio tolerante que
    `importar_contexto_tolerante/1`, un endpoint roto no tumba el resto
-   del import) y hace `ConsultaEndpoints.crear_o_actualizar/2` (ya
+   del import. Con la Empresa resuelta, hace `ConsultaEndpoints.crear_o_actualizar/2` (ya
    existe, B1) -- upsert por `meta_schema_consulta_id` (único, R8),
    reemplaza la fila completa (R68).
 
