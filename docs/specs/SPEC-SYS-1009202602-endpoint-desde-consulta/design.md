@@ -895,10 +895,10 @@ Actions aparte, ni tocar `bpb_habilitado` (la pantalla
 `Sysadmin.EndpointsLive` sigue sin existir en destino, y no hace
 falta que exista: nunca es ella la que escribe la fila ahí).
 
-**Cuatro correcciones sobre el borrador anterior -- las primeras tres
-encontradas leyendo el código real antes de implementar, la cuarta
-recién en la prueba end-to-end contra `unstable` (regla del proyecto,
-nunca asumir):**
+**Cinco correcciones sobre el borrador anterior -- las primeras tres
+encontradas leyendo el código real antes de implementar, la cuarta y
+la quinta recién en la prueba end-to-end contra `unstable` (regla del
+proyecto, nunca asumir):**
 
 - **`mix meta.export`/`importar_meta` (mecanismo genérico preexistente,
   no escrito para esta spec) solo maneja Header+Detail -- NUNCA toca
@@ -915,6 +915,17 @@ nunca asumir):**
   `.endpoint.json`, y `importar_endpoint/1` crea o actualiza esa fila
   a mano (`asegurar_consulta/2`) ANTES de resolver la Empresa y crear
   el `ConsultaEndpoint`.
+- **`asegurar_consulta/2` (recién agregada arriba) se olvidó de
+  `insert_guid`.** Hallazgo real, log de `bc-deploy.yml` un deploy
+  después del anterior: `ERROR 23502 (not_null_violation) null value
+  in column "insert_guid"` -- `Consulta.changeset/2` no castea
+  `insert_guid`/`update_guid`/`delete_guid` (no están en su lista de
+  campos permitidos), hay que setearlos a mano con
+  `Ecto.Changeset.change/2` después del changeset, mismo patrón que ya
+  usa CUALQUIER otro `crear`/`actualizar` de este proyecto
+  (`ConsultaEndpoints.crear/2`, `MetaSchemaContext.
+  crear_header_con_detalles/1`, etc.). Corregido: `insert_guid` al
+  crear, `update_guid` al actualizar.
 
 - `ConsultaEndpoints.eliminar/1` NO hace soft-delete: es un
   `Repo.delete` real sobre el Header oculto que sostiene la Consulta

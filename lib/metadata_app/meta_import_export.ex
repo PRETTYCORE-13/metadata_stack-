@@ -962,14 +962,27 @@ defmodule MetadataApp.MetaImportExport do
 
     resultado =
       case MetaConsultas.obtener_por_header_id(header.id) do
-        nil -> %Consulta{} |> Consulta.changeset(attrs) |> Repo.insert()
-        existente -> existente |> Consulta.changeset(attrs) |> Repo.update()
+        nil ->
+          %Consulta{}
+          |> Consulta.changeset(attrs)
+          |> Ecto.Changeset.change(insert_guid: generar_guid())
+          |> Repo.insert()
+
+        existente ->
+          existente
+          |> Consulta.changeset(attrs)
+          |> Ecto.Changeset.change(update_guid: generar_guid())
+          |> Repo.update()
       end
 
     case resultado do
       {:ok, consulta} -> consulta
       {:error, changeset} -> raise "Error creando/actualizando la Consulta de #{header.schema_context_name}: #{inspect(changeset.errors)}"
     end
+  end
+
+  defp generar_guid do
+    Ecto.UUID.generate() |> String.replace("-", "")
   end
 
   defp resolver_empresa_por_nombre(nil), do: {:error, "el archivo no trae \"empresa_nombre\""}
