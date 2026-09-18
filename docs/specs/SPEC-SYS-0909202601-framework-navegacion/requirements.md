@@ -1,6 +1,6 @@
 # SPEC-SYS-0909202601 — Framework de Navegación
 
-**Documento:** Requirements · **Fase:** ✅ aprobada (2026-09-09), con un incremento real después (2026-09-09/10: menú administrativo reorganizado — ver `tasks.md`, Grupos A-F). Se actualiza acá primero cuando haya un cambio real que planear sobre el framework.
+**Documento:** Requirements · **Fase:** ✅ aprobada (2026-09-09), con incrementos reales después (2026-09-09/10: menú administrativo reorganizado — ver `tasks.md`, Grupos A-F; 2026-09-18: R13c corregido, bug real). Se actualiza acá primero cuando haya un cambio real que planear sobre el framework.
 
 **Alcance de esta spec**: documentar (retroactivo, ya implementado, sin
 tocar código) el "framework" — la estructura fija que envuelve toda
@@ -108,9 +108,19 @@ explícitamente (2026-09-09): nunca en unstable/testing/stable/cliente**,
 el BPB sigue siendo exclusivo de developer, esta spec no cambia esa
 regla.
 
-R13c. Sin ninguna opción de R13/R13a/R13b concedida/aplicable, EL
-SISTEMA DEBE ocultar el menú administrativo por completo (ambos
-accesos) — nunca un menú vacío.
+R13c. **Corregido 2026-09-18, bug real reportado en vivo (un usuario
+común, sin ningún permiso de Sysadmin, no podía cerrar sesión ni
+cambiar su contraseña)**: el ÚNICO acceso al menú administrativo (el
+engrane, R22) DEBE mostrarse para cualquier usuario con sesión
+iniciada, sin importar si tiene o no alguna opción de R13/R13a/R13b
+concedida — porque R14/R15 (Cambiar Unidad Operativa, Configuración de
+cuenta, Cerrar sesión) están SIEMPRE disponibles ahí adentro, así que
+el menú NUNCA queda realmente vacío para un usuario logueado. La
+versión original de este requisito ("ocultar el menú si no hay ninguna
+opción administrativa/plataforma") ERA la implementación real hasta
+esta fecha, y tenía el efecto de esconder también R14/R15 — nunca fue
+correcto, quedó así por no haber contemplado que esos 2 ítems ya
+bastan para que el menú no esté vacío.
 
 R14. CUANDO el usuario tiene una empresa activa en su sesión, EL
 SISTEMA DEBE ofrecer en el menú administrativo la opción "Cambiar

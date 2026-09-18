@@ -16,6 +16,10 @@ usuario**, ver `tasks.md` (Grupos A-F) para el detalle de ejecución,
 incluidas dos correcciones el mismo día (Grupo E: sacar el acceso
 desde el avatar; Grupo F: rediseño estilo flyout).
 
+**§7 corregida de nuevo (2026-09-18)** — bug real encontrado en vivo
+(R13c), ver el párrafo "Corregido 2026-09-18" dentro de §7 y `tasks.md`
+Grupo G para el detalle de verificación.
+
 ## 1. Fuente del árbol de navegación
 
 El árbol sale de `MetaSchemaContext.listar_menu_arbol/0`: todos los
@@ -137,8 +141,20 @@ con título "Configuración" + botón de cerrar, ítems con ícono (Material
 Symbols) + etiqueta, en vez del dropdown compacto sin íconos de la
 primera versión.
 
-Lista vacía en ambos grupos → ni el botón de engrane se renderiza
-(nunca un botón que abre un menú vacío).
+**Corregido 2026-09-18 (R13c), bug real**: antes, con las 2 listas
+(`opciones_administrativas_visibles`/`opciones_plataforma_visibles`)
+vacías, el `:if` del engrane (`MenuLayout.sidebar/1`) ocultaba el botón
+ENTERO — pero `menu_administrativo/1` renderiza "Configuración de
+cuenta" y "Cerrar sesión" SIN NINGUNA condición (R15), así que un
+usuario sin ningún permiso de Sysadmin (el caso normal, no el raro) se
+quedaba sin poder cerrar sesión ni cambiar su contraseña — reportado
+en vivo por un usuario real en `unstable`. El `:if` correcto no mira
+esas 2 listas — mira si hay un usuario logueado
+(`@current_scope && @current_scope.usuario`), porque R14/R15 ya
+garantizan que el menú nunca está realmente vacío para nadie con
+sesión iniciada. "Lista vacía en ambos grupos" sigue ocultando esos
+ítems puntuales DENTRO del panel (cada `<.link :if=.../>` de la matriz
+de arriba), pero ya no esconde el panel completo.
 
 ## 8. Footer — jerarquía operativa de solo lectura
 

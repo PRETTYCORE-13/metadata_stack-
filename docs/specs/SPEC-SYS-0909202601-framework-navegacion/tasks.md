@@ -155,3 +155,25 @@ ajuste junto al usuario:
 Mismas 2 ubicaciones que el fix de arriba (`.pc-sidebar-flyout
 .pc-nav-icon` fuera del media query + su copia `!important` dentro del
 breakpoint móvil, por la misma razón defensiva ya documentada ahí).
+
+## Grupo G — Bug real: usuario sin permisos se quedaba sin engrane (2026-09-18) ✅
+
+Reportado en vivo por un usuario real en `unstable`: sin el engrane
+del sidebar no podía cerrar sesión ni cambiar su contraseña —
+`Configuración de cuenta`/`Cerrar sesión` (R15) viven ADENTRO de ese
+menú, sin otro acceso alternativo en toda la app.
+
+- [x] G1. `MenuLayout.sidebar/1` — el `:if` del engrane pasó de mirar
+      `opciones_administrativas_visibles != [] or
+      opciones_plataforma_visibles != []` a mirar
+      `@current_scope && @current_scope.usuario` (R13c corregido) —
+      R14/R15 ya garantizan que el panel nunca está vacío para un
+      usuario logueado, sin importar sus permisos de Sysadmin.
+- [x] G2. Test nuevo (`test/metadata_app_web/live/inicio_live_test.exs`,
+      archivo nuevo, no existía ninguno para esta pantalla): un usuario
+      SIN ningún permiso de Sysadmin ve el engrane +
+      "Configuración de cuenta"/"Cerrar sesión". Confirmado que el test
+      reproduce el bug de verdad — revirtiendo el fix temporalmente
+      (`git stash`) el test falla, con el fix pasa.
+- [x] G3. Suite completa — 647/649 (2 fallas preexistentes sin
+      relación, mismas de siempre).

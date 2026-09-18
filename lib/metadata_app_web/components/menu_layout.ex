@@ -157,9 +157,23 @@ defmodule MetadataAppWeb.MenuLayout do
              2026-09-09) -- segundo acceso al MISMO menú administrativo
              que el avatar de la topbar (misma fuente de datos, ver
              menu_administrativo/1), pegado al fondo del riel gracias a
-             que .pc-sidebar-body ya tiene flex:1 arriba (ver menu.css). -->
+             que .pc-sidebar-body ya tiene flex:1 arriba (ver menu.css).
+
+             Corregido 2026-09-18, bug real reportado en vivo: el :if de
+             acá SOLO miraba las 2 listas gateadas por permiso
+             (administrativas/plataforma) -- un usuario común sin NINGÚN
+             permiso de Sysadmin (el caso normal) se quedaba sin poder
+             abrir el menú, y con eso sin forma de llegar a
+             "Configuración de cuenta" ni "Cerrar sesión" (ver
+             menu_administrativo/1 más abajo: esos 2 ítems se renderizan
+             SIEMPRE, sin condición -- R15 de SPEC-SYS-0909202601 dice
+             exactamente eso). R13c de esa misma spec ("ocultar el menú
+             si queda vacío") en la práctica NUNCA aplica, porque esos 2
+             ítems ya lo dejan no-vacío para cualquier usuario logueado
+             -- el :if correcto es "hay un usuario", no "tiene algún
+             permiso de admin". -->
         <div
-          :if={@opciones_administrativas_visibles != [] or @opciones_plataforma_visibles != []}
+          :if={@current_scope && @current_scope.usuario}
           class="pc-sidebar-config"
         >
           <button
