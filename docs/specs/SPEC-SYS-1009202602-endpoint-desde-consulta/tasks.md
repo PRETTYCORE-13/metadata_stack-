@@ -847,3 +847,39 @@ compilador).
       encontrado" -- aparece la lista, se puede abrir el Endpoint de
       `pty_h_historico` y generar una credencial nueva ahí. Retoma O8
       desde el punto donde se había frenado.
+
+## Grupo Q — Publicar/despublicar un Endpoint sin terminal (R73-R75, agregado 2026-09-17)
+
+Ver design.md §15. A pedido explícito tras probar R67-R72 por
+terminal. Llama `MetaPublicador` directo (sin `Mix.Task.rerun`), mismo
+criterio que ya usa el wizard "Publicar paquete" de `BcListLive`.
+
+- [ ] **Q1.** `ConsultaEndpoints.publicar_a_ambiente/2` -- exporta
+      header + motor + endpoint (ya con `catalogo_base`/`campos` desde
+      el Grupo O) y arma/sube/dispara el bundle con
+      `MetaPublicador.armar_bundle/1`/`persistir_bundle/2`/
+      `disparar_deploy/3`. Sin `CatalogoGenerador.generar/1` -- la
+      Consulta interna nunca lo necesita (siempre type 3, sin
+      `meta_schema_detail`). Verificable: llamado desde `iex` contra un
+      endpoint real, dispara el mismo workflow que `mix motor.publicar`.
+
+- [ ] **Q2.** `ConsultaEndpoints.despublicar_de_ambiente/2` (R74) --
+      escribe el tombstone, arma/sube/dispara igual que Q1, y al
+      final vuelve a exportar el endpoint en forma normal (el local
+      queda intacto, nunca exige borrado previo). Test unitario:
+      después de llamarlo, `priv/repo/catalogos/<nombre>.endpoint.json`
+      en disco NO es un tombstone (quedó restaurado).
+
+- [ ] **Q3.** `EndpointsLive`: tarjeta "Publicación" suma selector de
+      ambiente (misma lista que `BcListLive.sistemas_disponibles/0`) +
+      botones "Publicar a ambiente"/"Quitar de ambiente", con
+      `start_async/3` (mismo patrón que `BcListLive`) y manejo de
+      error/éxito (flash). Sección entera `:if={@bpb_habilitado}`
+      (R75).
+
+- [ ] **Q4.** Verificación end-to-end real: desde la UI (sin terminal),
+      publicar un Endpoint a `unstable`, confirmar que responde, y
+      después "Quitar de unstable" y confirmar que vuelve a dar 404 --
+      sin haber tocado el Endpoint local en ningún momento.
+
+- [ ] **Q5.** Suite completa (`mix test`) sin regresiones.

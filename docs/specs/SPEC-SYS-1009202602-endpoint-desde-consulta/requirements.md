@@ -642,3 +642,27 @@ incluido un release compilado donde Business Process Builder esté
 apagado -- a diferencia de un catálogo nuevo hecho con BPB, ninguna de
 estas operaciones depende de generar un módulo Ecto ni de migrar una
 tabla física.
+
+## Publicar/despublicar un Endpoint sin terminal (agregado 2026-09-17, a pedido explícito)
+
+Verificado R67-R72 de punta a punta por terminal (`mix motor.publicar`/
+`mix endpoint.despublicar`) -- a pedido explícito del usuario
+("QUIERO NO TENER QUE METER COMANDOS EN LA TERMINAL"), se agrega el
+mismo mecanismo como acción directa en la pantalla de Endpoints.
+
+**R73.** EL SISTEMA DEBE permitir publicar un Endpoint a un ambiente
+elegido (y quitarlo de ahí) desde la propia pantalla de Endpoints, sin
+requerir ningún comando de terminal -- mismo resultado que `mix
+motor.publicar`/`mix endpoint.despublicar`.
+
+**R74.** Quitar un Endpoint de UN ambiente puntual desde esta pantalla
+NO DEBE requerir borrarlo antes en local -- a diferencia de `mix
+endpoint.despublicar` (pensado para cuando el Endpoint ya no existe en
+ningún lado), acá el Endpoint sigue vivo local y en cualquier otro
+ambiente donde ya se publicó; solo deja de responder en el ambiente
+elegido.
+
+**R75.** Esta acción DEBE estar disponible únicamente donde ya hoy
+existe la herramienta de publicar (mismo ambiente que tiene Business
+Process Builder habilitado) -- nunca en un release compilado, que no
+tiene `gh`/`tar` ni sentido como origen de una publicación.

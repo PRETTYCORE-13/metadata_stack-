@@ -25,6 +25,8 @@ defmodule MetadataApp.ConsultaEndpoints do
   alias MetadataApp.MetaSchema.ConsultaEndpointCredencial
   alias MetadataApp.MetaSchema.ConsultaEndpointJob
   alias MetadataApp.MetaConsultas
+  alias MetadataApp.MetaEstadosAdmin
+  alias MetadataApp.MetaPublicador
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerico
 
@@ -169,6 +171,73 @@ defmodule MetadataApp.ConsultaEndpoints do
 
     File.write!(Path.join(dir, "#{nombre_consulta}.endpoint.json"), contenido)
     nombre_consulta
+  end
+
+  @doc """
+  Publica este Endpoint a `sistema` SIN pasar por la terminal
+  (SPEC-SYS-1009202602, design.md §15, R73) -- llama `MetaPublicador`
+  directo, nunca `Mix.Task.rerun` (ese asume una terminal real,
+  `Mix.raise`/`Mix.shell()` no tienen sentido desde un proceso
+  LiveView), mismo criterio que ya usa el wizard "Publicar paquete" de
+  `BcListLive`. Equivalente exacto a `mix motor.publicar
+  --sistema=<sistema> <nombre-interno>`, salvo que nunca corre
+  `CatalogoGenerador.generar/1` -- la Consulta interna de un Endpoint
+  es siempre `schema_context_type: 3`, sin `meta_schema_detail` propio,
+  ese paso no genera nada para ella (confirmado real,
+  `mix gen.catalogos`: "No hay metadata en meta_schema_detail").
+
+  `{:ok, salida}` | `{:error, mensaje}`.
+  """
+  def publicar_a_ambiente(%ConsultaEndpoint{} = endpoint, sistema) do
+    endpoint = Repo.preload(endpoint, consulta: :header)
+    nombre = endpoint.consulta.header.schema_context_name
+
+    MetaSchemaContext.exportar_header(endpoint.consulta.header)
+    MetaEstadosAdmin.exportar_header(endpoint.consulta.header)
+    exportar_endpoint(endpoint)
+
+    armar_subir_y_desplegar(sistema, nombre)
+  end
+
+  @doc """
+  Quita este Endpoint de `sistema` SIN tocarlo local (R74) -- a
+  diferencia de `mix endpoint.despublicar` (pensado para un Endpoint ya
+  borrado en TODOS lados), acá sigue vivo local y en cualquier otro
+  ambiente donde ya se publicó, solo deja de responder en `sistema`.
+
+  Escribe el tombstone, arma/sube/dispara el bundle igual que
+  `publicar_a_ambiente/2`, y al final vuelve a exportar el Endpoint en
+  su forma NORMAL -- el tombstone era transitorio, solo para ESE
+  bundle puntual; en disco, después de esta llamada, todo queda como
+  si nunca hubiera pasado (el Release `bc-<nombre>` en GitHub sí queda
+  en forma tombstone hasta la próxima publicación real de este mismo
+  Endpoint -- correcto: "quitado de este ambiente" tiene que sobrevivir
+  a cualquier deploy normal futuro de `sistema`).
+
+  `{:ok, salida}` | `{:error, mensaje}`.
+  """
+  def despublicar_de_ambiente(%ConsultaEndpoint{} = endpoint, sistema) do
+    endpoint = Repo.preload(endpoint, consulta: :header)
+    nombre = endpoint.consulta.header.schema_context_name
+    dir = "priv/repo/catalogos"
+    File.mkdir_p!(dir)
+
+    tombstone = Jason.encode!(%{catalogo: nombre, eliminado: true}, pretty: true)
+    File.write!(Path.join(dir, "#{nombre}.endpoint.json"), tombstone)
+
+    resultado = armar_subir_y_desplegar(sistema, nombre)
+
+    exportar_endpoint(endpoint)
+
+    resultado
+  end
+
+  defp armar_subir_y_desplegar(sistema, nombre) do
+    with {:ok, bundle_path} <- MetaPublicador.armar_bundle([nombre]),
+         {:ok, _tags} <- MetaPublicador.persistir_bundle([nombre], bundle_path),
+         {:ok, salida} <- MetaPublicador.disparar_deploy(sistema, [nombre], bundle_path) do
+      {:ok, salida}
+    end
   end
 
   @doc """

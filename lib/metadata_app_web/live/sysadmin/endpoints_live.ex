@@ -115,6 +115,11 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
         |> assign(:campos_visibles_endpoint, campos_visibles_endpoint(consulta))
         |> assign(:campos_reales_alta, campos_reales_alta(consulta.catalogo_base))
         |> assign(:catalogos_detalle_alta, catalogos_detalle_alta(consulta.catalogo_base))
+        |> assign(:bpb_habilitado, Application.get_env(:metadata_app, :bpb_habilitado, false))
+        |> assign(:sistemas_disponibles, sistemas_disponibles())
+        |> assign(:ambiente_sistema, nil)
+        |> assign(:ambiente_procesando?, false)
+        |> assign(:ambiente_error, nil)
 
       _otro ->
         socket
@@ -510,6 +515,82 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
   def handle_event("despublicar_endpoint", _params, socket) do
     {:ok, endpoint} = ConsultaEndpoints.despublicar(socket.assigns.endpoint)
     {:noreply, assign(socket, :endpoint, endpoint)}
+  end
+
+  # --- Publicar/despublicar a un ambiente, sin terminal (SPEC-SYS-1009202602,
+  # design.md §15, R73-R75) --------------------------------------------------
+
+  def handle_event("elegir_ambiente", %{"sistema" => sistema}, socket) do
+    {:noreply, assign(socket, :ambiente_sistema, if(sistema == "", do: nil, else: sistema))}
+  end
+
+  # Defensa en profundidad -- el botón ya queda deshabilitado sin
+  # ambiente elegido, mismo criterio que BcListLive.
+  def handle_event("publicar_a_ambiente", _params, %{assigns: %{ambiente_sistema: nil}} = socket), do: {:noreply, socket}
+
+  def handle_event("publicar_a_ambiente", _params, socket) do
+    %{endpoint: endpoint, ambiente_sistema: sistema} = socket.assigns
+
+    socket =
+      socket
+      |> assign(:ambiente_procesando?, true)
+      |> assign(:ambiente_error, nil)
+      |> start_async(:ambiente_publicar, fn -> ConsultaEndpoints.publicar_a_ambiente(endpoint, sistema) end)
+
+    {:noreply, socket}
+  end
+
+  def handle_event("despublicar_de_ambiente", _params, %{assigns: %{ambiente_sistema: nil}} = socket), do: {:noreply, socket}
+
+  def handle_event("despublicar_de_ambiente", _params, socket) do
+    %{endpoint: endpoint, ambiente_sistema: sistema} = socket.assigns
+
+    socket =
+      socket
+      |> assign(:ambiente_procesando?, true)
+      |> assign(:ambiente_error, nil)
+      |> start_async(:ambiente_despublicar, fn -> ConsultaEndpoints.despublicar_de_ambiente(endpoint, sistema) end)
+
+    {:noreply, socket}
+  end
+
+  def handle_async(:ambiente_publicar, {:ok, {:ok, _salida}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:ambiente_procesando?, false)
+     |> put_flash(
+       :info,
+       "Publicado -- va camino a \"#{socket.assigns.ambiente_sistema}\". Seguí el progreso con \"gh run watch\" o \"gh run list\"."
+     )}
+  end
+
+  def handle_async(:ambiente_despublicar, {:ok, {:ok, _salida}}, socket) do
+    {:noreply,
+     socket
+     |> assign(:ambiente_procesando?, false)
+     |> put_flash(
+       :info,
+       "Quitado de \"#{socket.assigns.ambiente_sistema}\" -- el endpoint sigue publicado local. Seguí el progreso con \"gh run watch\"."
+     )}
+  end
+
+  def handle_async(nombre, {:ok, {:error, mensaje}}, socket) when nombre in [:ambiente_publicar, :ambiente_despublicar] do
+    {:noreply, socket |> assign(:ambiente_procesando?, false) |> assign(:ambiente_error, mensaje)}
+  end
+
+  def handle_async(nombre, {:exit, razon}, socket) when nombre in [:ambiente_publicar, :ambiente_despublicar] do
+    {:noreply,
+     socket
+     |> assign(:ambiente_procesando?, false)
+     |> assign(:ambiente_error, "Error inesperado: #{inspect(razon)}")}
+  end
+
+  # Mismos sistemas válidos que BcListLive.sistemas_disponibles/0 --
+  # clientes reales de priv/sistemas.json + "unstable", nunca
+  # "testing"/"stable" directo (esos solo reciben por promoción).
+  defp sistemas_disponibles do
+    (["unstable"] ++ (MetadataApp.MotorAlta.leer_sistemas() |> Map.keys()))
+    |> Enum.sort()
   end
 
   def handle_event("guardar_alta", params, socket) do
@@ -1009,6 +1090,49 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
             class="px-3 py-1.5 rounded-lg bg-gray-200 text-gray-700 text-xs font-semibold hover:bg-gray-300">
             Despublicar
           </button>
+        </div>
+
+        <div :if={@bpb_habilitado} class="mt-4 pt-4 border-t border-gray-100">
+          <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">
+            Ambientes (SPEC-SYS-1009202602, R73-R75)
+          </div>
+
+          <div :if={@ambiente_error} class="mb-2 rounded-lg border border-red-200 bg-red-50 text-red-700 text-xs px-2.5 py-1.5">
+            {@ambiente_error}
+          </div>
+
+          <p :if={@sistemas_disponibles == []} class="text-xs text-gray-400 mb-2">
+            No hay ningún sistema de alta todavía (priv/sistemas.json vacío) -- solo "unstable" disponible.
+          </p>
+
+          <div class="flex items-center gap-2 flex-wrap">
+            <form phx-change="elegir_ambiente">
+              <select name="sistema" class="border border-gray-300 rounded-lg text-gray-900 text-xs px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500">
+                <option value="" selected={is_nil(@ambiente_sistema)}>Elegí un ambiente…</option>
+                <option :for={sistema <- @sistemas_disponibles} value={sistema} selected={@ambiente_sistema == sistema}>
+                  {sistema}
+                </option>
+              </select>
+            </form>
+
+            <button type="button" phx-click="publicar_a_ambiente" disabled={is_nil(@ambiente_sistema) or @ambiente_procesando?}
+              class="px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed">
+              Publicar a ambiente
+            </button>
+            <button type="button" phx-click="despublicar_de_ambiente" disabled={is_nil(@ambiente_sistema) or @ambiente_procesando?}
+              data-confirm="Esto quita el endpoint SOLO de ese ambiente -- local queda igual. ¿Confirmar?"
+              class="px-3 py-1.5 rounded-lg bg-gray-200 text-gray-700 text-xs font-semibold hover:bg-gray-300 disabled:opacity-40 disabled:cursor-not-allowed">
+              Quitar de ambiente
+            </button>
+
+            <span :if={@ambiente_procesando?} class="text-xs text-gray-500 flex items-center gap-1.5">
+              <svg class="animate-spin h-3.5 w-3.5 text-purple-600" viewBox="0 0 24 24" fill="none">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+              Publicando/despublicando (tarda unos segundos por la red)…
+            </span>
+          </div>
         </div>
       </div>
 

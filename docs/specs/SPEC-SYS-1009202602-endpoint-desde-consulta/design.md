@@ -1094,3 +1094,66 @@ Con esto, R72 queda resuelto: `/sysadmin/endpoints` existe y funciona
 igual en local, `unstable`, `testing`, `stable` y cualquier cliente --
 generar/rotar/revocar una credencial (R69/R70) ya tiene un lugar real
 donde pasar en cada ambiente.
+
+## 15. Publicar/despublicar un Endpoint sin terminal (R73-R75, agregado 2026-09-17)
+
+**Decisión: llamar `MetaPublicador` DIRECTO desde la LiveView, nunca
+`Mix.Task.rerun`.** Mismo criterio que ya usa `BcListLive` para su
+wizard "Publicar paquete"/"Despublicar de producción" (`bc_list_live.ex:1090`,
+`:1078`) -- un `Mix.Task` asume que corre desde una terminal (`Mix.raise`,
+`Mix.shell()`), no encaja bien invocado desde un proceso LiveView de
+una app ya arrancada. Se reusan las funciones de bajo nivel que ya
+comparten el CLI y ese wizard: `MetaPublicador.armar_bundle/1`,
+`persistir_bundle/2`, `disparar_deploy/3`.
+
+**Por qué acá no hace falta `mix gen.catalogos` (a diferencia de
+`mix motor.publicar`/el wizard de BC List):** la Consulta interna de
+un Endpoint es SIEMPRE `schema_context_type: 3`, sin `meta_schema_detail`
+propio -- `CatalogoGenerador.generar/1` no genera nada para ella (visto
+real en el log: `"x ...: No hay metadata en meta_schema_detail"`, no es
+un error, es un no-op). Saltarlo acá no cambia el resultado y evita
+duplicar ese paso.
+
+### Piezas nuevas
+
+1. **`ConsultaEndpoints.publicar_a_ambiente/2`** -- exporta el header
+   (`MetaSchemaContext.exportar_header/1`), el motor
+   (`MetaEstadosAdmin.exportar_header/1`, vacío para una Consulta, pero
+   mismo camino que ya usa el CLI) y el propio Endpoint
+   (`exportar_endpoint/2`, ya trae `catalogo_base`/`campos`/etc. desde
+   R67), y arma+sube+dispara el bundle -- equivalente exacto a `mix
+   motor.publicar --sistema=<s> <nombre-interno>`.
+
+2. **`ConsultaEndpoints.despublicar_de_ambiente/2`** (R74 -- NO exige
+   que el Endpoint esté borrado local, a diferencia de `mix
+   endpoint.despublicar`): escribe el tombstone, arma+sube+dispara el
+   bundle igual que el punto 1, y al final vuelve a exportar el
+   Endpoint en su forma NORMAL -- el tombstone era solo para ESE
+   deploy puntual; en disco, después de esta llamada, todo queda como
+   si nunca hubiera pasado (el Endpoint sigue publicado local). El
+   Release `bc-<nombre>` en GitHub SÍ queda en la forma tombstone
+   hasta la próxima vez que se publique ese mismo Endpoint a algún
+   lado -- correcto: "quitado de este ambiente" debe sobrevivir a
+   cualquier deploy normal futuro de ESE ambiente, no auto-resucitar.
+
+3. **UI (`EndpointsLive`, tarjeta "Publicación")** -- selector de
+   ambiente (misma lista que `BcListLive.sistemas_disponibles/0`:
+   `priv/sistemas.json` + `"unstable"`, nunca `testing`/`stable`
+   directo) + dos botones, con `start_async/3` (mismo patrón que
+   `BcListLive`, la llamada real tarda segundos por la red/`gh`/`tar`).
+   Sección visible SOLO si `bpb_habilitado` (R75) -- un release
+   compilado no tiene `gh`/`tar` ni sentido como origen de publicación,
+   mismo criterio que ya aplica a BC List.
+
+### Cómo quedan resueltos R73-R75
+
+- **R73** -- botones "Publicar a ambiente"/"Quitar de ambiente" en la
+  misma pantalla, mismo resultado que los comandos de terminal.
+- **R74** -- `despublicar_de_ambiente/2` nunca toca el estado local del
+  Endpoint, ni exige que esté borrado -- el tombstone es transitorio,
+  solo para el bundle de ESE deploy.
+- **R75** -- la sección entera queda detrás de `bpb_habilitado` en la
+  UI (la RUTA de Endpoints en sí sigue sin ese gate, R72 -- separado a
+  propósito: usar el Endpoint no depende de BPB, pero PUBLICARLO desde
+  acá sí depende de tener `gh`/`tar` a mano, que solo existen donde ya
+  hoy vive esa herramienta).
