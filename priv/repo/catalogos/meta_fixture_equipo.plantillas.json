@@ -1,0 +1,56 @@
+{
+  "catalogo": "meta_fixture_equipo",
+  "plantillas": [
+    {
+      "nombre": "Plantilla automática",
+      "estado": "borrador",
+      "descripcion": null,
+      "disponible_multi_vista": false,
+      "definicion": {
+        "hijos": [
+          {
+            "hijos": [],
+            "id": "902d1637a5f5",
+            "propiedades": {
+              "campo": "meta_fixture_equipo_nombre_equipo",
+              "celda": {
+                "alineacion_h": "izquierda",
+                "alineacion_v": "arriba",
+                "alto": null,
+                "ancho": null,
+                "colspan": 1,
+                "columna": 0,
+                "estilo": {
+                  "borde": false,
+                  "color_texto": "",
+                  "fondo": "",
+                  "redondeado": false,
+                  "sombra": false
+                },
+                "fila": 0,
+                "padding": "normal",
+                "responsive": {
+                  "colspan_movil": null,
+                  "ocultar_movil": false,
+                  "orden_movil": null,
+                  "rowspan_movil": null
+                },
+                "rowspan": 1,
+                "visible": true
+              },
+              "tipo_filtro": "string"
+            },
+            "tipo": "campo"
+          }
+        ],
+        "propiedades": {
+          "columnas": 1,
+          "filas": 1,
+          "gap": "normal"
+        },
+        "tipo": "raiz"
+      },
+      "proposito": "vista"
+    }
+  ]
+}

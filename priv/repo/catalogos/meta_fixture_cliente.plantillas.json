@@ -1,0 +1,124 @@
+{
+  "catalogo": "meta_fixture_cliente",
+  "plantillas": [
+    {
+      "nombre": "Plantilla automática",
+      "estado": "borrador",
+      "descripcion": null,
+      "disponible_multi_vista": false,
+      "definicion": {
+        "hijos": [
+          {
+            "hijos": [],
+            "id": "c184440a6b17",
+            "propiedades": {
+              "campo": "meta_fixture_cliente_nombre",
+              "celda": {
+                "alineacion_h": "izquierda",
+                "alineacion_v": "arriba",
+                "alto": null,
+                "ancho": null,
+                "colspan": 1,
+                "columna": 0,
+                "estilo": {
+                  "borde": false,
+                  "color_texto": "",
+                  "fondo": "",
+                  "redondeado": false,
+                  "sombra": false
+                },
+                "fila": 0,
+                "padding": "normal",
+                "responsive": {
+                  "colspan_movil": null,
+                  "ocultar_movil": false,
+                  "orden_movil": null,
+                  "rowspan_movil": null
+                },
+                "rowspan": 1,
+                "visible": true
+              },
+              "tipo_filtro": "string"
+            },
+            "tipo": "campo"
+          },
+          {
+            "hijos": [],
+            "id": "344f2ffd30e1",
+            "propiedades": {
+              "campo": "meta_fixture_cliente_edad",
+              "celda": {
+                "alineacion_h": "izquierda",
+                "alineacion_v": "arriba",
+                "alto": null,
+                "ancho": null,
+                "colspan": 1,
+                "columna": 0,
+                "estilo": {
+                  "borde": false,
+                  "color_texto": "",
+                  "fondo": "",
+                  "redondeado": false,
+                  "sombra": false
+                },
+                "fila": 1,
+                "padding": "normal",
+                "responsive": {
+                  "colspan_movil": null,
+                  "ocultar_movil": false,
+                  "orden_movil": null,
+                  "rowspan_movil": null
+                },
+                "rowspan": 1,
+                "visible": true
+              },
+              "tipo_filtro": "numero"
+            },
+            "tipo": "campo"
+          },
+          {
+            "hijos": [],
+            "id": "0d53f979d7e6",
+            "propiedades": {
+              "campo": "meta_fixture_cliente_venta",
+              "celda": {
+                "alineacion_h": "izquierda",
+                "alineacion_v": "arriba",
+                "alto": null,
+                "ancho": null,
+                "colspan": 1,
+                "columna": 0,
+                "estilo": {
+                  "borde": false,
+                  "color_texto": "",
+                  "fondo": "",
+                  "redondeado": false,
+                  "sombra": false
+                },
+                "fila": 2,
+                "padding": "normal",
+                "responsive": {
+                  "colspan_movil": null,
+                  "ocultar_movil": false,
+                  "orden_movil": null,
+                  "rowspan_movil": null
+                },
+                "rowspan": 1,
+                "visible": true
+              },
+              "tipo_filtro": "numero"
+            },
+            "tipo": "campo"
+          }
+        ],
+        "propiedades": {
+          "columnas": 1,
+          "filas": 3,
+          "gap": "normal"
+        },
+        "tipo": "raiz"
+      },
+      "proposito": "vista"
+    }
+  ]
+}
