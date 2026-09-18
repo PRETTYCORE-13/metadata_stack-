@@ -883,3 +883,38 @@ criterio que ya usa el wizard "Publicar paquete" de `BcListLive`.
       sin haber tocado el Endpoint local en ningún momento.
 
 - [ ] **Q5.** Suite completa (`mix test`) sin regresiones.
+
+## Grupo R — Autoría de un Endpoint solo en local (R76, agregado 2026-09-18)
+
+Ver design.md §16. Hallazgo real: un Endpoint duplicado se creó sin
+querer directo en `unstable` porque R72 dejaba crear/editar en
+cualquier ambiente.
+
+- [x] **R1.** `router.ex`: `live "/sysadmin/endpoints/nuevo"` vuelve
+      adentro del bloque `if bpb_habilitado`. `:index`/`:editar` se
+      quedan afuera, sin cambios. Verificado: `mix compile` limpio.
+
+- [x] **R2.** `EndpointsLive`: `bpb_habilitado` se asigna una sola vez
+      en `mount/3`, se pasa como `attr` a `vista_index/1` y
+      `vista_editar/1` (function components, assigns propio). `+ Nuevo
+      endpoint`/"Eliminar" (index) y Campos/Configuración/Alta/Probar/
+      Publicación (editar) quedan `:if={@bpb_habilitado}`.
+      Credenciales/Documentación sin cambios. Verificado: `mix compile`
+      limpio.
+
+- [x] **R3.** `handle_event/3` genérico (`@eventos_solo_bpb`), ANTES de
+      las cláusulas específicas, corta crear/guardar/eliminar/marcar
+      campos/alta/probar/publicar-despublicar-local si
+      `bpb_habilitado` es falso -- defensa en profundidad además de la
+      UI. Credenciales quedan afuera de la lista a propósito.
+      Verificado: `mix compile` limpio.
+
+- [ ] **R4.** Suite completa (`mix test`) sin regresiones -- en
+      particular `endpoints_live_test.exs` (corre con
+      `bpb_habilitado = true` en `:test`, no debería cambiar nada ahí).
+
+- [ ] **R5.** Verificación end-to-end real: en `unstable`,
+      `/sysadmin/endpoints` ya NO muestra "+ Nuevo endpoint" ni
+      "Eliminar", y al entrar a "Configurar" un endpoint solo se ven
+      Credenciales + Documentación (con el aviso de "solo se edita en
+      local"). En local, todo sigue como antes.

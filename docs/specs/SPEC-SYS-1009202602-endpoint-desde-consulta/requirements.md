@@ -636,12 +636,18 @@ Builder en un release compilado (`bpb_habilitado`), así que R69/R70
 existe en `unstable`/`testing`/`stable`/un cliente. Contradicción
 encontrada dentro del propio spec, corregida acá antes de seguir.
 
-**R72.** EL SISTEMA DEBE permitir crear, editar, publicar/despublicar
-un Endpoint y administrar sus credenciales en CUALQUIER ambiente,
+**R72.** EL SISTEMA DEBE permitir **ver** la configuración de un
+Endpoint, **generar/rotar/revocar sus credenciales**, y **consultar su
+documentación** (qué mandar, qué responde) en CUALQUIER ambiente,
 incluido un release compilado donde Business Process Builder esté
-apagado -- a diferencia de un catálogo nuevo hecho con BPB, ninguna de
-estas operaciones depende de generar un módulo Ecto ni de migrar una
-tabla física.
+apagado -- ninguna de estas operaciones depende de generar un módulo
+Ecto ni de migrar una tabla física.
+
+*(Revisado 2026-09-18 -- ver R76: la redacción original decía "crear,
+editar, publicar/despublicar" en cualquier ambiente; eso quedó
+corregido después de un hallazgo real, un Endpoint duplicado creado
+sin querer directo en `unstable` una vez que esta regla dejó esa
+pantalla abierta ahí. Autoría de la definición ahora es R76, dev-only.)*
 
 ## Publicar/despublicar un Endpoint sin terminal (agregado 2026-09-17, a pedido explícito)
 
@@ -666,3 +672,21 @@ elegido.
 existe la herramienta de publicar (mismo ambiente que tiene Business
 Process Builder habilitado) -- nunca en un release compilado, que no
 tiene `gh`/`tar` ni sentido como origen de una publicación.
+
+## Autoría de un Endpoint, solo en local (agregado 2026-09-18, a pedido explícito)
+
+Hallazgo real (2026-09-17): con R72 permitiendo crear/editar un
+Endpoint en CUALQUIER ambiente, se creó sin querer un endpoint
+duplicado directo en `unstable` (`endpoint_pty_h_historico_499`) al
+entrar a "Nuevo Endpoint" ahí en vez de usar el ya publicado desde
+local -- mismo tipo de deriva que el resto de la plataforma ya evita
+para catálogos (nunca se crean en producción, solo se publican desde
+local). A pedido explícito, se alinea Endpoints con ese mismo criterio.
+
+**R76.** Crear un Endpoint nuevo y editar su definición (campos, ruta,
+método, parámetros, configuración de alta) DEBE estar disponible
+ÚNICAMENTE donde Business Process Builder está habilitado -- igual que
+un catálogo real, la definición se autoría en local y viaja por
+publicación (R73), nunca se edita directo en un ambiente desplegado.
+Ver/generar/rotar/revocar credenciales y consultar la documentación
+(R72, sin cambios) siguen disponibles en cualquier ambiente.

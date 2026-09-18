@@ -244,15 +244,26 @@ defmodule MetadataAppWeb.Router do
         live "/sysadmin/bc-list/:nombre/plantilla", Sysadmin.PlantillaConstructorLive
         live "/sysadmin/bc-list/:nombre/importacion", Sysadmin.ImportacionConstructorLive
         live "/sysadmin/tepache", Sysadmin.TepacheLive
+
+        # SPEC-SYS-1009202602 (design.md §16, R76, agregado 2026-09-18):
+        # "nuevo" SÍ vuelve a depender de bpb_habilitado -- crear un
+        # Endpoint es AUTORÍA de su definición (mismo criterio que un
+        # catálogo real, nunca se autoría directo en un ambiente
+        # desplegado). Hallazgo real: un endpoint duplicado se creó sin
+        # querer directo en `unstable` una vez que R72 dejó esta pantalla
+        # abierta en cualquier lado. `:index`/`:editar` (abajo, fuera de
+        # este bloque) SÍ siguen disponibles en cualquier ambiente -- ahí
+        # es donde vive ver/generar credenciales y la Documentación
+        # (R69/R70/R72 siguen vigentes para eso), el propio LiveView
+        # oculta el resto del formulario de edición fuera de local.
+        live "/sysadmin/endpoints/nuevo", Sysadmin.EndpointsLive, :nuevo
       end
 
       # SPEC-SYS-1009202602 (agregado 2026-09-14, a pedido explícito --
       # "no quiero que dependa de una consulta") -- sección propia para
       # crear/gestionar endpoints, sin pasar por BC List. Reemplaza el
       # atajo "+ Endpoint" (ya retirado de BcListLive) y la pestaña
-      # "Endpoint API" (ya retirada de ConsultaEditorLive). "nuevo"
-      # ANTES de ":id" -- ruta literal antes de comodín, mismo criterio
-      # que el resto de este archivo.
+      # "Endpoint API" (ya retirada de ConsultaEditorLive).
       #
       # Corregido 2026-09-17 (design.md §14, R72): FUERA del bloque
       # `bpb_habilitado` de arriba -- a diferencia de BC List, ninguna
@@ -266,9 +277,9 @@ defmodule MetadataAppWeb.Router do
       # (R67-R71) recién había logrado llevar la config del Endpoint
       # hasta ahí, sin ninguna pantalla para generar su credencial. La
       # protección real sigue siendo el permiso "sysadmin_endpoints"
-      # (R66), que no depende de esto.
+      # (R66), que no depende de esto. "nuevo" (arriba, SÍ gateado por
+      # bpb_habilitado) queda como excepción explícita desde R76.
       live "/sysadmin/endpoints", Sysadmin.EndpointsLive, :index
-      live "/sysadmin/endpoints/nuevo", Sysadmin.EndpointsLive, :nuevo
       live "/sysadmin/endpoints/:nombre", Sysadmin.EndpointsLive, :editar
 
       # Buscar TRN: siempre disponible (2026-08-04, a pedido explícito) —

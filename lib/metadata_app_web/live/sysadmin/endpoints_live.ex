@@ -73,6 +73,14 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
       |> assign(:show_clientes_children, false)
       |> assign(:show_prettycore_children, false)
       |> assign(:prefijo, @prefijo_ruta_endpoint)
+      # R76 (SPEC-SYS-1009202602, agregado 2026-09-18, a pedido explícito):
+      # la DEFINICIÓN de un Endpoint (campos, ruta, parámetros, alta) solo
+      # se edita en local -- mismo criterio que un catálogo real, nunca se
+      # autoría directo en un ambiente desplegado. Ver/generar credenciales
+      # y la Documentación siguen disponibles en cualquier lado (R69/R70/R72
+      # siguen vigentes para eso). Un endpoint duplicado creado sin querer
+      # directo en unstable (2026-09-17) es el hallazgo real que motivó esto.
+      |> assign(:bpb_habilitado, Application.get_env(:metadata_app, :bpb_habilitado, false))
 
     {:ok, cargar(socket, socket.assigns.live_action, params)}
   end
@@ -115,7 +123,6 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
         |> assign(:campos_visibles_endpoint, campos_visibles_endpoint(consulta))
         |> assign(:campos_reales_alta, campos_reales_alta(consulta.catalogo_base))
         |> assign(:catalogos_detalle_alta, catalogos_detalle_alta(consulta.catalogo_base))
-        |> assign(:bpb_habilitado, Application.get_env(:metadata_app, :bpb_habilitado, false))
         |> assign(:sistemas_disponibles, sistemas_disponibles())
         |> assign(:ambiente_sistema, nil)
         |> assign(:ambiente_procesando?, false)
@@ -230,6 +237,25 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
 
   def handle_event("change_page", %{"id" => id}, socket) do
     AdminNav.handle_nav(id, socket, "endpoints")
+  end
+
+  # Defensa en profundidad (R76, design.md §16): la UI ya oculta estos
+  # controles fuera de local (`bpb_habilitado`), pero un evento LiveView
+  # se puede disparar igual con el socket ya montado (ej. devtools) --
+  # esta cláusula, al estar ANTES de las específicas de abajo, corta
+  # cualquiera de estos eventos primero si el ambiente no tiene BPB.
+  # Nunca incluye eventos de credenciales/Probar-lectura -- esos siguen
+  # siendo válidos en cualquier ambiente.
+  @eventos_solo_bpb ~w(
+    eliminar_endpoint crear_endpoint guardar_columnas cambiar_es_parametro cambiar_acotado
+    cambiar_tipo_filtro cambiar_origen cambiar_catalogo_referenciado cambiar_defaults_modo
+    cambiar_defaults_valor cambiar_defaults_valor_hasta cambiar_defaults_valores
+    marcar_defaults_todos limpiar_defaults_valores guardar_endpoint publicar_endpoint
+    despublicar_endpoint guardar_alta eliminar_endpoint_actual probar_endpoint
+  )
+
+  def handle_event(evento, _params, %{assigns: %{bpb_habilitado: false}} = socket) when evento in @eventos_solo_bpb do
+    {:noreply, put_flash(socket, :error, "Esto solo se puede editar en local (Business Process Builder).")}
   end
 
   # --- :index -------------------------------------------------------------
@@ -681,7 +707,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
   def render(assigns) do
     ~H"""
     <div class="max-w-7xl mx-auto p-6 text-xs font-sans">
-      <.vista_index :if={@live_action == :index} endpoints={@endpoints} />
+      <.vista_index :if={@live_action == :index} endpoints={@endpoints} bpb_habilitado={@bpb_habilitado} />
       <.vista_nuevo :if={@live_action == :nuevo} catalogos={@catalogos} catalogo_base={@catalogo_base}
         catalogo_detalle={@catalogo_detalle} preview_union={@preview_union} error_nuevo={@error_nuevo} />
       <.vista_editar :if={@live_action == :editar} header={@header} consulta={@consulta} campos={@campos}
@@ -699,6 +725,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
   end
 
   attr :endpoints, :list, required: true
+  attr :bpb_habilitado, :boolean, default: false
 
   defp vista_index(assigns) do
     ~H"""
@@ -707,7 +734,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
         <span class="material-symbols-outlined text-purple-600">api</span>
         Endpoints
       </h1>
-      <.link navigate={~p"/sysadmin/endpoints/nuevo"} class="px-4 py-2 rounded-lg bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700">
+      <.link :if={@bpb_habilitado} navigate={~p"/sysadmin/endpoints/nuevo"} class="px-4 py-2 rounded-lg bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700">
         + Nuevo endpoint
       </.link>
     </div>
@@ -744,7 +771,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
                 class="text-blue-600 hover:text-blue-800 font-semibold mr-3">
                 Configurar
               </.link>
-              <button type="button" phx-click="eliminar_endpoint" phx-value-nombre={endpoint.consulta.header.schema_context_name}
+              <button :if={@bpb_habilitado} type="button" phx-click="eliminar_endpoint" phx-value-nombre={endpoint.consulta.header.schema_context_name}
                 data-confirm={"Se borra el endpoint '#{endpoint.nombre}' y todas sus credenciales, para siempre. ¿Eliminar?"}
                 class="text-red-600 hover:text-red-800 font-semibold">
                 Eliminar
@@ -871,18 +898,23 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
           </p>
         </div>
       </div>
-      <button :if={@endpoint} type="button" phx-click="eliminar_endpoint_actual"
+      <button :if={@endpoint && @bpb_habilitado} type="button" phx-click="eliminar_endpoint_actual"
         data-confirm="Se borra este endpoint y todas sus credenciales, para siempre. ¿Eliminar?"
         class="shrink-0 text-xs font-semibold text-red-600 hover:text-red-800">
         Eliminar endpoint
       </button>
     </div>
 
+    <div :if={!@bpb_habilitado} class="mb-4 rounded-xl border border-blue-200 bg-blue-50 text-blue-700 px-3 py-2">
+      La configuración de este endpoint (campos, ruta, parámetros) solo se edita en local (Business Process Builder) --
+      acá podés generar/rotar credenciales y ver la documentación de qué mandar.
+    </div>
+
     <div class="flex flex-col gap-4">
-      <.panel_campos campos={@campos} multi_tabla?={@multi_tabla?} detalles_por_catalogo={@detalles_por_catalogo}
+      <.panel_campos :if={@bpb_habilitado} campos={@campos} multi_tabla?={@multi_tabla?} detalles_por_catalogo={@detalles_por_catalogo}
         modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple} catalogos_referenciables={@catalogos_referenciables} />
 
-      <div class="bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
+      <div :if={@bpb_habilitado} class="bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
         <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-3">Configuración del endpoint</div>
         <form phx-submit="guardar_endpoint" class="flex flex-col gap-3">
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -967,7 +999,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
            la consulta: si @endpoint.permite_alta, el body del POST se
            interpreta como los campos del registro nuevo, nunca como
            filtros de búsqueda (ver ConsultaEndpointController.ejecutar/5). -->
-      <div :if={@endpoint && @endpoint.metodo == "post"} class="bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
+      <div :if={@endpoint && @endpoint.metodo == "post" && @bpb_habilitado} class="bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
         <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-1">Alta de registros (el POST inserta filas)</div>
         <p class="text-xs text-gray-500 mb-3">
           Mismas reglas que un alta manual desde la UI (motor de estados, folio/TRN si el catálogo es transaccional).
@@ -1041,7 +1073,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
         </form>
       </div>
 
-      <div :if={@endpoint} class="bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
+      <div :if={@endpoint && @bpb_habilitado} class="bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
         <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-3">Probar (no requiere estar publicado)</div>
         <form phx-submit="probar_endpoint" class="flex flex-col gap-2">
           <div :for={campo <- @parametros_elegibles} :if={MapSet.member?(@parametros_activos, campo["clave"])} class="flex flex-col sm:flex-row sm:items-center gap-1.5">
@@ -1071,7 +1103,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
         </div>
       </div>
 
-      <div :if={@endpoint} class="bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
+      <div :if={@endpoint && @bpb_habilitado} class="bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
         <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-3">Publicación</div>
 
         <div class="flex items-center gap-2 mb-3">

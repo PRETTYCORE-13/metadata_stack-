@@ -1157,3 +1157,53 @@ duplicar ese paso.
   propósito: usar el Endpoint no depende de BPB, pero PUBLICARLO desde
   acá sí depende de tener `gh`/`tar` a mano, que solo existen donde ya
   hoy vive esa herramienta).
+
+## 16. Autoría de un Endpoint, solo en local (R76, agregado 2026-09-18)
+
+**Hallazgo real que motivó esto:** con R72 dejando `/sysadmin/endpoints`
+abierto (crear/editar incluido) en cualquier ambiente, se creó sin
+querer un Endpoint duplicado directo en `unstable`
+(`endpoint_pty_h_historico_499`) -- exactamente la deriva que el resto
+de la plataforma ya evita para catálogos (nunca se autorían en
+producción). R72 se revisa: solo "ver + credenciales + documentación"
+sigue siendo universal; crear/editar la definición vuelve a depender
+de `bpb_habilitado`, igual que BC List.
+
+### Cambios
+
+1. **`router.ex`** -- `live "/sysadmin/endpoints/nuevo", ..., :nuevo`
+   vuelve DENTRO del bloque `if bpb_habilitado` (con BC List/Tepache).
+   `:index`/`:editar` (la lista y "Configurar") se quedan FUERA de ese
+   bloque, sin cambios -- ahí es donde vive ver/credenciales/docs.
+
+2. **`EndpointsLive`** -- `bpb_habilitado` se asigna una sola vez en
+   `mount/3` (antes estaba duplicado en el `cargar/3` de `:editar`), y
+   se pasa como `attr` a `vista_index/1` y `vista_editar/1` (son
+   function components -- tienen su assigns propio, aislado del
+   `socket.assigns` del LiveView; hallazgo real de la vuelta anterior,
+   R73-75, mismo tipo de bug si no se pasa explícito).
+   - `vista_index`: "+ Nuevo endpoint" y "Eliminar" (por fila) quedan
+     `:if={@bpb_habilitado}`.
+   - `vista_editar`: el panel de Campos, la tarjeta "Configuración del
+     endpoint" (+ "Alta de registros"), "Probar" y "Publicación"
+     (toggle local + la sección "Ambientes" de R73-75, que ya estaba
+     gateada) quedan `:if={@bpb_habilitado}` -- "Credenciales" y
+     "Documentación" NO llevan ese gate, siguen universales (R72). Sin
+     BPB, un aviso explica por qué no se puede editar ahí.
+   - **Defensa en profundidad**: un `handle_event/3` genérico, ANTES
+     de las cláusulas específicas (el orden de definición importa acá
+     -- Elixir prueba las cláusulas en el orden en que aparecen en el
+     archivo), corta cualquier evento de la lista `@eventos_solo_bpb`
+     (crear, guardar, eliminar, marcar campos, alta, probar,
+     publicar/despublicar LOCAL) si `bpb_habilitado` es `false` -- la
+     UI ya los oculta, esto cubre un evento disparado igual (ej. con
+     el socket ya montado). Los eventos de credenciales quedan afuera
+     de esa lista a propósito.
+
+### Cómo queda resuelto R76
+
+Crear/editar la definición de un Endpoint vuelve a depender de
+`bpb_habilitado`, en el router Y en la UI Y en el `handle_event` --
+tres capas, mismo criterio de "defensa en profundidad" que ya usa el
+resto del proyecto. Ver/credenciales/documentación siguen sin cambios
+(R72), disponibles en cualquier ambiente.
