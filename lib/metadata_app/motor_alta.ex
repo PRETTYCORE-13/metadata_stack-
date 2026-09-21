@@ -557,28 +557,37 @@ defmodule MetadataApp.MotorAlta do
 
   @doc """
   Rollback de base de datos (SPEC-SYS-1809202603 R10a/§6.3, Grupo H) --
-  corre `/app/bin/rollback <version>` DENTRO del pod `metadata-<sistema>`
-  (mismo patrón de `aplicar_manifiestos/3` para encontrar el pod
-  correcto: ordenar por `creationTimestamp`, tomar el último). Revierte
-  la base hasta (e incluyendo) `version` -- mismo `Ecto.Migrator.run/3`
-  que ya trae `MetadataApp.Release.rollback/2` de fábrica (boilerplate
-  estándar de `mix phx.gen.release`, ya existía, solo hacía falta
-  conectarlo -- `rel/overlays/bin/rollback`).
+  corre `/app/bin/rollback` DENTRO del pod `metadata-<sistema>` (mismo
+  patrón de `aplicar_manifiestos/3` para encontrar el pod correcto:
+  ordenar por `creationTimestamp`, tomar el último). Recibe
+  `rutas_migraciones` (las rutas exactas de `PropagacionContext.migraciones_entre/2`,
+  NUNCA un solo `version` de corte -- ver el bug real documentado en
+  `MetadataApp.Release.rollback/2`) y le pasa al release los BASENAMES
+  -- adentro, `MetadataApp.Release.rollback/2` resuelve cada uno a su
+  `{version, module}` real (`Code.compile_file/1` sobre el path del
+  propio release, el módulo no viene precompilado) y llama
+  `Ecto.Migrator.down/4` UNA vez por archivo, nunca `to: version` --
+  inmune a que otras migraciones ajenas (`pty_*`, con nombre "doble
+  timestamp") anden en el medio.
 
   Corre DESPUÉS del rollback de código (design.md §6.3: "primero código,
   después base") -- se ejecuta DENTRO del pod que ya tiene la imagen
-  vieja, así que sus migraciones bundleadas son las correctas para saber
-  cómo revertir hasta `version`. Solo se llama cuando
-  `SeguridadMigracion.clasificar_conjunto/2` ya confirmó `:automatico`
-  -- este código no vuelve a evaluar esa decisión, confía en el
-  resultado que ya se calculó antes de disparar nada.
+  vieja, así que sus migraciones bundleadas son las correctas. Solo se
+  llama cuando `SeguridadMigracion.clasificar_conjunto/2` ya confirmó
+  `:automatico` -- este código no vuelve a evaluar esa decisión, confía
+  en el resultado que ya se calculó antes de disparar nada.
 
   `{:ok, salida}` | `{:error, mensaje}`.
   """
-  def rollback_base_datos(ambiente, sistema, version) do
+  def rollback_base_datos(ambiente, sistema, rutas_migraciones) when is_list(rutas_migraciones) do
+    lista_literal =
+      rutas_migraciones
+      |> Enum.map(&inspect(Path.basename(&1)))
+      |> Enum.join(", ")
+
     comando = """
     POD=$(sudo k3s kubectl get pod -n metadata-stack -l app=metadata-#{sistema} --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[*].metadata.name}' | awk '{print $NF}') && \
-    sudo k3s kubectl exec -n metadata-stack "$POD" -- /app/bin/rollback #{version}
+    sudo k3s kubectl exec -n metadata-stack "$POD" -- /app/bin/rollback #{shell_comilla_simple("[#{lista_literal}]")}
     """
     |> String.trim()
 
@@ -588,6 +597,14 @@ defmodule MetadataApp.MotorAlta do
       {:error, _} = error -> error
     end
   end
+
+  # Mismo criterio de escapado que SeguridadMigracion -- envolver en
+  # comillas SIMPLES para el shell remoto (nunca dobles: la lista
+  # literal ya trae alias de módulo tipo MetadataApp.Repo.Migrations.X,
+  # sin comillas propias que choquen). Duplicado a propósito acá (una
+  # función de 1 línea, no vale la pena acoplar los dos módulos por
+  # esto).
+  defp shell_comilla_simple(texto), do: "'" <> String.replace(texto, "'", "'\\''") <> "'"
 
   defp comitear_y_pushear(path, sistema) do
     dir = Path.dirname(path)

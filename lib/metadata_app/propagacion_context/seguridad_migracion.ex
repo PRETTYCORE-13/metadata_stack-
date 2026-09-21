@@ -306,4 +306,5 @@ defmodule MetadataApp.PropagacionContext.SeguridadMigracion do
     |> hd()
     |> String.to_integer()
   end
+
 end
