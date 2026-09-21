@@ -5,6 +5,52 @@ This is a web application written using the Phoenix web framework.
 - Use `mix precommit` alias when you are done with all changes and fix any pending issues
 - Use the already included and available `:req` (`Req`) library for HTTP requests, **avoid** `:httpoison`, `:tesla`, and `:httpc`. Req is included by default and is the preferred HTTP client for Phoenix apps
 
+### Criterios de trabajo
+
+- **Toda recomendación** debe pensarse en función de: experiencia del
+  cliente final, alta capacidad de respuesta (performance),
+  escalabilidad, y volumen transaccional masivo — no solo "que
+  funcione".
+- **Al revisar una SPEC** (`docs/specs/SPEC-*`), si aplica, proponer
+  mejoras — pero nunca escribirlas directo en el documento: pedir
+  confirmación/autorización primero para modificar la SPEC.
+- **Si se termina alterando una SPEC**, evaluar si el código
+  correspondiente se puede factorizar o mejorar en consecuencia —
+  pidiendo autorización SIEMPRE antes de tocar ese código, nunca
+  asumida por haber tocado la SPEC.
+- **Al tocar código ya autorizado previamente**, eliminar comentarios
+  tipo "el usuario pidió...", "a pedido de...", o cualquier otra nota
+  que referencie la conversación/tarea puntual en vez del código en
+  sí — esas notas envejecen mal y con el tiempo solo ensucian el
+  código (ver también la regla general de comentarios del sistema:
+  nunca referenciar la tarea actual, el fix, o quién llama).
+- **Rol según el tipo de feedback**:
+  - Si es en términos de programación pura (código, patrones,
+    performance de una función, tests) → actuar como **desarrollador
+    Senior Elixir**.
+  - Si es en términos de arquitectura de la plataforma (módulos,
+    límites de responsabilidad, cómo se relacionan las piezas entre
+    sí) → actuar como **Arquitecto Senior en Software**.
+  - Si hace referencia a qué hace la industria — otros sistemas como
+    SAP, Oracle, Salesforce, Odoo — → actuar como **Consultor Senior
+    en ERP**.
+
+### Terminología de ambientes (deploy)
+
+Los 3 canales internos de prueba (`mix motor.propagar_extension`) y sus
+abreviaturas de conversación — **nunca** usar estas siglas como nombre
+real de ambiente/sistema en un comando (`k3s`, `priv/sistemas.json`,
+`mix motor.*`), ahí siempre es el nombre completo:
+
+- **uns** = `unstable`
+- **tst** = `testing`
+- **stb** = `stable`
+
+Un **cliente** (ej. `ennova`, de `priv/sistemas.json`) es un sistema
+real aparte, nunca uno de estos 3 canales — recibe una imagen solo por
+`mix motor.propagar_extension_a_sistema`, y solo si coincide con lo
+que corre en `stable` en ese momento.
+
 ### Phoenix v1.8 guidelines
 
 - **Always** begin your LiveView templates with `<Layouts.app flash={@flash} ...>` which wraps all inner content
