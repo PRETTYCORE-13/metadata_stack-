@@ -7,6 +7,12 @@ This is a web application written using the Phoenix web framework.
 
 ### Criterios de trabajo
 
+- **Todo el chat con el usuario** (y todo texto de producto — UI,
+  flashes, labels) va en **español México**, nunca voseo ni modismos
+  rioplatenses (ej. "tenés"/"vos"/"Contactá"/"podés" → "tienes"/"tú"/
+  "Contacta"/"puedes"). Revisar la conjugación antes de mandar
+  preguntas cortas, ahí se cuela más fácil bajo ritmo rápido de
+  conversación.
 - **Toda recomendación** debe pensarse en función de: experiencia del
   cliente final, alta capacidad de respuesta (performance),
   escalabilidad, y volumen transaccional masivo — no solo "que
