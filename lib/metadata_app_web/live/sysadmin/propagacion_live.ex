@@ -166,9 +166,7 @@ defmodule MetadataAppWeb.Sysadmin.PropagacionLive do
       rutas ->
         case SeguridadMigracion.clasificar_conjunto(rutas, {:remoto, ambiente, destino}) do
           {:automatico, _operaciones} ->
-            version = rutas |> Enum.map(&SeguridadMigracion.version_de/1) |> Enum.min()
-
-            case MotorAlta.rollback_base_datos(ambiente, destino, version) do
+            case MotorAlta.rollback_base_datos(ambiente, destino, rutas) do
               {:ok, _salida} ->
                 put_flash(socket, :info, "Base de datos revertida automáticamente -- rollback completo (código + datos).")
 
