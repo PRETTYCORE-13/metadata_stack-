@@ -6,7 +6,7 @@ código directo sobre una idea suelta. El flujo es siempre:
 
 ```
 00.doc_human.md → 01.requirements.md → 02.design.md → 03.tasks.md → 04.implementación → 05.usage.md
-      ↑                                                                                     │
+      ↑                                                                                   │
       └───────────────────────────── se vuelve a leer ────────────────────────────────────┘
 ```
 

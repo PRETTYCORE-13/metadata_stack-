@@ -13,6 +13,13 @@ This is a web application written using the Phoenix web framework.
   "Contacta"/"puedes"). Revisar la conjugación antes de mandar
   preguntas cortas, ahí se cuela más fácil bajo ritmo rápido de
   conversación.
+- **Al leer o escribir cualquier documento de una SPEC**
+  (`docs/specs/SPEC-*/*.md`), revisar que no tenga voseo ni modismos
+  rioplatenses — mismo criterio de arriba, pero acá se cuela fácil por
+  copiar/pegar lenguaje de una spec vieja o de otra parte del código
+  (ej. "grilla" en vez de "tabla", encontrado real en
+  `SPEC-SYS-1109202606`). Si se encuentra uno, corregirlo ahí mismo,
+  no esperar a que el usuario lo señale.
 - **Toda recomendación** debe pensarse en función de: experiencia del
   cliente final, alta capacidad de respuesta (performance),
   escalabilidad, y volumen transaccional masivo — no solo "que
