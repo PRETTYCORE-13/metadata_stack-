@@ -164,7 +164,7 @@ defmodule MetadataAppWeb.Sysadmin.PropagacionLive do
         socket
 
       rutas ->
-        case SeguridadMigracion.clasificar_conjunto(rutas) do
+        case SeguridadMigracion.clasificar_conjunto(rutas, {:remoto, ambiente, destino}) do
           {:automatico, _operaciones} ->
             version = rutas |> Enum.map(&SeguridadMigracion.version_de/1) |> Enum.min()
 

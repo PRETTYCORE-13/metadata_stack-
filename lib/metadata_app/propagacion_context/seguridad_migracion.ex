@@ -15,10 +15,28 @@ defmodule MetadataApp.PropagacionContext.SeguridadMigracion do
   Dos pasos separados a propósito (`clasificar/1` primero, verificación
   en vivo después) -- clasificar/1 es PURO (sin tocar ninguna base,
   testeable con fixtures reales del repo); `verificar_vacio?/2` y
-  `verificar_columna_sin_uso?/4` SÍ tocan una base real (el mismo
-  `MetadataApp.Repo` de donde corra este código -- en un release
-  desplegado, eso YA apunta al Postgres del destino real, mismo
-  mecanismo que usa `/app/bin/setup`; en test, la sandbox de siempre).
+  `verificar_columna_sin_uso?/4` SÍ tocan una base real.
+
+  **Bug real encontrado y corregido (verificación en vivo, 2026-09-21,
+  Grupo H tarea 38)**: el supuesto original de que "este código corre
+  DENTRO del release ya desplegado en el destino, así que
+  `MetadataApp.Repo` ya apunta al Postgres correcto" es FALSO para el
+  camino real de `/sysadmin/propagacion` -- esa pantalla corre en el
+  proceso de quien la esté usando (en dev, el Postgres local; en
+  producción, el Postgres de donde sea que esa pantalla esté
+  desplegada), nunca necesariamente el del DESTINO que se está
+  revirtiendo. Confirmado insertando una fila real solo en la base de
+  `testing` (dejando la base local en 0 filas) -- `clasificar_conjunto/2`
+  con el `repo` default igual devolvió `{:automatico, ...}`, sin ver el
+  dato real: exactamente el escenario que R10a existe para evitar.
+
+  Corrección: `repo` ahora también acepta `{:remoto, ambiente, sistema}`
+  -- consulta la base real del destino vía SSH + `kubectl exec` + `psql`
+  (mismo mecanismo que ya usa `MotorAlta.rollback_base_datos/3` para el
+  `down` en sí, y `MotorAlta.crear_base/2` para el nombre `db_<sistema>`),
+  nunca un Ecto Repo local. `propagacion_live.ex` SIEMPRE pasa
+  `{:remoto, ambiente, destino}` -- el default `MetadataApp.Repo` queda
+  solo para los tests (sandbox local, mismo criterio de siempre).
   """
 
   @doc """
@@ -127,12 +145,11 @@ defmodule MetadataApp.PropagacionContext.SeguridadMigracion do
 
   @doc """
   Paso 4 de design.md §6.2 -- ¿la tabla `tabla` está vacía (0 filas) EN
-  VIVO? Corre contra `repo` (default `MetadataApp.Repo`) -- en un
-  release desplegado eso ya apunta al Postgres del destino real.
+  VIVO? `repo` es un Ecto Repo local (tests) o `{:remoto, ambiente,
+  sistema}` (producción, ver moduledoc) -- nunca asume cuál.
   """
   def verificar_vacio?(tabla, repo \\ MetadataApp.Repo) do
-    %{rows: [[vacio]]} = Ecto.Adapters.SQL.query!(repo, ~s[SELECT NOT EXISTS(SELECT 1 FROM "#{tabla}")], [])
-    vacio
+    consultar_booleano(repo, ~s[SELECT NOT EXISTS(SELECT 1 FROM "#{tabla}")], [])
   end
 
   @doc """
@@ -144,42 +161,94 @@ defmodule MetadataApp.PropagacionContext.SeguridadMigracion do
   def verificar_columna_sin_uso?(tabla, campo, default, repo \\ MetadataApp.Repo)
 
   def verificar_columna_sin_uso?(tabla, campo, nil, repo) do
-    %{rows: [[sin_uso]]} =
-      Ecto.Adapters.SQL.query!(repo, ~s[SELECT NOT EXISTS(SELECT 1 FROM "#{tabla}" WHERE "#{campo}" IS NOT NULL)], [])
-
-    sin_uso
+    consultar_booleano(repo, ~s[SELECT NOT EXISTS(SELECT 1 FROM "#{tabla}" WHERE "#{campo}" IS NOT NULL)], [])
   end
 
   def verificar_columna_sin_uso?(tabla, campo, default, repo) do
-    %{rows: [[sin_uso]]} =
-      Ecto.Adapters.SQL.query!(
-        repo,
-        ~s[SELECT NOT EXISTS(SELECT 1 FROM "#{tabla}" WHERE "#{campo}" IS NOT NULL AND "#{campo}" != $1)],
-        [default]
-      )
-
-    sin_uso
+    consultar_booleano(
+      repo,
+      ~s[SELECT NOT EXISTS(SELECT 1 FROM "#{tabla}" WHERE "#{campo}" IS NOT NULL AND "#{campo}" != $1)],
+      [default]
+    )
   end
 
   @doc "Cuántas filas tiene `tabla` -- alimenta el \"cuántas filas\" de R10b cuando verificar_vacio?/2 da false."
   def contar_filas(tabla, repo \\ MetadataApp.Repo) do
-    %{rows: [[n]]} = Ecto.Adapters.SQL.query!(repo, ~s[SELECT COUNT(*) FROM "#{tabla}"], [])
-    n
+    consultar_entero(repo, ~s[SELECT COUNT(*) FROM "#{tabla}"], [])
   end
 
   @doc "Cuántas filas de `tabla` tienen un valor REAL en `campo` (ni NULL ni el default) -- alimenta R10b cuando verificar_columna_sin_uso?/4 da false."
   def contar_filas_con_dato_real(tabla, campo, default, repo \\ MetadataApp.Repo)
 
   def contar_filas_con_dato_real(tabla, campo, nil, repo) do
-    %{rows: [[n]]} = Ecto.Adapters.SQL.query!(repo, ~s[SELECT COUNT(*) FROM "#{tabla}" WHERE "#{campo}" IS NOT NULL], [])
-    n
+    consultar_entero(repo, ~s[SELECT COUNT(*) FROM "#{tabla}" WHERE "#{campo}" IS NOT NULL], [])
   end
 
   def contar_filas_con_dato_real(tabla, campo, default, repo) do
-    %{rows: [[n]]} =
-      Ecto.Adapters.SQL.query!(repo, ~s[SELECT COUNT(*) FROM "#{tabla}" WHERE "#{campo}" IS NOT NULL AND "#{campo}" != $1], [default])
+    consultar_entero(repo, ~s[SELECT COUNT(*) FROM "#{tabla}" WHERE "#{campo}" IS NOT NULL AND "#{campo}" != $1], [default])
+  end
 
-    n
+  defp consultar_booleano(repo, sql, params), do: consultar(repo, sql, params) |> valor_unico()
+  defp consultar_entero(repo, sql, params), do: consultar(repo, sql, params) |> valor_unico()
+
+  defp valor_unico(%{rows: [[valor]]}), do: valor
+
+  # Ecto Repo local -- tests (sandbox) o cualquier uso futuro dentro del
+  # propio release desplegado (si algún día esta pantalla corre embebida
+  # en cada destino en vez de centralizada).
+  defp consultar(repo, sql, params) when is_atom(repo) do
+    Ecto.Adapters.SQL.query!(repo, sql, params)
+  end
+
+  # Producción real (propagacion_live.ex) -- el destino NUNCA es el
+  # proceso donde corre esta pantalla, así que la única forma de leer su
+  # base real es remota: SSH + `kubectl exec` + `psql` (mismo mecanismo
+  # que `MotorAlta.rollback_base_datos/3`/`crear_base/2`).
+  defp consultar({:remoto, ambiente, sistema}, sql, params) do
+    sql_resuelto = interpolar_params(sql, params)
+
+    comando =
+      ~s[sudo k3s kubectl exec -n metadata-stack aws-postgres-0 -- psql -U appuser -d db_#{sistema} -t -A -c ] <>
+        shell_comilla_simple(sql_resuelto)
+
+    case MetadataApp.Ssh.ejecutar(ambiente, comando) do
+      {:ok, 0, salida} -> %{rows: [[parsear_valor(salida)]]}
+      {:ok, codigo, salida} -> raise "psql contra \"db_#{sistema}\" falló (status #{codigo}): #{salida}"
+      {:error, motivo} -> raise "SSH falló consultando \"db_#{sistema}\": #{inspect(motivo)}"
+    end
+  end
+
+  # psql no soporta bind params en `-c` -- se interpola el literal a mano
+  # (mismo criterio que el resto de MotorAlta, que ya arma SQL/comandos
+  # como string para SSH). Seguro acá: el único `$1` que puede aparecer
+  # es el `default:` YA EXTRAÍDO del AST de la migración (código del
+  # propio repo, nunca input de un usuario en runtime).
+  defp interpolar_params(sql, []), do: sql
+  defp interpolar_params(sql, [valor]), do: String.replace(sql, "$1", literal_sql(valor))
+
+  defp literal_sql(nil), do: "NULL"
+  defp literal_sql(v) when is_boolean(v), do: to_string(v)
+  defp literal_sql(v) when is_integer(v) or is_float(v), do: to_string(v)
+  defp literal_sql(v), do: "'" <> String.replace(to_string(v), "'", "''") <> "'"
+
+  # Envuelve `texto` en comillas simples para el shell remoto -- nunca
+  # comillas dobles: los identificadores SQL ya vienen entre comillas
+  # dobles (`"tabla"`) y, envueltos en simples, pasan literales sin
+  # escapar nada. Cada comilla simple propia (de un literal de string
+  # SQL, `literal_sql/1`) se reemplaza por `'\''` (cierra, escapa una
+  # comilla literal, reabre) -- técnica POSIX estándar, la única forma
+  # correcta de meter una comilla simple DENTRO de un string ya envuelto
+  # en comillas simples.
+  defp shell_comilla_simple(texto), do: "'" <> String.replace(texto, "'", "'\\''") <> "'"
+
+  # `-t -A`: tuples-only, sin alineación -- para NOT EXISTS/booleanos
+  # psql imprime "t"/"f"; para COUNT(*), el número plano.
+  defp parsear_valor(salida) do
+    case String.trim(salida) do
+      "t" -> true
+      "f" -> false
+      numero -> String.to_integer(numero)
+    end
   end
 
   @doc """
