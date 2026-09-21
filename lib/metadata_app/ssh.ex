@@ -147,9 +147,35 @@ defmodule MetadataApp.Ssh do
     args =
       ["-n", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"] ++
         opts_extra ++ [destino, comando]
-    {salida, codigo} = System.cmd("ssh", args, env: env, stderr_to_stdout: true)
+    {salida, codigo} = System.cmd(binario_ssh(), args, env: env, stderr_to_stdout: true)
     {:ok, codigo, salida}
   rescue
     e in ErlangError -> {:error, "No se pudo ejecutar ssh: #{Exception.message(e)} -- ¿está instalado y en el PATH?"}
+  end
+
+  # En Windows nativo, "ssh" por PATH resuelve al de Git for Windows
+  # (C:\Program Files\Git\usr\bin\ssh.exe, basado en MSYS2) ANTES que al
+  # OpenSSH nativo de Windows -- y ese binario de Git se cuelga
+  # indefinidamente (spinea CPU sin avanzar, confirmado real 2026-09-18
+  # con `Get-Process`: 9 procesos ssh.exe huérfanos acumulando cientos de
+  # segundos de CPU) cuando lo lanza un proceso Win32 nativo como
+  # `erl.exe` sin una consola/pty real -- el runtime MSYS2 que usa por
+  # debajo espera plomería de consola que Erlang no provee al spawnear un
+  # port (pipes anónimos, sin consola). El OpenSSH nativo de Windows
+  # (`C:\Windows\System32\OpenSSH\ssh.exe`, binario Win32 real, sin
+  # capa MSYS2) no tiene ese problema -- confirmado real, misma conexión
+  # tarda ~3s en vez de colgarse. Se usa por ruta absoluta (no por PATH)
+  # para no depender de qué haya antes en el PATH de quien corra esto.
+  # En cualquier otro SO (producción, Linux) "ssh" por PATH es el
+  # OpenSSH normal del sistema, sin este problema -- sin cambios ahí.
+  defp binario_ssh do
+    case :os.type() do
+      {:win32, _} ->
+        nativo = "C:/Windows/System32/OpenSSH/ssh.exe"
+        if File.exists?(nativo), do: nativo, else: "ssh"
+
+      _ ->
+        "ssh"
+    end
   end
 end

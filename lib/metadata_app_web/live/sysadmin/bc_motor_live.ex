@@ -41,7 +41,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     %{tipo: :pagina, id: "jerarquia", label: "Jerarquía organizacional", nav: "/sysadmin/jerarquia"},
   %{tipo: :pagina, id: "panel_control", label: "Panel Control", nav: "/sysadmin/panel-control"},
   %{tipo: :pagina, id: "sesiones_movil", label: "Sesiones móviles", nav: "/sysadmin/sesiones-movil"},
-  %{tipo: :pagina, id: "endpoints", label: "Endpoints", nav: "/sysadmin/endpoints"}
+  %{tipo: :pagina, id: "endpoints", label: "Endpoints", nav: "/sysadmin/endpoints"},
+  %{tipo: :pagina, id: "propagacion", label: "Propagación", nav: "/sysadmin/propagacion"},
   ]
 
   # Get View unificado (panel_get_view/1) — descriptores fijos de los

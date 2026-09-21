@@ -182,8 +182,8 @@ jobs:
   # SPEC-SYS-0309202601 (Grupo E, §3): `metadata-stack-app` se recrea como
   # `metadata-unstable`, el primero de tres canales (unstable/testing/
   # stable) -- este job sigue siendo el único 100% automático (cada push a
-  # main), y apunta SIEMPRE a unstable; promover a testing/stable es manual
-  # (`mix motor.promover`, `actualizar-sistema.yml`). Namespace fijo
+  # main), y apunta SIEMPRE a unstable; propagar a testing/stable es manual
+  # (`mix motor.propagar_extension`, `actualizar-sistema.yml`). Namespace fijo
   # (`metadata-stack`), mismo nombre que dejó la migración a k3s. Asume que
   # DEPLOY_USER tiene NOPASSWD sudo para /usr/local/bin/k3s (ya configurado
   # para "elixir" en ese servidor).

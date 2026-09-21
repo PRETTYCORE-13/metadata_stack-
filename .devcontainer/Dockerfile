@@ -9,7 +9,7 @@ ARG DEBIAN_VERSION=trixie-20260610-slim
 
 FROM docker.io/hexpm/elixir:${ELIXIR_VERSION}-erlang-${OTP_VERSION}-debian-${DEBIAN_VERSION}
 
-# gh -- mix motor.publicar/motor.actualizar/motor.promover lo necesitan
+# gh -- mix motor.publicar/motor.propagar_extension_a_sistema/motor.propagar_extension lo necesitan
 # para disparar workflows (`gh workflow run`), y el registro de un alta
 # nueva en priv/sistemas.json necesita `git push` -- por eso también
 # `gh auth setup-git` como parte del setup de cada dev (ver

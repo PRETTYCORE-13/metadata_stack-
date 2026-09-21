@@ -93,15 +93,17 @@ que lee/escribe el Caddyfile remoto. Un sistema nuevo no lleva `Ingress`
   es obligatorio, sin default, validado contra `priv/sistemas.json`.
 - **Despublicar** (un catálogo ya borrado local): `mix motor.despublicar
   --sistema=<sistema> <catalogo>`.
-- **Actualizar un cliente a una imagen ya construida**: `mix
-  motor.actualizar <sistema> <imagen>` -- `actualizar-sistema.yml`
+- **Propagar a un cliente una imagen ya construida**: `mix
+  motor.propagar_extension_a_sistema <sistema> <imagen>` (renombrado de
+  `mix motor.actualizar`, SPEC-SYS-1809202603 R2) -- `actualizar-sistema.yml`
   (GitHub Actions) valida que `<imagen>` sea EXACTO lo que corre ahora
   mismo en `metadata-stable`, rechaza si no. Probado real (2026-09-07,
   cliente "ennova"): acepta la imagen correcta, rechaza una inventada sin
   tocar el Deployment.
-- **Promover entre canales** (`unstable→testing` o `testing→stable`,
-  único par válido, nunca se saltea Testing): `mix motor.promover
-  <ambiente> <origen> <destino>` -- consulta la imagen actual de
+- **Propagar entre canales** (`unstable→testing` o `testing→stable`,
+  único par válido, nunca se saltea Testing): `mix motor.propagar_extension
+  <ambiente> <origen> <destino>` (renombrado de `mix motor.promover`,
+  SPEC-SYS-1809202603 R1) -- consulta la imagen actual de
   `<origen>` por SSH y la aplica sobre `<destino>` vía el mismo
   `actualizar-sistema.yml`. Nunca hay build nuevo, solo mover el mismo
   artefacto ya construido.
@@ -124,7 +126,7 @@ siempre requieren un comando explícito.
 
 ## 6. Setup de `gh` en el devcontainer (una sola vez por dev)
 
-`mix motor.actualizar`/`mix motor.promover`/`mix motor.publicar` (disparan
+`mix motor.propagar_extension_a_sistema`/`mix motor.propagar_extension`/`mix motor.publicar` (disparan
 workflows vía `gh workflow run`) y el paso final de `mix motor.alta`
 (`git push` de `priv/sistemas.json`) necesitan `gh` instalado Y
 autenticado dentro del devcontainer. **Resuelto (2026-09-07)**:

@@ -562,6 +562,10 @@ defmodule MetadataAppWeb.MenuLayout do
           <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">bolt</span></span>
           <span class="pc-admin-menu-label">Acciones externas</span>
         </.link>
+        <.link :if={"sysadmin_propagacion" in @opciones_plataforma} navigate="/sysadmin/propagacion" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">rocket_launch</span></span>
+          <span class="pc-admin-menu-label">Propagación</span>
+        </.link>
         <div :if={@opciones_administrativas != [] or @opciones_plataforma != []} class="pc-admin-menu-divisor"></div>
         <button
           :if={@current_scope && @current_scope.empresa_activa}
@@ -882,7 +886,7 @@ defmodule MetadataAppWeb.MenuLayout do
   # diferencia de BC List/Tepache, ninguna operación de Endpoints
   # depende del compilador, así que su link no puede seguir escondido
   # en un ambiente sin bpb_habilitado (ver router.ex, mismo motivo).
-  @recursos_plataforma ~w(sysadmin_credenciales sysadmin_ambientes sysadmin_panel_control sysadmin_acciones_externas sysadmin_endpoints)
+  @recursos_plataforma ~w(sysadmin_credenciales sysadmin_ambientes sysadmin_panel_control sysadmin_acciones_externas sysadmin_endpoints sysadmin_propagacion)
   @recursos_plataforma_bpb ~w(sysadmin_bc sysadmin_tepache)
 
   defp opciones_administrativas_visibles(%MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa} = scope)

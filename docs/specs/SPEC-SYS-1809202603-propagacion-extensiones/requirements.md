@@ -1,0 +1,187 @@
+# SPEC-SYS-1809202603 — Propagación de Extensiones (CORE)
+
+**Documento:** Requirements · **Fase:** ✅ aprobada (2026-09-18).
+
+## 1. Propósito y alcance
+
+`SPEC-SYS-0309202601-alta-sistema-nuevo` ya resolvió cómo se **crea**
+un sistema nuevo (R1-R10) y estableció, en R8 + §3 ("decisiones ya
+resueltas"), el principio de que **k3s es la única fuente de verdad**
+de qué versión corre en cada lado — sin registro propio que se pueda
+desincronizar. `MotorAlta.imagen_actual/2` ya implementa esa consulta.
+
+Esta spec **no re-especifica esa base** — la extiende para cubrir el
+problema DISTINTO de **propagar una actualización del CORE (el
+framework Prettycore/BPB en sí) a través de sistemas que YA están
+vivos**, con datos y usuarios reales. A diferencia de un alta (día 0,
+sin riesgo real), este es un mecanismo de **operación continua sobre
+producción** — necesita más rigor: visibilidad cómoda de qué corre
+dónde, y una guarda para no reiniciar/actualizar un sistema que ya
+tiene exactamente esa versión.
+
+**Decisión de arquitectura de specs (a pedido explícito, confirmada
+como arquitecto)**: alta-de-sistema y propagación-de-actualizaciones
+son DOS specs separadas a propósito, aunque compartan mecanismo
+(`MotorAlta`, `actualizar-sistema.yml`) — distinta audiencia (alta es
+raro/onboarding; propagar es constante/cada release), distinto perfil
+de riesgo (día 0 sin usuarios vs. producción con usuarios), y
+`SPEC-SYS-0309202601` ya cerró (✅ aprobada, R1-R10) — no se reabre
+para mezclarle un concern de operación continua.
+
+**Fuera de alcance, a propósito**: propagar/versionar **artefactos de
+negocio** (catálogos `pty_*`, publicados vía `mix motor.publicar`) —
+mecanismo genuinamente distinto (sin canales testing/stable propios
+hoy), spec futura y separada. Por eso el vocabulario de esta spec dice
+siempre "extensión" (CORE/framework), nunca "artefacto" a secas —
+para que el nombre no colisione cuando esa spec futura exista.
+
+## 2. Renombrar los comandos existentes (terminología)
+
+R1. EL SISTEMA DEBE renombrar `mix motor.promover <ambiente> <origen>
+<destino>` a **`mix motor.propagar_extension <ambiente> <origen>
+<destino>`** — mismo comportamiento exacto (mueve, sin reconstruir, la
+imagen que corre en `<origen>` hacia `<destino>`, solo
+`unstable→testing` o `testing→stable`), solo cambia el nombre.
+
+R2. EL SISTEMA DEBE renombrar `mix motor.actualizar <sistema>
+<imagen>` a **`mix motor.propagar_extension_a_sistema <sistema>
+<imagen>`** — mismo comportamiento exacto (aplica una imagen ya
+promovida a un cliente puntual de `priv/sistemas.json`, con el gate
+existente de "debe coincidir con lo que corre en `stable`"), solo
+cambia el nombre.
+
+R3. CUANDO se renombran R1/R2, EL SISTEMA DEBE actualizar toda mención
+a los nombres viejos (`motor.promover`/`motor.actualizar`) en
+`SPEC-SYS-0309202601` (R10, design.md/§3) y en los comentarios del
+código que los documentan — el spec y el código nunca quedan
+mencionando un comando que ya no existe.
+
+## 3. Visibilidad — qué versión corre en cada lado
+
+R4. EL SISTEMA DEBE ofrecer un comando (`mix motor.estado_extension`,
+mismo prefijo de familia que R1/R2) que consulte, de una sola corrida,
+qué imagen corre AHORA MISMO en los 3 canales (`unstable`/`testing`/
+`stable`) y en cada cliente de `priv/sistemas.json` — mostrando, por
+cada uno, el tag de la imagen (que ya es el hash de commit de git,
+`design.md` §2 de esta spec) para poder correlacionarlo directo contra
+`git log`/GitHub sin inventar un esquema de versión aparte.
+
+R5. CUANDO la consulta a un ambiente puntual falla (SSH caído,
+deployment inexistente, etc.), EL SISTEMA DEBE mostrar el error de ESE
+ambiente puntual sin abortar la consulta de los demás — un canal o
+cliente con problemas no debe ocultar el estado de los que sí
+responden.
+
+## 4. Guarda de idempotencia
+
+R6. CUANDO `mix motor.propagar_extension` o
+`mix motor.propagar_extension_a_sistema` van a aplicar una imagen a un
+destino que YA tiene exactamente esa misma imagen corriendo (mismo
+tag/hash), EL SISTEMA NO DEBE disparar ningún workflow de GitHub
+Actions ni reiniciar ningún pod — debe avisar claramente que el
+destino ya está en esa versión y terminar sin hacer nada. Motivo real:
+hoy `actualizar-sistema.yml` hace `kubectl set image` +
+`rollout restart` sin ninguna comprobación previa — hasta un no-op
+(pedir la misma imagen que ya corre) reinicia el pod igual, un riesgo
+innecesario sobre un sistema con usuarios reales.
+
+R7. La guarda (R6) DEBE evaluarse consultando el destino EN VIVO
+(mismo mecanismo de R8/`SPEC-SYS-0309202601`, `imagen_actual/2`) —
+nunca contra un valor cacheado localmente, para no arriesgarse a un
+falso "ya está actualizado" por datos viejos.
+
+## 5. Selección explícita de commit (a pedido explícito, escenario real)
+
+Escenario que motivó esto: `unstable` recibe un deploy automático en
+CADA push a `main` (varios por día) — si solo el commit N (no el más
+reciente) quedó validado sin errores, promoverlo "a ciegas" tomando lo
+que corre HOY en `unstable` arrastraría commits sin probar todavía.
+**Esto NO es rollback** (§7) — es decidir, hacia ADELANTE, cuál de los
+commits ya presentes en el origen es el que se quiere propagar.
+
+R8. CUANDO se usa `mix motor.propagar_extension` (o su equivalente en
+la pantalla de §6), EL SISTEMA DEBE aceptar un commit/hash explícito
+opcional (`--commit=<hash>`) en vez de inferir siempre "lo que corre
+ahora en `<origen>`" — validando que exista una imagen real con ese
+tag en el registro de contenedores antes de aplicar nada (nunca fallar
+en silencio contra un hash mal tipeado). Sin el flag, se mantiene el
+comportamiento por default (toma el commit actual de `<origen>`).
+`mix motor.propagar_extension_a_sistema` YA acepta la imagen explícita
+siempre (sin cambios ahí, R2).
+
+## 6. Pantalla "Propagación" (Frontend, a pedido explícito)
+
+R9. EL SISTEMA DEBE ofrecer una pantalla nueva en Sysadmin
+(`/sysadmin/propagacion`, gate `sysadmin_propagacion`, agrupada en
+"plataforma" del menú administrativo — mismo criterio que Credenciales/
+Ambientes/Panel de Control: solo `super_admin`, ver `SPEC-SYS-0909202601`
+§3) con una presentación tipo lista de ejecuciones de GitHub Actions
+(ícono de estado ✓/✗, mensaje del commit, **quién escribió el commit**,
+**quién disparó ESE run de propagación** — dos personas distintas, no
+se pisan (ver R9b) —, cuándo, duración) mostrando la línea de tiempo de
+commits de `main` con, superpuesto, en qué commit está parado cada
+canal (`unstable`/`testing`/`stable`) y cada sistema cliente —
+permitiendo elegir un commit puntual (R8) y disparar la propagación
+directo desde ahí, sin necesitar terminal.
+
+R9a. Los datos de R9 DEBEN salir en vivo de git + k3s + el historial de
+runs de GitHub Actions — mismo principio de "sin registro propio que se
+desincronice" ya establecido en R8/§3 de `SPEC-SYS-0309202601` — nunca
+de una tabla propia guardada en la base de esta app.
+
+R9b. EL SISTEMA DEBE distinguir siempre dos identidades distintas en
+cada fila de R9: **autor del commit** (sale de `git log`, la persona
+que escribió ese código) y **actor del run** (sale del historial de
+GitHub Actions — "Manually run by `<usuario>`" — la persona que decidió
+disparar ESA propagación/rollback puntual). Ambos datos ya existen hoy
+en git/GitHub Actions respectivamente — no hace falta un mecanismo de
+auditoría nuevo, solo mostrar los dos campos que ya trae cada fuente.
+
+## 7. Rollback (a pedido explícito)
+
+R10. EL SISTEMA DEBE ofrecer, por cada canal/sistema en la pantalla de
+R9, una acción "Volver a la versión anterior" que reusa R8 con el
+commit inmediatamente anterior al actual en el historial de ESE
+ambiente (según R9a) — mismo mecanismo de propagación de siempre
+(`propagar_extension_a_sistema`), sin ningún camino de despliegue
+nuevo o paralelo para el CÓDIGO.
+
+R10a. **Criterio para decidir si el rollback de BASE DE DATOS (correr
+`down` de las migraciones del/de los commit(s) que se revierten)
+corre automático o pide confirmación manual** — evaluado migración por
+migración, nunca todas juntas:
+
+- **Automático (seguro)**, solo si TODAS las operaciones de esa
+  migración puntual son de este tipo:
+  - Crear una tabla nueva — segura si esa tabla está VACÍA ahora mismo
+    (0 filas).
+  - Agregar una columna nueva — segura si NINGUNA fila tiene un valor
+    real ahí (todas en `NULL`, o todas exactamente en su default —
+    cualquier fila que difiera cuenta como dato real de un usuario).
+  - Agregar un índice o una constraint sin tocar datos existentes.
+- **Manual, siempre, sin excepción** — si la migración incluye
+  cualquiera de estas (el dato ya se arriesgó/perdió al aplicarla hacia
+  adelante, o Ecto no puede revertirla solo):
+  - Borrar una columna o una tabla.
+  - Cambiar el tipo de una columna, o renombrarla.
+  - Cualquier SQL crudo (`execute/1`).
+
+R10b. CUANDO el rollback de base de datos NO puede correr automático
+(R10a), EL SISTEMA DEBE avisar, sin bloquear el rollback de CÓDIGO
+(R10, que sigue disponible igual):
+- Qué migración específica frenó el proceso y por qué (la operación
+  puntual, no un mensaje genérico).
+- Si el motivo es "hay datos reales cargados", cuántas filas tienen un
+  valor real ahí — para dimensionar el impacto antes de decidir.
+- Que revertir el schema a mano queda como acción del administrador,
+  fuera de este mecanismo.
+
+## 8. Fuera de alcance de esta spec
+
+- Todo lo ya resuelto por `SPEC-SYS-0309202601` (cómo se da de alta un
+  sistema, R1-R10) — esta spec no lo repite.
+- Propagación/versionado de artefactos de negocio (`pty_*`) — spec
+  futura y separada, ver §1.
+- Rollback de base de datos para migraciones "manual" (R10a/R10b) —
+  esta spec detecta y avisa, pero no lo ejecuta; revertirla a mano
+  sigue siendo responsabilidad del administrador.

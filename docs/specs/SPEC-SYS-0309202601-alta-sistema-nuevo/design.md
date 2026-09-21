@@ -143,20 +143,24 @@ sin bundle: dado un `sistema` y una `imagen` (tag/sha, siempre obligatorio,
 nunca implícito "el último"), actualiza `metadata-<sistema>` a esa imagen.
 Sirve para DOS cosas distintas con la misma mecánica:
 
-- **Promoción entre canales** — `mix motor.promover <ambiente> <origen>
-  <destino>` (`unstable→testing` o `testing→stable`, ningún otro par
+- **Propagación entre canales** — `mix motor.propagar_extension <ambiente>
+  <origen> <destino>` (renombrado de `mix motor.promover`,
+  SPEC-SYS-1809202603 R1 — mismo comportamiento exacto) —
+  (`unstable→testing` o `testing→stable`, ningún otro par
   válido — no se saltea Testing) consulta qué imagen corre HOY en
   `<origen>` (mismo mecanismo de R8, `kubectl get deployment ... -o
   jsonpath=...image`) y llama `actualizar-sistema.yml` con esa imagen
-  exacta sobre `<destino>`. No hay build nuevo — promover es mover el
+  exacta sobre `<destino>`. No hay build nuevo — propagar es mover el
   MISMO artefacto ya construido, nunca reconstruirlo. **`<ambiente>`
   agregado durante la implementación (Grupo E, tarea 22, 2026-09-07)**:
   consultar la imagen de `<origen>` necesita SSH directo, y
   `MetadataApp.Ambientes` es el único registro de credenciales que ya
   existe para eso — mismo motivo por el que `mix motor.alta` (§4) ya toma
   `<ambiente>` como primer argumento.
-- **Actualizar un sistema de cliente** — `mix motor.actualizar <sistema>
-  <imagen>` (`<sistema>` de `priv/sistemas.json`). Acá `actualizar-
+- **Propagar a un sistema de cliente** — `mix motor.propagar_extension_a_sistema
+  <sistema> <imagen>` (renombrado de `mix motor.actualizar`,
+  SPEC-SYS-1809202603 R2 — mismo comportamiento exacto) —
+  (`<sistema>` de `priv/sistemas.json`). Acá `actualizar-
   sistema.yml` valida ADEMÁS que `<imagen>` sea la que está corriendo
   AHORA MISMO en `metadata-stable` — si no coincide, rechaza. Así ningún
   cliente puede terminar con una imagen que nunca pasó por los tres
@@ -279,7 +283,7 @@ Puntos concretos y su mitigación:
   a mitad (ej. falla el paso 4 o alguien lo interrumpe antes del paso 6),
   queda un sistema con recursos reales en k3s (DB, Deployment, Service) y
   quizás DNS/Caddy ya apuntando, pero SIN registrar en `sistemas.json` —
-  huérfano: no aparece como válido para `motor.publicar`/`motor.actualizar`
+  huérfano: no aparece como válido para `motor.publicar`/`motor.propagar_extension_a_sistema`
   (R5 ya lo protege ahí), pero tampoco queda evidencia fácil de que hay
   que terminarlo o limpiarlo. Mitigación: cada paso debe ser re-ejecutable
   sin duplicar (crear DB/aplicar manifiestos son idempotentes por
@@ -291,14 +295,15 @@ Puntos concretos y su mitigación:
   a propósito** (decidido 2026-09-03 — no tiene nada de valor todavía, se
   recrea libremente, no se migra dato ninguno). Junto con Testing y Stable,
   quedan AFUERA de `priv/sistemas.json` — ese archivo es solo para
-  clientes. `mix motor.actualizar`/`mix motor.promover` siguen sin poder
+  clientes. `mix motor.propagar_extension_a_sistema`/`mix motor.propagar_extension`
+  (renombrados, SPEC-SYS-1809202603 R1/R2) siguen sin poder
   apuntar nunca a un canal por ese archivo (`sistema_registrado?/1`); la
   ÚNICA excepción, agregada por R10 (2026-09-07, a pedido explícito),
   es `mix motor.publicar`/`mix motor.despublicar --sistema=unstable` —
   para probar un BC antes de mandarlo a cualquier cliente real, nunca
-  `testing`/`stable` (esos solo reciben por promoción). El riesgo real
+  `testing`/`stable` (esos solo reciben por propagación). El riesgo real
   acá es de proceso, no técnico: si alguien confunde
-  un canal con un cliente (ej. corre `mix motor.actualizar unstable
+  un canal con un cliente (ej. corre `mix motor.propagar_extension_a_sistema unstable
   <imagen>` pensando que es un cliente), el mismo chequeo de "¿está en
   `sistemas.json`?" ya lo bloquea — `unstable`/`testing`/`stable` nunca
   están ahí, así que ese comando se rechaza igual que cualquier nombre

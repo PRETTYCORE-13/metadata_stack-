@@ -1,0 +1,166 @@
+defmodule MetadataApp.PropagacionContext do
+  @moduledoc """
+  Fuente de datos de `/sysadmin/propagacion` (SPEC-SYS-1809202603 R9-R9b)
+  -- Elixir puro, sin LiveView, mismo criterio que cualquier Context de
+  este proyecto. Todo sale EN VIVO de git + k3s (vía `MotorAlta.Estado`)
+  + el historial de runs de GitHub Actions (R9a) -- nunca de una tabla
+  propia (mismo principio ya aprobado en R8/§3 de
+  `SPEC-SYS-0309202601-alta-sistema-nuevo`).
+  """
+
+  alias MetadataApp.MotorAlta.Estado
+
+  @separador "\x1f"
+
+  @doc """
+  Línea de tiempo de los últimos `limite` commits de `origin/main`, cada
+  uno con: hash completo/corto, mensaje, autor (git), fecha, la lista de
+  runs de `actualizar-sistema.yml` que apuntan a ESE commit (R9b: actor
+  del run, distinto del autor del commit) y qué canales/sistemas están
+  parados ahí ahora mismo (vía `ambiente`, R9-R9a).
+  """
+  def linea_de_tiempo(ambiente, limite \\ 30) do
+    commits = commits_recientes(limite)
+    runs_por_hash = runs_actualizar_sistema()
+    posiciones_por_hash = posiciones_por_hash(ambiente)
+
+    Enum.map(commits, fn commit ->
+      commit
+      |> Map.put(:runs, Map.get(runs_por_hash, commit.hash, []))
+      |> Map.put(:posiciones, Map.get(posiciones_por_hash, commit.hash, []))
+    end)
+  end
+
+  defp commits_recientes(limite) do
+    formato = Enum.join(["%H", "%h", "%s", "%an", "%aI"], @separador)
+    args = ["log", "origin/main", "--format=#{formato}", "-n", to_string(limite)]
+
+    case System.cmd("git", args, stderr_to_stdout: true) do
+      {salida, 0} ->
+        salida
+        |> String.split("\n", trim: true)
+        |> Enum.map(&parsear_commit/1)
+
+      {_salida, _status} ->
+        []
+    end
+  rescue
+    ErlangError -> []
+  end
+
+  defp parsear_commit(linea) do
+    [hash, hash_corto, mensaje, autor, fecha_iso] = String.split(linea, @separador)
+    {:ok, fecha, _offset} = DateTime.from_iso8601(fecha_iso)
+
+    %{hash: hash, hash_corto: hash_corto, mensaje: mensaje, autor: autor, fecha: fecha}
+  end
+
+  # %{hash_completo => [%{estado:, actor:, creado_en:, terminado_en:, titulo:}]}
+  # -- lista (no un solo run) porque un mismo commit puede haberse
+  # propagado más de una vez (ej. reintento, o a distintos destinos).
+  defp runs_actualizar_sistema do
+    args = [
+      "run",
+      "list",
+      "--workflow=actualizar-sistema.yml",
+      "--json",
+      "headSha,status,conclusion,displayTitle,createdAt,updatedAt",
+      "--limit",
+      "200"
+    ]
+
+    case System.cmd("gh", args, stderr_to_stdout: true) do
+      {salida, 0} ->
+        salida
+        |> Jason.decode!()
+        |> Enum.group_by(& &1["headSha"], fn run ->
+          %{
+            estado: run["conclusion"] || run["status"],
+            titulo: run["displayTitle"],
+            creado_en: run["createdAt"],
+            terminado_en: run["updatedAt"]
+          }
+        end)
+
+      {_salida, _status} ->
+        %{}
+    end
+  rescue
+    ErlangError -> %{}
+  end
+
+  # "Nunca saltar Testing" (Grupo F, confirmado con el usuario) --
+  # reinterpretado para un commit puntual sin "origen" explícito: cada
+  # destino candidato solo se ofrece si su predecesor YA está parado en
+  # ESE commit. `testing`/`stable` son los únicos candidatos de canal
+  # (unstable se autoactualiza, nunca es un destino elegible acá);
+  # cualquier otro nombre se trata como cliente (`priv/sistemas.json`),
+  # ofrecible solo si `stable` ya está ahí -- mismo gate que ya impone
+  # `actualizar-sistema.yml` del lado servidor (R6/R8 de
+  # SPEC-SYS-0309202601), ofrecerlo antes evita un disparo que el
+  # workflow rechazaría igual, con menos contexto.
+  @canales_candidatos ~w(testing stable)
+
+  def destino_ofrecible?(commit, "testing"), do: "unstable" in commit.posiciones
+  def destino_ofrecible?(commit, "stable"), do: "testing" in commit.posiciones
+  def destino_ofrecible?(commit, _cliente), do: "stable" in commit.posiciones
+
+  @doc "Destinos (canal o cliente) que se le pueden ofrecer a `commit` para propagar/rollback -- ver destino_ofrecible?/2."
+  def destinos_ofrecibles(commit, clientes) do
+    Enum.filter(@canales_candidatos ++ clientes, &destino_ofrecible?(commit, &1))
+  end
+
+  @doc "El commit inmediatamente anterior (más viejo) a `hash` dentro de `commits` -- mismo orden que `linea_de_tiempo/2` (más reciente primero). `nil` si `hash` no está en la lista, o si es el más viejo cargado."
+  def commit_anterior(commits, hash) do
+    case Enum.find_index(commits, &(&1.hash == hash)) do
+      nil -> nil
+      idx -> Enum.at(commits, idx + 1)
+    end
+  end
+
+  @doc """
+  Rutas (relativas, tal como viven en el working tree local) de las
+  migraciones agregadas entre `commit_viejo` (exclusive) y
+  `commit_nuevo` (inclusive) -- exactamente las que hay que revertir
+  para que la base quede consistente con un rollback de código de
+  `commit_nuevo` a `commit_viejo` (Grupo H, R10a/R10b).
+
+  `--diff-filter=A` -- solo archivos AGREGADOS en ese rango, nunca
+  modificados/renombrados (una migración ya aplicada no debería
+  reescribirse después, y si pasara, igual no es "agregar" una
+  reversión nueva). `--format=` vacío para que la salida sea SOLO
+  nombres de archivo, sin encabezados de commit mezclados.
+  """
+  def migraciones_entre(commit_viejo, commit_nuevo) do
+    args = [
+      "log",
+      "--diff-filter=A",
+      "--name-only",
+      "--format=",
+      "#{commit_viejo}..#{commit_nuevo}",
+      "--",
+      "priv/repo/migrations/"
+    ]
+
+    case System.cmd("git", args, stderr_to_stdout: true) do
+      {salida, 0} -> salida |> String.split("\n", trim: true) |> Enum.uniq()
+      {_salida, _status} -> []
+    end
+  rescue
+    ErlangError -> []
+  end
+
+  # %{hash_completo => ["unstable", "ennova", ...]}
+  defp posiciones_por_hash(ambiente) do
+    ambiente
+    |> Estado.consultar_todo()
+    |> Enum.reduce(%{}, fn
+      %{destino: destino, resultado: {:ok, imagen}}, acc ->
+        hash = imagen |> String.split(":") |> List.last()
+        Map.update(acc, hash, [destino], &[destino | &1])
+
+      %{resultado: {:error, _}}, acc ->
+        acc
+    end)
+  end
+end
