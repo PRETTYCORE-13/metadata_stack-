@@ -38,6 +38,7 @@ defmodule MetadataAppWeb.MenuLayout do
       |> assign(:jerarquia_opciones, opciones_jerarquia_activa(assigns[:current_scope]))
       |> assign(:firma_unidad_operativa, firma_unidad_operativa(assigns[:current_scope]))
       |> assign(:anio_actual, Date.utc_today().year)
+      |> assign(:version_footer, Application.get_env(:metadata_app, :version_footer, []))
       |> assign(:bpb_habilitado, Application.get_env(:metadata_app, :bpb_habilitado, false))
       |> asignar_datos_usuario()
 
@@ -360,6 +361,14 @@ defmodule MetadataAppWeb.MenuLayout do
 
       <div class="pc-footer">
         <span class="pc-footer-copyright">Prettycore {@anio_actual}</span>
+        <!-- SPEC-SYS-1809202603 R11: versión visible para cualquier usuario
+             autenticado -- hash corto + fecha del commit que armó esta
+             imagen (config/runtime.exs, GIT_SHA_CORTO/GIT_SHA_FECHA). En
+             dev/test esas env no existen -- @version_footer[:hash] da nil
+             y el :if lo oculta (R11a: nunca un valor inventado). -->
+        <span :if={@version_footer[:hash]} class="pc-footer-version">
+          {@version_footer[:hash]} · {@version_footer[:fecha]}
+        </span>
 
         <!-- Jerarquía operativa activa (Fase 4, 2026-08-11) -- SOLO LECTURA
              acá desde Fase 1 de docs/ui (2026-08-15, a pedido explícito):

@@ -26,6 +26,17 @@ end
 # también se puede probar sin recompilar.
 config :metadata_app, :nombre_empresa, System.get_env("NOMBRE_EMPRESA", "DemoCore Sa. de C.V")
 
+# Versión visible en el pie de página (SPEC-SYS-1809202603 R11) — hash
+# corto + fecha del commit que armó esta imagen (ci.yml los pasa como
+# build-args, Dockerfile los deja como ENV del contenedor). Vale para
+# todos los ambientes, no solo prod: sin esas env (dev local, mix test,
+# cualquier corrida fuera de la imagen de release) ambos quedan `nil`
+# — el footer no muestra nada extra ahí, correcto, no hay ninguna
+# imagen de release corriendo en esos casos.
+config :metadata_app, :version_footer,
+  hash: System.get_env("GIT_SHA_CORTO"),
+  fecha: System.get_env("GIT_SHA_FECHA")
+
 if config_env() == :prod do
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 

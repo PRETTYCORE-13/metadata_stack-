@@ -118,6 +118,16 @@ RUN chown nobody /app
 # set runner ENV
 ENV MIX_ENV="prod"
 
+# SPEC-SYS-1809202603 R11: hash corto + fecha del commit que armó esta
+# imagen -- config/runtime.exs los lee para mostrar la versión en el
+# pie de página. ARG viene de --build-arg (ci.yml), ENV los deja
+# disponibles en el contenedor ya corriendo (un ARG solo sin ENV no
+# sobrevive más allá del build).
+ARG GIT_SHA_CORTO
+ARG GIT_SHA_FECHA
+ENV GIT_SHA_CORTO=${GIT_SHA_CORTO}
+ENV GIT_SHA_FECHA=${GIT_SHA_FECHA}
+
 # Only copy the final release from the build stage
 COPY --from=builder --chown=nobody:root /app/_build/${MIX_ENV}/rel/metadata_app ./
 
