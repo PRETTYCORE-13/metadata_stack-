@@ -2006,7 +2006,8 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   defp celda_body(%{col: %{tipo_columna: :negocio}} = assigns) do
     valor = Map.get(assigns.fila, String.to_existing_atom(assigns.col.columna.schema_context_field))
-    assigns = assign(assigns, :valor, valor)
+    booleano? = assigns.col.columna.schema_context_properties["tipo"] == "boolean"
+    assigns = assign(assigns, valor: valor, booleano?: booleano?)
 
     ~H"""
     <td data-col={@col.clave} class={[
@@ -2014,7 +2015,11 @@ defmodule MetadataAppWeb.CatalogoLive do
       alineacion_columna(@col.columna),
       clase_valor_celda(@valor, @col.columna.schema_context_properties)
     ]}>
-      {formatear_celda(@valor, @col.columna.schema_context_properties)}
+      <%!-- SPEC-SYS-1109202606 R19: un booleano se pinta como checkbox
+           (checked/unchecked), nunca el texto "true"/"false" -- disabled
+           a propósito, es un parseo visual de solo lectura, no un form. --%>
+      <input :if={@booleano?} type="checkbox" checked={@valor == true} disabled class="checkbox checkbox-sm" />
+      {if !@booleano?, do: formatear_celda(@valor, @col.columna.schema_context_properties)}
     </td>
     """
   end
