@@ -29,6 +29,13 @@ defmodule MetadataAppWeb.MetaTransicionControllerTest do
     rol_admin = Repo.get_by!(Rol, nombre: "administrador")
     {:ok, _} = Permissions.asignar_rol(usuario.id, rol_admin.id, empresa.id)
 
+    # SPEC-SYS-2209202601 -- GET .../transiciones (listar) ahora exige
+    # {recurso: "meta_fixture_cliente", accion: "leer"} vía el plug
+    # nuevo; administrador solo ve permisos YA REGISTRADOS (ver
+    # comentario de arriba), así que hay que registrar este también,
+    # no solo los de cada transición puntual (fixture_transicion/4).
+    Permissions.crear_permiso(%{recurso: "meta_fixture_cliente", accion: "leer"})
+
     conn =
       conn
       |> log_in_usuario(usuario)
@@ -142,17 +149,20 @@ defmodule MetadataAppWeb.MetaTransicionControllerTest do
       assert transiciones == []
     end
 
-    test "rechazo estructural: acción inválida desde el estado actual -> 409", %{conn: conn} do
+    # SPEC-SYS-2209202601: una "accion" que no existe como transición
+    # tampoco existe como Permiso -- el plug de autorización (R6, chequea
+    # el permiso de "no_existe") ahora corta ANTES de que el controller
+    # llegue a evaluar si es estructuralmente válida. 403, no 409 -- este
+    # test dejó de poder ejercitar el rechazo estructural del controller
+    # (eso lo sigue cubriendo directo `MetaStateEngineTest`).
+    test "acción sin permiso registrado (inexistente) -> 403, nunca llega al controller", %{conn: conn} do
       header = header_clientes()
       nuevo = fixture_estado(header, %{nombre: "http_409a_#{unique()}", es_inicial: true})
       cliente = fixture_cliente(nuevo.id)
 
       conn = post(conn, ~p"/api/meta_fixture_cliente/#{cliente.id}/transiciones/no_existe", %{})
 
-      assert %{"errors" => %{"detail" => _, "estado_actual_id" => estado_id}} =
-               json_response(conn, 409)
-
-      assert estado_id == nuevo.id
+      assert %{"errors" => %{"detail" => "sin permiso"}} = json_response(conn, 403)
     end
 
     test "rechazo de negocio: precondición fallida -> 422 con razones", %{conn: conn} do
@@ -186,6 +196,40 @@ defmodule MetadataAppWeb.MetaTransicionControllerTest do
 
       assert %{"data" => data} = json_response(conn, 200)
       assert data["estado_id"] == activo.id
+    end
+  end
+
+  describe "autorización (SPEC-SYS-2209202601, R6)" do
+    import MetadataApp.PermisosApiFixtures
+
+    test "sin sesión -> 401, ni index ni ejecutar tocan el motor de estados" do
+      conn = Phoenix.ConnTest.build_conn()
+      header = header_clientes()
+      nuevo = fixture_estado(header, %{nombre: "http_401_#{unique()}", es_inicial: true})
+      cliente = fixture_cliente(nuevo.id)
+
+      assert %{"errors" => %{"detail" => "no autenticado"}} =
+               get(conn, ~p"/api/meta_fixture_cliente/#{cliente.id}/transiciones") |> json_response(401)
+
+      assert %{"errors" => %{"detail" => "no autenticado"}} =
+               post(conn, ~p"/api/meta_fixture_cliente/#{cliente.id}/transiciones/activar", %{}) |> json_response(401)
+    end
+
+    test "con sesión pero sin permiso para ESA transición puntual -> 403 (nunca llega a verificar_permiso_transicion/3)" do
+      empresa = empresa_fixture!()
+      # tiene permiso para "activar" pero no para "baja" -- confirma que el chequeo
+      # es por transición puntual (conn.params["accion"]), no "cualquier transición del catálogo".
+      usuario = usuario_con_permiso!(empresa, "meta_fixture_cliente", "activar")
+      conn = conn_autenticado(Phoenix.ConnTest.build_conn(), usuario, empresa)
+
+      header = header_clientes()
+      nuevo = fixture_estado(header, %{nombre: "http_403tr_#{unique()}", es_inicial: true})
+      activo = fixture_estado(header, %{nombre: "http_403tr2_#{unique()}"})
+      fixture_transicion(header, nuevo, activo, "baja")
+      cliente = fixture_cliente(nuevo.id)
+
+      assert %{"errors" => %{"detail" => "sin permiso"}} =
+               post(conn, ~p"/api/meta_fixture_cliente/#{cliente.id}/transiciones/baja", %{}) |> json_response(403)
     end
   end
 end

@@ -1,10 +1,24 @@
 defmodule MetadataAppWeb.BusinessProcessBuilder.ConsultaControllerTest do
   use MetadataAppWeb.ConnCase, async: true
 
+  import MetadataApp.PermisosApiFixtures
+
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaConsultas
   alias MetadataApp.MetaBusinessProcess.Catalogos.MetaFixtureCliente
+  alias MetadataApp.Permissions
   alias MetadataApp.Repo
+
+  # SPEC-SYS-2209202601 -- GET /api/:tabla ahora exige {recurso: tabla,
+  # accion: "leer"}, incluso cuando ese "tabla" resuelve a una Consulta
+  # (mismo controller, CatalogoController delega a este). administrador
+  # ve cualquier permiso YA REGISTRADO (nunca todos por default) --
+  # criar_consulta/1 registra el suyo por nombre dinámico.
+  setup %{conn: conn} do
+    empresa = empresa_fixture!()
+    usuario = usuario_administrador!(empresa)
+    %{conn: conn_autenticado(conn, usuario, empresa), empresa: empresa}
+  end
 
   defp guid, do: Ecto.UUID.generate() |> String.replace("-", "")
   defp unique, do: System.unique_integer([:positive])
@@ -35,6 +49,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.ConsultaControllerTest do
       })
 
     {:ok, consulta} = MetaConsultas.crear(header, "meta_fixture_cliente")
+    Permissions.crear_permiso(%{recurso: nombre, accion: "leer"})
     {header, consulta}
   end
 

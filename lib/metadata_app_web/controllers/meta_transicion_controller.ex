@@ -18,6 +18,13 @@ defmodule MetadataAppWeb.MetaTransicionController do
   alias MetadataApp.BusinessProcessBuilder.{CatalogoGenerico, MetaSchemaContext}
   alias MetadataApp.MetaStateEngine
 
+  # SPEC-SYS-2209202601 (R6, design.md §3) -- recurso dinámico
+  # (conn.params["tabla"]); en :ejecutar la acción TAMBIÉN es dinámica
+  # (conn.params["accion"] -- el nombre de la transición pedida es
+  # justo el permiso a chequear, no un string fijo).
+  plug MetadataAppWeb.Plugs.RequierePermiso, [accion: "leer"] when action in [:index]
+  plug MetadataAppWeb.Plugs.RequierePermiso, [] when action in [:ejecutar]
+
   action_fallback MetadataAppWeb.FallbackController
 
   def index(conn, %{"tabla" => tabla, "id" => id} = params) do

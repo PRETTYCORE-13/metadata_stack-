@@ -1,6 +1,8 @@
 defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoControllerTest do
   use MetadataAppWeb.ConnCase, async: true
 
+  import MetadataApp.PermisosApiFixtures
+
   alias MetadataApp.Repo
   alias MetadataApp.MetaBusinessProcess.Catalogos.MetaFixtureCliente
 
@@ -21,6 +23,13 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoControllerTest do
   end
 
   describe "GET /api/:tabla — paginación" do
+    # SPEC-SYS-2209202601 -- GET ahora exige {recurso: "meta_fixture_cliente", accion: "leer"}.
+    setup %{conn: conn} do
+      empresa = empresa_fixture!()
+      usuario = usuario_con_permiso!(empresa, "meta_fixture_cliente", "leer")
+      %{conn: conn_autenticado(conn, usuario, empresa)}
+    end
+
     test "sin parámetros: pagina 1, por_pagina 25 por default", %{conn: conn} do
       fixture_clientes(30)
 
@@ -86,12 +95,55 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoControllerTest do
   end
 
   describe "GET /api/:tabla — sin registros" do
+    setup %{conn: conn} do
+      empresa = empresa_fixture!()
+      usuario = usuario_con_permiso!(empresa, "meta_fixture_equipo", "leer")
+      %{conn: conn_autenticado(conn, usuario, empresa)}
+    end
+
     test "total_paginas es 1 (no 0) para no romper la UI de paginación", %{conn: conn} do
       conn = get(conn, ~p"/api/meta_fixture_equipo")
 
       assert %{"data" => [], "paginacion" => paginacion} = json_response(conn, 200)
       assert paginacion["total_filas"] == 0
       assert paginacion["total_paginas"] == 1
+    end
+  end
+
+  describe "autorización (SPEC-SYS-2209202601, R1-R5, R9)" do
+    test "sin sesión -> 401 en las 4 acciones, ninguna llega a tocar datos", %{conn: conn} do
+      assert %{"errors" => %{"detail" => "no autenticado"}} = get(conn, ~p"/api/meta_fixture_cliente") |> json_response(401)
+      assert %{"errors" => %{"detail" => "no autenticado"}} = post(conn, ~p"/api/meta_fixture_cliente", %{}) |> json_response(401)
+      assert %{"errors" => %{"detail" => "no autenticado"}} = put(conn, ~p"/api/meta_fixture_cliente/1", %{}) |> json_response(401)
+      assert %{"errors" => %{"detail" => "no autenticado"}} = delete(conn, ~p"/api/meta_fixture_cliente/1") |> json_response(401)
+    end
+
+    test "con sesión pero sin el permiso de la acción -> 403, no el genérico de cualquier permiso", %{conn: conn} do
+      empresa = empresa_fixture!()
+      # tiene "crear" pero no "leer" -- confirma que el chequeo es por acción, no "tiene algún permiso en este catálogo".
+      usuario = usuario_con_permiso!(empresa, "meta_fixture_cliente", "crear")
+      conn = conn_autenticado(conn, usuario, empresa)
+
+      assert %{"errors" => %{"detail" => "sin permiso"}} = get(conn, ~p"/api/meta_fixture_cliente") |> json_response(403)
+    end
+
+    test "con el permiso correcto, la request pasa la autorización (llega al controller)", %{conn: conn} do
+      empresa = empresa_fixture!()
+      usuario = usuario_con_permiso!(empresa, "meta_fixture_cliente", "eliminar")
+      conn = conn_autenticado(conn, usuario, empresa)
+
+      # id inexistente -> Ecto.NoResultsError adentro del controller (no 401/403) confirma
+      # que la autorización ya pasó y el request efectivamente llegó a CatalogoGenerico.obtener!/3.
+      assert_raise Ecto.NoResultsError, fn -> delete(conn, ~p"/api/meta_fixture_cliente/999999999") end
+    end
+
+    test "administrador pasa sin necesitar el permiso concedido a ningún rol (R9)", %{conn: conn} do
+      empresa = empresa_fixture!()
+      usuario = usuario_administrador!(empresa)
+      MetadataApp.Permissions.crear_permiso(%{recurso: "meta_fixture_cliente", accion: "leer"})
+      conn = conn_autenticado(conn, usuario, empresa)
+
+      assert %{"data" => []} = get(conn, ~p"/api/meta_fixture_cliente") |> json_response(200)
     end
   end
 end

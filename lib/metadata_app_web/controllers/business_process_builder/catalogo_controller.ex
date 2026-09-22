@@ -4,6 +4,13 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaStateEngine
 
+  # SPEC-SYS-2209202601 (R1-R5, design.md §3) -- recurso dinámico, se
+  # toma de conn.params["tabla"] (mismo catálogo que la URL pide).
+  plug MetadataAppWeb.Plugs.RequierePermiso, [accion: "leer"] when action in [:index, :show]
+  plug MetadataAppWeb.Plugs.RequierePermiso, [accion: "crear"] when action in [:create]
+  plug MetadataAppWeb.Plugs.RequierePermiso, [accion: "editar"] when action in [:update]
+  plug MetadataAppWeb.Plugs.RequierePermiso, [accion: "eliminar"] when action in [:delete]
+
   action_fallback MetadataAppWeb.FallbackController
 
   # Sin estos parámetros el listado igual sale paginado (defaults acá

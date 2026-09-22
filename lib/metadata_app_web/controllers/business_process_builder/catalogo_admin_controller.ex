@@ -4,6 +4,15 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoAdminController do
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataAppWeb.AuditoriaContexto
 
+  # SPEC-SYS-2209202601 (R7-R8, design.md §3) -- recurso fijo, mismo
+  # permiso de plataforma que ya protege BC Motor/BC List en la web.
+  # `delete` es destructivo (borra el catálogo entero) -- nunca con un
+  # permiso más débil que "editar la estructura" (R8).
+  plug MetadataAppWeb.Plugs.RequierePermiso,
+       [recurso: "sysadmin_bc", accion: "leer"] when action in [:impacto, :validar_motor, :completitud]
+
+  plug MetadataAppWeb.Plugs.RequierePermiso, [recurso: "sysadmin_bc", accion: "editar"] when action in [:delete]
+
   action_fallback MetadataAppWeb.FallbackController
 
   def impacto(conn, %{"tabla" => tabla}) do

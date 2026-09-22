@@ -9,6 +9,11 @@ defmodule MetadataAppWeb.MetaEstadoController do
 
   alias MetadataApp.MetaEstadosAdmin
 
+  # SPEC-SYS-2209202601 (R7, design.md §3) -- recurso fijo, mismo
+  # permiso de plataforma que ya protege BC Motor/BC List en la web.
+  plug MetadataAppWeb.Plugs.RequierePermiso, [recurso: "sysadmin_bc", accion: "leer"] when action in [:index]
+  plug MetadataAppWeb.Plugs.RequierePermiso, [recurso: "sysadmin_bc", accion: "editar"] when action in [:create]
+
   action_fallback MetadataAppWeb.FallbackController
 
   def index(conn, %{"meta_schema_header_id" => header_id}) do
