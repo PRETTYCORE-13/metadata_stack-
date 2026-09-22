@@ -2017,8 +2017,13 @@ defmodule MetadataAppWeb.CatalogoLive do
     ]}>
       <%!-- SPEC-SYS-1109202606 R19: un booleano se pinta como checkbox
            (checked/unchecked), nunca el texto "true"/"false" -- disabled
-           a propósito, es un parseo visual de solo lectura, no un form. --%>
-      <input :if={@booleano?} type="checkbox" checked={@valor == true} disabled class="checkbox checkbox-sm" />
+           a propósito, es un parseo visual de solo lectura, no un form.
+           Mismas clases planas de Tailwind que ya usa el checkbox de
+           selección de fila de esta misma tabla (:1688) -- nunca
+           "checkbox checkbox-sm" de daisyUI (encontrado real: invisible
+           en esta página, este proyecto evita daisyUI a propósito, ver
+           AGENTS.md). --%>
+      <input :if={@booleano?} type="checkbox" checked={@valor == true} disabled class="rounded border-gray-300 text-purple-600" />
       {if !@booleano?, do: formatear_celda(@valor, @col.columna.schema_context_properties)}
     </td>
     """
