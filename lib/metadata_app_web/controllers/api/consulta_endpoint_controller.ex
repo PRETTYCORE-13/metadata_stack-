@@ -82,6 +82,16 @@ defmodule MetadataAppWeb.Api.ConsultaEndpointController do
   # filtros acá (son dos modos mutuamente excluyentes por endpoint,
   # decisión explícita -- no se mezclan alta y query en la misma
   # llamada).
+  #
+  # R77-R81 (agregado 2026-09-21) -- un body que es un arreglo JSON
+  # top-level llega acá como `%{"_json" => [...]}` (Plug.Parsers); se
+  # bifurca ANTES de tocar `crear_registro/3`, que sigue exactamente
+  # igual para el alta individual (R78 -- ningún cliente existente
+  # cambia de comportamiento).
+  defp ejecutar_alta(conn, endpoint, credencial, %{"_json" => lote}, inicio) when is_list(lote) do
+    ejecutar_alta_lote(conn, endpoint, credencial, lote, inicio)
+  end
+
   defp ejecutar_alta(conn, endpoint, credencial, valores_externos, inicio) do
     case ConsultaEndpoints.crear_registro(endpoint, endpoint.consulta, valores_externos) do
       {:ok, registro} ->
@@ -90,6 +100,32 @@ defmodule MetadataAppWeb.Api.ConsultaEndpointController do
       {:error, reason} ->
         mensaje = mensaje_error_alta(reason)
         responder(conn, :unprocessable_entity, %{"error" => mensaje}, endpoint, credencial, inicio, 0)
+    end
+  end
+
+  # R79-R80 -- todo-o-nada: un elemento que no es un objeto se rechaza
+  # antes de abrir ninguna transacción (mismo criterio que R65, nunca
+  # insertar en silencio); si todos son objetos, el lote completo pasa
+  # a `crear_registros_en_lote/3` (design.md §17).
+  defp ejecutar_alta_lote(conn, endpoint, credencial, lote, inicio) do
+    case Enum.find_index(lote, &(not is_map(&1))) do
+      nil ->
+        case ConsultaEndpoints.crear_registros_en_lote(endpoint, endpoint.consulta, lote) do
+          {:ok, ids} ->
+            responder(conn, :created, %{"data" => %{"creados" => ids}}, endpoint, credencial, inicio, length(ids))
+
+          {:error, {indice, motivo}} ->
+            body = %{"error" => %{"indice" => indice, "motivo" => mensaje_error_alta(motivo)}, "meta" => %{"total_enviados" => length(lote)}}
+            responder(conn, :unprocessable_entity, body, endpoint, credencial, inicio, 0)
+        end
+
+      indice ->
+        body = %{
+          "error" => %{"indice" => indice, "motivo" => "cada elemento del arreglo debe ser un objeto JSON"},
+          "meta" => %{"total_enviados" => length(lote)}
+        }
+
+        responder(conn, :unprocessable_entity, body, endpoint, credencial, inicio, 0)
     end
   end
 

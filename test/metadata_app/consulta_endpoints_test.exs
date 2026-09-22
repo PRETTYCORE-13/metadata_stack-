@@ -345,4 +345,79 @@ defmodule MetadataApp.ConsultaEndpointsTest do
       refute Map.has_key?(contenido, "api_key_sufijo")
     end
   end
+
+  describe "crear_registros_en_lote/3 (R77-R81, agregado 2026-09-21, design.md §17)" do
+    alias MetadataApp.MetaBusinessProcess.Catalogos.MetaFixtureCliente
+    alias MetadataApp.MetaSchema.Estado
+
+    defp guid, do: Ecto.UUID.generate() |> String.replace("-", "")
+
+    # meta_fixture_cliente no trae ningún estado por default -- sin
+    # esto CatalogoGenerico.crear/4 rechaza con :motor_no_configurado
+    # (mismo criterio que consulta_endpoint_controller_alta_test.exs).
+    defp fixture_estado_inicial! do
+      header = MetaSchemaContext.obtener_header_por_nombre("meta_fixture_cliente")
+
+      %Estado{}
+      |> Estado.changeset(%{meta_schema_header_id: header.id, orden: unique(), nombre: "inicial_#{unique()}", es_inicial: true})
+      |> Ecto.Changeset.put_change(:insert_guid, guid())
+      |> Repo.insert!()
+    end
+
+    defp endpoint_con_alta!(empresa) do
+      consulta = consulta_con_parametros!(%{})
+
+      {:ok, endpoint} =
+        ConsultaEndpoints.crear_o_actualizar(consulta, %{
+          "nombre" => "Alta en lote test",
+          "metodo" => "post",
+          "ruta" => "lote-#{unique()}",
+          "empresa_id" => empresa.id,
+          "parametros" => [],
+          "permite_alta" => true,
+          "campos_alta" => ~w(meta_fixture_cliente_nombre meta_fixture_cliente_edad meta_fixture_cliente_venta)
+        })
+
+      {endpoint, consulta}
+    end
+
+    test "lote completo válido -> {:ok, [ids]} en el mismo orden, todos persistidos" do
+      fixture_estado_inicial!()
+      empresa = empresa!()
+      {endpoint, consulta} = endpoint_con_alta!(empresa)
+
+      lote =
+        for n <- 1..5 do
+          %{
+            "meta_fixture_cliente_nombre" => "cliente lote #{n}_#{unique()}",
+            "meta_fixture_cliente_edad" => 20 + n,
+            "meta_fixture_cliente_venta" => "10.00"
+          }
+        end
+
+      assert {:ok, ids} = ConsultaEndpoints.crear_registros_en_lote(endpoint, consulta, lote)
+      assert length(ids) == 5
+
+      registros = Enum.map(ids, &Repo.get!(MetaFixtureCliente, &1))
+      assert Enum.map(registros, & &1.meta_fixture_cliente_edad) == Enum.map(21..25, & &1)
+    end
+
+    test "un elemento inválido en el medio del lote -> {:error, {indice, motivo}}, NADA queda persistido" do
+      fixture_estado_inicial!()
+      empresa = empresa!()
+      {endpoint, consulta} = endpoint_con_alta!(empresa)
+      total_antes = Repo.aggregate(MetaFixtureCliente, :count)
+
+      lote = [
+        %{"meta_fixture_cliente_nombre" => "válido 1 #{unique()}", "meta_fixture_cliente_edad" => 20, "meta_fixture_cliente_venta" => "1.00"},
+        %{"meta_fixture_cliente_nombre" => "válido 2 #{unique()}", "meta_fixture_cliente_edad" => 21, "meta_fixture_cliente_venta" => "2.00"},
+        # posición 2 (0-based) -- sin nombre, el campo obligatorio del catálogo.
+        %{"meta_fixture_cliente_edad" => 22, "meta_fixture_cliente_venta" => "3.00"},
+        %{"meta_fixture_cliente_nombre" => "válido 4 #{unique()}", "meta_fixture_cliente_edad" => 23, "meta_fixture_cliente_venta" => "4.00"}
+      ]
+
+      assert {:error, {2, _motivo}} = ConsultaEndpoints.crear_registros_en_lote(endpoint, consulta, lote)
+      assert Repo.aggregate(MetaFixtureCliente, :count) == total_antes
+    end
+  end
 end
