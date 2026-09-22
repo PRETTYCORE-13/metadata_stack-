@@ -165,6 +165,10 @@ defmodule MetadataApp.MetaImportExport do
                 [] -> nil
                 campos -> "campo(s) nuevo(s) sincronizado(s): #{Enum.join(campos, ", ")}"
               end,
+              case sincronizar_detalles_eliminados(existente, contexto["detalles"] || []) do
+                [] -> nil
+                campos -> "campo(s) obsoleto(s) eliminado(s): #{Enum.join(campos, ", ")}"
+              end,
               case sincronizar_etiquetas_campos(existente, contexto["detalles"] || []) do
                 [] -> nil
                 campos -> "etiqueta(s) actualizada(s): #{Enum.join(campos, ", ")}"
@@ -403,6 +407,34 @@ defmodule MetadataApp.MetaImportExport do
 
         {:error, changeset} ->
           raise "Error sincronizando campo \"#{detalle_attrs["schema_context_field"]}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+      end
+    end)
+  end
+
+  # Contraparte de sincronizar_detalles_nuevos/2 -- un campo que YA existía
+  # en el destino pero ya no viene en el bundle (borrado en dev vía
+  # CatalogoGenerador.eliminar_campo/3 antes de volver a publicar) quedaba
+  # huérfano en meta_schema_detail: la columna física SÍ se borraba (la
+  # migración "remove :campo" viaja igual que cualquier otra y bin/migrate
+  # la corre) y el schema .ex bundleado ya no trae el campo, pero nada
+  # soft-eliminaba la fila vieja -- Frontend seguía viendo un campo "activo"
+  # que ya no existe ni en la tabla ni en el struct Ecto (bug real,
+  # 2026-09-22: 500 en Get de pty_ch_areas en unstable tras ese flujo
+  # exacto). Mismo soft-delete que usa la UI (MetaSchemaContext.eliminar_detalle/1),
+  # nunca un DROP acá -- la columna física ya se fue por su propia migración.
+  defp sincronizar_detalles_eliminados(header, detalles_json) do
+    campos_vigentes = MapSet.new(detalles_json, & &1["schema_context_field"])
+
+    header.schema_context_name
+    |> MetaSchemaContext.listar_detalles()
+    |> Enum.reject(&MapSet.member?(campos_vigentes, &1.schema_context_field))
+    |> Enum.map(fn detalle ->
+      case MetaSchemaContext.eliminar_detalle(detalle) do
+        {:ok, _detalle} ->
+          detalle.schema_context_field
+
+        {:error, changeset} ->
+          raise "Error eliminando campo obsoleto \"#{detalle.schema_context_field}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
       end
     end)
   end

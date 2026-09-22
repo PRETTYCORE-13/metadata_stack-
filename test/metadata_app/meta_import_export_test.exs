@@ -203,6 +203,81 @@ defmodule MetadataApp.MetaImportExportTest do
     assert detalle.schema_context_properties["orden"] == 5
   end
 
+  # Encontrado real (2026-09-22): un campo borrado en dev (soft-delete +
+  # DROP COLUMN vía CatalogoGenerador.eliminar_campo/3) y luego republicado
+  # dejaba el destino con la columna física ya borrada (la migración
+  # "remove :campo" viaja igual que cualquier otra) pero el registro de
+  # meta_schema_detail seguía activo -- 500 real en el Get de pty_ch_areas
+  # en unstable. sincronizar_detalles_eliminados/2 cubre este caso.
+  test "republicar un catálogo ya existente elimina (soft-delete) un campo que ya no viene en el bundle" do
+    nombre = "pty_test_campo_eliminado_#{unique()}"
+
+    {:ok, {_header, _detalles}} =
+      MetaSchemaContext.crear_header_con_detalles(%{
+        "schema_context_name" => nombre,
+        "schema_context_label" => "Test",
+        "schema_context_nav" => "/#{nombre}",
+        "schema_visible" => true,
+        "schema_context_type" => 1,
+        "detalles" => [
+          %{
+            "schema_context_field" => "campo1",
+            "schema_context_properties" => %{
+              "tipo" => "string",
+              "etiqueta" => "Campo 1",
+              "orden" => 0,
+              "visible" => true,
+              "editable" => true,
+              "opcional" => false
+            }
+          },
+          %{
+            "schema_context_field" => "campo2",
+            "schema_context_properties" => %{
+              "tipo" => "string",
+              "etiqueta" => "Campo 2",
+              "orden" => 1,
+              "visible" => true,
+              "editable" => true,
+              "opcional" => false
+            }
+          }
+        ]
+      })
+
+    dir = Path.join(System.tmp_dir!(), "meta_import_export_test_#{unique()}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    escribir_meta_json(dir, %{
+      "schema_context_name" => nombre,
+      "schema_context_label" => "Test",
+      "schema_context_nav" => "/#{nombre}",
+      "schema_visible" => true,
+      "schema_context_type" => 1,
+      "detalles" => [
+        %{
+          "schema_context_field" => "campo1",
+          "schema_context_properties" => %{
+            "tipo" => "string",
+            "etiqueta" => "Campo 1",
+            "orden" => 0,
+            "visible" => true,
+            "editable" => true,
+            "opcional" => false
+          }
+        }
+      ]
+    })
+
+    mensajes = MetaImportExport.importar_meta(dir)
+
+    assert Enum.any?(mensajes, &(&1 =~ "campo(s) obsoleto(s) eliminado(s): campo2"))
+
+    campos_activos = nombre |> MetaSchemaContext.listar_detalles() |> Enum.map(& &1.schema_context_field)
+    assert campos_activos == ["campo1"]
+  end
+
   # Encontrado real (2026-09-17): captura de un catálogo publicado mostrando
   # el orden alfabético de siempre en vez del orden manual (drag-and-drop)
   # configurado en dev -- exportar_header/2 no incluía "orden" en el
