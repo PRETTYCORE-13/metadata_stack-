@@ -416,6 +416,15 @@
   font-weight: 500;
 }
 
+/* SPEC-SYS-1809202603 R11 -- hash corto + fecha del commit corriendo,
+   junto al copyright. Monoespaciada como el resto de los hashes de
+   commit ya mostrados en la app (propagacion_live.ex). */
+.pc-footer-version {
+  white-space: nowrap;
+  font-family: ui-monospace, monospace;
+  opacity: 0.8;
+}
+
 /* Selector de jerarquía operativa activa (Empresa/Sucursal/Almacén/
    Unidad de venta) en la banda de pie (2026-08-11) — cada uno es un
    Solo lectura desde Fase 1 (2026-08-15) -- ver comentario en

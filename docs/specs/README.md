@@ -5,14 +5,34 @@ vivo que **ancla** cada sesión de trabajo con la IA — nunca se le pide
 código directo sobre una idea suelta. El flujo es siempre:
 
 ```
-requirements.md  →  design.md  →  tasks.md  →  implementación
-      ↑                                               │
-      └──────────────── se vuelve a leer ─────────────┘
+00.doc_human.md → 01.requirements.md → 02.design.md → 03.tasks.md → 04.implementación → 05.usage.md
+      ↑                                                                                   │
+      └───────────────────────────── se vuelve a leer ────────────────────────────────────┘
 ```
 
-## Las 3 fases (nunca se saltean, nunca se mezclan)
+Los archivos de cada spec llevan el prefijo numérico (`00.`, `01.`,
+`02.`, `03.`, `05.`) para que el orden de fases sea también el orden
+alfabético/visual en el directorio — sin tener que memorizar la
+secuencia, se lee de arriba hacia abajo tal cual aparece listada.
 
-1. **`requirements.md`** — QUÉ tiene que hacer el sistema, desde la
+## Las 5 fases (nunca se saltean, nunca se mezclan)
+
+0. **`00.doc_human.md`** — QUÉ es la spec y PARA QUÉ sirve, en lenguaje
+   100% llano. Tiene que ser entendible por cualquier persona sin
+   conocimiento técnico: un desarrollador nuevo, alguien de ADN, un
+   asesor de servicio a cliente. Sin EARS, sin nombrar tablas, módulos,
+   ni código — es la puerta de entrada para capacitar gente, y también
+   el resumen que evita tener que pedirle a la IA "explicame la spec".
+   3-5 párrafos: qué problema resuelve, para quién, y cómo se ve el
+   flujo de principio a fin contado como una historia. Es el documento
+   más estable de los cuatro — al ser puramente conceptual, casi nunca
+   cambia cuando iteran `02.design.md`/`03.tasks.md`; solo se actualiza
+   si cambia el alcance o el propósito de la spec. Arranca directo con
+   el contenido — sin meta-explicación de "qué es este documento" o
+   "para quién es" (eso ya lo dice el nombre del archivo y esta sección
+   del README).
+
+1. **`01.requirements.md`** — QUÉ tiene que hacer el sistema, desde la
    perspectiva de quien lo usa. Sin mencionar tablas, módulos ni código.
    Notación EARS (fácil de leer, sin ambigüedad):
    > CUANDO `<evento/condición>` EL SISTEMA DEBE `<comportamiento>`
@@ -21,24 +41,50 @@ requirements.md  →  design.md  →  tasks.md  →  implementación
    numeración, EL SISTEMA DEBE dejar de asignarlo en futuras
    solicitudes, sin borrar su historial de folios ya asignados."
 
-2. **`design.md`** — CÓMO se resuelve lo de arriba. Acá sí entran
+2. **`02.design.md`** — CÓMO se resuelve lo de arriba. Acá sí entran
    decisiones técnicas: modelo de datos, módulos, algoritmos,
-   diagramas. Se escribe DESPUÉS de que `requirements.md` está
+   diagramas. Se escribe DESPUÉS de que `01.requirements.md` está
    aprobado — nunca antes, nunca en paralelo ("spec pura": una fase
    cierra antes de abrir la siguiente).
 
-3. **`tasks.md`** — la lista de pasos concretos e incrementales para
+3. **`03.tasks.md`** — la lista de pasos concretos e incrementales para
    construir el diseño, cada uno chico y verificable (compila, corre,
    un test pasa). Es el ÚNICO documento contra el que se pide código.
+
+4. **`05.usage.md`** — CÓMO USAR lo que `03.tasks.md` ya construyó
+   (04.implementación no es un archivo, es el estado del código real).
+   Se escribe/actualiza recién cuando un grupo de `03.tasks.md` con
+   interacción visible para algún usuario (pantalla, comando, botón)
+   queda ✅ cerrado y verificado — nunca antes, nunca sobre algo todavía
+   sin construir. Responde una sola pregunta: "la funcionalidad ya
+   existe, ¿cómo la uso?" — guía paso a paso, en lenguaje llano,
+   pensada para que cualquiera (funcional, técnico, soporte, o la IA en
+   una sesión futura) la use sin tener que pedir una explicación de
+   cero. Nunca duplica el CÓMO SE CONSTRUYE de `02.design.md` ni el QUÉ
+   DEBE HACER de `01.requirements.md` — si algo pertenece ahí, se
+   referencia (ej. "ver R6"), no se copia. Un grupo de `03.tasks.md`
+   sin interacción visible (ej. un detector interno, una guarda que
+   corre sola) no necesita entrada en `05.usage.md` — no hay nada que
+   un usuario "use" ahí.
+
+   **Regla para la IA**: antes de volver a explicar paso a paso cómo
+   usar algo que ya está implementado, consultar `05.usage.md` primero
+   — si ya está esa explicación, usarla tal cual en vez de rearmarla de
+   cero (ahorra tokens y evita que la explicación de una sesión
+   diverja de la de otra). Si la funcionalidad preguntada no está
+   todavía en `05.usage.md`, o quedó desactualizada (código real ya no
+   coincide), esa es la señal de actualizarlo — primero se corrige el
+   documento, después se usa como referencia.
 
 ## Regla de oro
 
 Cuando le pidas a la IA que implemente algo, la instrucción siempre
-es: **"segui `tasks.md`, tarea N"** — no "hacé X" suelto. Si mientras
-implementás aparece algo que el spec no contemplaba, se vuelve a
-`requirements.md`/`design.md` primero, se actualiza, y recién después
-se sigue con `tasks.md`. El código nunca es la fuente de verdad — el
-spec sí. Por eso "anchored": todo se ancla ahí, nunca deriva solo.
+es: **"segui `03.tasks.md`, tarea N"** — no "hacé X" suelto. Si
+mientras implementás aparece algo que el spec no contemplaba, se vuelve
+a `01.requirements.md`/`02.design.md` primero, se actualiza, y recién
+después se sigue con `03.tasks.md`. El código nunca es la fuente de
+verdad — el spec sí. Por eso "anchored": todo se ancla ahí, nunca
+deriva solo.
 
 ## Convención de nombres
 

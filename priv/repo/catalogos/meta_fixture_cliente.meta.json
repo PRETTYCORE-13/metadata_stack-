@@ -80,6 +80,17 @@
       }
     },
     {
+      "schema_context_field": "meta_fixture_cliente_activo",
+      "schema_context_properties": {
+        "editable": true,
+        "etiqueta": "Activo",
+        "opcional": true,
+        "orden": 6,
+        "tipo": "boolean",
+        "visible": true
+      }
+    },
+    {
       "schema_context_field": "fecha_registro",
       "schema_context_properties": {
         "editable": false,

@@ -2006,7 +2006,8 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   defp celda_body(%{col: %{tipo_columna: :negocio}} = assigns) do
     valor = Map.get(assigns.fila, String.to_existing_atom(assigns.col.columna.schema_context_field))
-    assigns = assign(assigns, :valor, valor)
+    booleano? = assigns.col.columna.schema_context_properties["tipo"] == "boolean"
+    assigns = assign(assigns, valor: valor, booleano?: booleano?)
 
     ~H"""
     <td data-col={@col.clave} class={[
@@ -2014,7 +2015,27 @@ defmodule MetadataAppWeb.CatalogoLive do
       alineacion_columna(@col.columna),
       clase_valor_celda(@valor, @col.columna.schema_context_properties)
     ]}>
-      {formatear_celda(@valor, @col.columna.schema_context_properties)}
+      <%!-- SPEC-SYS-1109202606 R19: un booleano se pinta como checkbox
+           (checked/unchecked), nunca el texto "true"/"false" -- de solo
+           lectura, es un parseo visual, no un form.
+
+           NUNCA un <input type="checkbox" disabled> real -- encontrado
+           real (2026-09-22, dos vueltas): ni "checkbox checkbox-sm"
+           (daisyUI, invisible -- este proyecto lo evita a propósito,
+           AGENTS.md) ni "accent-blue-600"/"text-blue-600" (el color de
+           acento de un checkbox DISABLED queda apagado/gris por la
+           hoja de estilo nativa del navegador, ninguna clase CSS lo
+           pisa -- confirmado real contra Chrome/Edge). Un <div> con
+           ícono adentro da control total del color sin pelear con el
+           checkbox nativo -- mismo criterio de "escribí tu propio
+           componente" que ya rige para daisyUI. --%>
+      <div :if={@booleano?} class={[
+        "w-4 h-4 rounded border flex items-center justify-center",
+        if(@valor == true, do: "bg-blue-600 border-blue-600", else: "border-gray-300")
+      ]}>
+        <span :if={@valor == true} class="material-symbols-outlined text-white" style="font-size: 12px">check</span>
+      </div>
+      {if !@booleano?, do: formatear_celda(@valor, @col.columna.schema_context_properties)}
     </td>
     """
   end

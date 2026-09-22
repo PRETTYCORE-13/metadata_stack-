@@ -133,3 +133,37 @@ Encontrado 2026-09-08, dando de alta el primer usuario real en un canal (`unstab
 - Definir si esto reemplaza `smtp-compartido` (una credencial por sistema, ya no una compartida por todo el clúster) o convive como *override* opcional por sistema, con `smtp-compartido` como default si el sysadmin nunca configuró el propio.
 - Un botón "Enviar correo de prueba" en esa misma pantalla — para no depender de nadie corriendo `deliver_login_instructions/2` a mano por SSH para confirmar que quedó bien configurado, como se tuvo que hacer hoy.
 - Cómo aplica el cambio al pod corriendo: hoy el SMTP llega por variable de entorno (`Secret` de k3s), que solo se relee al reiniciar el pod — si esto pasa a vivir en la base de datos (como `Credencial`/`Ambiente`), el Mailer necesitaría leerlo en caliente en vez de vía `config :metadata_app, MetadataApp.Mailer` fijo al arranque.
+
+## 17 — `testing` no puede migrar: `pty_dsd_mat_material` referencia `pty_dsd_mat_marca`, que no existe ahí ✅ RESUELTO (2026-09-21)
+
+Encontrado 2026-09-21, verificando en real `SPEC-SYS-1809202603` Grupo H (rollback de base de datos): al propagar cualquier commit nuevo a `testing`, `/app/bin/setup` falla migrando —
+
+```
+== Running 20260818225730 MetadataApp.Repo.Migrations.CrearPtyDsdMatMaterial20260818225730.change/0 forward
+** (Postgrex.Error) ERROR 42P01 (undefined_table) relation "pty_dsd_mat_marca" does not exist
+```
+
+— una migración vieja (18/08) de `pty_dsd_mat_material` depende de que `pty_dsd_mat_marca` ya exista en la base destino, pero en `testing` esa tabla nunca se creó (drift real entre lo que hay commiteado/publicado y lo que realmente corre en ese canal — mismo tipo de inconsistencia ya documentado en `feedback_gen_catalogos_side_effects` de memoria, catálogos `pty_*` publicados vía `mix motor.publicar` fuera del repo compartido). **Sin relación con Grupo H en sí** — bloquea cualquier deploy nuevo a `testing`, no solo el de esta spec.
+
+**Resuelto (2026-09-21)**: no se publicó `pty_dsd_mat_marca` — `mix
+motor.publicar` de hecho rechaza `testing`/`stable` como destino
+(`--sistema=` solo acepta un cliente real o `"unstable"`, esos dos
+canales solo reciben por propagación). En paralelo, el usuario decidió
+retirar por completo esa familia de catálogos (`pty_dsd_mat_marca`/
+`material`/`material_gamas`, y también `pty_dsd_cs_*`) en vez de
+repararla. Se destrabó `testing` verificando primero (solo lectura)
+que ninguna de esas migraciones dejara rastro real ahí (sin tabla física
+ni fila en `meta_schema_header`), y donde sí había quedado una tabla
+real a mitad de camino (vacía, confirmado antes de tocar nada) se borró
+a mano — después se marcaron como aplicadas las migraciones
+correspondientes en `meta_schema_migrations` (pura contabilidad de
+Ecto, sin DDL real donde no hacía falta). Confirmado después:
+`/app/bin/migrate` corre limpio de punta a punta en `testing`.
+
+**Pendiente, sin diseñar todavía**: decidir si vale la pena un chequeo
+previo (¿existen todas las tablas que las migraciones pendientes van a
+referenciar?) antes de que `/app/bin/setup` intente migrar a ciegas,
+para que este tipo de drift se detecte ANTES de un deploy real en vez
+de tumbarlo a mitad de camino — este incidente puntual ya se resolvió,
+pero el mecanismo que lo permitió (catálogos `pty_*` que pueden quedar
+con dependencias rotas en un ambiente específico) sigue igual.

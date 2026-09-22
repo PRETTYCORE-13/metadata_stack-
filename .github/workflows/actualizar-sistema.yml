@@ -5,12 +5,14 @@ name: Actualizar Sistema
 # patrón (SSH + kubectl set image + rollout + bin/setup), pero sin bundle:
 # sirve para DOS cosas con la misma mecánica (SPEC-SYS-0309202601, §3):
 #
-#   - Promoción entre canales -- disparado por `mix motor.promover
-#     <origen> <destino>`, que ya consultó qué imagen corre HOY en
+#   - Propagación entre canales -- disparado por `mix motor.propagar_extension
+#     <origen> <destino>` (renombrado de `mix motor.promover`,
+#     SPEC-SYS-1809202603 R1), que ya consultó qué imagen corre HOY en
 #     <origen> (R8) y la pasa acá tal cual. Mover el MISMO artefacto,
 #     nunca reconstruirlo.
-#   - Actualizar un sistema de cliente -- disparado por `mix motor.actualizar
-#     <sistema> <imagen>`. Acá SÍ hay un gate (ver abajo): la imagen tiene
+#   - Propagar a un sistema de cliente -- disparado por `mix motor.propagar_extension_a_sistema
+#     <sistema> <imagen>` (renombrado de `mix motor.actualizar`,
+#     SPEC-SYS-1809202603 R2). Acá SÍ hay un gate (ver abajo): la imagen tiene
 #     que ser la que está corriendo AHORA MISMO en metadata-stable, para
 #     que ningún cliente termine con algo que nunca pasó por los tres
 #     canales, sin importar quién dispare el comando o desde dónde.
@@ -53,9 +55,9 @@ jobs:
       # cliente, "imagen" tiene que coincidir EXACTO con lo que corre AHORA
       # MISMO en metadata-stable -- consultado en vivo contra k3s (mismo
       # mecanismo de R8), nunca contra un valor cacheado o copiado a mano.
-      # Si "sistema" es un canal (promoción unstable->testing/testing->stable,
-      # disparada por mix motor.promover), este paso no aplica -- promover
-      # ES cómo una imagen llega a stable en primer lugar.
+      # Si "sistema" es un canal (propagación unstable->testing/testing->stable,
+      # disparada por mix motor.propagar_extension), este paso no aplica --
+      # propagar ES cómo una imagen llega a stable en primer lugar.
       - name: "Gate: para un cliente, la imagen debe ser la que corre en stable"
         if: steps.tipo.outputs.es_cliente == 'true'
         uses: appleboy/ssh-action@v1

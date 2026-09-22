@@ -62,8 +62,8 @@ defmodule MetadataApp.MotorAlta do
   `"unstable"` -- R10 (2026-09-07, a pedido explícito): ADN necesita poder
   probar un catálogo BC antes de mandarlo a cualquier cliente real. NUNCA
   `"testing"` ni `"stable"` aunque sean canales válidos (`canales/0`) --
-  esos dos solo reciben por promoción (`mix motor.promover`, design.md
-  §3), jamás por una publicación directa; permitirlo rompería la garantía
+  esos dos solo reciben por propagación (`mix motor.propagar_extension`,
+  design.md §3), jamás por una publicación directa; permitirlo rompería la garantía
   de que todo lo que llega a Stable ya pasó por Testing.
 
   Un BC publicado a `"unstable"` queda pegado a cada build futuro igual
@@ -438,8 +438,8 @@ defmodule MetadataApp.MotorAlta do
   Ambiente) -- mismo comando, generalizado acá a cualquier `sistema` (canal
   o cliente) en vez de un deployment fijo.
 
-  Usado por `mix motor.promover` para saber qué imagen exacta mover de
-  `<origen>` a `<destino>` -- promover nunca reconstruye, solo mueve el
+  Usado por `mix motor.propagar_extension` para saber qué imagen exacta mover de
+  `<origen>` a `<destino>` -- propagar nunca reconstruye, solo mueve el
   MISMO artefacto ya construido. `{:ok, imagen}` | `{:error, mensaje}`.
   """
   def imagen_actual(ambiente, sistema) do
@@ -465,9 +465,36 @@ defmodule MetadataApp.MotorAlta do
   Dispara `actualizar-sistema.yml` (GitHub Actions) vía `gh workflow run`
   -- mismo mecanismo que `MetaPublicador.disparar_deploy/3`, pero sin
   bundle: el workflow no reconstruye nada, solo mueve `sistema` a `imagen`
-  (ya construida) directo en k3s. `{:ok, salida}` | `{:error, mensaje}`.
+  (ya construida) directo en k3s. `{:ok, salida}` | `{:ok, :sin_cambios,
+  mensaje}` | `{:error, mensaje}`.
+
+  **Guarda de idempotencia (SPEC-SYS-1809202603 R6-R7)**: antes de
+  disparar nada, consulta `imagen_actual/2` contra `ambiente` -- si
+  `sistema` YA está exactamente en `imagen`, no se llama a `gh workflow
+  run` ni se reinicia ningún pod, devuelve `{:ok, :sin_cambios, mensaje}`.
+  Evaluado SIEMPRE en vivo (R7), nunca contra un valor cacheado. Si la
+  consulta falla (SSH caído, etc.) se trata igual que "no está
+  actualizado" -- sigue con el disparo normal: un falso negativo (dispara
+  de más) es solo un `rollout restart` de más, un falso positivo (no
+  dispara por no poder confirmar) dejaría un sistema desactualizado sin
+  que nadie se entere.
+
+  `fun_imagen_actual` -- `&imagen_actual/2` por default, parametrizable
+  solo para tests (mismo criterio que `dependencias` en
+  `MotorAlta.Estado.consultar_todo/2`) -- `imagen_actual/2` necesita SSH
+  real, sin mock en este proyecto.
   """
-  def disparar_actualizacion(sistema, imagen) do
+  def disparar_actualizacion(ambiente, sistema, imagen, fun_imagen_actual \\ &imagen_actual/2) do
+    case fun_imagen_actual.(ambiente, sistema) do
+      {:ok, ^imagen} ->
+        {:ok, :sin_cambios, "\"#{sistema}\" ya está en #{imagen} -- no se disparó ningún workflow."}
+
+      _otro_o_error ->
+        disparar_actualizacion_sin_guarda(sistema, imagen)
+    end
+  end
+
+  defp disparar_actualizacion_sin_guarda(sistema, imagen) do
     args = ["workflow", "run", "actualizar-sistema.yml", "-f", "sistema=#{sistema}", "-f", "imagen=#{imagen}"]
 
     case System.cmd("gh", args, stderr_to_stdout: true) do
@@ -477,6 +504,107 @@ defmodule MetadataApp.MotorAlta do
   rescue
     e in ErlangError -> {:error, "No se pudo ejecutar \"gh\" -- ¿está instalado y en el PATH de este proceso? (#{Exception.message(e)})"}
   end
+
+  # Mismo prefijo que Ambiente.imagen_docker por default -- único registro
+  # real de este proyecto, no vale la pena parametrizarlo.
+  @registro_imagen "ghcr.io/prettycore-13/metadata_stack"
+
+  @doc """
+  `--commit=<hash>` de `mix motor.propagar_extension` (SPEC-SYS-1809202603
+  R8) -- arma la imagen completa para `hash` DESPUÉS de confirmar que
+  existe un tag real con ese hash en el registro de contenedores (nunca a
+  ciegas: un hash mal tipeado dispararía `actualizar-sistema.yml` con un
+  tag inventado, que fallaría recién del otro lado, con menos contexto
+  que un error acá). `{:ok, imagen}` | `{:error, mensaje}`.
+  """
+  def imagen_para_commit(hash) do
+    case tags_del_registro() do
+      {:ok, tags} ->
+        if hash in tags do
+          {:ok, "#{@registro_imagen}:#{hash}"}
+        else
+          {:error, "No existe ninguna imagen con el commit \"#{hash}\" en el registro de contenedores."}
+        end
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  # "users/..." (NUNCA "orgs/...", 404 real -- prettycore-13 es un
+  # usuario de GitHub, no una organización) SIN slash inicial (con "/"
+  # al principio, Git Bash en Windows reinterpreta el endpoint como un
+  # path de filesystem y "gh" falla con "invalid API endpoint",
+  # encontrado real 2026-09-18). Necesita el scope "read:packages" en el
+  # token de `gh` -- no viene por default (403 real hasta que se
+  # concedió a mano, `gh auth refresh -h github.com -s read:packages`).
+  defp tags_del_registro do
+    args = [
+      "api",
+      "users/prettycore-13/packages/container/metadata_stack/versions",
+      "--paginate",
+      "--jq",
+      ".[].metadata.container.tags[]"
+    ]
+
+    case System.cmd("gh", args, stderr_to_stdout: true) do
+      {salida, 0} -> {:ok, String.split(salida, "\n", trim: true)}
+      {salida, status} -> {:error, "gh api falló consultando el registro de contenedores (status #{status}):\n#{salida}"}
+    end
+  rescue
+    e in ErlangError -> {:error, "No se pudo ejecutar \"gh\" -- ¿está instalado y en el PATH de este proceso? (#{Exception.message(e)})"}
+  end
+
+  @doc """
+  Rollback de base de datos (SPEC-SYS-1809202603 R10a/§6.3, Grupo H) --
+  corre `/app/bin/rollback` DENTRO del pod `metadata-<sistema>` (mismo
+  patrón de `aplicar_manifiestos/3` para encontrar el pod correcto:
+  ordenar por `creationTimestamp`, tomar el último). Recibe
+  `rutas_migraciones` (las rutas exactas de `PropagacionContext.migraciones_entre/2`,
+  NUNCA un solo `version` de corte -- ver el bug real documentado en
+  `MetadataApp.Release.rollback/2`) y le pasa al release los BASENAMES
+  -- adentro, `MetadataApp.Release.rollback/2` resuelve cada uno a su
+  `{version, module}` real (`Code.compile_file/1` sobre el path del
+  propio release, el módulo no viene precompilado) y llama
+  `Ecto.Migrator.down/4` UNA vez por archivo, nunca `to: version` --
+  inmune a que otras migraciones ajenas (`pty_*`, con nombre "doble
+  timestamp") anden en el medio.
+
+  Corre DESPUÉS del rollback de código (design.md §6.3: "primero código,
+  después base") -- se ejecuta DENTRO del pod que ya tiene la imagen
+  vieja, así que sus migraciones bundleadas son las correctas. Solo se
+  llama cuando `SeguridadMigracion.clasificar_conjunto/2` ya confirmó
+  `:automatico` -- este código no vuelve a evaluar esa decisión, confía
+  en el resultado que ya se calculó antes de disparar nada.
+
+  `{:ok, salida}` | `{:error, mensaje}`.
+  """
+  def rollback_base_datos(ambiente, sistema, rutas_migraciones) when is_list(rutas_migraciones) do
+    lista_literal =
+      rutas_migraciones
+      |> Enum.map(&inspect(Path.basename(&1)))
+      |> Enum.join(", ")
+
+    comando = """
+    POD=$(sudo k3s kubectl get pod -n metadata-stack -l app=metadata-#{sistema} --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[*].metadata.name}' | awk '{print $NF}') && \
+    sudo k3s kubectl exec -n metadata-stack "$POD" -- /app/bin/rollback #{shell_comilla_simple("[#{lista_literal}]")}
+    """
+    |> String.trim()
+
+    case MetadataApp.Ssh.ejecutar(ambiente, comando) do
+      {:ok, 0, salida} -> {:ok, salida}
+      {:ok, _codigo, salida} -> {:error, salida}
+      {:error, _} = error -> error
+    end
+  end
+
+  # Mismo criterio de escapado que SeguridadMigracion -- envolver en
+  # comillas SIMPLES para el shell remoto (nunca dobles: la lista
+  # literal ya trae alias de módulo tipo MetadataApp.Repo.Migrations.X,
+  # sin comillas propias que choquen). Duplicado a propósito acá (una
+  # función de 1 línea, no vale la pena acoplar los dos módulos por
+  # esto).
+  defp shell_comilla_simple(texto), do: "'" <> String.replace(texto, "'", "'\\''") <> "'"
 
   defp comitear_y_pushear(path, sistema) do
     dir = Path.dirname(path)

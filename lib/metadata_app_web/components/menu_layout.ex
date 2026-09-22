@@ -38,6 +38,7 @@ defmodule MetadataAppWeb.MenuLayout do
       |> assign(:jerarquia_opciones, opciones_jerarquia_activa(assigns[:current_scope]))
       |> assign(:firma_unidad_operativa, firma_unidad_operativa(assigns[:current_scope]))
       |> assign(:anio_actual, Date.utc_today().year)
+      |> assign(:version_footer, Application.get_env(:metadata_app, :version_footer, []))
       |> assign(:bpb_habilitado, Application.get_env(:metadata_app, :bpb_habilitado, false))
       |> asignar_datos_usuario()
 
@@ -360,6 +361,14 @@ defmodule MetadataAppWeb.MenuLayout do
 
       <div class="pc-footer">
         <span class="pc-footer-copyright">Prettycore {@anio_actual}</span>
+        <!-- SPEC-SYS-1809202603 R11: versión visible para cualquier usuario
+             autenticado -- hash corto + fecha del commit que armó esta
+             imagen (config/runtime.exs, GIT_SHA_CORTO/GIT_SHA_FECHA). En
+             dev/test esas env no existen -- @version_footer[:hash] da nil
+             y el :if lo oculta (R11a: nunca un valor inventado). -->
+        <span :if={@version_footer[:hash]} class="pc-footer-version">
+          {@version_footer[:hash]} · {@version_footer[:fecha]}
+        </span>
 
         <!-- Jerarquía operativa activa (Fase 4, 2026-08-11) -- SOLO LECTURA
              acá desde Fase 1 de docs/ui (2026-08-15, a pedido explícito):
@@ -561,6 +570,10 @@ defmodule MetadataAppWeb.MenuLayout do
         <.link :if={"sysadmin_acciones_externas" in @opciones_plataforma} navigate="/sysadmin/acciones-externas" class="pc-admin-menu-item">
           <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">bolt</span></span>
           <span class="pc-admin-menu-label">Acciones externas</span>
+        </.link>
+        <.link :if={"sysadmin_propagacion" in @opciones_plataforma} navigate="/sysadmin/propagacion" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">rocket_launch</span></span>
+          <span class="pc-admin-menu-label">Propagación</span>
         </.link>
         <div :if={@opciones_administrativas != [] or @opciones_plataforma != []} class="pc-admin-menu-divisor"></div>
         <button
@@ -882,7 +895,7 @@ defmodule MetadataAppWeb.MenuLayout do
   # diferencia de BC List/Tepache, ninguna operación de Endpoints
   # depende del compilador, así que su link no puede seguir escondido
   # en un ambiente sin bpb_habilitado (ver router.ex, mismo motivo).
-  @recursos_plataforma ~w(sysadmin_credenciales sysadmin_ambientes sysadmin_panel_control sysadmin_acciones_externas sysadmin_endpoints)
+  @recursos_plataforma ~w(sysadmin_credenciales sysadmin_ambientes sysadmin_panel_control sysadmin_acciones_externas sysadmin_endpoints sysadmin_propagacion)
   @recursos_plataforma_bpb ~w(sysadmin_bc sysadmin_tepache)
 
   defp opciones_administrativas_visibles(%MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa} = scope)

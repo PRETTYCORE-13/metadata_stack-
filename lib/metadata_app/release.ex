@@ -13,9 +13,33 @@ defmodule MetadataApp.Release do
     end
   end
 
-  def rollback(repo, version) do
+  # `nombres_archivo` -- lista de basenames de migración EXACTOS (nunca
+  # un solo "version" de corte -- SPEC-SYS-1809202603 Grupo H, bug real
+  # encontrado 2026-09-21: `Ecto.Migrator.run(:down, to: version)`
+  # ordena TODAS las migraciones aplicadas por su número de versión, y
+  # este proyecto tiene migraciones "doble timestamp" -- pty_* publicadas
+  # vía mix motor.publicar, fuera del repo compartido -- cuyo número es
+  # mayor al de cualquier timestamp normal sin importar la fecha real;
+  # `to: version` las revertía en cascada antes de llegar a la pedida.
+  # `Ecto.Migrator.down/4` revierte UNA migración puntual por su
+  # `{version, module}` exacto, sin ordenamiento relativo -- inmune a
+  # eso. El módulo no está compilado en el release (las migraciones son
+  # `.exs`, se cargan al vuelo) -- `Code.compile_file/1` sobre el path
+  # real dentro de este release (`Application.app_dir/2`, mismo criterio
+  # que `import_meta/0`) antes de poder llamar `down/4`.
+  def rollback(repo, nombres_archivo) when is_list(nombres_archivo) do
     load_app()
-    {:ok, _, _} = Ecto.Migrator.with_repo(repo, &Ecto.Migrator.run(&1, :down, to: version))
+    dir = Application.app_dir(@app, "priv/repo/migrations")
+
+    for nombre <- nombres_archivo do
+      path = Path.join(dir, nombre)
+      [{modulo, _bin} | _] = Code.compile_file(path)
+      version = nombre |> String.split("_", parts: 2) |> hd() |> String.to_integer()
+
+      {:ok, _, _} = Ecto.Migrator.with_repo(repo, &Ecto.Migrator.down(&1, version, modulo))
+    end
+
+    :ok
   end
 
   # Corre después de migrate/0 — la migración crea la TABLA física del BC
