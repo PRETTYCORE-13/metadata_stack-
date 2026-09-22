@@ -918,3 +918,75 @@ cualquier ambiente.
       "Eliminar", y al entrar a "Configurar" un endpoint solo se ven
       Credenciales + Documentación (con el aviso de "solo se edita en
       local"). En local, todo sigue como antes.
+
+## Grupo S — Alta en lote, varios registros en un solo POST (R77-R81, agregado 2026-09-21)
+
+Ver design.md §17. Hallazgo real: un caller externo necesita mandar
+~50 registros de `pty_h_historico` de una sola vez; hoy el endpoint
+solo acepta un objeto por request, y un arreglo JSON se rechazaba con
+un 422 que no explicaba el problema real.
+
+- [x] **S1.** `MetadataAppWeb.BodyReaderLoteEndpoints` (nuevo módulo,
+      `read_body/2`) -- sube el límite de bytes SOLO para
+      `conn.request_path` bajo `/api/consultas` (200 MB), cualquier
+      otra ruta sigue con el default de `Plug.Parsers`. Conectado vía
+      `body_reader:` en el `Plug.Parsers` de `endpoint.ex`. Verificable:
+      `mix test` sin regresiones en otras rutas (formularios/LiveView
+      upload siguen con el límite de siempre) + un POST de prueba con
+      body > 8 MB a `/api/consultas/...` ya no da 413.
+
+- [x] **S2.** `ConsultaEndpoints.crear_registros_en_lote/3` -- envuelve
+      `crear_registro/3` en `Repo.transaction(fn -> ... end, timeout:
+      :infinity)`, `Enum.with_index/1` sobre el lote, `Repo.rollback/1`
+      con `{indice, motivo}` en el primer error. Verificable (test de
+      contexto, transacción real contra Postgres):
+        - lote de N registros válidos → `{:ok, [id1, id2, ..., idN]}`,
+          en el mismo orden enviado, los N persistidos.
+        - lote con el elemento en la posición 2 inválido (ej. sin
+          coincidencia de campos) → `{:error, {2, motivo}}` Y
+          `Repo.all(...)` confirma que NINGÚN registro del lote quedó
+          persistido (ni los que iban antes de la posición 2).
+
+- [x] **S3.** `ConsultaEndpointController` -- `ejecutar_alta/5`
+      bifurca por `%{"_json" => lote}` (`is_list/1`) vs. el camino de
+      objeto único (R78, sin tocar `ejecutar_alta_individual/5`, ex-
+      `ejecutar_alta/5`). `ejecutar_alta_lote/5` llama a S2 y responde
+      `201 {"data": {"creados": [ids]}}` o `422 {"error": {"indice":
+      i, "motivo": "..."}, "meta": {"total_enviados": N}}` (R80,
+      reusando `mensaje_error_alta/1`). Un elemento del arreglo que no
+      es un mapa se rechaza antes de abrir transacción, mismo formato
+      de error. Verificable: request test contra el controller --
+      arreglo válido → 201 con N ids; arreglo con un inválido → 422 con
+      índice y motivo correctos, 0 filas nuevas en la tabla; objeto
+      único (sin arreglo) → sigue devolviendo `201 {"data": {"id":
+      ...}}` exactamente como antes (regresión R78).
+
+- [x] **S4.** Auditoría (`ConsultaEndpointLog`) -- una sola fila por
+      request de lote, `cantidad_registros` = tamaño del lote si se
+      creó completo, `0` si se revirtió. Verificable: test de contexto/
+      controller confirma exactamente 1 fila de log por POST de lote
+      (no N), con el valor correcto en cada caso.
+
+- [x] **S5.** Suite completa (`mix test`) sin regresiones. Verificado
+      (2026-09-21): 661 tests, 5 failures -- las 5 son pre-existentes
+      y no relacionadas con este cambio (4 de `CaddyTest`, fin de línea
+      Windows `\r\n` vs `\n`; 1 de `CatalogoLiveConsultaTest`), primera
+      corrida limpia de la suite completa en esta máquina. En el
+      camino se encontró y corrigió un bug pre-existente y no
+      relacionado: ~40 migraciones locales (`pty_*`, gitignored) tenían
+      un formato de versión de 17 dígitos en vez de 14, lo que hacía
+      que Ecto (compara versiones como enteros) las ordenara después de
+      migraciones más nuevas de 14 dígitos -- nunca se había notado
+      porque nadie había hecho un replay completo desde cero en esta
+      máquina. Corregido renombrando las locales afectadas (nunca las
+      3 que sí están en git) + eliminando un par de migraciones locales
+      húerfanas cuyo efecto neto ya era cero (ver commit/notas de
+      sesión).
+
+- [ ] **S6.** Verificación end-to-end real: publicar `pty_h_historico`
+      actualizado a `unstable` (si hace falta) y mandar un POST real
+      (Postman) con un arreglo de varios registros de prueba --
+      confirmar 201 con los ids, los registros aparecen en la pantalla
+      Histórico, y un segundo POST con un elemento a propósito inválido
+      en el medio del arreglo confirma que NINGUNO de esa segunda
+      tanda se insertó (todo-o-nada real, no solo en test).

@@ -1207,3 +1207,155 @@ Crear/editar la definición de un Endpoint vuelve a depender de
 tres capas, mismo criterio de "defensa en profundidad" que ya usa el
 resto del proyecto. Ver/credenciales/documentación siguen sin cambios
 (R72), disponibles en cualquier ambiente.
+
+## 17. Alta en lote — varios registros en un solo POST (R77-R81, agregado 2026-09-21)
+
+### Detección del lote
+
+`ConsultaEndpointController.ejecutar/5` ya arma `valores_externos =
+Map.drop(params, ["ruta"])` antes de decidir alta vs consulta (§8). Un
+body que es un arreglo JSON top-level llega ahí como `%{"_json" =>
+[...]}` (comportamiento de `Plug.Parsers` con `Phoenix.json_library()`,
+sin cambios). `ejecutar_alta/5` bifurca ahí mismo:
+
+```elixir
+defp ejecutar_alta(conn, endpoint, credencial, %{"_json" => lote}, inicio) when is_list(lote),
+  do: ejecutar_alta_lote(conn, endpoint, credencial, lote, inicio)
+
+defp ejecutar_alta(conn, endpoint, credencial, valores_externos, inicio),
+  do: ejecutar_alta_individual(conn, endpoint, credencial, valores_externos, inicio)  # camino R54-R65, sin cambios (R78)
+```
+
+Si algún elemento del arreglo no es un mapa (`is_map/1` falla), se
+rechaza de una con 422 (`{"error": {"indice": i, "motivo": "cada
+elemento del arreglo debe ser un objeto JSON"}}`) sin llegar a abrir
+ninguna transacción — mismo criterio que R65 (rechazar temprano, nunca
+insertar en silencio).
+
+### Todo-o-nada: una transacción externa, `crear_registro/3` sin tocar (R79)
+
+`ConsultaEndpoints.crear_registros_en_lote/3` (nueva función, mismo
+módulo):
+
+```elixir
+def crear_registros_en_lote(endpoint, consulta, lote) do
+  Repo.transaction(
+    fn ->
+      lote
+      |> Enum.with_index()
+      |> Enum.map(fn {attrs_externos, indice} ->
+        case crear_registro(endpoint, consulta, attrs_externos) do
+          {:ok, registro} -> registro.id
+          {:error, motivo} -> Repo.rollback({indice, motivo})
+        end
+      end)
+    end,
+    timeout: :infinity
+  )
+end
+```
+
+`crear_registro/3` (R54-R65) no cambia — `CatalogoGenerico.crear/4` ya
+abre su propia transacción interna (Multi de TRN/folio, §1.2 de
+SPEC-SYS-0109202601); anidada dentro de la transacción externa, Ecto la
+resuelve como SAVEPOINT de Postgres, así que un fallo del registro N
+hace rollback exactamente hasta el savepoint de N sin abortar la
+externa hasta que el `Repo.rollback/1` explícito de arriba la cierra —
+la transacción completa (los 1..N-1 ya "confirmados" en sus propios
+savepoints incluidos) se deshace junto con ella. **Ningún registro del
+lote persiste si cualquiera falla** (R79), sin haber tocado el camino
+de alta individual.
+
+`timeout: :infinity` es deliberado: el timeout default de
+`Repo.transaction/2` (15s) existe para detectar código colgado, no para
+lotes legítimamente grandes -- cortarlo a mitad de un lote de 100.000
+registros violaría R81 (convertiría un lote válido, solo lento, en un
+500 a mitad de camino).
+
+### Respuesta HTTP
+
+```elixir
+defp ejecutar_alta_lote(conn, endpoint, credencial, lote, inicio) do
+  case ConsultaEndpoints.crear_registros_en_lote(endpoint, endpoint.consulta, lote) do
+    {:ok, ids} ->
+      responder(conn, :created, %{"data" => %{"creados" => ids}}, endpoint, credencial, inicio, length(ids))
+
+    {:error, {indice, motivo}} ->
+      body = %{"error" => %{"indice" => indice, "motivo" => mensaje_error_alta(motivo)}, "meta" => %{"total_enviados" => length(lote)}}
+      responder(conn, :unprocessable_entity, body, endpoint, credencial, inicio, 0)
+  end
+end
+```
+
+`mensaje_error_alta/1` (R65, sin cambios) ya traduce cualquier motivo
+de error de `crear_registro/3` a texto legible -- se reusa tal cual
+para el registro que rompió el lote (R80: índice + motivo, 0-based, en
+el orden enviado). `cantidad_registros` en la auditoría (columna ya
+existente, §1.1) queda en `length(ids)` si el lote entero se creó, o en
+`0` si se revirtió -- una sola fila de auditoría por request de lote,
+nunca una por registro.
+
+### Tamaño de body — límite propio para esta ruta, no global (R81)
+
+`Plug.Parsers` en `lib/metadata_app_web/endpoint.ex` no trae `length:`
+explícito hoy → default de la librería, 8.000.000 bytes (~8 MB).
+100.000 registros de un catálogo con ~35 campos como
+`pty_h_historico` (~900 bytes/registro en JSON) pesan ~90 MB — muy por
+encima del default. Subir el límite GLOBAL del `Plug.Parsers` del
+`Endpoint` afectaría cualquier otro POST de la plataforma (formularios,
+`multipart`), no solo esta ruta — descartado.
+
+En vez de eso, un `body_reader` propio (opción documentada de
+`Plug.Parsers`, un módulo con `read_body/2`) que solo sube el límite
+cuando `conn.request_path` empieza con `/api/consultas` — cualquier
+otra ruta sigue con el default de 8 MB sin cambios:
+
+```elixir
+defmodule MetadataAppWeb.BodyReaderLoteEndpoints do
+  # Único propósito: permitir bodies grandes SOLO en /api/consultas
+  # (alta en lote, R81) sin tocar el límite del resto de la plataforma.
+  @limite_lote 200_000_000
+
+  def read_body(conn, opts) do
+    if String.starts_with?(conn.request_path, "/api/consultas") do
+      Plug.Conn.read_body(conn, Keyword.put(opts, :length, @limite_lote))
+    else
+      Plug.Conn.read_body(conn, opts)
+    end
+  end
+end
+```
+
+...pasado como `body_reader: {MetadataAppWeb.BodyReaderLoteEndpoints,
+:read_body, []}` al `Plug.Parsers` existente en `endpoint.ex`. 200 MB
+es el tope duro real de R81 (protege contra un body literalmente
+infinito/malicioso) -- un lote de 100.000 registros cabe cómodo con
+margen; el requisito de "sin límite artificial de CANTIDAD" se cumple
+porque nada cuenta filas antes de aceptar el body, solo bytes.
+
+### Riesgo conocido, fuera de esta ronda
+
+Un lote de 100.000 registros retiene UNA conexión del pool de Ecto
+durante todo el procesamiento (cada `crear_registro/3` es secuencial,
+con su propia validación/resolución de referencias/folio). Bajo carga
+concurrente real esto podría agotar el pool -- mismo tipo de problema
+que ya se resolvió del lado LECTURA con el Job asíncrono de R39-R41
+(§5.2.2). No se replica esa solución acá todavía porque el caso real
+que motivó esta ronda es un lote de 50 registros, no 100.000 -- si en
+el futuro un caller real necesita lotes de ese volumen de forma
+recurrente, la extensión natural es la misma: alta en lote asíncrona
+vía Job, con `job_id`/polling en vez de esperar la respuesta del POST.
+Documentado a propósito para no descubrirlo en producción como con
+`pty_dsd_mat_material_precios`.
+
+### Cómo quedan resueltos R77-R81
+
+R77 (arreglo aceptado) y R78 (objeto único intacto) -- bifurcación en
+`ejecutar_alta/5` por la forma de `valores_externos["_json"]`. R79
+(todo-o-nada) -- transacción externa + `Repo.rollback/1` en el primer
+error, aprovechando que las transacciones internas de
+`CatalogoGenerico.crear/4` ya anidan como savepoints. R80 (índice +
+motivo) -- `Enum.with_index/1` sobre el lote, reusando
+`mensaje_error_alta/1`. R81 (sin tope de cantidad, sin caerse) --
+`timeout: :infinity` en la transacción + `body_reader` con límite de
+bytes acotado SOLO a `/api/consultas`.

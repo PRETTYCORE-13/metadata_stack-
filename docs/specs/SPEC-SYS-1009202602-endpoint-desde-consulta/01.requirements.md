@@ -690,3 +690,48 @@ un catálogo real, la definición se autoría en local y viaja por
 publicación (R73), nunca se edita directo en un ambiente desplegado.
 Ver/generar/rotar/revocar credenciales y consultar la documentación
 (R72, sin cambios) siguen disponibles en cualquier ambiente.
+
+## Alta en lote -- varios registros en un solo POST (agregado 2026-09-21, a pedido explícito)
+
+Hallazgo real (2026-09-21): un sistema externo necesita mandar ~50
+registros de `pty_h_historico` de una sola vez. Hoy `POST
+/api/consultas/*ruta` con `permite_alta` solo acepta UN objeto JSON
+plano por request (`ConsultaEndpoints.crear_registro/3` recibe un mapa,
+nunca una lista). Si el cliente manda un arreglo JSON en el body,
+Phoenix lo envuelve como `%{"_json" => [...]}` -- ninguna llave del
+catálogo se llama `_json`, así que el filtro de campos habilitados no
+encuentra ninguna coincidencia y el endpoint responde 422
+(`body_sin_coincidencias`) sin dar ninguna pista de que el problema real
+es "no se aceptan arreglos". El cliente externo termina mandando 50
+requests sueltos.
+
+**R77.** EL SISTEMA DEBE aceptar, en el mismo POST que ya existe, un
+body que sea un arreglo JSON de objetos -- cada objeto con la misma
+forma que ya acepta un alta individual (mismas llaves = campos
+habilitados del endpoint).
+
+**R78.** EL SISTEMA DEBE seguir aceptando un body de UN SOLO objeto
+(sin arreglo) exactamente como hoy -- ningún cliente existente que ya
+integra el endpoint deja de funcionar.
+
+**R79.** CUANDO el body es un arreglo, EL SISTEMA DEBE crear TODOS los
+registros del lote dentro de una única operación atómica -- si
+CUALQUIER registro del lote falla su validación (campo requerido
+faltante, tipo inválido, referencia no encontrada, etc.), EL SISTEMA NO
+DEBE insertar NINGÚN registro del lote (todo-o-nada, a pedido
+explícito -- no alta parcial).
+
+**R80.** CUANDO un lote falla, EL SISTEMA DEBE responder indicando
+exactamente qué posición(es) del arreglo enviado fallaron (índice,
+0-based, en el mismo orden en que se mandaron) y el motivo de cada
+falla, para que el sistema externo pueda corregir esos registros
+puntuales y reenviar el lote completo -- nunca un error genérico sin
+decir cuál(es) registro(s) lo causaron.
+
+**R81.** EL SISTEMA NO DEBE imponer un tope artificial a la cantidad de
+registros por lote -- pero un lote de volumen alto (a pedido explícito,
+caso de referencia: 100,000 registros) NO DEBE tirar el servidor
+(agotar memoria, colgar el proceso, o dejar el request sin respuesta
+por timeout) -- ver `design.md` para el mecanismo (procesamiento en
+lotes internos dentro de la misma transacción lógica, límites de
+tamaño de body, etc.).

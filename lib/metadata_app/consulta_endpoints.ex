@@ -428,6 +428,43 @@ defmodule MetadataApp.ConsultaEndpoints do
   def crear_registro(%ConsultaEndpoint{permite_alta: false}, _consulta, _attrs_externos),
     do: {:error, :alta_no_habilitada}
 
+  @doc """
+  Alta en lote (R77-R81, agregado 2026-09-21, design.md §17) -- crea
+  TODOS los registros de `lote` (lista de mapas, misma forma que un
+  alta individual) o NINGUNO. `crear_registro/3` no cambia: cada
+  elemento se procesa con la MISMA función que un alta individual
+  (whitelist de campos, resolución de referencias, folio/TRN si
+  aplica) -- las transacciones internas que ya abre
+  `CatalogoGenerico.crear/4` anidan como SAVEPOINT dentro de esta
+  transacción externa, así que el fallo del elemento N revierte los
+  1..N-1 sin haber tocado ese código.
+
+  `timeout: :infinity` a propósito -- el timeout default de
+  `Repo.transaction/2` (15s) existe para código colgado, no para un
+  lote legítimamente grande (R81); cortarlo a mitad de camino
+  convertiría un lote válido, solo lento, en un 500 sin razón de
+  negocio real.
+
+  Devuelve `{:ok, [id, ...]}` en el mismo orden que `lote`, o
+  `{:error, {indice, motivo}}` (índice 0-based) con el motivo tal cual
+  lo devuelve `crear_registro/3` para ese elemento.
+  """
+  def crear_registros_en_lote(endpoint, consulta, lote) do
+    Repo.transaction(
+      fn ->
+        lote
+        |> Enum.with_index()
+        |> Enum.map(fn {attrs_externos, indice} ->
+          case crear_registro(endpoint, consulta, attrs_externos) do
+            {:ok, registro} -> registro.id
+            {:error, motivo} -> Repo.rollback({indice, motivo})
+          end
+        end)
+      end,
+      timeout: :infinity
+    )
+  end
+
   defp estampar_empresa_fija(attrs, modulo, empresa_id) do
     if :empresa_id in modulo.__schema__(:fields) do
       Map.put(attrs, "empresa_id", empresa_id)

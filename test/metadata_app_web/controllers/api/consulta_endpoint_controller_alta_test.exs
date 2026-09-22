@@ -1,6 +1,8 @@
 defmodule MetadataAppWeb.Api.ConsultaEndpointControllerAltaTest do
   use MetadataAppWeb.ConnCase, async: true
 
+  import Ecto.Query
+
   alias MetadataApp.Repo
   alias MetadataApp.MetaConsultas
   alias MetadataApp.ConsultaEndpoints
@@ -8,6 +10,7 @@ defmodule MetadataAppWeb.Api.ConsultaEndpointControllerAltaTest do
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
   alias MetadataApp.MetaSchema.Estado
   alias MetadataApp.MetaBusinessProcess.Catalogos.MetaFixtureCliente
+  alias MetadataApp.MetaSchema.ConsultaEndpointLog
   alias MetadataApp.Autenticacion.Empresa
 
   # R52-R58 (agregado 2026-09-14, a pedido explícito -- "necesito que
@@ -190,5 +193,84 @@ defmodule MetadataAppWeb.Api.ConsultaEndpointControllerAltaTest do
       })
 
     assert %{"error" => _mensaje} = json_response(conn, 422)
+  end
+
+  describe "alta en lote -- arreglo JSON en el body (R77-R81, agregado 2026-09-21)" do
+    # Un arreglo top-level solo llega como `_json` (Plug.Parsers) cuando
+    # el body es JSON REAL con Content-Type explícito -- a diferencia
+    # de los tests de arriba (map -> Plug.Test lo codifica como
+    # urlencoded/multipart solo), acá hay que mandar el body ya
+    # serializado.
+    defp post_lote(conn, ruta, lote) do
+      conn |> put_req_header("content-type", "application/json") |> post("/api/consultas/#{ruta}", Jason.encode!(lote))
+    end
+
+    test "arreglo válido -> 201 con los ids creados, en el mismo orden, todos persistidos", %{conn: conn} do
+      fixture_estado_inicial!()
+      empresa = empresa!()
+      {endpoint, key} = endpoint_con_alta!(empresa)
+
+      lote =
+        for n <- 1..5 do
+          %{"meta_fixture_cliente_nombre" => "lote #{n}_#{unique()}", "meta_fixture_cliente_edad" => n, "meta_fixture_cliente_venta" => "1.00"}
+        end
+
+      conn = conn |> put_req_header("authorization", "Bearer #{key}") |> post_lote(endpoint.ruta, lote)
+
+      %{"data" => %{"creados" => ids}} = json_response(conn, 201)
+      assert length(ids) == 5
+
+      edades = ids |> Enum.map(&Repo.get!(MetaFixtureCliente, &1)) |> Enum.map(& &1.meta_fixture_cliente_edad)
+      assert edades == Enum.to_list(1..5)
+    end
+
+    test "un elemento inválido en el arreglo -> 422 con índice y motivo, NADA se persiste (todo-o-nada, R79-R80)", %{conn: conn} do
+      fixture_estado_inicial!()
+      empresa = empresa!()
+      {endpoint, key} = endpoint_con_alta!(empresa)
+      total_antes = Repo.aggregate(MetaFixtureCliente, :count)
+
+      lote = [
+        %{"meta_fixture_cliente_nombre" => "válido #{unique()}", "meta_fixture_cliente_edad" => 1, "meta_fixture_cliente_venta" => "1.00"},
+        # posición 1 (0-based) -- sin nombre, campo obligatorio.
+        %{"meta_fixture_cliente_edad" => 2, "meta_fixture_cliente_venta" => "2.00"}
+      ]
+
+      conn = conn |> put_req_header("authorization", "Bearer #{key}") |> post_lote(endpoint.ruta, lote)
+
+      assert %{"error" => %{"indice" => 1, "motivo" => motivo}, "meta" => %{"total_enviados" => 2}} = json_response(conn, 422)
+      assert motivo =~ "nombre"
+      assert Repo.aggregate(MetaFixtureCliente, :count) == total_antes
+    end
+
+    test "un elemento que no es un objeto -> 422 explícito sin abrir transacción", %{conn: conn} do
+      fixture_estado_inicial!()
+      empresa = empresa!()
+      {endpoint, key} = endpoint_con_alta!(empresa)
+
+      lote = [%{"meta_fixture_cliente_nombre" => "ok #{unique()}", "meta_fixture_cliente_edad" => 1, "meta_fixture_cliente_venta" => "1.00"}, "no es un objeto"]
+
+      conn = conn |> put_req_header("authorization", "Bearer #{key}") |> post_lote(endpoint.ruta, lote)
+
+      assert %{"error" => %{"indice" => 1, "motivo" => motivo}} = json_response(conn, 422)
+      assert motivo =~ "objeto JSON"
+    end
+
+    test "una sola fila de auditoría por request de lote, con cantidad_registros correcta", %{conn: conn} do
+      fixture_estado_inicial!()
+      empresa = empresa!()
+      {endpoint, key} = endpoint_con_alta!(empresa)
+
+      lote =
+        for n <- 1..3 do
+          %{"meta_fixture_cliente_nombre" => "audit #{n}_#{unique()}", "meta_fixture_cliente_edad" => n, "meta_fixture_cliente_venta" => "1.00"}
+        end
+
+      conn |> put_req_header("authorization", "Bearer #{key}") |> post_lote(endpoint.ruta, lote)
+
+      [log] = Repo.all(from(l in ConsultaEndpointLog, where: l.meta_schema_consulta_endpoint_id == ^endpoint.id))
+      assert log.cantidad_registros == 3
+      assert log.resultado_http == 201
+    end
   end
 end
