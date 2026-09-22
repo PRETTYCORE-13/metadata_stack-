@@ -265,14 +265,26 @@ deny-by-default funciona de verdad y no solo en el caso feliz.
 
 ## 5. Publicar
 
-Una vez verificado, `mix motor.publicar <catalogo>` — valida el motor,
-exporta metadata+autómata a los JSON versionados
-(`priv/repo/catalogos/<catalogo>.meta.json`/`.motor.json`) y arma el
-commit acotado a ese catálogo. El `git push` queda aparte, a criterio
-del usuario. Para maestro-detalle, publicá el MAESTRO primero y
-después cada catálogo detalle por separado (`mix motor.publicar
-<detalle>`) — cada uno exporta a su propio archivo, y el detalle
-depende de que el `schema_encabezado_id` del maestro ya esté resuelto.
+**`mix motor.publicar` YA NO es un commit local** (corregido
+2026-09-23 — la versión vieja de esta sección describía el mecanismo
+anterior a un rediseño de CI/CD real, quedó mal desde entonces). Hoy
+`mix motor.publicar --sistema=<sistema> <catalogo> [<catalogo2> ...]`
+dispara un **deploy real**: arma un bundle, corre `.github/workflows/bc-deploy.yml`
+vía GitHub Actions, que compila una imagen Docker y la despliega por
+SSH a un servidor — todo sin tocar `origin/main` (cero `git
+add`/commit/push en ningún paso). `--sistema=` es obligatorio, sin
+default: un cliente real de `priv/sistemas.json`, o `"unstable"` (el
+único pensado para probar un BC antes de mandarlo a un cliente real).
+
+**Por el peso real de la acción (deploy, no un commit inocuo), NUNCA
+lo corras sin confirmación explícita del usuario** — decile qué es
+realmente (deploy, no commit) y a qué `--sistema` antes de ejecutarlo,
+aunque el usuario ya haya dicho "publicá"/"commiteá" en un mensaje
+anterior asumiendo el mecanismo viejo. Para maestro-detalle, el
+maestro y sus detalles pueden ir en la misma corrida (el comando
+acepta varios catálogos y resuelve el orden de dependencia solo,
+`MetaSchemaContext.calcular_paquete_publicacion/1`) — no hace falta
+correrlo por separado como antes.
 
 ## Resumen — orden de los pasos
 
@@ -294,5 +306,6 @@ depende de que el `schema_encabezado_id` del maestro ya esté resuelto.
    plugin aparte, nunca a mano en `pre.ex`/`post.ex`).
 6. Verificar el ciclo completo (alta/guardar/baja/reactivar, y en
    maestro-detalle también insertar/editar/"quitar" renglones con la
-   matriz de permisos) y `mix motor.publicar <catalogo>` (maestro
-   primero, después cada detalle).
+   matriz de permisos). Publicar (`mix motor.publicar --sistema=<...>
+   <catalogo> [<detalle> ...]`) es un DEPLOY real — confirmar con el
+   usuario a qué `--sistema` antes de correrlo, nunca asumido.
