@@ -2020,11 +2020,21 @@ defmodule MetadataAppWeb.CatalogoLive do
            a propósito, es un parseo visual de solo lectura, no un form.
            Clases planas de Tailwind (nunca "checkbox checkbox-sm" de
            daisyUI, encontrado real: invisible en esta página, este
-           proyecto evita daisyUI a propósito, ver AGENTS.md) -- azul
-           (text-blue-600) a pedido explícito del usuario, distinto del
-           checkbox de selección de fila (morado, :1688) para no
-           confundir "esto es un dato" con "esto está seleccionado". --%>
-      <input :if={@booleano?} type="checkbox" checked={@valor == true} disabled class="rounded border-gray-300 text-blue-600" />
+           proyecto evita daisyUI a propósito, ver AGENTS.md).
+
+           `text-blue-600` NO alcanza para pintar el color del check
+           nativo -- ese comportamiento lo da el plugin
+           `@tailwindcss/forms` (restyla `input[type=checkbox]` para
+           que "color"/texto controle su accent), y este proyecto NO
+           lo tiene cargado (confirmado real: el checkbox de selección
+           de fila, :1688, tiene el mismo `text-purple-600` y tampoco
+           se pinta morado -- siempre fue el negro nativo del
+           navegador, nadie lo había notado). `accent-blue-600` sí es
+           una utilidad propia de Tailwind (mapea directo a la
+           propiedad CSS `accent-color`, sin plugin), soportada nativo
+           por el checkbox del navegador -- azul a pedido explícito del
+           usuario, distinto del morado del checkbox de selección. --%>
+      <input :if={@booleano?} type="checkbox" checked={@valor == true} disabled class="rounded border-gray-300 accent-blue-600" />
       {if !@booleano?, do: formatear_celda(@valor, @col.columna.schema_context_properties)}
     </td>
     """
