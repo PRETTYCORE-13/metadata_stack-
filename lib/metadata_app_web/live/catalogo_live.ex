@@ -2016,25 +2016,25 @@ defmodule MetadataAppWeb.CatalogoLive do
       clase_valor_celda(@valor, @col.columna.schema_context_properties)
     ]}>
       <%!-- SPEC-SYS-1109202606 R19: un booleano se pinta como checkbox
-           (checked/unchecked), nunca el texto "true"/"false" -- disabled
-           a propósito, es un parseo visual de solo lectura, no un form.
-           Clases planas de Tailwind (nunca "checkbox checkbox-sm" de
-           daisyUI, encontrado real: invisible en esta página, este
-           proyecto evita daisyUI a propósito, ver AGENTS.md).
+           (checked/unchecked), nunca el texto "true"/"false" -- de solo
+           lectura, es un parseo visual, no un form.
 
-           `text-blue-600` NO alcanza para pintar el color del check
-           nativo -- ese comportamiento lo da el plugin
-           `@tailwindcss/forms` (restyla `input[type=checkbox]` para
-           que "color"/texto controle su accent), y este proyecto NO
-           lo tiene cargado (confirmado real: el checkbox de selección
-           de fila, :1688, tiene el mismo `text-purple-600` y tampoco
-           se pinta morado -- siempre fue el negro nativo del
-           navegador, nadie lo había notado). `accent-blue-600` sí es
-           una utilidad propia de Tailwind (mapea directo a la
-           propiedad CSS `accent-color`, sin plugin), soportada nativo
-           por el checkbox del navegador -- azul a pedido explícito del
-           usuario, distinto del morado del checkbox de selección. --%>
-      <input :if={@booleano?} type="checkbox" checked={@valor == true} disabled class="rounded border-gray-300 accent-blue-600" />
+           NUNCA un <input type="checkbox" disabled> real -- encontrado
+           real (2026-09-22, dos vueltas): ni "checkbox checkbox-sm"
+           (daisyUI, invisible -- este proyecto lo evita a propósito,
+           AGENTS.md) ni "accent-blue-600"/"text-blue-600" (el color de
+           acento de un checkbox DISABLED queda apagado/gris por la
+           hoja de estilo nativa del navegador, ninguna clase CSS lo
+           pisa -- confirmado real contra Chrome/Edge). Un <div> con
+           ícono adentro da control total del color sin pelear con el
+           checkbox nativo -- mismo criterio de "escribí tu propio
+           componente" que ya rige para daisyUI. --%>
+      <div :if={@booleano?} class={[
+        "w-4 h-4 rounded border flex items-center justify-center",
+        if(@valor == true, do: "bg-blue-600 border-blue-600", else: "border-gray-300")
+      ]}>
+        <span :if={@valor == true} class="material-symbols-outlined text-white" style="font-size: 12px">check</span>
+      </div>
       {if !@booleano?, do: formatear_celda(@valor, @col.columna.schema_context_properties)}
     </td>
     """

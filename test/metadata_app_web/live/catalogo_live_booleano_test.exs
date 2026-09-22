@@ -1,8 +1,8 @@
 defmodule MetadataAppWeb.CatalogoLiveBooleanoTest do
   @moduledoc """
   SPEC-SYS-1109202606 R19 -- una columna de negocio tipo "boolean" se
-  pinta en la tabla del usuario final como un checkbox deshabilitado
-  (marcado/desmarcado), nunca como el texto "true"/"false".
+  pinta en la tabla del usuario final como un indicador visual tipo
+  checkbox (marcado/desmarcado), nunca como el texto "true"/"false".
   """
   use MetadataAppWeb.ConnCase, async: true
 
@@ -54,7 +54,7 @@ defmodule MetadataAppWeb.CatalogoLiveBooleanoTest do
   # criterio ya establecido.
   defp buscar(view, texto), do: render_change(view, "buscar_general", %{"value" => texto})
 
-  test "true se pinta con checkbox marcado, nunca el texto \"true\"", %{conn: conn} do
+  test "true se pinta marcado (relleno + ícono), nunca el texto \"true\"", %{conn: conn} do
     sufijo = System.unique_integer([:positive])
 
     fixture_cliente(%{
@@ -68,13 +68,13 @@ defmodule MetadataAppWeb.CatalogoLiveBooleanoTest do
     buscar(view, "Con activo #{sufijo}")
 
     celda = celda_activo(view)
-    assert celda =~ ~s(type="checkbox")
-    assert celda =~ "checked"
+    assert celda =~ "bg-blue-600"
+    assert celda =~ "check"
     refute celda =~ ">true<"
     refute celda =~ ">false<"
   end
 
-  test "false se pinta con checkbox desmarcado, nunca el texto \"false\"", %{conn: conn} do
+  test "false se pinta desmarcado (sin relleno ni ícono), nunca el texto \"false\"", %{conn: conn} do
     sufijo = System.unique_integer([:positive])
 
     fixture_cliente(%{
@@ -88,25 +88,26 @@ defmodule MetadataAppWeb.CatalogoLiveBooleanoTest do
     buscar(view, "Sin activo #{sufijo}")
 
     celda = celda_activo(view)
-    assert celda =~ ~s(type="checkbox")
-    refute celda =~ "checked"
+    refute celda =~ "bg-blue-600"
+    refute celda =~ "check"
     refute celda =~ ">true<"
     refute celda =~ ">false<"
   end
 
-  test "el checkbox está deshabilitado -- es solo lectura, no un formulario", %{conn: conn} do
+  test "nil se pinta desmarcado, igual que false", %{conn: conn} do
     sufijo = System.unique_integer([:positive])
 
     fixture_cliente(%{
-      meta_fixture_cliente_nombre: "Deshabilitado #{sufijo}",
+      meta_fixture_cliente_nombre: "Sin dato #{sufijo}",
       meta_fixture_cliente_edad: 30,
-      meta_fixture_cliente_venta: Decimal.new("1"),
-      meta_fixture_cliente_activo: true
+      meta_fixture_cliente_venta: Decimal.new("1")
     })
 
     {:ok, view, _html} = live(conn, "/__test__/fixture-cliente")
-    buscar(view, "Deshabilitado #{sufijo}")
+    buscar(view, "Sin dato #{sufijo}")
 
-    assert celda_activo(view) =~ "disabled"
+    celda = celda_activo(view)
+    refute celda =~ "bg-blue-600"
+    refute celda =~ "check"
   end
 end
