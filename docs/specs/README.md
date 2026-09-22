@@ -187,3 +187,22 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   nunca datos, plantillas custom del Constructor, ni permisos ya
   otorgados (implementado, Grupos A-E completos, verificado contra
   Postgres real).
+- [`SPEC-SYS-2209202602-propagacion-artefactos-negocio/`](SPEC-SYS-2209202602-propagacion-artefactos-negocio/) —
+  documentación retroactiva de cómo se respalda/propaga un artefacto de
+  negocio (catálogo `pty_*`): `mix motor.publicar` deja una copia en un
+  GitHub Release (`bc-<catalogo>`) antes de desplegar; ese release se
+  reincorpora solo en cada actualización normal del sistema, así que un
+  catálogo viaja siempre empaquetado dentro de la actualización
+  completa (`mix motor.propagar_extension`), nunca aislado — "todo o
+  nada" es diseño, no un descuido. Cierra la nota pendiente de
+  `SPEC-SYS-1809202603` (§1). Sin `tasks.md` a propósito (nada que
+  construir, comportamiento ya existente).
+- [`SPEC-ADN-2209202601-config-sales-unit/`](SPEC-ADN-2209202601-config-sales-unit/) —
+  primera spec de área ADN (Administración de Negocio, no plataforma):
+  motor de configuración para la app móvil (~120 parámetros, hoy
+  serializados en XML) vía Parámetros Base (catálogo cerrado, valida
+  nombres) + Perfiles de Configuración (valor compartido, editable una
+  sola vez) + dos ejes de asignación independientes — Ventas (Sales
+  Unit) y Reparto (Almacén) — cada uno con sus Excepciones puntuales.
+  `01.requirements.md`/`02.design.md`/`03.tasks.md` escritos, pendiente
+  de ejecución (Grupos A-F).
