@@ -95,7 +95,7 @@ defmodule MetadataAppWeb.Sysadmin.PropagacionLive do
   def handle_event("rollback", %{"hash" => hash, "destino" => destino}, socket) do
     case PropagacionContext.commit_anterior(socket.assigns.commits, hash) do
       nil ->
-        {:noreply, put_flash(socket, :error, "No hay un commit anterior cargado en esta línea de tiempo -- aumentá el límite para verlo.")}
+        {:noreply, put_flash(socket, :error, "No hay un commit anterior cargado en esta línea de tiempo -- aumenta el límite para verlo.")}
 
       anterior ->
         {:noreply, disparar_rollback(socket, destino, hash, anterior.hash)}
@@ -121,7 +121,7 @@ defmodule MetadataAppWeb.Sysadmin.PropagacionLive do
 
           {:ok, _salida} ->
             socket
-            |> put_flash(:info, "Disparado -- \"#{destino}\" va camino a #{imagen}. Seguí el progreso con \"gh run list\".")
+            |> put_flash(:info, "Disparado -- \"#{destino}\" va camino a #{imagen}. Sigue el progreso con \"gh run list\".")
             |> iniciar_carga()
 
           {:error, mensaje} ->
@@ -184,8 +184,12 @@ defmodule MetadataAppWeb.Sysadmin.PropagacionLive do
     end
   end
 
-  def handle_async(:cargar_linea_de_tiempo, {:ok, commits}, socket) do
+  def handle_async(:cargar_linea_de_tiempo, {:ok, {:ok, commits}}, socket) do
     {:noreply, socket |> assign(:commits, commits) |> assign(:cargando, false) |> assign(:error_carga, nil)}
+  end
+
+  def handle_async(:cargar_linea_de_tiempo, {:ok, {:error, mensaje}}, socket) do
+    {:noreply, socket |> assign(:commits, nil) |> assign(:cargando, false) |> assign(:error_carga, mensaje)}
   end
 
   def handle_async(:cargar_linea_de_tiempo, {:exit, motivo}, socket) do
@@ -232,7 +236,7 @@ defmodule MetadataAppWeb.Sysadmin.PropagacionLive do
 
       <div class="flex items-center gap-3 mb-4">
         <select name="ambiente_id" phx-change="elegir_ambiente" class="border border-gray-300 rounded-lg px-2 py-1.5 text-sm">
-          <option value="" selected={is_nil(@ambiente_seleccionado)}>Elegí un ambiente...</option>
+          <option value="" selected={is_nil(@ambiente_seleccionado)}>Elige un ambiente...</option>
           <option :for={a <- @ambientes} value={a.id} selected={@ambiente_seleccionado && @ambiente_seleccionado.id == a.id}>
             {a.nombre} ({a.host})
           </option>
@@ -250,7 +254,7 @@ defmodule MetadataAppWeb.Sysadmin.PropagacionLive do
       </div>
 
       <p :if={is_nil(@ambiente_seleccionado)} class="text-sm text-gray-400">
-        Elegí un ambiente para ver la línea de tiempo.
+        Elige un ambiente para ver la línea de tiempo.
       </p>
 
       <p :if={@error_carga} class="text-sm text-red-600 mb-3">{@error_carga}</p>

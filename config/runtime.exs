@@ -37,6 +37,17 @@ config :metadata_app, :version_footer,
   hash: System.get_env("GIT_SHA_CORTO"),
   fecha: System.get_env("GIT_SHA_FECHA")
 
+# Token de GitHub de SOLO LECTURA (scopes contents:read + actions:read,
+# nunca uno con permiso de disparar workflows) para que
+# MetadataApp.PropagacionContext consulte la API HTTP de GitHub en vez
+# de shellear `git`/`gh` (SPEC-SYS-1809202603 R9c) -- necesario porque
+# esta pantalla también se abre directo contra un pod ya desplegado, que
+# no tiene esos binarios instalados. Vale para todos los ambientes (no
+# solo prod), sin `raise` si falta: sin esta env, el resto de la app
+# sigue funcionando, solo esta pantalla muestra un error explícito en
+# vez de la línea de tiempo.
+config :metadata_app, :github_token_lectura, System.get_env("GITHUB_TOKEN_LECTURA")
+
 if config_env() == :prod do
   maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
 

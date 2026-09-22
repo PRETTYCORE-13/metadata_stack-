@@ -10,7 +10,13 @@ defmodule MetadataApp.PropagacionContext do
 
   alias MetadataApp.MotorAlta.Estado
 
-  @separador "\x1f"
+  # OJO: "metadata_stack-" CON el guion final -- es el nombre real del
+  # repositorio de GitHub (confirmado con "gh repo view"), distinto del
+  # nombre de la imagen Docker ("metadata_stack", sin el guion -- ci.yml
+  # lo recorta al armar el tag: `repo="${repo%[-._]}"`). Usar el nombre
+  # de la imagen acá da 404 en la API de GitHub (encontrado real,
+  # 2026-09-22, verificación en vivo de este mismo cambio).
+  @repo "PRETTYCORE-13/metadata_stack-"
 
   @doc """
   Línea de tiempo de los últimos `limite` commits de `origin/main`, cada
@@ -18,75 +24,91 @@ defmodule MetadataApp.PropagacionContext do
   runs de `actualizar-sistema.yml` que apuntan a ESE commit (R9b: actor
   del run, distinto del autor del commit) y qué canales/sistemas están
   parados ahí ahora mismo (vía `ambiente`, R9-R9a).
+
+  `{:ok, [commit]} | {:error, mensaje}` (R9c, 2026-09-22) -- consulta la
+  API HTTP de GitHub, nunca shellea `git`/`gh` (esta pantalla también se
+  abre directo contra un pod ya desplegado, que no los tiene instalados,
+  ver SPEC-SYS-1809202603 §5.3). `{:error, ...}` cubre tanto "falta el
+  token" como cualquier falla de red/API -- nunca una lista vacía
+  silenciosa que un admin pueda confundir con "no hay commits".
   """
   def linea_de_tiempo(ambiente, limite \\ 30) do
-    commits = commits_recientes(limite)
-    runs_por_hash = runs_actualizar_sistema()
-    posiciones_por_hash = posiciones_por_hash(ambiente)
+    case github_token() do
+      nil ->
+        {:error, "Falta configurar GITHUB_TOKEN_LECTURA en este ambiente -- sin él, esta pantalla no puede consultar la API de GitHub (SPEC-SYS-1809202603 R9c)."}
 
-    Enum.map(commits, fn commit ->
-      commit
-      |> Map.put(:runs, Map.get(runs_por_hash, commit.hash, []))
-      |> Map.put(:posiciones, Map.get(posiciones_por_hash, commit.hash, []))
-    end)
-  end
+      token ->
+        with {:ok, commits} <- commits_recientes(token, limite),
+             {:ok, runs_por_hash} <- runs_actualizar_sistema(token) do
+          posiciones_por_hash = posiciones_por_hash(ambiente)
 
-  defp commits_recientes(limite) do
-    formato = Enum.join(["%H", "%h", "%s", "%an", "%aI"], @separador)
-    args = ["log", "origin/main", "--format=#{formato}", "-n", to_string(limite)]
-
-    case System.cmd("git", args, stderr_to_stdout: true) do
-      {salida, 0} ->
-        salida
-        |> String.split("\n", trim: true)
-        |> Enum.map(&parsear_commit/1)
-
-      {_salida, _status} ->
-        []
+          {:ok,
+           Enum.map(commits, fn commit ->
+             commit
+             |> Map.put(:runs, Map.get(runs_por_hash, commit.hash, []))
+             |> Map.put(:posiciones, Map.get(posiciones_por_hash, commit.hash, []))
+           end)}
+        end
     end
-  rescue
-    ErlangError -> []
   end
 
-  defp parsear_commit(linea) do
-    [hash, hash_corto, mensaje, autor, fecha_iso] = String.split(linea, @separador)
+  defp github_token, do: Application.get_env(:metadata_app, :github_token_lectura)
+
+  defp commits_recientes(token, limite) do
+    case Req.get(api_url("/commits"), headers: api_headers(token), params: [sha: "main", per_page: limite]) do
+      {:ok, %{status: 200, body: body}} -> {:ok, Enum.map(body, &parsear_commit/1)}
+      {:ok, %{status: status, body: body}} -> {:error, "GitHub API (/commits) respondió #{status}: #{inspect(body)}"}
+      {:error, exception} -> {:error, "No se pudo consultar GitHub (/commits): #{Exception.message(exception)}"}
+    end
+  end
+
+  defp parsear_commit(%{
+         "sha" => hash,
+         "commit" => %{"message" => mensaje, "author" => %{"name" => autor, "date" => fecha_iso}}
+       }) do
     {:ok, fecha, _offset} = DateTime.from_iso8601(fecha_iso)
+    primera_linea = mensaje |> String.split("\n", parts: 2) |> hd()
 
-    %{hash: hash, hash_corto: hash_corto, mensaje: mensaje, autor: autor, fecha: fecha}
+    %{hash: hash, hash_corto: String.slice(hash, 0, 7), mensaje: primera_linea, autor: autor, fecha: fecha}
   end
 
-  # %{hash_completo => [%{estado:, actor:, creado_en:, terminado_en:, titulo:}]}
+  # %{hash_completo => [%{estado:, creado_en:, terminado_en:, titulo:}]}
   # -- lista (no un solo run) porque un mismo commit puede haberse
   # propagado más de una vez (ej. reintento, o a distintos destinos).
-  defp runs_actualizar_sistema do
-    args = [
-      "run",
-      "list",
-      "--workflow=actualizar-sistema.yml",
-      "--json",
-      "headSha,status,conclusion,displayTitle,createdAt,updatedAt",
-      "--limit",
-      "200"
-    ]
+  # per_page=100 (máximo de la API por página) en vez del --limit 200 de
+  # la versión con `gh` -- alcanza para calzar contra los últimos 30
+  # commits que muestra la pantalla por default.
+  defp runs_actualizar_sistema(token) do
+    url = api_url("/actions/workflows/actualizar-sistema.yml/runs")
 
-    case System.cmd("gh", args, stderr_to_stdout: true) do
-      {salida, 0} ->
-        salida
-        |> Jason.decode!()
-        |> Enum.group_by(& &1["headSha"], fn run ->
-          %{
-            estado: run["conclusion"] || run["status"],
-            titulo: run["displayTitle"],
-            creado_en: run["createdAt"],
-            terminado_en: run["updatedAt"]
-          }
-        end)
+    case Req.get(url, headers: api_headers(token), params: [per_page: 100]) do
+      {:ok, %{status: 200, body: %{"workflow_runs" => runs}}} ->
+        {:ok,
+         Enum.group_by(runs, & &1["head_sha"], fn run ->
+           %{
+             estado: run["conclusion"] || run["status"],
+             titulo: run["display_title"],
+             creado_en: run["created_at"],
+             terminado_en: run["updated_at"]
+           }
+         end)}
 
-      {_salida, _status} ->
-        %{}
+      {:ok, %{status: status, body: body}} ->
+        {:error, "GitHub API (/actions/workflows/.../runs) respondió #{status}: #{inspect(body)}"}
+
+      {:error, exception} ->
+        {:error, "No se pudo consultar GitHub (/actions/workflows/.../runs): #{Exception.message(exception)}"}
     end
-  rescue
-    ErlangError -> %{}
+  end
+
+  defp api_url(path), do: "https://api.github.com/repos/#{@repo}#{path}"
+
+  defp api_headers(token) do
+    [
+      {"authorization", "Bearer #{token}"},
+      {"accept", "application/vnd.github+json"},
+      {"x-github-api-version", "2022-11-28"}
+    ]
   end
 
   # "Nunca saltar Testing" (Grupo F, confirmado con el usuario) --
