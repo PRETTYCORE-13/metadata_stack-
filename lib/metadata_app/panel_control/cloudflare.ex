@@ -44,6 +44,40 @@ defmodule MetadataApp.PanelControl.Cloudflare do
     e -> {:error, "Excepción llamando a Cloudflare: #{Exception.message(e)}"}
   end
 
+  @doc """
+  Borra el registro A de `subdominio` en la zona de `dominio_base`, si
+  existe. Contraparte de `crear_registro_a/3` (SPEC-SYS-1709202603,
+  mecanismo de baja) -- idempotente a propósito, mismo criterio que el
+  resto de este mecanismo: si el registro ya no existe (ej. una baja
+  reintentada), no es error.
+
+  `{:ok, :borrado}` | `{:ok, :no_existia}` | `{:error, mensaje}`.
+  """
+  def eliminar_registro_a(dominio_base, subdominio) do
+    case MetadataApp.Integraciones.obtener_credencial_por_sistema("cloudflare") do
+      nil ->
+        {:error, "No hay ninguna credencial de Cloudflare configurada -- creá una en /sysadmin/credenciales con sistema_externo \"cloudflare\"."}
+
+      credencial ->
+        with {:ok, zone_id} <- obtener_zone_id(credencial, dominio_base),
+             {:ok, registro_id} <- buscar_registro(credencial, zone_id, subdominio, dominio_base) do
+          borrar_registro(credencial, zone_id, registro_id)
+        end
+    end
+  rescue
+    e -> {:error, "Excepción llamando a Cloudflare: #{Exception.message(e)}"}
+  end
+
+  defp borrar_registro(_credencial, _zone_id, nil), do: {:ok, :no_existia}
+
+  defp borrar_registro(credencial, zone_id, registro_id) do
+    case delete(credencial, "/zones/#{zone_id}/dns_records/#{registro_id}") do
+      {:ok, %{"success" => true}} -> {:ok, :borrado}
+      {:ok, resp} -> {:error, "Cloudflare no pudo borrar el registro: #{inspect(resp["errors"])}"}
+      {:error, mensaje} -> {:error, mensaje}
+    end
+  end
+
   defp obtener_zone_id(credencial, dominio_base) do
     case get(credencial, "/zones", name: dominio_base) do
       {:ok, %{"result" => [%{"id" => zone_id} | _]}} ->
@@ -102,6 +136,10 @@ defmodule MetadataApp.PanelControl.Cloudflare do
 
   defp put(credencial, path, body) do
     request(:put, credencial, path, json: body)
+  end
+
+  defp delete(credencial, path) do
+    request(:delete, credencial, path, [])
   end
 
   defp request(metodo, credencial, path, opts) do

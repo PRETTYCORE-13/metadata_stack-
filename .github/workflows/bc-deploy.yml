@@ -145,6 +145,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # SPEC-SYS-1809202603 R11: mismo build-arg que ci.yml -- faltaba acá
+      # (encontrado real 2026-09-22: el footer de versión se quedaba vacío
+      # en unstable después de publicar un BC, porque este workflow arma su
+      # propia imagen `latest` sin pasar GIT_SHA_CORTO/GIT_SHA_FECHA, y su
+      # rollout puede terminar DESPUÉS que el de ci.yml y pisar la imagen
+      # buena con una sin el hash).
+      - name: Capturar hash corto y fecha del commit (footer de versión, R11)
+        run: |
+          echo "GIT_SHA_CORTO=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_ENV"
+          echo "GIT_SHA_FECHA=$(git log -1 --format=%ad --date=format:'%d %b %Y')" >> "$GITHUB_ENV"
+
       # Mismo Dockerfile de siempre -- el bundle ya extraído en el checkout
       # es justo lo que "COPY lib lib" / "COPY priv priv" van a empaquetar.
       # Tag "latest" se actualiza igual que un deploy normal del BPB (el
@@ -158,6 +169,9 @@ jobs:
           tags: |
             ghcr.io/${{ env.IMAGE_NAME }}:latest
             ghcr.io/${{ env.IMAGE_NAME }}:bc-${{ inputs.catalogo }}-${{ github.run_number }}
+          build-args: |
+            GIT_SHA_CORTO=${{ env.GIT_SHA_CORTO }}
+            GIT_SHA_FECHA=${{ env.GIT_SHA_FECHA }}
 
       # k3s, no Docker Swarm -- ver el comentario largo en ci.yml (mismo
       # bug, mismo fix, 2026-08-28): DEPLOY_HOST apunta al servidor Hetzner

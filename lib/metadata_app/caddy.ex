@@ -75,6 +75,36 @@ defmodule MetadataApp.Caddy do
     String.trim_trailing(contenido_sin_bloque_previo) <> "\n" <> bloque_nuevo
   end
 
+  @doc """
+  Contraparte de `exponer/3` (SPEC-SYS-1709202603, mecanismo de baja) --
+  quita el bloque de `host` del Caddyfile remoto (si existe) y recarga
+  Caddy. Idempotente a propósito, mismo criterio que `exponer/3`: si
+  `host` no tiene ningún bloque, no es error, no reescribe ni recarga
+  nada -- así reintentar una baja que ya había sacado el bloque en un
+  intento anterior no falla.
+
+  `{:ok, :quitado}` | `{:ok, :no_existia}` | `{:error, mensaje}`.
+  """
+  def quitar(ambiente, host) do
+    case leer(ambiente) do
+      {:ok, actual} ->
+        if tiene_bloque?(actual, host) do
+          nuevo_contenido = Regex.replace(patron_bloque(host), actual, "") |> String.trim_trailing()
+          nuevo_contenido = nuevo_contenido <> "\n"
+
+          case escribir_y_recargar(ambiente, nuevo_contenido) do
+            {:ok, :agregado} -> {:ok, :quitado}
+            {:error, _} = error -> error
+          end
+        else
+          {:ok, :no_existia}
+        end
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
   # Ancla a INICIO DE LÍNEA (/m + ^) -- sin esto, "stable.ventaenruta.com.mx"
   # matchea como substring dentro de "unstable.ventaenruta.com.mx" (un
   # host es sufijo literal del otro). Encontrado real dando de alta

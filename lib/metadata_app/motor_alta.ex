@@ -183,6 +183,187 @@ defmodule MetadataApp.MotorAlta do
     end
   end
 
+  @doc """
+  ¿`sistema` es un destino válido para dar de baja? A diferencia de
+  `validar_nombre/2` (que exige que NO esté registrado, para el alta),
+  acá es al revés: tiene que estar registrado, y nunca puede ser uno de
+  los canales de plataforma (`canales/0`) -- esos no se dan de baja por
+  este mecanismo (SPEC-SYS-1709202603 R2). `{:ok, sistema}` |
+  `{:error, mensaje}`.
+  """
+  def validar_puede_bajar(sistema, path \\ ruta_sistemas())
+
+  def validar_puede_bajar(sistema, _path) when sistema in ~w[unstable testing stable] do
+    {:error, "\"#{sistema}\" es un canal de plataforma, no un sistema dado de alta -- este mecanismo no aplica ahí."}
+  end
+
+  def validar_puede_bajar(sistema, path) do
+    if sistema_registrado?(sistema, path) do
+      {:ok, sistema}
+    else
+      {:error, "\"#{sistema}\" no está registrado en priv/sistemas.json -- no se puede dar de baja algo que no está de alta."}
+    end
+  end
+
+  @doc """
+  Borra el Deployment, Service y Secret de `sistema` en k3s
+  (SPEC-SYS-1709202603 R1) -- contraparte de `aplicar_manifiestos/3`.
+  Idempotente (R4): `--ignore-not-found` en los tres, así reintentar una
+  baja que ya había borrado esto no falla.
+
+  `{:ok, salida}` | `{:error, mensaje}`.
+  """
+  def borrar_deployment(ambiente, sistema) do
+    comando =
+      "sudo k3s kubectl delete deployment metadata-#{sistema} -n metadata-stack --ignore-not-found && " <>
+        "sudo k3s kubectl delete service metadata-#{sistema} -n metadata-stack --ignore-not-found && " <>
+        "sudo k3s kubectl delete secret metadata-#{sistema}-env -n metadata-stack --ignore-not-found"
+
+    case MetadataApp.Ssh.ejecutar(ambiente, comando) do
+      {:ok, 0, salida} -> {:ok, salida}
+      {:ok, _codigo, salida} -> {:error, salida}
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc """
+  Respalda `db_<sistema>` ANTES de borrarla (SPEC-SYS-1709202603 R7) --
+  `pg_dump` corrido dentro del pod (mismo mecanismo de acceso que
+  `crear_base/2`, "aws-postgres" no tiene puerto publicado fuera del
+  clúster) con la salida redirigida a un archivo en el HOST real (no
+  dentro del pod -- si el pod se recicla, no se lleva el respaldo con
+  él). Formato SQL plano a propósito: restaurable con un `psql -f`
+  cualquiera, sin depender de `pg_restore` ni de que quien lo necesite
+  sepa del formato custom de Postgres.
+
+  Idempotente (R4): si `db_<sistema>` ya no existe (ej. un intento
+  anterior ya la había borrado y se cortó después), no hay nada que
+  respaldar -- no es error, `{:ok, :ya_no_existia}`.
+
+  `{:ok, ruta_remota}` | `{:ok, :ya_no_existia}` | `{:error, mensaje}`.
+  """
+  def respaldar_base(ambiente, sistema) do
+    timestamp = DateTime.utc_now() |> Calendar.strftime("%Y%m%d%H%M%S")
+    ruta = "/home/elixir/backups/db_#{sistema}_#{timestamp}.sql"
+
+    comando =
+      "mkdir -p /home/elixir/backups && " <>
+        "sudo k3s kubectl exec -n metadata-stack aws-postgres-0 -- pg_dump -U appuser -d \"db_#{sistema}\" > #{ruta} && " <>
+        "test -s #{ruta}"
+
+    case MetadataApp.Ssh.ejecutar(ambiente, comando) do
+      {:ok, 0, _salida} ->
+        {:ok, ruta}
+
+      {:ok, _codigo, salida} ->
+        if salida =~ "does not exist" do
+          {:ok, :ya_no_existia}
+        else
+          {:error, salida}
+        end
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  @doc """
+  Borra `db_<sistema>` (SPEC-SYS-1709202603 R1) -- contraparte de
+  `crear_base/2`. `WITH (FORCE)` corta cualquier conexión activa antes de
+  soltar la base (la app recién bajada puede tener conexiones colgando
+  un instante). Idempotente (R4): `IF EXISTS` -- una base ya borrada en
+  un intento anterior no es error.
+
+  `{:ok, salida}` | `{:error, mensaje}`.
+  """
+  def borrar_base(ambiente, sistema) do
+    comando =
+      "sudo k3s kubectl exec -n metadata-stack aws-postgres-0 -- psql -U appuser -d postgres -c 'DROP DATABASE IF EXISTS \"db_#{sistema}\" WITH (FORCE);'"
+
+    case MetadataApp.Ssh.ejecutar(ambiente, comando) do
+      {:ok, 0, salida} -> {:ok, salida}
+      {:ok, _codigo, salida} -> {:error, salida}
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc """
+  Quita la exposición de `sistema` (SPEC-SYS-1709202603 R1) -- contraparte
+  de `exponer_dominio/3`: borra el registro DNS en Cloudflare y el bloque
+  del Caddyfile remoto, en ese orden. Idempotente: cada paso ya lo es por
+  su cuenta (`Cloudflare.eliminar_registro_a/2`, `Caddy.quitar/2`).
+
+  `{:ok, mensaje}` | `{:error, mensaje}`.
+  """
+  def quitar_dominio(ambiente, sistema) do
+    host = "#{sistema}.ventaenruta.com.mx"
+
+    with {:ok, _} <- MetadataApp.PanelControl.Cloudflare.eliminar_registro_a("ventaenruta.com.mx", sistema),
+         {:ok, _} <- MetadataApp.Caddy.quitar(ambiente, host) do
+      {:ok, "#{host} -> DNS y Caddy limpios"}
+    end
+  end
+
+  @doc """
+  Quita `sistema` de `priv/sistemas.json` (SPEC-SYS-1709202603 R5) --
+  contraparte de `registrar_sistema/2`, último paso de la baja. Nunca se
+  usa con un canal (`validar_puede_bajar/2` ya los rechaza antes). Sin
+  esto, un sistema borrado de la infraestructura real pero que sigue
+  apareciendo acá se considera una baja incompleta -- mismo criterio que
+  R4 del alta. Idempotente: si `sistema` ya no está en el archivo (ej. un
+  intento anterior ya lo había sacado pero no llegó a pushear), no
+  reescribe nada, solo reintenta el push.
+
+  `{:ok, :desregistrado}` | `{:error, mensaje}`.
+  """
+  def desregistrar_sistema(sistema, path \\ ruta_sistemas()) do
+    if sistema_registrado?(sistema, path) do
+      nuevo_mapa = leer_sistemas(path) |> Map.delete(sistema)
+      File.write!(path, Jason.encode!(nuevo_mapa, pretty: true) <> "\n")
+
+      case comitear_y_pushear_baja(path, sistema) do
+        :ok -> {:ok, :desregistrado}
+        {:error, _} = error -> error
+      end
+    else
+      case pushear(path) do
+        :ok -> {:ok, :desregistrado}
+        {:error, _} = error -> error
+      end
+    end
+  end
+
+  @doc """
+  Verificación final de la baja (SPEC-SYS-1709202603 R6) -- confirma
+  contra el servidor real que no queda ningún componente de `sistema`
+  activo: sin Deployment en k3s, sin bloque en el Caddyfile. No repite el
+  chequeo de DNS (Cloudflare no tiene forma barata de confirmarlo sin
+  otra llamada a la API, y `quitar_dominio/2` ya reporta error si falla)
+  ni el de la base (`DROP DATABASE` ya falla fuerte si no pudo borrarla).
+
+  `{:ok, :limpio}` | `{:error, mensaje}`.
+  """
+  def verificar_baja(ambiente, sistema) do
+    comando = "sudo k3s kubectl get deployment metadata-#{sistema} -n metadata-stack"
+
+    case MetadataApp.Ssh.ejecutar(ambiente, comando) do
+      {:ok, 0, _salida} ->
+        {:error, "\"metadata-#{sistema}\" todavía existe como Deployment en k3s -- la baja no terminó limpia."}
+
+      {:ok, _codigo, _salida} ->
+        host = "#{sistema}.ventaenruta.com.mx"
+
+        case MetadataApp.Caddy.host_expuesto?(ambiente, host) do
+          true -> {:error, "\"#{host}\" todavía tiene un bloque en el Caddyfile -- la baja no terminó limpia."}
+          false -> {:ok, :limpio}
+          {:error, _} = error -> error
+        end
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
   @doc "SECRET_KEY_BASE o CLOAK_KEY nuevos -- nunca se comparten entre sistemas (aislamiento real, no solo de datos)."
   def generar_clave_base64(bytes \\ 64) do
     :crypto.strong_rand_bytes(bytes) |> Base.encode64()
@@ -609,6 +790,25 @@ defmodule MetadataApp.MotorAlta do
   defp comitear_y_pushear(path, sistema) do
     dir = Path.dirname(path)
     mensaje = "Alta: registrar sistema \"#{sistema}\" en priv/sistemas.json"
+
+    with {_, 0} <- System.cmd("git", ["add", Path.basename(path)], cd: dir, stderr_to_stdout: true),
+         {_, 0} <- System.cmd("git", ["commit", "-m", mensaje], cd: dir, stderr_to_stdout: true) do
+      pushear(path)
+    else
+      {salida, _codigo} -> {:error, "git add/commit de priv/sistemas.json falló:\n#{salida}"}
+    end
+  rescue
+    e in ErlangError -> {:error, "No se pudo ejecutar git: #{Exception.message(e)} -- ¿está instalado y en el PATH?"}
+  end
+
+  # Función propia de la baja (SPEC-SYS-1709202603) -- deliberadamente NO
+  # comparte código con comitear_y_pushear/2 del alta, aunque el cuerpo
+  # sea casi idéntico salvo el mensaje: la baja no toca ninguna función
+  # ya existente del mecanismo de alta, ni siquiera para agregarle un
+  # parámetro opcional.
+  defp comitear_y_pushear_baja(path, sistema) do
+    dir = Path.dirname(path)
+    mensaje = "Baja: quitar sistema \"#{sistema}\" de priv/sistemas.json"
 
     with {_, 0} <- System.cmd("git", ["add", Path.basename(path)], cd: dir, stderr_to_stdout: true),
          {_, 0} <- System.cmd("git", ["commit", "-m", mensaje], cd: dir, stderr_to_stdout: true) do
