@@ -819,4 +819,92 @@ defmodule MetadataApp.MetaImportExportTest do
       assert Enum.any?(mensajes, &(&1 =~ "ya no existía"))
     end
   end
+
+  # SPEC-SYS-1109202601 R29/R30: la configuración de un campo referencia
+  # YA existente (cascada, filtros fijos, Relación) antes solo viajaba en
+  # un campo NUEVO -- cambiarla/quitarla y volver a publicar no llegaba.
+  test "republicar sincroniza la configuración de referencia de un campo YA existente: agrega, cambia y quita" do
+    nombre = "pty_test_ref_sync_#{unique()}"
+
+    base = %{
+      "tipo" => "referencia",
+      "catalogo" => "meta_schema_inventory_location",
+      "etiqueta" => "Almacén",
+      "orden" => 0,
+      "visible" => true,
+      "editable" => true,
+      "opcional" => false
+    }
+
+    contexto = fn props ->
+      %{
+        "schema_context_name" => nombre,
+        "schema_context_label" => "Test",
+        "schema_context_nav" => "/#{nombre}",
+        "schema_visible" => true,
+        "schema_context_type" => 1,
+        "detalles" => [
+          %{"schema_context_field" => "almacen", "schema_context_properties" => props}
+        ]
+      }
+    end
+
+    {:ok, _} =
+      base
+      |> Map.merge(%{
+        "campos_acompanamiento" => ["inventory_name"],
+        "mensaje_sin_padre" => "Elige primero"
+      })
+      |> contexto.()
+      |> MetaSchemaContext.crear_header_con_detalles()
+
+    dir = Path.join(System.tmp_dir!(), "meta_import_export_test_#{unique()}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    props_de = fn -> hd(MetaSchemaContext.listar_detalles(nombre)).schema_context_properties end
+
+    # Agrega filtros_fijos + campo_visualizacion, cambia campos_acompanamiento
+    # y quita mensaje_sin_padre (ausente en el bundle).
+    escribir_meta_json(
+      dir,
+      contexto.(
+        Map.merge(base, %{
+          "campos_acompanamiento" => ["inventory_name", "inventory_type"],
+          "campo_visualizacion" => %{
+            "modo" => "descripcion",
+            "campo_descripcion" => "inventory_name"
+          },
+          "filtros_fijos" => [%{"campo" => "inventory_type", "valores" => ["COMPROMETIDA"]}]
+        })
+      )
+    )
+
+    mensajes = MetaImportExport.importar_meta(dir)
+    assert Enum.any?(mensajes, &(&1 =~ "configuración de referencia actualizada: almacen"))
+
+    props = props_de.()
+
+    assert props["filtros_fijos"] == [
+             %{"campo" => "inventory_type", "valores" => ["COMPROMETIDA"]}
+           ]
+
+    assert props["campos_acompanamiento"] == ["inventory_name", "inventory_type"]
+    assert props["campo_visualizacion"]["campo_descripcion"] == "inventory_name"
+    refute Map.has_key?(props, "mensaje_sin_padre")
+    assert props["etiqueta"] == "Almacén"
+
+    # Quitar los filtros en el origen y republicar los quita en el destino.
+    escribir_meta_json(
+      dir,
+      contexto.(Map.put(base, "campos_acompanamiento", ["inventory_name", "inventory_type"]))
+    )
+
+    MetaImportExport.importar_meta(dir)
+    refute Map.has_key?(props_de.(), "filtros_fijos")
+
+    # Sin cambios: no reporta nada.
+    mensajes = MetaImportExport.importar_meta(dir)
+    refute Enum.any?(mensajes, &(&1 =~ "configuración de referencia actualizada"))
+  end
 end

@@ -200,6 +200,15 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     from(r in query, where: field(r, ^campo) >= ^desde and field(r, ^campo) <= ^hasta)
   end
 
+  # "Filtros fijos" de un campo referencia (ver filtros_fijos/1): `valores`
+  # ya llega normalizado (trim + upcase, MetaSchemaContext.
+  # validar_filtros_fijos/2), así que solo se normaliza la columna -- el
+  # CAST a text deja filtrar también columnas no-texto (enteros, enums). Un
+  # NULL nunca cumple el IN: un registro sin valor queda fuera, a propósito.
+  defp aplicar_filtro(query, campo, {:en_ci, valores}) do
+    from(r in query, where: fragment("upper(trim(CAST(? AS text)))", field(r, ^campo)) in ^valores)
+  end
+
   defp aplicar_filtro(query, campo, valor) do
     from(r in query, where: field(r, ^campo) == ^valor)
   end
@@ -1107,6 +1116,10 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     opción). Administradores siguen viendo todas las de la empresa.
   """
   def opciones_referencia(props, filtros, scope) do
+    # Lista de tuplas, no Map.merge: un filtro fijo y una dependencia sobre
+    # la MISMA columna tienen que aplicarse los dos (Y), no pisarse.
+    filtros = Enum.to_list(filtros) ++ filtros_fijos(props)
+
     case MetadataApp.BusinessProcessBuilder.MetaSchemaContext.catalogo_sistema(props["catalogo"]) do
       %{modulo: modulo} ->
         # Empresa/Branch/InventoryLocation/SalesUnit: no son un catálogo
@@ -1137,6 +1150,46 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
             modulo |> listar(:sistema, filtros, limit: 500) |> Enum.map(&{&1.id, etiqueta_para_referencia(&1, props)})
         end
     end
+  end
+
+  @doc """
+  "Filtros fijos" de un campo referencia (`props["filtros_fijos"]`,
+  `[%{"campo" => ..., "valores" => [...]}]`) en el formato de
+  `aplicar_filtros/2`: `[{campo, {:en_ci, valores}}]`. Y entre filtros, O
+  entre los valores de cada uno. Pública para que
+  `MetaSchemaContext.validar_dependencias_referencia/2` valide al guardar
+  exactamente con la misma semántica que arma el combo.
+  """
+  def filtros_fijos(props) do
+    for %{"campo" => campo, "valores" => [_ | _] = valores} <- List.wrap(props["filtros_fijos"]),
+        is_binary(campo) and campo != "",
+        do: {campo, {:en_ci, valores}}
+  end
+
+  @doc """
+  Hasta `limite` valores distintos (como texto, sin `nil`, ordenados) de
+  la columna `campo` en los registros vivos de `catalogo` -- sugerencias
+  para capturar un filtro fijo en BcMotorLive sin errores de tecleo. `[]`
+  si el catálogo o la columna no existen.
+  """
+  def valores_distintos(catalogo, campo, limite \\ 50) do
+    with modulo when not is_nil(modulo) <- modulo_destino_de(catalogo),
+         campo_atom when not is_nil(campo_atom) <- campo_de_schema(modulo, campo) do
+      from(r in modulo,
+        where: is_nil(r.delete_guid) and not is_nil(field(r, ^campo_atom)),
+        distinct: true,
+        select: fragment("CAST(? AS text)", field(r, ^campo_atom)),
+        order_by: fragment("CAST(? AS text)", field(r, ^campo_atom)),
+        limit: ^limite
+      )
+      |> Repo.all()
+    else
+      _ -> []
+    end
+  end
+
+  defp campo_de_schema(modulo, campo) do
+    Enum.find(modulo.__schema__(:fields), &(Atom.to_string(&1) == campo))
   end
 
   defp acotar_alcance(query, catalogo, %Scope{branch_activo: %{id: branch_activo_id}})

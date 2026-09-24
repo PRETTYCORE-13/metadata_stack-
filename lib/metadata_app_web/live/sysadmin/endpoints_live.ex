@@ -1148,7 +1148,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
           <div class="flex items-center gap-2 flex-wrap">
             <form phx-change="elegir_ambiente">
               <select name="sistema" class="border border-gray-300 rounded-lg text-gray-900 text-xs px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500">
-                <option value="" selected={is_nil(@ambiente_sistema)}>Elegí un ambiente…</option>
+                <option value="" selected={is_nil(@ambiente_sistema)}>Elige un ambiente…</option>
                 <option :for={sistema <- @sistemas_disponibles} value={sistema} selected={@ambiente_sistema == sistema}>
                   {sistema}
                 </option>

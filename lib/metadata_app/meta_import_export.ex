@@ -185,6 +185,10 @@ defmodule MetadataApp.MetaImportExport do
                 [] -> nil
                 campos -> "parámetro(s)/total(es) actualizado(s): #{Enum.join(campos, ", ")}"
               end,
+              case sincronizar_propiedades_referencia_campos(existente, contexto["detalles"] || []) do
+                [] -> nil
+                campos -> "configuración de referencia actualizada: #{Enum.join(campos, ", ")}"
+              end,
               if(sincronizar_cargar_todos_por_default(existente, contexto["cargar_todos_por_default"]),
                 do: "\"traer todo por default\" actualizado"
               ),
@@ -609,6 +613,53 @@ defmodule MetadataApp.MetaImportExport do
 
           {:error, changeset} ->
             raise "Error sincronizando parámetros/totales de \"#{detalle.schema_context_field}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+        end
+      end
+    end)
+  end
+
+  # Configuración de un campo "referencia" YA existente (Relación, cascada,
+  # filtros fijos -- SPEC-SYS-1109202601 R29/R30): hasta 2026-09-24 solo
+  # viajaba cuando el campo era NUEVO (sincronizar_detalles_nuevos/2), así
+  # que cambiarla en un campo ya publicado y volver a publicar no llegaba
+  # al destino. Metadata pura (ni columna física ni schema .ex). A
+  # diferencia de @propiedades_parametros_totales, una clave AUSENTE en el
+  # bundle se quita en el destino: meta.export vuelca las propiedades
+  # completas, así que ausente = se quitó en el origen (ej. borrar todos
+  # los filtros fijos). Solo para campos que en el bundle siguen siendo
+  # "referencia". Una propiedad nueva de un campo referencia se agrega acá.
+  @propiedades_referencia ~w(campo_visualizacion campos_acompanamiento campos_relacion dependencias filtros_fijos mensaje_sin_padre)
+
+  defp sincronizar_propiedades_referencia_campos(header, detalles_json) do
+    existentes =
+      header.schema_context_name
+      |> MetaSchemaContext.listar_detalles()
+      |> Map.new(&{&1.schema_context_field, &1})
+
+    detalles_json
+    |> Enum.filter(&(Map.has_key?(existentes, &1["schema_context_field"]) and get_in(&1, ["schema_context_properties", "tipo"]) == "referencia"))
+    |> Enum.flat_map(fn detalle_json ->
+      detalle = Map.fetch!(existentes, detalle_json["schema_context_field"])
+      props_nuevas = detalle_json["schema_context_properties"] || %{}
+      props_actuales = detalle.schema_context_properties
+
+      props =
+        Enum.reduce(@propiedades_referencia, props_actuales, fn clave, acc ->
+          case Map.fetch(props_nuevas, clave) do
+            {:ok, valor} -> Map.put(acc, clave, valor)
+            :error -> Map.delete(acc, clave)
+          end
+        end)
+
+      if props == props_actuales do
+        []
+      else
+        case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+          {:ok, _detalle} ->
+            [detalle.schema_context_field]
+
+          {:error, changeset} ->
+            raise "Error sincronizando la configuración de referencia de \"#{detalle.schema_context_field}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
         end
       end
     end)

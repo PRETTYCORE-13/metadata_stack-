@@ -204,7 +204,7 @@ defmodule MetadataAppWeb.CampoInputComponents do
       |> assign(:dom_id, assigns.id || "campo-#{String.replace(assigns.name, ~r/[\[\]]/, "-")}")
       |> assign(:opciones_json, Jason.encode!(Enum.map(assigns.opciones, fn {id, etiqueta} -> %{id: to_string(id), etiqueta: etiqueta} end)))
       |> assign(:etiqueta_actual, etiqueta_para_valor(assigns.opciones, assigns.valor))
-      |> assign(:placeholder, (assigns.disabled && assigns.mensaje_dependencia) || "Escribí o F2 para buscar…")
+      |> assign(:placeholder, (assigns.disabled && assigns.mensaje_dependencia) || "Escribe o F2 para buscar…")
 
     ~H"""
     <div>

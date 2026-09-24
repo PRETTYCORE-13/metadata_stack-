@@ -104,7 +104,7 @@ export default {
   leerDataset() {
     this.opciones = JSON.parse(this.el.dataset.opciones || "[]")
     this.deshabilitado = this.el.dataset.disabled === "true"
-    this.texto.placeholder = this.deshabilitado && this.el.dataset.mensaje ? this.el.dataset.mensaje : "Escribí o F2 para buscar…"
+    this.texto.placeholder = this.deshabilitado && this.el.dataset.mensaje ? this.el.dataset.mensaje : "Escribe o F2 para buscar…"
   },
 
   abierta() {

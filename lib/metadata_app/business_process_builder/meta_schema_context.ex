@@ -4,6 +4,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Detail
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.CarpetaOrden
   alias MetadataApp.BusinessProcessBuilder.CatalogoGenerador
+  alias MetadataApp.BusinessProcessBuilder.CatalogoGenerico
   alias MetadataApp.BusinessProcessBuilder.AlcanceBackfill
   alias MetadataApp.Autenticacion.Rol
   alias MetadataApp.Permissions
@@ -781,10 +782,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   def campos_con_dependencias(catalogo) do
     catalogo
     |> listar_detalles()
-    |> Enum.filter(fn d ->
-      props = d.schema_context_properties
-      props["tipo"] == "referencia" and is_list(props["dependencias"]) and props["dependencias"] != []
-    end)
+    |> Enum.filter(&con_lista?(&1, "dependencias"))
   end
 
   @doc """
@@ -1002,10 +1000,102 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   etc.): esos casos agregan error en vez de crashear el guardado.
   """
   def validar_dependencias_referencia(changeset, catalogo) do
-    catalogo
-    |> campos_con_dependencias()
-    |> Enum.reduce(changeset, &validar_una_dependencia_referencia(&2, &1))
+    detalles = listar_detalles(catalogo)
+
+    # Una sola lectura de listar_detalles/1 para las dos validaciones (no
+    # campos_con_dependencias/1, que la haría de nuevo) -- esto corre en
+    # cada changeset de cada catálogo.
+    changeset =
+      detalles
+      |> Enum.filter(&con_lista?(&1, "dependencias"))
+      |> Enum.reduce(changeset, &validar_una_dependencia_referencia(&2, &1))
+
+    # "Filtros fijos" (SPEC-SYS-1109202601 R27): viaja en este mismo paso
+    # del changeset generado en vez de uno propio -- sumar un paso nuevo al
+    # pipeline obligaría a regenerar el .ex de cada catálogo existente.
+    detalles
+    |> Enum.filter(&con_lista?(&1, "filtros_fijos"))
+    |> Enum.reduce(changeset, &validar_filtros_fijos_contra_registro(&2, &1))
   end
+
+  defp con_lista?(detalle, clave) do
+    props = detalle.schema_context_properties
+    props["tipo"] == "referencia" and is_list(props[clave]) and props[clave] != []
+  end
+
+  # Solo si el valor CAMBIÓ (get_change/2): un registro guardado antes de
+  # configurar o endurecer el filtro no queda bloqueado para editar sus
+  # otros campos. Metadata mal formada (columna que ya no existe, destino
+  # desconocido) se ignora sin tronar -- validar_filtros_fijos/2 ya evita
+  # guardarla así desde BcMotorLive.
+  defp validar_filtros_fijos_contra_registro(changeset, detalle) do
+    campo_atom = String.to_existing_atom(detalle.schema_context_field)
+    props = detalle.schema_context_properties
+
+    with valor when valor not in [nil, ""] <- Ecto.Changeset.get_change(changeset, campo_atom),
+         id when not is_nil(id) <- a_entero_seguro(valor),
+         modulo when not is_nil(modulo) <- CatalogoGenerico.modulo_destino_de(props["catalogo"]),
+         false <- cumple_filtros_fijos?(modulo, id, props) do
+      Ecto.Changeset.add_error(changeset, campo_atom, "el valor seleccionado no cumple los filtros configurados para este campo")
+    else
+      _ -> changeset
+    end
+  rescue
+    ArgumentError -> changeset
+    Ecto.QueryError -> changeset
+  end
+
+  defp cumple_filtros_fijos?(modulo, id, props) do
+    from(r in modulo, where: r.id == ^id)
+    |> CatalogoGenerico.aplicar_filtros(CatalogoGenerico.filtros_fijos(props))
+    |> Repo.exists?()
+  end
+
+  @doc """
+  Valida y normaliza los "filtros fijos" de un campo referencia antes de
+  guardarlos (SPEC-SYS-1109202601 R28) contra `campos_destino` (los
+  campos reales del catálogo destino, `campos_seleccionables_de/1`).
+  `filtros` es `[%{"campo" => ..., "valores" => ...}]`; "valores" acepta
+  una lista o un texto separado por comas (tal como llega del
+  formulario). Descarta las filas totalmente vacías; los valores quedan
+  con `trim` + `upcase`, sin repetidos -- mismo criterio con el que
+  `CatalogoGenerico` compara, así en tiempo de ejecución solo se
+  normaliza la columna. `{:ok, filtros_normalizados}` o `{:error, mensaje}`.
+  """
+  def validar_filtros_fijos(filtros, campos_destino) do
+    nombres = MapSet.new(campos_destino, & &1.schema_context_field)
+
+    filtros
+    |> Enum.map(fn f -> {to_string(f["campo"] || ""), normalizar_valores_filtro(f["valores"])} end)
+    |> Enum.reject(fn {campo, valores} -> campo == "" and valores == [] end)
+    |> Enum.reduce_while({:ok, []}, fn
+      {"", _valores}, _acc ->
+        {:halt, {:error, "Cada filtro fijo tiene que indicar un campo."}}
+
+      {campo, valores}, {:ok, acc} ->
+        cond do
+          not MapSet.member?(nombres, campo) ->
+            {:halt, {:error, "El campo \"#{campo}\" no existe en el catálogo destino."}}
+
+          valores == [] ->
+            {:halt, {:error, "El filtro fijo sobre \"#{campo}\" necesita al menos un valor."}}
+
+          true ->
+            {:cont, {:ok, acc ++ [%{"campo" => campo, "valores" => valores}]}}
+        end
+    end)
+  end
+
+  defp normalizar_valores_filtro(valores) when is_binary(valores), do: valores |> String.split(",") |> normalizar_valores_filtro()
+
+  defp normalizar_valores_filtro(valores) when is_list(valores) do
+    valores
+    |> Enum.map(&(&1 |> to_string() |> String.trim() |> String.upcase()))
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.uniq()
+  end
+
+  defp normalizar_valores_filtro(_valores), do: []
 
   defp validar_una_dependencia_referencia(changeset, detalle) do
     campo = detalle.schema_context_field

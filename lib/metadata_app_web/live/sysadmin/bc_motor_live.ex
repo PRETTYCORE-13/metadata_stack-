@@ -459,6 +459,12 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # ya arma abrir_form_relacion/1, no duplicado). Ver
   # MetaSchemaContext.resolver_filtros/3 (runtime) y validar_sin_ciclo/3
   # (acá, antes de guardar).
+  #
+  # El mismo modal lleva además los "filtros fijos" (SPEC-SYS-1109202601
+  # §3.6): acotar el destino por un valor constante de una columna, ej.
+  # Almacén con inventory_type = COMPROMETIDA. campos_seleccionables_de/1
+  # (no listar_detalles/1) para que un destino de sistema (Almacén,
+  # Sucursal...) tenga columnas que ofrecer.
   def handle_event("abrir_form_dependencia", %{"campo" => campo}, socket) do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
     props = detalle.schema_context_properties
@@ -466,8 +472,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
     campos_destino =
       props["catalogo"]
-      |> MetaSchemaContext.listar_detalles()
+      |> MetaSchemaContext.campos_seleccionables_de()
       |> Enum.filter(& &1.schema_context_properties["visible"])
+
+    filtros_fijos =
+      Enum.map(props["filtros_fijos"] || [], &%{"campo" => &1["campo"], "valores" => Enum.join(&1["valores"] || [], ", ")})
 
     # Un campo que YA depende (directa o transitivamente) de `campo` no
     # puede ofrecerse como su padre — sería un ciclo inmediato. Filtro acá
@@ -485,13 +494,25 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
      assign(socket, :dependencia_form, %{
        "campo" => campo,
        "catalogo" => catalogo,
-       "catalogo_destino_label" => MetaSchemaContext.obtener_header_por_nombre(props["catalogo"]).schema_context_label,
+       "catalogo_destino" => props["catalogo"],
+       "catalogo_destino_label" => etiqueta_catalogo(props["catalogo"]),
        "campos_destino" => campos_destino,
        "otros_referencia" => otros_referencia,
        "dependencias" => props["dependencias"] || [],
+       "filtros_fijos" => filtros_fijos,
+       "sugerencias" => sugerencias_filtros(props["catalogo"], filtros_fijos, %{}),
        "descendientes" => MetaSchemaContext.descendientes(catalogo, campo),
        "error" => nil
      })}
+  end
+
+  def handle_event("filtro_fijo_agregar", _params, socket) do
+    {:noreply, update(socket, :dependencia_form, &Map.update!(&1, "filtros_fijos", fn fs -> fs ++ [%{"campo" => "", "valores" => ""}] end))}
+  end
+
+  def handle_event("filtro_fijo_quitar", %{"indice" => indice}, socket) do
+    i = String.to_integer(indice)
+    {:noreply, update(socket, :dependencia_form, &Map.update!(&1, "filtros_fijos", fn fs -> List.delete_at(fs, i) end))}
   end
 
   def handle_event("cerrar_form_dependencia", _params, socket) do
@@ -512,18 +533,14 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # (`dependencias[0][campo_padre]`, `dependencias[1][campo_padre]`, ...),
   # Plug ya las decodifica como mapa con llaves "0"/"1"/... (mismo truco
   # que renglones[IDX][...] en FichaLive) — se reordena acá una sola vez.
-  def handle_event("dependencia_cambiar", %{"dependencias" => deps_params}, socket) do
+  # Cada sección solo viaja si tiene filas en el DOM: sin ninguna
+  # dependencia (o ningún filtro fijo) su clave ni llega en los params.
+  def handle_event("dependencia_cambiar", params, socket) do
     dependencias =
-      deps_params
-      # Agregar/quitar una fila del medio de un :for sin key estable hace
-      # que el cliente de LiveView mande ADEMÁS una clave sombra
-      # "dependencias[_unused_N]" (recycling de nodos DOM) — no es un
-      # índice real, String.to_integer/1 sobre eso tira ArgumentError y
-      # tumba el LiveView (bug real, reproducido en vivo en el asistente
-      # de campos — ver field_designer_components.ex).
-      |> Enum.filter(fn {indice, _valores} -> match?({_n, ""}, Integer.parse(indice)) end)
-      |> Enum.sort_by(fn {indice, _valores} -> String.to_integer(indice) end)
-      |> Enum.map(fn {_indice, valores} ->
+      params
+      |> Map.get("dependencias", %{})
+      |> filas_indexadas()
+      |> Enum.map(fn valores ->
         %{
           "campo_padre" => valores["campo_padre"],
           "campo_remoto" => valores["campo_remoto"],
@@ -531,7 +548,19 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         }
       end)
 
-    {:noreply, update(socket, :dependencia_form, &Map.put(&1, "dependencias", dependencias))}
+    filtros_fijos =
+      params
+      |> Map.get("filtros_fijos", %{})
+      |> filas_indexadas()
+      |> Enum.map(&%{"campo" => &1["campo"] || "", "valores" => &1["valores"] || ""})
+
+    {:noreply,
+     update(socket, :dependencia_form, fn form ->
+       form
+       |> Map.put("dependencias", dependencias)
+       |> Map.put("filtros_fijos", filtros_fijos)
+       |> Map.put("sugerencias", sugerencias_filtros(form["catalogo_destino"], filtros_fijos, form["sugerencias"]))
+     end)}
   end
 
   def handle_event("guardar_dependencia", _params, socket) do
@@ -542,16 +571,21 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       Enum.filter(dependencias, &(&1["campo_padre"] not in [nil, ""] and &1["campo_remoto"] not in [nil, ""]))
 
     with :ok <- MetaSchemaContext.validar_sin_ciclo(catalogo, campo, dependencias_validas),
-         :ok <- MetaSchemaContext.validar_tipos_dependencia(dependencias_validas, socket.assigns.campos, campos_destino) do
+         :ok <- MetaSchemaContext.validar_tipos_dependencia(dependencias_validas, socket.assigns.campos, campos_destino),
+         {:ok, filtros_fijos} <- MetaSchemaContext.validar_filtros_fijos(socket.assigns.dependencia_form["filtros_fijos"], campos_destino) do
       detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
-      props = Map.put(detalle.schema_context_properties, "dependencias", dependencias_validas)
+
+      props =
+        detalle.schema_context_properties
+        |> Map.put("dependencias", dependencias_validas)
+        |> then(&if(filtros_fijos == [], do: Map.delete(&1, "filtros_fijos"), else: Map.put(&1, "filtros_fijos", filtros_fijos)))
 
       case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
         {:ok, _detalle} ->
           {:noreply,
            socket
            |> assign(:dependencia_form, nil)
-           |> put_flash(:info, "Dependencia de \"#{campo}\" actualizada.")
+           |> put_flash(:info, "Filtros de \"#{campo}\" actualizados.")
            |> cargar_motor()}
 
         {:error, changeset} ->
@@ -2467,10 +2501,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                             class="text-purple-600 hover:text-purple-800 text-[11px] font-semibold mr-2">
                             <%= if Map.get(props, "campos_acompanamiento", []) != [], do: "Configurado", else: "Configurar" %>
                           </button>
-                          <button type="button" phx-click="abrir_form_dependencia" phx-value-campo={c.schema_context_field}
-                            title="Combo en cascada: qué otro campo referencia hay que elegir primero"
+                          <button type="button" id={"filtros-#{c.schema_context_field}"} phx-click="abrir_form_dependencia" phx-value-campo={c.schema_context_field}
+                            title="Qué registros se pueden elegir: cascada desde otro campo y/o filtros fijos"
                             class="text-blue-600 hover:text-blue-800 text-[11px] font-semibold">
-                            <%= if Map.get(props, "dependencias", []) != [], do: "Cascada ✓", else: "Cascada" %>
+                            <%= if con_filtros?(props), do: "Filtros ✓", else: "Filtros" %>
                           </button>
                         </div>
                       <% true -> %>
@@ -2525,6 +2559,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campos que trae</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200">Campos que muestra allá</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Combo en cascada: qué otro campo referencia de este catálogo tiene que elegirse primero">Depende de</th>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Valores constantes que tiene que cumplir el registro del catálogo destino">Filtros fijos</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
             </thead>
@@ -2558,11 +2593,20 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                       {dependencias |> Enum.map(& &1["campo_padre"]) |> Enum.join(" + ")}
                     <% end %>
                   </td>
+                  <td class="px-1.5 py-1 text-gray-600">
+                    <%= if Map.get(props, "filtros_fijos", []) == [] do %>
+                      <span class="text-gray-400">—</span>
+                    <% else %>
+                      <div :for={f <- props["filtros_fijos"]} class="font-mono">{f["campo"]} = {Enum.join(f["valores"] || [], " | ")}</div>
+                    <% end %>
+                  </td>
                   <td class="px-1.5 py-1 whitespace-nowrap">
                     <button type="button" phx-click="abrir_form_relacion" phx-value-campo={c.schema_context_field}
                       class="text-blue-600 hover:text-blue-800 text-[11px] font-semibold mr-2">Configurar</button>
                     <button type="button" phx-click="abrir_form_dependencia" phx-value-campo={c.schema_context_field}
-                      class="text-purple-600 hover:text-purple-800 text-[11px] font-semibold">Cascada</button>
+                      class="text-purple-600 hover:text-purple-800 text-[11px] font-semibold">
+                      <%= if con_filtros?(props), do: "Filtros ✓", else: "Filtros" %>
+                    </button>
                   </td>
                 </tr>
               <% end %>
@@ -2943,7 +2987,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           class="text-purple-700 hover:text-purple-900 font-semibold disabled:text-gray-300 disabled:cursor-not-allowed">
           + Agregar estado
         </button>
-        <span :if={!@puede_agregar} class="text-gray-400 ml-1">(agregá al menos un campo primero)</span>
+        <span :if={!@puede_agregar} class="text-gray-400 ml-1">(agrega al menos un campo primero)</span>
       </div>
     </div>
     """
@@ -3022,7 +3066,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           class="text-purple-700 hover:text-purple-900 font-semibold disabled:text-gray-300 disabled:cursor-not-allowed">
           + Agregar transición
         </button>
-        <span :if={!@puede_agregar} class="text-gray-400 ml-1">(definí un estado inicial primero)</span>
+        <span :if={!@puede_agregar} class="text-gray-400 ml-1">(define un estado inicial primero)</span>
       </div>
     </div>
     """
@@ -3878,12 +3922,53 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     """
   end
 
+  # Filas de un grupo `nombre[IDX][...]` de un phx-change, en orden de
+  # índice. Agregar/quitar una fila del medio de un :for sin key estable
+  # hace que el cliente de LiveView mande ADEMÁS claves sombra
+  # "nombre[_unused_N]" (recycling de nodos DOM) — no son un índice real,
+  # String.to_integer/1 sobre eso tira ArgumentError y tumba el LiveView
+  # (bug real, reproducido en vivo en el asistente de campos — ver
+  # field_designer_components.ex).
+  defp filas_indexadas(params) do
+    params
+    |> Enum.filter(fn {indice, _valores} -> match?({_n, ""}, Integer.parse(indice)) end)
+    |> Enum.sort_by(fn {indice, _valores} -> String.to_integer(indice) end)
+    |> Enum.map(fn {_indice, valores} -> valores end)
+  end
+
+  # Valores reales de cada columna elegida en "Filtros fijos", para el
+  # <datalist>. `previas` evita volver a consultar una columna ya cargada
+  # en cada tecla del phx-change.
+  defp sugerencias_filtros(catalogo_destino, filtros_fijos, previas) do
+    filtros_fijos
+    |> Enum.map(& &1["campo"])
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.uniq()
+    |> Map.new(&{&1, Map.get_lazy(previas, &1, fn -> CatalogoGenerico.valores_distintos(catalogo_destino, &1) end)})
+  end
+
+  defp con_filtros?(props), do: Map.get(props, "dependencias", []) != [] or Map.get(props, "filtros_fijos", []) != []
+
+  defp etiqueta_catalogo(catalogo) do
+    case MetaSchemaContext.catalogo_sistema(catalogo) do
+      %{etiqueta: etiqueta} ->
+        etiqueta
+
+      nil ->
+        case MetaSchemaContext.obtener_header_por_nombre(catalogo) do
+          nil -> catalogo
+          header -> header.schema_context_label
+        end
+    end
+  end
+
   attr :form, :map, required: true
 
   # "Dependencia o filtro en cascada" de un campo referencia (combos en
   # cascada, ver MetaSchemaContext.resolver_filtros/3 y
-  # validar_sin_ciclo/3) — lanzado desde el botón "Cascada" del panel
-  # "Relaciones". Genérico: "campo_padre" siempre es OTRO campo
+  # validar_sin_ciclo/3) + "filtros fijos" (valores constantes de una
+  # columna del destino) — lanzado desde el botón "Filtros" de la fila del
+  # campo y del panel "Relaciones". Genérico: "campo_padre" siempre es OTRO campo
   # "referencia" YA CREADO en este mismo catálogo (nunca un nombre fijo
   # como "estado_id"), "campo_remoto" siempre una columna real del
   # catálogo DESTINO de `campo` — Estado/Municipio/Localidad es apenas un
@@ -3895,12 +3980,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       <div class="bg-white rounded-xl shadow-lg max-w-lg w-full text-xs max-h-[90vh] overflow-y-auto">
         <div class="px-4 pt-4 pb-3 border-b border-gray-100 flex items-start justify-between gap-3">
           <div class="flex items-start gap-2.5">
-            <span class="material-symbols-outlined text-purple-600 mt-0.5" style="font-size:20px">stacked_line_chart</span>
+            <span class="material-symbols-outlined text-purple-600 mt-0.5" style="font-size:20px">filter_alt</span>
             <div>
-              <h2 class="text-sm font-bold text-gray-900">Dependencia o filtro en cascada</h2>
+              <h2 class="text-sm font-bold text-gray-900">Filtros de <span class="font-mono">{@form["campo"]}</span></h2>
               <p class="text-gray-500 mt-0.5">
-                De qué otro campo depende <strong class="font-mono">{@form["campo"]}</strong> para acotar sus opciones — ej.
-                Municipio solo trae los que pertenecen al Estado ya elegido.
+                Qué registros de <strong>{@form["catalogo_destino_label"]}</strong> se pueden elegir en este campo.
               </p>
             </div>
           </div>
@@ -3909,21 +3993,18 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           </button>
         </div>
 
-        <div class="p-4">
-          <div :if={@form["error"]} class="bg-red-50 text-red-700 rounded-lg px-2.5 py-1.5 mb-3">{@form["error"]}</div>
+        <form id="form-filtros-referencia" class="p-4" phx-change="dependencia_cambiar" phx-submit="guardar_dependencia">
+          <div :if={@form["error"]} id="filtros-referencia-error" class="bg-red-50 text-red-700 rounded-lg px-2.5 py-1.5 mb-3">{@form["error"]}</div>
+
+          <h3 class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">Depende de otro campo</h3>
+          <p class="text-gray-500 mb-2">Ej. Municipio solo trae los que pertenecen al Estado ya elegido.</p>
 
           <%= if @form["otros_referencia"] == [] do %>
-            <p class="text-gray-400 mb-3">
+            <p class="text-gray-400 mb-4">
               Este catálogo no tiene otro campo tipo <span class="font-mono">referencia</span> (que no dependa ya de
               <strong class="font-mono">{@form["campo"]}</strong>) del que pueda depender todavía.
             </p>
-            <div class="flex justify-end">
-              <button type="button" phx-click="cerrar_form_dependencia" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
-                Cerrar
-              </button>
-            </div>
           <% else %>
-            <form phx-change="dependencia_cambiar" phx-submit="guardar_dependencia">
               <%= if @form["dependencias"] == [] do %>
                 <p class="text-gray-400 mb-3">
                   <strong class="font-mono">{@form["campo"]}</strong> no depende de nada todavía — siempre trae
@@ -3982,18 +4063,67 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <p class="text-gray-500">Campos que ya dependen de <strong class="font-mono">{@form["campo"]}</strong> (se limpian solos si este cambia):</p>
                 <p class="font-semibold text-gray-800">{Enum.join(@form["descendientes"], " → ")}</p>
               </div>
-
-              <div class="flex justify-end gap-2">
-                <button type="button" phx-click="cerrar_form_dependencia" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
-                  Cancelar
-                </button>
-                <button type="submit" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700">
-                  Guardar
-                </button>
-              </div>
-            </form>
           <% end %>
-        </div>
+
+          <div class="border-t border-gray-100 pt-3 mt-1">
+            <h3 class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">Filtros fijos</h3>
+            <p class="text-gray-500 mb-2">
+              Solo se listan los registros cuyo campo tenga uno de los valores indicados (sin distinguir mayúsculas). Si
+              agregas varios filtros, se tienen que cumplir todos.
+            </p>
+
+            <p :if={@form["filtros_fijos"] == []} class="text-gray-400 mb-2">
+              Sin filtros fijos — se listan todos los registros de <strong>{@form["catalogo_destino_label"]}</strong>.
+            </p>
+
+            <div :if={@form["filtros_fijos"] != []} id="filtros-fijos" class="flex flex-col gap-2 mb-2">
+              <%= for {filtro, i} <- Enum.with_index(@form["filtros_fijos"]) do %>
+                <div id={"filtro-fijo-#{i}"} class="border border-gray-200 rounded-lg p-2.5 transition-colors hover:border-purple-200">
+                  <div class="grid grid-cols-[1fr_1.4fr_auto] gap-2 items-end">
+                    <div>
+                      <label class="block text-gray-500 mb-0.5">Campo de {@form["catalogo_destino_label"]}</label>
+                      <select name={"filtros_fijos[#{i}][campo]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                        <option value="">— Elegir —</option>
+                        <option :for={c <- @form["campos_destino"]} value={c.schema_context_field} selected={filtro["campo"] == c.schema_context_field}>
+                          {c.schema_context_properties["etiqueta"] || c.schema_context_field}
+                        </option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="block text-gray-500 mb-0.5">Valores permitidos (separados por coma)</label>
+                      <input type="text" name={"filtros_fijos[#{i}][valores]"} value={filtro["valores"]} list={"sugerencias-filtro-#{i}"}
+                        autocomplete="off" placeholder="Ej. COMPROMETIDA" phx-debounce="300"
+                        class="w-full border border-gray-300 rounded-lg px-2 py-1.5" />
+                      <datalist id={"sugerencias-filtro-#{i}"}>
+                        <option :for={v <- Map.get(@form["sugerencias"], filtro["campo"], [])} value={v} />
+                      </datalist>
+                    </div>
+                    <button type="button" phx-click="filtro_fijo_quitar" phx-value-indice={i} title="Quitar filtro"
+                      class="text-red-600 hover:text-red-800 pb-1.5">
+                      <span class="material-symbols-outlined" style="font-size:18px">delete</span>
+                    </button>
+                  </div>
+                  <p :if={filtro["campo"] not in [nil, ""] and Map.get(@form["sugerencias"], filtro["campo"], []) != []} class="text-gray-400 mt-1 truncate">
+                    Valores existentes: {Enum.join(Map.get(@form["sugerencias"], filtro["campo"], []), ", ")}
+                  </p>
+                </div>
+              <% end %>
+            </div>
+
+            <button type="button" id="agregar-filtro-fijo" phx-click="filtro_fijo_agregar" class="text-purple-700 hover:text-purple-900 font-semibold mb-3">
+              + Agregar filtro fijo
+            </button>
+          </div>
+
+          <div class="flex justify-end gap-2">
+            <button type="button" phx-click="cerrar_form_dependencia" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50">
+              Cancelar
+            </button>
+            <button type="submit" id="guardar-filtros-referencia" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
+              Guardar
+            </button>
+          </div>
+        </form>
       </div>
     </div>
     """

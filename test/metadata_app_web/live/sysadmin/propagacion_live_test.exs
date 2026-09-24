@@ -44,7 +44,7 @@ defmodule MetadataAppWeb.Sysadmin.PropagacionLiveTest do
     {:ok, _view, html} = live(conn, ~p"/sysadmin/propagacion")
 
     assert html =~ "Propagación"
-    assert html =~ "Elegí un ambiente"
+    assert html =~ "Elige un ambiente"
   end
 
   test "toggle_picker no crashea sin commits cargados (ningún ambiente elegido todavía)", %{conn: conn} do

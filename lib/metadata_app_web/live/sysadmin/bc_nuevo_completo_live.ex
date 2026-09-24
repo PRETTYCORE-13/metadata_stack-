@@ -1106,7 +1106,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
           class="text-purple-700 hover:text-purple-900 font-semibold disabled:text-gray-300 disabled:cursor-not-allowed">
           + Agregar estado
         </button>
-        <span :if={!@puede_agregar} class="text-gray-400 ml-1">(agregá al menos un campo primero)</span>
+        <span :if={!@puede_agregar} class="text-gray-400 ml-1">(agrega al menos un campo primero)</span>
       </div>
     </div>
     """
@@ -1154,7 +1154,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
           + Agregar transición
         </button>
         <%= if !@puede_agregar do %>
-          <span class="text-gray-400 ml-1">(definí un estado inicial primero)</span>
+          <span class="text-gray-400 ml-1">(define un estado inicial primero)</span>
         <% end %>
       </div>
     </div>
