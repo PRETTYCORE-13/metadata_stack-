@@ -197,6 +197,15 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   nada" es diseño, no un descuido. Cierra la nota pendiente de
   `SPEC-SYS-1809202603` (§1). Sin `tasks.md` a propósito (nada que
   construir, comportamiento ya existente).
+- [`SPEC-SYS-2509202602-consulta-ecto/`](SPEC-SYS-2509202602-consulta-ecto/) —
+  documentación retroactiva de la Consulta Ecto (Consulta/Reporte, BC de
+  solo lectura sobre un catálogo principal + tablas relacionadas): alta
+  desde BC List con detección de uniones, editor de 5 pestañas, alcance
+  de datos solo sobre el catálogo principal, vista del usuario final y
+  `GET /api/:tabla`. `requirements.md` §4 registra sus límites actuales
+  sin propuesta (vista sin paginación/búsqueda, tablas fijas después del
+  alta, definición que no viaja al publicar). Sin `tasks.md` a propósito
+  (nada que construir).
 - [`SPEC-ADN-2209202601-config-sales-unit/`](SPEC-ADN-2209202601-config-sales-unit/) —
   primera spec de área ADN (Administración de Negocio, no plataforma):
   motor de configuración para la app móvil (~120 parámetros, hoy
