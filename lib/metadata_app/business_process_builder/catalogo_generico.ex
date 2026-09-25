@@ -1115,6 +1115,21 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     "la sucursal activa" (no tendría sentido, sería siempre una sola
     opción). Administradores siguen viendo todas las de la empresa.
   """
+  # Campo con Diccionario (SPEC-SYS-2509202601 R26): las opciones salen de
+  # la SQL View, no del catálogo destino.
+  def opciones_referencia(%{"diccionario" => %{"consulta" => consulta}} = props, filtros, scope) when is_binary(consulta) and consulta != "" do
+    {filtros_dic, filtros_destino} = separar_filtros_diccionario(filtros)
+
+    # scope nil = llamador interno sin sesión (grid editable, parámetros):
+    # mismo criterio que un catálogo sin Scope, sin acotar por alcance.
+    MetadataApp.ConsultasSql.opciones_diccionario(
+      props,
+      filtros_dic ++ filtros_fijos_diccionario(props),
+      filtros_destino ++ filtros_fijos(props),
+      scope || :sin_alcance
+    )
+  end
+
   def opciones_referencia(props, filtros, scope) do
     # Lista de tuplas, no Map.merge: un filtro fijo y una dependencia sobre
     # la MISMA columna tienen que aplicarse los dos (Y), no pisarse.
@@ -1160,10 +1175,35 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   `MetaSchemaContext.validar_dependencias_referencia/2` valide al guardar
   exactamente con la misma semántica que arma el combo.
   """
-  def filtros_fijos(props) do
-    for %{"campo" => campo, "valores" => [_ | _] = valores} <- List.wrap(props["filtros_fijos"]),
+  def filtros_fijos(props), do: filtros_fijos_por_origen(props, "destino")
+
+  @doc """
+  Filtros fijos con `"origen": "diccionario"` (SPEC-SYS-1109202601 R33):
+  aplican sobre columnas del Diccionario del campo, no del catálogo
+  destino. Mismo formato que `filtros_fijos/1`.
+  """
+  def filtros_fijos_diccionario(props), do: filtros_fijos_por_origen(props, "diccionario")
+
+  # Sin "origen" = "destino": la configuración anterior a los Diccionarios
+  # sigue igual.
+  defp filtros_fijos_por_origen(props, origen) do
+    for %{"campo" => campo, "valores" => [_ | _] = valores} = filtro <- List.wrap(props["filtros_fijos"]),
         is_binary(campo) and campo != "",
+        Map.get(filtro, "origen", "destino") == origen,
         do: {campo, {:en_ci, valores}}
+  end
+
+  @prefijo_diccionario "diccionario:"
+
+  @doc """
+  Separa los filtros de `dependencias` que resolvió
+  `MetaSchemaContext.resolver_filtros/3` en los que aplican sobre el
+  Diccionario (llave `"diccionario:<columna>"`) y los del catálogo
+  destino: `{filtros_dic, filtros_destino}`, ambos como lista de tuplas.
+  """
+  def separar_filtros_diccionario(filtros) do
+    {dic, destino} = filtros |> Enum.to_list() |> Enum.split_with(fn {campo, _} -> String.starts_with?(to_string(campo), @prefijo_diccionario) end)
+    {Enum.map(dic, fn {campo, valor} -> {String.replace_prefix(to_string(campo), @prefijo_diccionario, ""), valor} end), destino}
   end
 
   @doc """

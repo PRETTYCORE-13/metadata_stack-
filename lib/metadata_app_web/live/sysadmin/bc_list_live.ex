@@ -91,6 +91,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:copiar_error, nil)
      |> assign(:consulta_form, nil)
      |> assign(:consulta_error, nil)
+     |> assign(:sql_view_form, nil)
+     |> assign(:sql_view_error, nil)
      |> assign(:catalogos_base_disponibles, [])
      |> assign(:tablas_relacionadas, [])
      |> assign(:selector_tabla_relacionada_abierto, false)
@@ -617,6 +619,68 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:union_manual, nil)}
   end
 
+  # "+ SQL View" (BC tipo 4, SPEC-SYS-2509202601) — mismo patrón de modal
+  # interno que "Nueva carpeta": etiqueta, navegación y uso. Nace sin SQL y
+  # no visible; el SQL, el ícono y la visibilidad se configuran en su
+  # editor (ConsultaSqlEditorLive).
+  def handle_event("abrir_form_sql_view", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:carpetas_disponibles, MetaSchemaContext.listar_carpetas_existentes())
+     |> assign(:sql_view_form, %{"etiqueta" => "", "carpeta_padre" => "", "nav_final" => "", "uso" => "diccionario"})
+     |> assign(:sql_view_error, nil)}
+  end
+
+  def handle_event("cerrar_form_sql_view", _params, socket) do
+    {:noreply, socket |> assign(:sql_view_form, nil) |> assign(:sql_view_error, nil)}
+  end
+
+  def handle_event("validar_sql_view", %{"contexto" => contexto}, socket) do
+    contexto = Map.put(contexto, "nav_final", normalizar_slug_carpeta(contexto["nav_final"]))
+    nav = componer_nav_carpeta(contexto["carpeta_padre"], contexto["nav_final"])
+
+    error =
+      if nav != "" and MetaSchemaContext.obtener_header_por_nav(nav) do
+        "Esa ruta ya la usa otro catálogo o carpeta."
+      end
+
+    {:noreply, socket |> assign(:sql_view_form, contexto) |> assign(:sql_view_error, error)}
+  end
+
+  def handle_event("guardar_sql_view", %{"contexto" => contexto}, socket) do
+    nav = componer_nav_carpeta(contexto["carpeta_padre"], contexto["nav_final"])
+
+    case MetadataApp.ConsultasSql.crear(%{"etiqueta" => contexto["etiqueta"], "nav" => nav, "uso" => contexto["uso"]}) do
+      {:ok, {header, _consulta_sql}} ->
+        {:noreply,
+         socket
+         |> assign(:sql_view_form, nil)
+         |> assign(:sql_view_error, nil)
+         |> put_flash(:info, "SQL View '#{header.schema_context_label}' creada. Ahora escribe su SQL.")
+         |> push_navigate(to: ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta-sql")}
+
+      {:error, mensaje} ->
+        {:noreply, socket |> assign(:sql_view_form, contexto) |> assign(:sql_view_error, mensaje)}
+    end
+  end
+
+  def handle_event("pedir_eliminar_sql_view", %{"nombre" => nombre, "label" => label}, socket) do
+    {:noreply, assign(socket, :accion_eliminar, %{tipo: :confirmar_sql_view, nombre: nombre, label: label})}
+  end
+
+  # R30: MetadataApp.ConsultasSql.eliminar/1 rechaza si algún campo la usa.
+  def handle_event("confirmar_eliminar_sql_view", _params, socket) do
+    %{nombre: nombre, label: label} = socket.assigns.accion_eliminar
+
+    case MetadataApp.ConsultasSql.eliminar(nombre) do
+      :ok ->
+        {:noreply, socket |> assign(:accion_eliminar, nil) |> put_flash(:info, "SQL View #{label} eliminada.") |> cargar_headers()}
+
+      {:error, mensaje} ->
+        {:noreply, socket |> assign(:accion_eliminar, nil) |> put_flash(:error, mensaje)}
+    end
+  end
+
   # --- Consulta Ecto: agregar tablas relacionadas (Fase 2, joins) --------------
   # Todo esto vive en @tablas_relacionadas, un assign APARTE de
   # @consulta_form a propósito: "validar_consulta" reemplaza @consulta_form
@@ -948,7 +1012,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # pedir_eliminar_carpeta/2 ya usa para "Eliminar".
   defp puede_copiar?(nodo) do
     not Map.get(nodo, :es_carpeta, false) and not Map.get(nodo, :es_consulta, false) and
-      is_nil(nodo.schema_encabezado_id) and MetaSchemaContext.listar_catalogos_detalle(nodo.header_id) == []
+      not Map.get(nodo, :es_consulta_sql, false) and is_nil(nodo.schema_encabezado_id) and MetaSchemaContext.listar_catalogos_detalle(nodo.header_id) == []
   end
 
   # "Nueva carpeta"/"Editar carpeta" ya se resuelven solos, arriba, sin
@@ -1508,6 +1572,15 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             </button>
             <button
               type="button"
+              id="btn-nueva-sql-view"
+              phx-click="abrir_form_sql_view"
+              title="SQL View: un SQL de solo lectura que se convierte en vista — Diccionario para combos de campos referencia, o Consulta"
+              class="pc-btn-secundario bg-linear-to-b from-white to-gray-100 hover:to-gray-200 border border-gray-100 text-gray-800 shadow-sm font-semibold text-xs px-4 py-1.5 rounded-full transition-colors"
+            >
+              + SQL View
+            </button>
+            <button
+              type="button"
               phx-click="abrir_editar_orden"
               title="Arrastrar las carpetas raíz para cambiar el orden en que aparecen acá y en el menú"
               class="pc-btn-secundario bg-linear-to-b from-white to-gray-100 hover:to-gray-200 border border-gray-100 text-gray-800 shadow-sm font-semibold text-xs px-4 py-1.5 rounded-full transition-colors"
@@ -1584,6 +1657,82 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       catalogos_relacionables={@catalogos_relacionables_disponibles}
     />
     <.modal_union_manual union_manual={@union_manual} />
+    <.modal_sql_view form={@sql_view_form} error={@sql_view_error} carpetas={@carpetas_disponibles} />
+    """
+  end
+
+  defp modal_sql_view(%{form: nil} = assigns), do: ~H""
+
+  defp modal_sql_view(%{form: form} = assigns) do
+    assigns =
+      assigns
+      |> assign(:nav_preview, componer_nav_carpeta(form["carpeta_padre"], form["nav_final"]))
+      |> assign(:nombre_preview, MetadataApp.ConsultasSql.nombre_desde_nav(componer_nav_carpeta(form["carpeta_padre"], form["nav_final"])))
+
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-lg w-full max-h-[90vh] overflow-y-auto overflow-x-hidden">
+        <div class="flex items-center gap-1.5 bg-[#fafafa] border-b border-gray-200 px-4 py-2.5 rounded-t-xl">
+          <span class="material-symbols-outlined text-gray-400" style="font-size: 18px">database</span>
+          <span class="text-sm font-semibold text-gray-900">Nueva SQL View</span>
+        </div>
+
+        <div :if={@error} id="sql-view-error" class="px-4 py-1.5 text-xs font-medium border-b border-gray-200 bg-red-50 text-red-700">
+          {@error}
+        </div>
+
+        <form id="form-sql-view" phx-submit="guardar_sql_view" phx-change="validar_sql_view" class="p-4 space-y-3 text-xs">
+          <div class="grid grid-cols-1 sm:grid-cols-[110px_1fr] gap-y-2 gap-x-2 items-start">
+            <label class="font-medium text-gray-900 pt-1">Etiqueta:</label>
+            <input type="text" name="contexto[etiqueta]" value={@form["etiqueta"]} required maxlength="100"
+              class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="Rutas de preventa con perfil activo" />
+
+            <label class="font-medium text-gray-900 pt-1">Navegación:</label>
+            <div class="min-w-0">
+              <div class="flex items-center gap-1 flex-wrap">
+                <select name="contexto[carpeta_padre]"
+                  class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 min-w-0 max-w-full focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors">
+                  <option value="" selected={@form["carpeta_padre"] in [nil, ""]}>— Sin carpeta (raíz) —</option>
+                  <option :for={carpeta <- @carpetas} value={carpeta.ruta} selected={@form["carpeta_padre"] == carpeta.ruta}>{carpeta.etiqueta}</option>
+                </select>
+                <span class="text-gray-400">/</span>
+                <input type="text" name="contexto[nav_final]" value={@form["nav_final"]} required maxlength="50"
+                  class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 flex-1 min-w-[8rem] focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="rutas-preventa" />
+              </div>
+              <div class="mt-1 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg px-1.5 py-0.5 flex flex-wrap items-center gap-1 max-w-full">
+                <span class="text-purple-400">Vista previa:</span>
+                <span class="font-mono break-all">{@nav_preview}</span>
+                <span :if={@nombre_preview != ""} class="text-purple-400">· vista</span>
+                <span :if={@nombre_preview != ""} class="font-mono break-all">{@nombre_preview}</span>
+              </div>
+            </div>
+
+            <label class="font-medium text-gray-900 pt-1">Uso:</label>
+            <div class="flex flex-col gap-1">
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" name="contexto[uso]" value="diccionario" checked={@form["uso"] != "consulta"} class="accent-purple-600" />
+                <span><strong>Diccionario</strong> — lista para los combos de campos referencia</span>
+              </label>
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" name="contexto[uso]" value="consulta" checked={@form["uso"] == "consulta"} class="accent-purple-600" />
+                <span><strong>Consulta</strong> — reporte de solo lectura</span>
+              </label>
+            </div>
+          </div>
+
+          <p class="text-gray-500">Nace sin SQL y no visible. El SQL, el ícono y la visibilidad se configuran en su editor.</p>
+
+          <div class="flex justify-end gap-2">
+            <button type="button" phx-click="cerrar_form_sql_view" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50 transition-colors">
+              Cancelar
+            </button>
+            <button type="submit" id="guardar-sql-view" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
+              Crear
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
     """
   end
 
@@ -2398,6 +2547,29 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     """
   end
 
+  defp modal_eliminar(%{accion: %{tipo: :confirmar_sql_view}} = assigns) do
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+        <h2 class="text-lg font-bold text-gray-900 mb-2">Eliminar SQL View</h2>
+        <p class="text-sm text-gray-700 mb-6">
+          Se eliminará la SQL View <strong>"{@accion.label}"</strong> y su vista en la base de datos. Si algún campo la usa, no se eliminará.
+        </p>
+        <div class="flex justify-end gap-3">
+          <button type="button" phx-click="cancelar_eliminar"
+            class="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50">
+            Cancelar
+          </button>
+          <button type="button" id="confirmar-eliminar-sql-view" phx-click="confirmar_eliminar_sql_view"
+            class="px-4 py-2 rounded bg-red-600 text-white text-sm font-semibold hover:bg-red-700">
+            Eliminar
+          </button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
   defp modal_eliminar(%{accion: %{tipo: :confirmar_consulta}} = assigns) do
     ~H"""
     <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
@@ -2680,6 +2852,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                   <%= cond do %>
                     <% Map.get(nodo, :icono) not in [nil, ""] -> %>{nodo.icono}
                     <% Map.get(nodo, :es_consulta, false) -> %>search
+                    <% Map.get(nodo, :es_consulta_sql, false) -> %>database
                     <% true -> %>description
                   <% end %>
                 </span>
@@ -2693,6 +2866,12 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               class="inline-block mr-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-purple-100 text-purple-700"
             >
               Consulta
+            </span>
+            <span
+              :if={Map.get(nodo, :es_consulta_sql, false)}
+              class="inline-block mr-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-indigo-100 text-indigo-700"
+            >
+              SQL View
             </span>
             {nodo.label}
           </td>
@@ -2728,7 +2907,24 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           <td class="px-4 py-2.5">
             <div class="inline-flex flex-wrap items-center gap-2 pc-acciones-chip rounded-lg px-2.5 py-1">
               <.link
-                :if={not Map.get(nodo, :es_consulta, false)}
+                :if={Map.get(nodo, :es_consulta_sql, false)}
+                navigate={~p"/sysadmin/bc-list/#{nodo.id}/consulta-sql"}
+                class="text-blue-600 hover:text-blue-800 text-xs font-semibold"
+              >
+                Editar
+              </.link>
+              <button
+                :if={Map.get(nodo, :es_consulta_sql, false)}
+                type="button"
+                phx-click="pedir_eliminar_sql_view"
+                phx-value-nombre={nodo.id}
+                phx-value-label={nodo.label}
+                class="text-red-600 hover:text-red-800 text-xs font-semibold"
+              >
+                Eliminar
+              </button>
+              <.link
+                :if={not Map.get(nodo, :es_consulta, false) and not Map.get(nodo, :es_consulta_sql, false)}
                 navigate={~p"/sysadmin/bc-list/#{nodo.id}/motor"}
                 class="text-blue-600 hover:text-blue-800 text-xs font-semibold"
               >
@@ -2761,7 +2957,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                 Eliminar
               </button>
               <button
-                :if={not Map.get(nodo, :es_consulta, false)}
+                :if={not Map.get(nodo, :es_consulta, false) and not Map.get(nodo, :es_consulta_sql, false)}
                 type="button"
                 phx-click="pedir_eliminar"
                 phx-value-tabla={nodo.id}

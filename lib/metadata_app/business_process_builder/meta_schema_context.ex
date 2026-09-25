@@ -166,7 +166,8 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
       icono: h.schema_context_icono,
       orden: h.orden,
       es_carpeta: h.schema_context_type == 2,
-      es_consulta: h.schema_context_type == 3
+      es_consulta: h.schema_context_type == 3,
+      es_consulta_sql: h.schema_context_type == 4
     }
   end
 
@@ -960,7 +961,11 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
 
       cond do
         valor_padre != nil and campo_remoto not in [nil, ""] ->
-          {:cont, {:ok, Map.put(filtros, campo_remoto, valor_padre)}}
+          # "origen": "diccionario" (SPEC-SYS-1109202601 R33): la columna es
+          # del Diccionario del campo, no del destino -- la llave con prefijo
+          # le dice a CatalogoGenerico.opciones_referencia/3 dónde aplicarla.
+          llave = if dep["origen"] == "diccionario", do: "diccionario:" <> campo_remoto, else: campo_remoto
+          {:cont, {:ok, Map.put(filtros, llave, valor_padre)}}
 
         obligatorio? ->
           mensaje = props["mensaje_sin_padre"] || mensaje_sin_padre_por_defecto(campo_padre, campos_hermanos)
@@ -1013,9 +1018,71 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     # "Filtros fijos" (SPEC-SYS-1109202601 R27): viaja en este mismo paso
     # del changeset generado en vez de uno propio -- sumar un paso nuevo al
     # pipeline obligaría a regenerar el .ex de cada catálogo existente.
+    changeset =
+      detalles
+      |> Enum.filter(&con_lista?(&1, "filtros_fijos"))
+      |> Enum.reduce(changeset, &validar_filtros_fijos_contra_registro(&2, &1))
+
+    # "Diccionario" (SPEC-SYS-2509202601 R28): mismo paso, mismo motivo.
     detalles
-    |> Enum.filter(&con_lista?(&1, "filtros_fijos"))
-    |> Enum.reduce(changeset, &validar_filtros_fijos_contra_registro(&2, &1))
+    |> Enum.filter(&con_diccionario?/1)
+    |> Enum.reduce(changeset, &validar_diccionario_contra_registro(&2, &1))
+  end
+
+  defp con_diccionario?(detalle) do
+    props = detalle.schema_context_properties
+    props["tipo"] == "referencia" and is_binary(get_in(props, ["diccionario", "consulta"]))
+  end
+
+  # Solo si el valor CAMBIÓ, igual que los filtros fijos. Las dependencias
+  # se resuelven con los valores del propio changeset (sin padre todavía,
+  # no se filtra por esa dependencia). Sin alcance: el changeset no conoce
+  # la sesión (ver SPEC-SYS-2509202601 02.design.md §6).
+  defp validar_diccionario_contra_registro(changeset, detalle) do
+    campo_atom = String.to_existing_atom(detalle.schema_context_field)
+    props = detalle.schema_context_properties
+
+    with valor when valor not in [nil, ""] <- Ecto.Changeset.get_change(changeset, campo_atom),
+         id when not is_nil(id) <- a_entero_seguro(valor) do
+      valores = valores_de_padres(changeset, props)
+
+      filtros =
+        case resolver_filtros(Map.put(props, "dependencias", Enum.map(props["dependencias"] || [], &Map.put(&1, "obligatorio", false))), valores) do
+          {:ok, f} -> f
+          _ -> %{}
+        end
+
+      {filtros_dic, filtros_destino} = CatalogoGenerico.separar_filtros_diccionario(filtros)
+
+      if MetadataApp.ConsultasSql.pertenece?(
+           props,
+           id,
+           filtros_dic ++ CatalogoGenerico.filtros_fijos_diccionario(props),
+           filtros_destino ++ CatalogoGenerico.filtros_fijos(props)
+         ),
+         do: changeset,
+         else: Ecto.Changeset.add_error(changeset, campo_atom, "el valor seleccionado no está en el diccionario de este campo")
+    else
+      _ -> changeset
+    end
+  rescue
+    ArgumentError -> changeset
+  end
+
+  defp valores_de_padres(changeset, props) do
+    for dep <- props["dependencias"] || [],
+        padre = dep["campo_padre"],
+        is_binary(padre) and padre != "",
+        into: %{} do
+      valor =
+        try do
+          Ecto.Changeset.get_field(changeset, String.to_existing_atom(padre))
+        rescue
+          ArgumentError -> nil
+        end
+
+      {padre, if(is_nil(valor), do: nil, else: to_string(valor))}
+    end
   end
 
   defp con_lista?(detalle, clave) do
@@ -1062,26 +1129,35 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   `CatalogoGenerico` compara, así en tiempo de ejecución solo se
   normaliza la columna. `{:ok, filtros_normalizados}` o `{:error, mensaje}`.
   """
-  def validar_filtros_fijos(filtros, campos_destino) do
+  #
+  # `columnas_diccionario` (SPEC-SYS-1109202601 R33): nombres de columna del
+  # Diccionario del campo, para las filas con `"origen" => "diccionario"`;
+  # esas filas conservan su "origen" en la salida.
+  def validar_filtros_fijos(filtros, campos_destino, columnas_diccionario \\ []) do
     nombres = MapSet.new(campos_destino, & &1.schema_context_field)
+    nombres_dic = MapSet.new(columnas_diccionario)
 
     filtros
-    |> Enum.map(fn f -> {to_string(f["campo"] || ""), normalizar_valores_filtro(f["valores"])} end)
-    |> Enum.reject(fn {campo, valores} -> campo == "" and valores == [] end)
+    |> Enum.map(fn f -> {to_string(f["campo"] || ""), normalizar_valores_filtro(f["valores"]), f["origen"] == "diccionario"} end)
+    |> Enum.reject(fn {campo, valores, _dic?} -> campo == "" and valores == [] end)
     |> Enum.reduce_while({:ok, []}, fn
-      {"", _valores}, _acc ->
+      {"", _valores, _dic?}, _acc ->
         {:halt, {:error, "Cada filtro fijo tiene que indicar un campo."}}
 
-      {campo, valores}, {:ok, acc} ->
+      {campo, valores, dic?}, {:ok, acc} ->
         cond do
-          not MapSet.member?(nombres, campo) ->
+          dic? and not MapSet.member?(nombres_dic, campo) ->
+            {:halt, {:error, "La columna \"#{campo}\" no existe en el Diccionario del campo."}}
+
+          not dic? and not MapSet.member?(nombres, campo) ->
             {:halt, {:error, "El campo \"#{campo}\" no existe en el catálogo destino."}}
 
           valores == [] ->
             {:halt, {:error, "El filtro fijo sobre \"#{campo}\" necesita al menos un valor."}}
 
           true ->
-            {:cont, {:ok, acc ++ [%{"campo" => campo, "valores" => valores}]}}
+            filtro = %{"campo" => campo, "valores" => valores}
+            {:cont, {:ok, acc ++ [if(dic?, do: Map.put(filtro, "origen", "diccionario"), else: filtro)]}}
         end
     end)
   end
@@ -1118,6 +1194,11 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   # error) — un `with`/`else` que colapsara ambos en el mismo valor
   # (ej. `false`) los confundiría y podría rechazar guardados válidos
   # solo porque la metadata está incompleta.
+  # Una dependencia sobre una columna del Diccionario se valida en
+  # validar_diccionario_contra_registro/2, no contra el catálogo destino.
+  defp validar_dependencia_contra_registro(changeset, _campo_atom, _valor_hijo, _catalogo_destino, %{"origen" => "diccionario"}),
+    do: changeset
+
   defp validar_dependencia_contra_registro(changeset, campo_atom, valor_hijo, catalogo_destino, dep) do
     campo_padre = dep["campo_padre"]
     campo_remoto = dep["campo_remoto"]
@@ -1474,11 +1555,24 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     end
   end
 
+  # SPEC-SYS-2509202601 R32: un campo con Diccionario arrastra esa SQL View,
+  # y una SQL View arrastra los catálogos que usa su SQL (vía pg_depend).
   defp referencias_de(catalogo, detalles_por_catalogo) do
-    detalles_por_catalogo
-    |> Map.get(catalogo, [])
-    |> Enum.filter(&(&1.schema_context_properties["tipo"] == "referencia"))
-    |> Enum.map(& &1.schema_context_properties["catalogo"])
+    referencias =
+      detalles_por_catalogo
+      |> Map.get(catalogo, [])
+      |> Enum.filter(&(&1.schema_context_properties["tipo"] == "referencia"))
+
+    destinos = Enum.map(referencias, & &1.schema_context_properties["catalogo"])
+    diccionarios = referencias |> Enum.map(&get_in(&1.schema_context_properties, ["diccionario", "consulta"])) |> Enum.reject(&is_nil/1)
+
+    vistas =
+      case obtener_header_por_nombre(catalogo) do
+        %{schema_context_type: 4} -> MetadataApp.ConsultasSql.catalogos_que_usa(catalogo)
+        _ -> []
+      end
+
+    destinos ++ diccionarios ++ vistas
   end
 
   @doc """
@@ -1759,7 +1853,10 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
           codigo_trn: header.codigo_trn,
           schema_encabezado_catalogo: nombre_encabezado(header.schema_encabezado_id),
           detalles: Enum.map(detalles, &serializar_detalle/1)
-        },
+        }
+        # SQL View (tipo 4, SPEC-SYS-2509202601 R31): solo para ese tipo, así
+        # el .meta.json de los demás catálogos no cambia.
+        |> Map.merge(MetadataApp.ConsultasSql.exportar_definicion(header)),
         pretty: true
       )
 

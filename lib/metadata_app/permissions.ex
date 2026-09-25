@@ -513,7 +513,7 @@ defmodule MetadataApp.Permissions do
         where: is_nil(h.delete_guid) and h.schema_context_type != 2 and is_nil(h.schema_encabezado_id),
         where: ^condicion_texto,
         where:
-          h.schema_context_type == 3 or
+          h.schema_context_type in [3, 4] or
             exists(
               from t in "meta_schema_transiciones",
                 where: t.meta_schema_header_id == parent_as(:header).id and is_nil(t.delete_guid),
@@ -521,7 +521,7 @@ defmodule MetadataApp.Permissions do
             ),
         order_by: h.schema_context_label,
         limit: ^limite,
-        select: %{recurso: h.schema_context_name, label: h.schema_context_label, es_consulta: h.schema_context_type == 3}
+        select: %{recurso: h.schema_context_name, label: h.schema_context_label, es_consulta: h.schema_context_type in [3, 4]}
     )
   end
 
@@ -758,7 +758,10 @@ defmodule MetadataApp.Permissions do
           id: h.id,
           recurso: h.schema_context_name,
           label: h.schema_context_label,
-          es_consulta: h.schema_context_type == 3,
+          # Tipo 4 (Consulta SQL, SPEC-SYS-2509202601) también es solo
+          # lectura: mismas acciones (~w(leer)) que una Consulta Ecto.
+          es_consulta: h.schema_context_type in [3, 4],
+          es_consulta_sql: h.schema_context_type == 4,
           es_detalle: not is_nil(h.schema_encabezado_id),
           # Fase 6 del modelo de Alcance de Datos (2026-08-11) -- para que
           # CatalogoPermisosLive sepa si ofrecer la sección de alcance por

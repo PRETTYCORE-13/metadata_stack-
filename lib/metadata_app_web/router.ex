@@ -241,6 +241,8 @@ defmodule MetadataAppWeb.Router do
         live "/sysadmin/bc-list/nuevo-completo", Sysadmin.BcNuevoCompletoLive
         live "/sysadmin/bc-list/:nombre/motor", Sysadmin.BcMotorLive
         live "/sysadmin/bc-list/:nombre/consulta", Sysadmin.ConsultaEditorLive
+        # SPEC-SYS-2509202601: editor de una Consulta SQL (tipo 4).
+        live "/sysadmin/bc-list/:nombre/consulta-sql", Sysadmin.ConsultaSqlEditorLive
         live "/sysadmin/bc-list/:nombre/plantilla", Sysadmin.PlantillaConstructorLive
         live "/sysadmin/bc-list/:nombre/importacion", Sysadmin.ImportacionConstructorLive
         live "/sysadmin/tepache", Sysadmin.TepacheLive

@@ -197,6 +197,14 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   nada" es diseño, no un descuido. Cierra la nota pendiente de
   `SPEC-SYS-1809202603` (§1). Sin `tasks.md` a propósito (nada que
   construir, comportamiento ya existente).
+- [`SPEC-SYS-2509202601-consulta-sql/`](SPEC-SYS-2509202601-consulta-sql/) —
+  Consulta SQL / "SQL View" (BC tipo 4): un SQL de solo lectura que se
+  convierte en vista de Postgres vía migración generada (`pty_sql_*`).
+  Uso **Diccionario** (combos de campos referencia, con BC autorizados y
+  "Filtrar por diccionario" en SPEC-SYS-1109202601 §2.2) o **Consulta**
+  (listado de solo lectura). Validación por Postgres, ejecución de solo
+  lectura con tiempo máximo, alcance por columnas de control, GET de API,
+  dependencias vía `pg_depend` y publicación con `motor.publicar`.
 - [`SPEC-SYS-2509202602-consulta-ecto/`](SPEC-SYS-2509202602-consulta-ecto/) —
   documentación retroactiva de la Consulta Ecto (Consulta/Reporte, BC de
   solo lectura sobre un catálogo principal + tablas relacionadas): alta

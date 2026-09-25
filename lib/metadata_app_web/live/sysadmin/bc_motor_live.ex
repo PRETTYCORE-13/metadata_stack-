@@ -476,7 +476,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       |> Enum.filter(& &1.schema_context_properties["visible"])
 
     filtros_fijos =
-      Enum.map(props["filtros_fijos"] || [], &%{"campo" => &1["campo"], "valores" => Enum.join(&1["valores"] || [], ", ")})
+      Enum.map(
+        props["filtros_fijos"] || [],
+        &%{"campo" => &1["campo"], "valores" => Enum.join(&1["valores"] || [], ", "), "origen" => &1["origen"] || "destino"}
+      )
 
     # Un campo que YA depende (directa o transitivamente) de `campo` no
     # puede ofrecerse como su padre — sería un ciclo inmediato. Filtro acá
@@ -501,6 +504,12 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
        "dependencias" => props["dependencias"] || [],
        "filtros_fijos" => filtros_fijos,
        "sugerencias" => sugerencias_filtros(props["catalogo"], filtros_fijos, %{}),
+       # SPEC-SYS-1109202601 §2.2: SQL View de uso Diccionario que autorizan a este BC.
+       "diccionarios" => MetadataApp.ConsultasSql.diccionarios_para(catalogo),
+       "diccionario" => %{
+         "consulta" => get_in(props, ["diccionario", "consulta"]) || "",
+         "descripcion" => get_in(props, ["diccionario", "descripcion"]) || []
+       },
        "descendientes" => MetaSchemaContext.descendientes(catalogo, campo),
        "error" => nil
      })}
@@ -544,7 +553,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         %{
           "campo_padre" => valores["campo_padre"],
           "campo_remoto" => valores["campo_remoto"],
-          "obligatorio" => valores["obligatorio"] == "true"
+          "obligatorio" => valores["obligatorio"] == "true",
+          "origen" => valores["origen"] || "destino"
         }
       end)
 
@@ -552,13 +562,23 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       params
       |> Map.get("filtros_fijos", %{})
       |> filas_indexadas()
-      |> Enum.map(&%{"campo" => &1["campo"] || "", "valores" => &1["valores"] || ""})
+      |> Enum.map(&%{"campo" => &1["campo"] || "", "valores" => &1["valores"] || "", "origen" => &1["origen"] || "destino"})
+
+    diccionario =
+      case params["diccionario"] do
+        %{"consulta" => consulta} = dic ->
+          %{"consulta" => consulta, "descripcion" => dic |> Map.get("descripcion", []) |> List.wrap() |> Enum.reject(&(&1 == ""))}
+
+        _ ->
+          nil
+      end
 
     {:noreply,
      update(socket, :dependencia_form, fn form ->
        form
        |> Map.put("dependencias", dependencias)
        |> Map.put("filtros_fijos", filtros_fijos)
+       |> then(&if(diccionario, do: Map.put(&1, "diccionario", diccionario), else: &1))
        |> Map.put("sugerencias", sugerencias_filtros(form["catalogo_destino"], filtros_fijos, form["sugerencias"]))
      end)}
   end
@@ -567,18 +587,35 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     %{"campo" => campo, "catalogo" => catalogo, "dependencias" => dependencias, "campos_destino" => campos_destino} =
       socket.assigns.dependencia_form
 
+    form = socket.assigns.dependencia_form
+    columnas_dic = columnas_diccionario(form)
+
+    # Sin Diccionario elegido, toda fila queda sobre el destino. Solo se
+    # guarda "origen" cuando es "diccionario" (lo demás, como antes).
     dependencias_validas =
-      Enum.filter(dependencias, &(&1["campo_padre"] not in [nil, ""] and &1["campo_remoto"] not in [nil, ""]))
+      dependencias
+      |> Enum.filter(&(&1["campo_padre"] not in [nil, ""] and &1["campo_remoto"] not in [nil, ""]))
+      |> Enum.map(fn dep ->
+        if dep["origen"] == "diccionario" and columnas_dic != [], do: dep, else: Map.delete(dep, "origen")
+      end)
+
+    {deps_dic, deps_destino} = Enum.split_with(dependencias_validas, &(&1["origen"] == "diccionario"))
+
+    filtros_formulario =
+      Enum.map(form["filtros_fijos"], fn f -> if columnas_dic == [], do: Map.delete(f, "origen"), else: f end)
 
     with :ok <- MetaSchemaContext.validar_sin_ciclo(catalogo, campo, dependencias_validas),
-         :ok <- MetaSchemaContext.validar_tipos_dependencia(dependencias_validas, socket.assigns.campos, campos_destino),
-         {:ok, filtros_fijos} <- MetaSchemaContext.validar_filtros_fijos(socket.assigns.dependencia_form["filtros_fijos"], campos_destino) do
+         :ok <- MetaSchemaContext.validar_tipos_dependencia(deps_destino, socket.assigns.campos, campos_destino),
+         :ok <- validar_deps_diccionario(deps_dic, columnas_dic),
+         {:ok, filtros_fijos} <- MetaSchemaContext.validar_filtros_fijos(filtros_formulario, campos_destino, columnas_dic),
+         {:ok, diccionario} <- validar_diccionario_de_formulario(form, columnas_dic) do
       detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
 
       props =
         detalle.schema_context_properties
         |> Map.put("dependencias", dependencias_validas)
         |> then(&if(filtros_fijos == [], do: Map.delete(&1, "filtros_fijos"), else: Map.put(&1, "filtros_fijos", filtros_fijos)))
+        |> then(&if(is_nil(diccionario), do: Map.delete(&1, "diccionario"), else: Map.put(&1, "diccionario", diccionario)))
 
       case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
         {:ok, _detalle} ->
@@ -3941,13 +3978,55 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # en cada tecla del phx-change.
   defp sugerencias_filtros(catalogo_destino, filtros_fijos, previas) do
     filtros_fijos
+    |> Enum.reject(&(&1["origen"] == "diccionario"))
     |> Enum.map(& &1["campo"])
     |> Enum.reject(&(&1 in [nil, ""]))
     |> Enum.uniq()
     |> Map.new(&{&1, Map.get_lazy(previas, &1, fn -> CatalogoGenerico.valores_distintos(catalogo_destino, &1) end)})
   end
 
-  defp con_filtros?(props), do: Map.get(props, "dependencias", []) != [] or Map.get(props, "filtros_fijos", []) != []
+  defp validar_deps_diccionario(deps, columnas_dic) do
+    case Enum.find(deps, &(&1["campo_remoto"] not in columnas_dic)) do
+      nil -> :ok
+      dep -> {:error, "La columna \"#{dep["campo_remoto"]}\" no existe en el Diccionario del campo."}
+    end
+  end
+
+  # SPEC-SYS-1109202601 R32 / SPEC-SYS-2509202601 R25: al menos una columna
+  # de descripción, y todos los id del Diccionario existen en el destino.
+  defp validar_diccionario_de_formulario(form, columnas_dic) do
+    consulta = get_in(form, ["diccionario", "consulta"])
+    descripcion = (get_in(form, ["diccionario", "descripcion"]) || []) |> Enum.filter(&(&1 in columnas_dic))
+
+    cond do
+      consulta in [nil, ""] ->
+        {:ok, nil}
+
+      columnas_dic == [] ->
+        {:error, "El Diccionario elegido ya no está disponible para este BC."}
+
+      descripcion == [] ->
+        {:error, "Elige al menos una columna del Diccionario para la descripción del combo."}
+
+      true ->
+        with :ok <- MetadataApp.ConsultasSql.verificar_ids_en_destino(consulta, form["catalogo_destino"]) do
+          {:ok, %{"consulta" => consulta, "descripcion" => descripcion}}
+        end
+    end
+  end
+
+  defp con_filtros?(props),
+    do: Map.get(props, "dependencias", []) != [] or Map.get(props, "filtros_fijos", []) != [] or is_map(props["diccionario"])
+
+  # Columnas del Diccionario elegido en el formulario "Filtros" (SPEC-SYS-1109202601 §2.2).
+  defp columnas_diccionario(form) do
+    consulta = get_in(form, ["diccionario", "consulta"])
+
+    case Enum.find(form["diccionarios"] || [], &(&1.nombre == consulta)) do
+      nil -> []
+      d -> Enum.map(d.columnas, & &1["nombre"])
+    end
+  end
 
   defp etiqueta_catalogo(catalogo) do
     case MetaSchemaContext.catalogo_sistema(catalogo) do
@@ -4014,13 +4093,26 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <div class="flex flex-col gap-2 mb-3">
                   <%= for {dep, i} <- Enum.with_index(@form["dependencias"]) do %>
                     <% campo_padre = Enum.find(@form["otros_referencia"], &(&1.schema_context_field == dep["campo_padre"])) %>
-                    <% remotos_validos = campo_padre && MetaSchemaContext.campos_remoto_validos(@form["campos_destino"], campo_padre.schema_context_properties["catalogo"]) %>
+                    <% sobre_dic? = dep["origen"] == "diccionario" and columnas_diccionario(@form) != [] %>
+                    <% remotos_validos =
+                      cond do
+                        sobre_dic? -> Enum.map(columnas_diccionario(@form), &%{schema_context_field: &1, schema_context_properties: %{"etiqueta" => &1}})
+                        campo_padre -> MetaSchemaContext.campos_remoto_validos(@form["campos_destino"], campo_padre.schema_context_properties["catalogo"])
+                        true -> nil
+                      end %>
                     <div class="border border-gray-200 rounded-lg p-2.5">
                       <div class="flex items-center justify-between mb-1.5">
                         <span class="text-gray-500 font-semibold">Depende de</span>
                         <button type="button" phx-click="dependencia_quitar" phx-value-indice={i} class="text-red-600 hover:text-red-800 font-semibold">
                           Quitar
                         </button>
+                      </div>
+                      <div :if={columnas_diccionario(@form) != []} class="mb-1.5">
+                        <label class="block text-gray-500 mb-0.5">Aplicar sobre</label>
+                        <select name={"dependencias[#{i}][origen]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                          <option value="destino" selected={dep["origen"] != "diccionario"}>{@form["catalogo_destino_label"]} (catálogo destino)</option>
+                          <option value="diccionario" selected={dep["origen"] == "diccionario"}>Columnas del Diccionario</option>
+                        </select>
                       </div>
                       <div class="grid grid-cols-2 gap-2">
                         <div>
@@ -4034,7 +4126,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                         </div>
                         <div>
                           <label class="block text-gray-500 mb-0.5">Filtrar {@form["catalogo_destino_label"]} por</label>
-                          <select name={"dependencias[#{i}][campo_remoto]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5" disabled={is_nil(campo_padre)}>
+                          <select name={"dependencias[#{i}][campo_remoto]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5" disabled={is_nil(campo_padre) and not sobre_dic?}>
                             <option value="">— Elegir —</option>
                             <option :for={c <- remotos_validos || []} value={c.schema_context_field} selected={dep["campo_remoto"] == c.schema_context_field}>
                               {c.schema_context_properties["etiqueta"] || c.schema_context_field}
@@ -4042,7 +4134,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                           </select>
                         </div>
                       </div>
-                      <p :if={campo_padre && remotos_validos == []} class="text-amber-600 mt-1">
+                      <p :if={campo_padre && not sobre_dic? && remotos_validos == []} class="text-amber-600 mt-1">
                         {@form["catalogo_destino_label"]} no tiene ningún campo referencia al mismo catálogo que {dep["campo_padre"]} — no se puede armar esta cascada.
                       </p>
                       <label class="flex items-center gap-1.5 mt-1.5">
@@ -4079,15 +4171,30 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             <div :if={@form["filtros_fijos"] != []} id="filtros-fijos" class="flex flex-col gap-2 mb-2">
               <%= for {filtro, i} <- Enum.with_index(@form["filtros_fijos"]) do %>
                 <div id={"filtro-fijo-#{i}"} class="border border-gray-200 rounded-lg p-2.5 transition-colors hover:border-purple-200">
+                  <div :if={columnas_diccionario(@form) != []} class="mb-1.5">
+                    <label class="block text-gray-500 mb-0.5">Aplicar sobre</label>
+                    <select name={"filtros_fijos[#{i}][origen]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                      <option value="destino" selected={filtro["origen"] != "diccionario"}>{@form["catalogo_destino_label"]} (catálogo destino)</option>
+                      <option value="diccionario" selected={filtro["origen"] == "diccionario"}>Columnas del Diccionario</option>
+                    </select>
+                  </div>
                   <div class="grid grid-cols-[1fr_1.4fr_auto] gap-2 items-end">
                     <div>
-                      <label class="block text-gray-500 mb-0.5">Campo de {@form["catalogo_destino_label"]}</label>
-                      <select name={"filtros_fijos[#{i}][campo]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
-                        <option value="">— Elegir —</option>
-                        <option :for={c <- @form["campos_destino"]} value={c.schema_context_field} selected={filtro["campo"] == c.schema_context_field}>
-                          {c.schema_context_properties["etiqueta"] || c.schema_context_field}
-                        </option>
-                      </select>
+                      <%= if filtro["origen"] == "diccionario" and columnas_diccionario(@form) != [] do %>
+                        <label class="block text-gray-500 mb-0.5">Columna del Diccionario</label>
+                        <select name={"filtros_fijos[#{i}][campo]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                          <option value="">— Elegir —</option>
+                          <option :for={col <- columnas_diccionario(@form)} value={col} selected={filtro["campo"] == col}>{col}</option>
+                        </select>
+                      <% else %>
+                        <label class="block text-gray-500 mb-0.5">Campo de {@form["catalogo_destino_label"]}</label>
+                        <select name={"filtros_fijos[#{i}][campo]"} class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+                          <option value="">— Elegir —</option>
+                          <option :for={c <- @form["campos_destino"]} value={c.schema_context_field} selected={filtro["campo"] == c.schema_context_field}>
+                            {c.schema_context_properties["etiqueta"] || c.schema_context_field}
+                          </option>
+                        </select>
+                      <% end %>
                     </div>
                     <div>
                       <label class="block text-gray-500 mb-0.5">Valores permitidos (separados por coma)</label>
@@ -4113,6 +4220,38 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             <button type="button" id="agregar-filtro-fijo" phx-click="filtro_fijo_agregar" class="text-purple-700 hover:text-purple-900 font-semibold mb-3">
               + Agregar filtro fijo
             </button>
+          </div>
+
+          <div id="seccion-diccionario" class="border-t border-gray-100 pt-3 mt-1 mb-3">
+            <h3 class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1">Filtrar por diccionario</h3>
+            <p class="text-gray-500 mb-2">
+              Solo se ofrecen los registros que entrega una SQL View de uso Diccionario (con condiciones que cruzan varios catálogos).
+            </p>
+
+            <%= if @form["diccionarios"] == [] do %>
+              <p class="text-gray-400">
+                Ningún Diccionario autoriza a este BC todavía. Se autoriza desde la SQL View, en "BC que pueden usarla".
+              </p>
+            <% else %>
+              <select name="diccionario[consulta]" id="selector-diccionario" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 mb-2">
+                <option value="" selected={@form["diccionario"]["consulta"] in [nil, ""]}>— Sin diccionario —</option>
+                <option :for={d <- @form["diccionarios"]} value={d.nombre} selected={@form["diccionario"]["consulta"] == d.nombre}>
+                  {d.etiqueta} ({d.nombre})
+                </option>
+              </select>
+
+              <div :if={columnas_diccionario(@form) != []}>
+                <label class="block text-gray-500 mb-1">Columnas que forman la descripción del combo</label>
+                <input type="hidden" name="diccionario[descripcion][]" value="" />
+                <div class="flex flex-wrap gap-2">
+                  <label :for={col <- columnas_diccionario(@form) -- ["id"]}
+                    class="flex items-center gap-1 border border-gray-200 rounded-lg px-2 py-1 cursor-pointer hover:border-purple-200 transition-colors">
+                    <input type="checkbox" name="diccionario[descripcion][]" value={col} checked={col in (@form["diccionario"]["descripcion"] || [])} class="accent-purple-600" />
+                    <span class="font-mono">{col}</span>
+                  </label>
+                </div>
+              </div>
+            <% end %>
           </div>
 
           <div class="flex justify-end gap-2">

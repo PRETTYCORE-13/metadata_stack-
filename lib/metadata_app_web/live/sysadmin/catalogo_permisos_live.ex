@@ -190,6 +190,10 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   # in: nil"), tumbando la pantalla entera. Ahora se degrada a un aviso
   # (ver render/1) en vez de crashear -- no se intenta reparar el dato
   # solo, es un caso real que el admin tiene que revisar a mano.
+  # Una Consulta SQL (tipo 4) no tiene catálogo base: se acota por las
+  # columnas de control que entregue su SQL (ver render/1).
+  defp catalogo_base_de_consulta(%{es_consulta_sql: true}), do: nil
+
   defp catalogo_base_de_consulta(%{es_consulta: true, id: header_id}) do
     case MetaConsultas.obtener_por_header_id(header_id) do
       nil ->
@@ -623,7 +627,14 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
 
       <div :if={@catalogo && @catalogo.es_consulta} class="mt-6 rounded-xl border border-gray-200 p-4 bg-gray-50">
         <h2 class="text-xs font-bold text-gray-700 uppercase tracking-wide">Alcance de datos</h2>
-        <%= if @catalogo_base_de_consulta do %>
+        <%= cond do %>
+          <% Map.get(@catalogo, :es_consulta_sql, false) -> %>
+          <p id="alcance-sql-view" class="text-[11px] text-gray-500 mt-0.5 max-w-2xl">
+            Una SQL View no tiene Alcance de Datos propio: se acota automáticamente por las columnas
+            <code class="font-mono">branch_id</code>, <code class="font-mono">sales_unit_id</code> e
+            <code class="font-mono">inventory_id</code> que entregue su SQL (el administrador ve todo). Revisa qué columnas entrega en su tab Configuración.
+          </p>
+          <% @catalogo_base_de_consulta -> %>
           <p class="text-[11px] text-gray-500 mt-0.5 max-w-2xl">
             Una Consulta no tiene Alcance de Datos propio — sigue el de su catálogo base,
             <span class="font-semibold">{@catalogo_base_de_consulta.label}</span>
@@ -637,7 +648,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
             <% end %>
             Para cambiarlo, ir a Permisos del catálogo base.
           </p>
-        <% else %>
+          <% true -> %>
           <p class="text-[11px] text-red-600 mt-0.5 max-w-2xl">
             Esta Consulta no tiene su configuración armada (falta la fila en
             <code class="font-mono">meta_schema_consulta</code>) — no se puede resolver su catálogo base ni su Alcance de Datos. Revisala desde BC Motor antes de seguir configurando sus permisos.

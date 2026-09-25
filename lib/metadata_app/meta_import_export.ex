@@ -133,7 +133,27 @@ defmodule MetadataApp.MetaImportExport do
     end
   end
 
+  # SQL View (tipo 4, SPEC-SYS-2509202601 R31): además del header, su
+  # definición (uso, SQL, columnas, BC autorizados) viaja en el bloque
+  # "consulta_sql" del .meta.json. La vista en sí la crea su migración
+  # `*_vista_pty_sql_*`, que viaja en el mismo paquete.
   defp importar_contexto(contexto) do
+    mensaje = importar_contexto_base(contexto)
+
+    case contexto do
+      %{"schema_context_type" => 4, "consulta_sql" => datos} when is_map(datos) ->
+        case MetadataApp.ConsultasSql.importar_definicion(contexto["schema_context_name"], datos) do
+          :sin_cambios -> mensaje
+          :creada -> mensaje <> "; definición SQL creada"
+          :actualizada -> mensaje <> "; definición SQL actualizada"
+        end
+
+      _ ->
+        mensaje
+    end
+  end
+
+  defp importar_contexto_base(contexto) do
     nombre = contexto["schema_context_name"]
 
     case MetaSchemaContext.obtener_header_por_nombre(nombre) do

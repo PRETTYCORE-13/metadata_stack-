@@ -44,6 +44,14 @@ defmodule MetadataApp.MetaPublicador do
       nil ->
         {:error, "\"#{nombre}\" no existe."}
 
+      # SQL View (SPEC-SYS-2509202601): sin autómata; basta con tener SQL
+      # guardado (su vista viaja en su migración `*_vista_pty_sql_*`).
+      %{schema_context_type: 4} ->
+        case MetadataApp.ConsultasSql.obtener_por_catalogo(nombre) do
+          %{sql: sql} when is_binary(sql) -> {:ok, %{problemas: [], valido?: true}}
+          _ -> {:error, "#{nombre}: la SQL View todavía no tiene SQL guardado."}
+        end
+
       _header ->
         case MetaEstadosAdmin.validar_motor(nombre) do
           {:error, motivo} -> {:error, "#{nombre}: #{motivo}"}

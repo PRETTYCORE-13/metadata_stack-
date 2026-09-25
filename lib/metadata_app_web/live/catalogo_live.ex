@@ -65,10 +65,10 @@ defmodule MetadataAppWeb.CatalogoLive do
 
       header ->
         if autorizado_para_leer?(socket.assigns[:current_scope], header.schema_context_name) do
-          if header.schema_context_type == 3 do
-            montar_consulta(socket, header)
-          else
-            montar_catalogo(socket, header)
+          case header.schema_context_type do
+            3 -> montar_consulta(socket, header)
+            4 -> montar_consulta_sql(socket, header)
+            _ -> montar_catalogo(socket, header)
           end
         else
           {:ok,
@@ -254,6 +254,33 @@ defmodule MetadataAppWeb.CatalogoLive do
     |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
     |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
   end
+
+  # SQL View (schema_context_type: 4, SPEC-SYS-2509202601 R3): listado de
+  # solo lectura, paginado, con las columnas y el orden de su SQL y el
+  # alcance de datos por columnas (MetadataApp.ConsultasSql.filas/4). Sin
+  # filtros ni parámetros: el SQL es fijo.
+  defp montar_consulta_sql(socket, header) do
+    {:ok,
+     socket
+     |> assign(:current_page, header.schema_context_name)
+     |> assign(:encontrado?, true)
+     |> assign(:es_consulta_sql?, true)
+     |> assign(:label, header.schema_context_label)
+     |> assign(:nombre_sql, header.schema_context_name)
+     |> cargar_pagina_sql(1)}
+  end
+
+  defp cargar_pagina_sql(socket, pagina) do
+    case MetadataApp.ConsultasSql.filas(socket.assigns.nombre_sql, socket.assigns[:current_scope], pagina) do
+      {:ok, resultado} -> socket |> assign(:resultado_sql, resultado) |> assign(:error_sql, nil)
+      {:error, motivo} -> socket |> assign(:resultado_sql, nil) |> assign(:error_sql, MetadataApp.ConsultasSql.mensaje_ejecucion(motivo))
+    end
+  end
+
+  defp valor_sql(nil), do: "—"
+  defp valor_sql(%Decimal{} = d), do: Decimal.to_string(d, :normal)
+  defp valor_sql(valor) when is_binary(valor), do: valor
+  defp valor_sql(valor), do: to_string(valor)
 
   # Consulta Ecto (schema_context_type: 3): reporte de solo lectura, sin
   # motor de estados/TRN/maestro-detalle/alta — reusa el mismo render de
@@ -450,6 +477,11 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   def handle_event("change_page", %{"id" => id}, socket) do
     AdminNav.handle_nav(id, socket, socket.assigns.current_page)
+  end
+
+  # SQL View (tipo 4): paginación del listado de solo lectura.
+  def handle_event("pagina_sql", %{"pagina" => pagina}, %{assigns: %{es_consulta_sql?: true}} = socket) do
+    {:noreply, cargar_pagina_sql(socket, String.to_integer(pagina))}
   end
 
   # --- Asistente "Importar" (Fase 1 del módulo de Importación) -------------
@@ -1461,6 +1493,58 @@ defmodule MetadataAppWeb.CatalogoLive do
     <div class="p-8">
       <h1 class="text-xl font-bold">Catálogo no encontrado</h1>
       <p class="text-gray-500 mt-2">No hay ningún catálogo registrado con esta ruta.</p>
+    </div>
+    """
+  end
+
+  def render(%{es_consulta_sql?: true} = assigns) do
+    assigns =
+      assign(
+        assigns,
+        :total_paginas,
+        if(assigns.resultado_sql, do: max(div(assigns.resultado_sql.total + assigns.resultado_sql.por_pagina - 1, assigns.resultado_sql.por_pagina), 1), else: 1)
+      )
+
+    ~H"""
+    <div class="p-6">
+      <div class="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
+        <div class="flex items-center justify-between gap-3 mb-3">
+          <h1 class="text-lg font-bold text-gray-900">{@label}</h1>
+          <span :if={@resultado_sql} class="text-xs text-gray-500">{@resultado_sql.total} registros</span>
+        </div>
+
+        <p :if={@error_sql} id="error-sql-view" class="bg-red-50 text-red-700 rounded-lg px-3 py-2 text-sm">{@error_sql}</p>
+
+        <div :if={@resultado_sql} class="overflow-x-auto rounded-xl border border-gray-100">
+          <table id="tabla-sql-view" class="min-w-full divide-y divide-gray-200 text-xs">
+            <thead class="bg-gray-50">
+              <tr>
+                <th :for={c <- @resultado_sql.columnas} class="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">
+                  {c["nombre"]}
+                </th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+              <tr :if={@resultado_sql.filas == []}>
+                <td colspan={length(@resultado_sql.columnas)} class="px-3 py-6 text-center text-gray-400">Sin registros.</td>
+              </tr>
+              <tr :for={fila <- @resultado_sql.filas} class="hover:bg-gray-50 transition-colors">
+                <td :for={c <- @resultado_sql.columnas} class="px-3 py-2 text-gray-700 whitespace-nowrap">
+                  {valor_sql(fila[c["nombre"]])}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div :if={@resultado_sql && @total_paginas > 1} class="flex items-center justify-end gap-2 mt-3 text-xs">
+          <button :if={@resultado_sql.pagina > 1} type="button" phx-click="pagina_sql" phx-value-pagina={@resultado_sql.pagina - 1}
+            class="px-3 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors">Anterior</button>
+          <span class="text-gray-500">Página {@resultado_sql.pagina} de {@total_paginas}</span>
+          <button :if={@resultado_sql.pagina < @total_paginas} type="button" phx-click="pagina_sql" phx-value-pagina={@resultado_sql.pagina + 1}
+            class="px-3 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors">Siguiente</button>
+        </div>
+      </div>
     </div>
     """
   end
