@@ -284,14 +284,27 @@ defmodule MetadataAppWeb.FichaLive do
   end
 
   # No hay más modo edición separado — los campos editables ya se muestran
-  # como input directo, siempre. "Cancelar" solo descarta lo tipeado
-  # (vuelve a mostrar el valor real del registro en cada input).
+  # como input directo, siempre. "Cancelar" descarta TODO lo que no se
+  # guardó: lo tipeado en el encabezado (vuelve a mostrar el valor real de
+  # cada input) y los renglones nuevos/editados/eliminados del tab Detalle
+  # -- esos viven en el hook GridEditable, así que además de limpiar la
+  # copia del servidor se le manda grid_recargar con las filas persistidas.
+  # Antes solo limpiaba el encabezado: con un renglón nuevo pendiente el
+  # contador decía "1 cambio sin guardar" pero Cancelar quedaba
+  # deshabilitado y no había forma de descartarlo.
   def handle_event("cancelar_edicion", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:form_values, %{})
-     |> assign(:errores_campos, %{})
-     |> assign(:error_guardado, nil)}
+    socket =
+      socket
+      |> assign(:form_values, %{})
+      |> assign(:errores_campos, %{})
+      |> assign(:error_guardado, nil)
+      |> assign(:detalle_renglones_nuevos, %{})
+      |> assign(:detalle_renglones_editados, %{})
+      |> assign(:detalle_renglones_eliminados, %{})
+      |> assign(:detalle_seleccion, %{})
+      |> assign(:detalle_form_error, nil)
+
+    {:noreply, Enum.reduce(socket.assigns.catalogos_detalle, socket, &recargar_grid(&2, &1.nombre))}
   end
 
   def handle_event("validar", %{"campos" => campos_params}, socket) do
@@ -991,8 +1004,24 @@ defmodule MetadataAppWeb.FichaLive do
     Enum.reject(filas, fn fila -> fila == %{} or Enum.all?(Map.values(fila), &(&1 in [nil, "", "false"])) end)
   end
 
+  # Reemplaza en el hook GridEditable las filas de `catalogo` por las
+  # persistidas (mismo mensaje que usa la transición de renglón de arriba).
+  defp recargar_grid(socket, catalogo) do
+    columnas =
+      socket.assigns.catalogos_detalle
+      |> Enum.find(%{columnas_tabla: []}, &(&1.nombre == catalogo))
+      |> Map.get(:columnas_tabla)
+
+    push_event(socket, "grid_recargar", %{
+      catalogo: catalogo,
+      filas: GridEditableComponents.filas_para_js(Map.get(socket.assigns.detalle_renglones, catalogo, []), columnas, socket.assigns.estados_por_id),
+      transiciones: Enum.map(socket.assigns.otras_transiciones, &Map.take(&1, [:accion, :etiqueta]))
+    })
+  end
+
   # Cuenta renglones nuevos + editados + eliminados en staging — usado
-  # para el badge del tab "Detalle" y para habilitar el botón "Guardar".
+  # para el badge del tab "Detalle" y para habilitar los botones "Guardar"
+  # y "Cancelar".
   defp contar_cambios_detalle(renglones_nuevos, renglones_editados, renglones_eliminados) do
     nuevos = renglones_nuevos |> Map.values() |> Enum.map(&length(limpiar_renglones_vacios(&1))) |> Enum.sum()
     editados = renglones_editados |> Map.values() |> Enum.map(&length/1) |> Enum.sum()
@@ -1913,7 +1942,8 @@ defmodule MetadataAppWeb.FichaLive do
                 class="px-2.5 py-1 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50">
                 Cancelar
               </.link>
-              <button :if={@modo == :ver} type="button" phx-click="cancelar_edicion" disabled={map_size(@form_values) == 0}
+              <button :if={@modo == :ver} type="button" id="ficha-cancelar" phx-click="cancelar_edicion"
+                disabled={map_size(@form_values) == 0 and @renglones_nuevos_count == 0}
                 class="px-2.5 py-1 rounded-lg border border-gray-300 text-gray-700 text-xs font-semibold hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">
                 Cancelar
               </button>
