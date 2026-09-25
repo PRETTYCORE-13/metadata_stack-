@@ -199,4 +199,15 @@ defmodule MetadataApp.ConsultasSqlTest do
       assert Enum.any?(MetaSchemaContext.listar_detalles("meta_fixture_equipo"), &(&1.schema_context_field == campo))
     end
   end
+
+  describe "nombre de la migración de la vista" do
+    test "cada guardado genera un nombre de migración único (Ecto no acepta nombres repetidos)" do
+      a = ConsultasSql.ruta_migracion("vista", "pty_sql_x", "20260925180122")
+      b = ConsultasSql.ruta_migracion("vista", "pty_sql_x", "20260925180448")
+
+      assert a == "priv/repo/migrations/20260925180122_vista_pty_sql_x_20260925180122.exs"
+      nombre = fn ruta -> ruta |> Path.basename(".exs") |> String.split("_", parts: 2) |> List.last() end
+      refute nombre.(a) == nombre.(b)
+    end
+  end
 end

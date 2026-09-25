@@ -314,9 +314,20 @@ defmodule MetadataApp.ConsultasSql do
   # archivo de migración ni Ecto.Migrator.
   defp vista_directa?, do: Application.get_env(:metadata_app, :consultas_sql_vista_directa, false)
 
+  @doc """
+  Ruta de la migración de una SQL View. El timestamp va también como
+  sufijo del nombre: Ecto exige que el NOMBRE de cada migración (lo que
+  sigue a la versión) sea único, y cada guardado del SQL genera una nueva
+  (bug real 2026-09-25: el segundo guardado de la misma vista dejó dos
+  `*_vista_pty_sql_x.exs` y `Phoenix.Ecto.CheckRepoStatus` tumbaba toda
+  pantalla en dev). Mismo patrón que `crear_pty_x_<ts>` de los catálogos.
+  """
+  def ruta_migracion(accion, nombre, timestamp) when accion in ["vista", "eliminar_vista"],
+    do: "priv/repo/migrations/#{timestamp}_#{accion}_#{nombre}_#{timestamp}.exs"
+
   defp escribir_y_correr_archivo(nombre, sql) do
     timestamp = CatalogoGenerador.timestamp_migracion()
-    path = "priv/repo/migrations/#{timestamp}_vista_#{nombre}.exs"
+    path = ruta_migracion("vista", nombre, timestamp)
     File.write!(path, contenido_migracion(nombre, sql, timestamp))
 
     try do
@@ -610,7 +621,7 @@ defmodule MetadataApp.ConsultasSql do
 
   defp escribir_y_correr_archivo_baja(nombre) do
     timestamp = CatalogoGenerador.timestamp_migracion()
-    path = "priv/repo/migrations/#{timestamp}_eliminar_vista_#{nombre}.exs"
+    path = ruta_migracion("eliminar_vista", nombre, timestamp)
     modulo = "EliminarVistaPtySql" <> Macro.camelize(String.replace_prefix(nombre, @prefijo, "")) <> timestamp
 
     File.write!(path, """
