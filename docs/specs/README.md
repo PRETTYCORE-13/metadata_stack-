@@ -206,3 +206,10 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   Unit) y Reparto (Almacén) — cada uno con sus Excepciones puntuales.
   `01.requirements.md`/`02.design.md`/`03.tasks.md` escritos, pendiente
   de ejecución (Grupos A-F).
+- [`SPEC-SYS-2509202603-jerarquia-organizacional/`](SPEC-SYS-2509202603-jerarquia-organizacional/) —
+  documentación retroactiva de `/sysadmin/jerarquia`: catálogo base
+  Empresa → Sucursal → (Unidad de venta / Ubicación de inventario),
+  hasta la pantalla del menú "Jerarquía organizacional" — no incluye
+  Alcance de Datos por usuario ni Configuración de Sales Unit, que la
+  consumen desde specs propias. Sin `tasks.md` a propósito (nada que
+  construir, comportamiento ya existente).
