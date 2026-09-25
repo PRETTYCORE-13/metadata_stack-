@@ -2929,7 +2929,8 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # campos de negocio que se muestran junto al título de la Ficha 360°
   # (solo los VALORES, sin etiqueta -- ver FichaLive), para poder
   # reconocer un registro más allá del id interno. [] = sin configurar,
-  # FichaLive cae a los campos del índice único de negocio real. Mismo
+  # la Ficha no muestra nada ahí (a pedido explícito -- se probó un
+  # fallback automático al índice único de negocio y se descartó). Mismo
   # patrón visual que panel_orden_resultados/1, sin dirección (acá el
   # orden de la lista es directamente el orden de aparición) y con un
   # tope duro de 3 -- agregar/el selector desaparecen al llegar al tope.
@@ -2943,7 +2944,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       </summary>
       <p class="text-xs text-gray-400 mb-3 mt-2">
         Hasta 3 campos que se muestran junto al título de la Ficha, para reconocer un registro sin depender del id interno
-        (solo se ve el valor, no el nombre del campo). Sin nada elegido acá, el sistema usa los campos del índice único de negocio.
+        (solo se ve el valor, no el nombre del campo). Sin nada elegido acá, no se muestra nada ahí.
       </p>
 
       <ul :if={@header.campos_llave_ficha != []} class="flex flex-col gap-1.5 mb-3">
@@ -2958,7 +2959,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
             class="w-6 h-6 rounded border border-gray-300 text-red-600 hover:bg-red-50 flex-shrink-0" title="Quitar">×</button>
         </li>
       </ul>
-      <p :if={@header.campos_llave_ficha == []} class="text-xs text-gray-400 mb-3">Sin configurar — se usan los campos del índice único de negocio.</p>
+      <p :if={@header.campos_llave_ficha == []} class="text-xs text-gray-400 mb-3">Sin configurar — no se muestra nada junto al título.</p>
 
       <div :if={length(@header.campos_llave_ficha) < 3} class="relative inline-block">
         <button type="button" phx-click="abrir_selector_llave_ficha" class="text-purple-700 hover:text-purple-900 font-semibold text-sm">

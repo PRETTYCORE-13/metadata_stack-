@@ -31,7 +31,7 @@ defmodule MetadataAppWeb.FichaLive do
   alias MetadataApp.Repo
   alias MetadataApp.Autenticacion
   alias MetadataApp.Autenticacion.{Scope, Empresa}
-  alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerico, CatalogoGenerador}
+  alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerico}
   alias MetadataApp.MetaStateEngine
   alias MetadataApp.MetaAuditoria
   alias MetadataApp.Renglones
@@ -1333,28 +1333,15 @@ defmodule MetadataAppWeb.FichaLive do
 
   # "Llave de identificación" junto al título de la Ficha 360° (2026-09-25,
   # a pedido explícito, viendo "Catálogo de productos #69" sin ninguna
-  # pista de CUÁL producto es más allá del id interno) -- primero se
-  # probó automática (todos los campos del índice único de negocio real),
-  # pero el usuario pidió acotarla a máximo 3 campos elegidos a mano
-  # (Header.campos_llave_ficha, BcMotorLive.panel_llave_ficha/1) y mostrar
-  # solo el VALOR, nunca el nombre del campo -- se muestra tal cual el
-  # admin la ordenó ahí. [] = sin configurar todavía: cae a los campos del
-  # índice único real (CatalogoGenerador.campos_indice_unico/1, leído de
-  # Postgres -- un catálogo con campos agregados después de creado puede
-  # tener un índice más angosto que sus campos de negocio actuales),
-  # "encabezado_id" excluido (FK sintético de un catálogo detalle, no un
-  # campo de negocio reconocible), acotado a los primeros 3 igual.
+  # pista de CUÁL producto es más allá del id interno) -- máximo 3 campos
+  # elegidos a mano (Header.campos_llave_ficha, BcMotorLive.panel_llave_ficha/1),
+  # mostrando solo el VALOR, nunca el nombre del campo, en el orden que
+  # el admin los dejó ahí. [] = sin configurar -- no se muestra NADA (a
+  # pedido explícito, se probó antes con un fallback automático al
+  # índice único de negocio y se descartó: mejor no mostrar nada a
+  # mostrar algo que nadie eligió a propósito).
   defp llave_negocio(header, registro) do
     header.campos_llave_ficha
-    |> then(fn
-      [] ->
-        header.schema_context_name
-        |> CatalogoGenerador.campos_indice_unico()
-        |> Enum.reject(&(&1 == "encabezado_id"))
-
-      configurados ->
-        configurados
-    end)
     |> Enum.take(3)
     |> Enum.map(&(registro |> Map.get(String.to_existing_atom(&1)) |> to_string()))
     |> Enum.reject(&(&1 == ""))

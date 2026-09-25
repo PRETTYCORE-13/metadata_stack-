@@ -115,12 +115,12 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
 
     # "Llave de identificación" de la Ficha 360° (BC Motor, 2026-09-25) --
     # hasta 3 campos de negocio elegidos a mano, mostrados junto al título
-    # ("Catálogo de productos #69 · Descripción: ... · Unidad: ...") para
-    # poder reconocer un registro más allá del id interno. Mismo criterio
-    # que orden_resultados: [] = sin configurar (FichaLive.llave_negocio/2
-    # cae a los campos del índice único de negocio real, ver
-    # CatalogoGenerador.campos_indice_unico/1). Orden = orden de
-    # aparición, igual que orden_resultados.
+    # ("Catálogo de productos #69 · Arroz Morelos 1kg · Paq") para poder
+    # reconocer un registro más allá del id interno -- se ve solo el
+    # VALOR, nunca el nombre del campo. [] = sin configurar, no se
+    # muestra nada (a pedido explícito -- se probó un fallback automático
+    # al índice único de negocio y se descartó). Orden = orden de
+    # aparición, mismo criterio que orden_resultados.
     field :campos_llave_ficha, {:array, :string}, default: []
 
     # Catálogo Maestro-Detalle (ver docs/catalogo-maestro-detalle-requerimientos.md,

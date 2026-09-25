@@ -913,38 +913,6 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   # generado (MetaCatalogoGenerico), para que nunca puedan desincronizarse.
   def nombre_indice_unico(tabla), do: "#{tabla}_unico_index"
 
-  @doc """
-  Columnas REALES (orden incluido) del índice único de negocio de un
-  catálogo, leídas directo de Postgres (`pg_index`/`pg_attribute`) en vez
-  de derivarlas de `meta_schema_detail` — a propósito (2026-09-25, a
-  pedido explícito, ver FichaLive: "llaves primarias del registro" junto
-  al título de la Ficha 360°): `asegurar_campos_nuevos/1` nunca ensancha
-  este índice al agregar un campo nuevo (ver `indice_unico_negocio/4`
-  arriba, se crea una sola vez al generar la tabla) -- con el tiempo el
-  índice real puede terminar siendo un SUBCONJUNTO de los campos de
-  negocio actuales del catálogo. Devuelve `[]` si el catálogo no tiene
-  este índice (`requiere_folio: true`, ver `indice_unico_negocio/4`) o si
-  la tabla todavía no existe físicamente.
-  """
-  def campos_indice_unico(tabla) do
-    %{rows: rows} =
-      Repo.query!(
-        """
-        SELECT a.attname
-        FROM pg_index ix
-        JOIN pg_class i ON i.oid = ix.indexrelid
-        JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = ANY(ix.indkey)
-        WHERE i.relname = $1
-        ORDER BY array_position(ix.indkey, a.attnum)
-        """,
-        [nombre_indice_unico(tabla)]
-      )
-
-    Enum.map(rows, fn [nombre] -> nombre end)
-  rescue
-    Postgrex.Error -> []
-  end
-
   # Valida que todo detalle tipo "referencia" apunte a un catálogo ya
   # registrado (no se puede crear una FK a una tabla que no existe todavía).
   # Map.get en vez de Map.fetch!: un detalle "referencia" sin "catalogo"
