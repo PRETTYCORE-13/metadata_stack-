@@ -94,6 +94,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       |> assign(:reglas_mensajes, %{"pre" => nil, "post" => nil})
       |> assign(:compilar_disponible, MetaReglasCodigo.compilar_disponible?())
       |> assign(:selector_orden_resultados_abierto, false)
+      |> assign(:selector_llave_ficha_abierto, false)
       |> assign(:modos_fecha_rango, FiltrosDefault.modos_fecha_rango())
       |> assign(:modos_fecha_simple, FiltrosDefault.modos_fecha_simple())
 
@@ -1332,6 +1333,76 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     |> Enum.reject(&MapSet.member?(ya_usados, &1.schema_context_field))
   end
 
+  # --- Get View: "Llave de identificación" (Ficha 360°) -------------------
+  # Mismo mecanismo que "Orden de resultados" arriba, pero sobre
+  # Header.campos_llave_ficha (lista simple de nombres, sin dirección) y
+  # con un tope duro de 3 (a pedido explícito, ver header.ex) -- el botón
+  # de agregar/el selector ni se muestran una vez alcanzado el tope.
+
+  def handle_event("abrir_selector_llave_ficha", _params, socket) do
+    {:noreply, assign(socket, :selector_llave_ficha_abierto, true)}
+  end
+
+  def handle_event("cerrar_selector_llave_ficha", _params, socket) do
+    {:noreply, assign(socket, :selector_llave_ficha_abierto, false)}
+  end
+
+  def handle_event("agregar_llave_ficha", %{"campo" => campo}, socket) do
+    if length(socket.assigns.header.campos_llave_ficha) >= 3 do
+      {:noreply, socket}
+    else
+      nuevos = socket.assigns.header.campos_llave_ficha ++ [campo]
+      guardar_llave_ficha(socket, nuevos, close: true)
+    end
+  end
+
+  def handle_event("quitar_llave_ficha", %{"indice" => indice}, socket) do
+    nuevos = List.delete_at(socket.assigns.header.campos_llave_ficha, String.to_integer(indice))
+    guardar_llave_ficha(socket, nuevos, close: false)
+  end
+
+  def handle_event("mover_llave_ficha", %{"indice" => indice, "direccion" => direccion}, socket) do
+    indice = String.to_integer(indice)
+    actual_lista = socket.assigns.header.campos_llave_ficha
+    destino = if direccion == "arriba", do: indice - 1, else: indice + 1
+
+    if destino >= 0 and destino < length(actual_lista) do
+      actual = Enum.at(actual_lista, indice)
+      vecino = Enum.at(actual_lista, destino)
+      nuevos = actual_lista |> List.replace_at(indice, vecino) |> List.replace_at(destino, actual)
+      guardar_llave_ficha(socket, nuevos, close: false)
+    else
+      {:noreply, socket}
+    end
+  end
+
+  defp guardar_llave_ficha(socket, nuevos, opciones) do
+    case MetaSchemaContext.actualizar_header(socket.assigns.header, %{"campos_llave_ficha" => nuevos}) do
+      {:ok, header} ->
+        socket = assign(socket, :header, header)
+        socket = if opciones[:close], do: assign(socket, :selector_llave_ficha_abierto, false), else: socket
+        {:noreply, socket}
+
+      {:error, changeset} ->
+        {:noreply, put_flash(socket, :error, "No se pudo guardar la llave de identificación: #{resumen_errores(changeset)}")}
+    end
+  end
+
+  defp etiqueta_llave_ficha(campos, campo) do
+    case Enum.find(campos, &(&1.schema_context_field == campo)) do
+      nil -> "#{campo} (columna eliminada)"
+      detalle -> Map.get(detalle.schema_context_properties, "etiqueta") || campo
+    end
+  end
+
+  defp campos_disponibles_llave_ficha(campos, campos_llave_ficha) do
+    ya_usados = MapSet.new(campos_llave_ficha)
+
+    campos
+    |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
+    |> Enum.reject(&MapSet.member?(ya_usados, &1.schema_context_field))
+  end
+
   # --- Estados: agregar/editar/eliminar ----------------------------------------
 
   # El botón ya viene disabled en tabla_estados/1 mientras no haya Campos
@@ -2167,6 +2238,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       <div id="motor-panel-getview" class="hidden">
         <.panel_get_view campos={@campos} header={@header} selector_orden_resultados_abierto={@selector_orden_resultados_abierto}
+          selector_llave_ficha_abierto={@selector_llave_ficha_abierto}
           modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple}
           catalogos_referenciables={@catalogos_referenciables} detalles_por_catalogo={@detalles_por_catalogo} />
         <.panel_campos_default header={@header} />
@@ -2670,6 +2742,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # negocio (schema_context_properties), que sigue intacto para la
   # pestaña Campos/Ficha/contrato de API.
   attr :selector_orden_resultados_abierto, :boolean, required: true
+  attr :selector_llave_ficha_abierto, :boolean, required: true
   attr :modos_fecha_rango, :list, required: true
   attr :modos_fecha_simple, :list, required: true
   attr :catalogos_referenciables, :list, required: true
@@ -2779,6 +2852,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       </details>
 
       <.panel_orden_resultados campos={@campos} header={@header} selector_abierto={@selector_orden_resultados_abierto} />
+      <.panel_llave_ficha campos={@campos} header={@header} selector_abierto={@selector_llave_ficha_abierto} />
     </div>
     """
   end
@@ -2840,6 +2914,65 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
               {Map.get(c.schema_context_properties, "etiqueta") || c.schema_context_field}
             </button>
             <p :if={campos_disponibles_orden_resultados(@campos, @header.orden_resultados) == []} class="px-3 py-2 text-gray-400 text-xs">Ya agregaste todas las columnas.</p>
+          </div>
+        <% end %>
+      </div>
+    </details>
+    """
+  end
+
+  attr :campos, :list, required: true
+  attr :header, :any, required: true
+  attr :selector_abierto, :boolean, required: true
+
+  # "Llave de identificación" (2026-09-25, a pedido explícito) -- hasta 3
+  # campos de negocio que se muestran junto al título de la Ficha 360°
+  # (solo los VALORES, sin etiqueta -- ver FichaLive), para poder
+  # reconocer un registro más allá del id interno. [] = sin configurar,
+  # FichaLive cae a los campos del índice único de negocio real. Mismo
+  # patrón visual que panel_orden_resultados/1, sin dirección (acá el
+  # orden de la lista es directamente el orden de aparición) y con un
+  # tope duro de 3 -- agregar/el selector desaparecen al llegar al tope.
+  defp panel_llave_ficha(assigns) do
+    ~H"""
+    <details id="get-view-llave-ficha" phx-hook="RecordarSeccion" class="group bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
+      <summary class="text-[11px] font-bold uppercase tracking-wide text-gray-400 flex items-center gap-1.5 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+        <span class="material-symbols-outlined text-gray-400 transition-transform group-open:rotate-90" style="font-size: 15px">chevron_right</span>
+        <span class="material-symbols-outlined" style="font-size: 15px">key</span>
+        Llave de identificación (Ficha 360°)
+      </summary>
+      <p class="text-xs text-gray-400 mb-3 mt-2">
+        Hasta 3 campos que se muestran junto al título de la Ficha, para reconocer un registro sin depender del id interno
+        (solo se ve el valor, no el nombre del campo). Sin nada elegido acá, el sistema usa los campos del índice único de negocio.
+      </p>
+
+      <ul :if={@header.campos_llave_ficha != []} class="flex flex-col gap-1.5 mb-3">
+        <li :for={{campo, indice} <- Enum.with_index(@header.campos_llave_ficha)} class="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
+          <span class="text-gray-400 font-mono w-4 text-center flex-shrink-0">{indice + 1}</span>
+          <span class="flex-1 min-w-0 text-gray-900 truncate">{etiqueta_llave_ficha(@campos, campo)}</span>
+          <button type="button" phx-click="mover_llave_ficha" phx-value-indice={indice} phx-value-direccion="arriba" disabled={indice == 0}
+            class="w-6 h-6 rounded border border-gray-300 text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0" title="Subir">↑</button>
+          <button type="button" phx-click="mover_llave_ficha" phx-value-indice={indice} phx-value-direccion="abajo" disabled={indice == length(@header.campos_llave_ficha) - 1}
+            class="w-6 h-6 rounded border border-gray-300 text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0" title="Bajar">↓</button>
+          <button type="button" phx-click="quitar_llave_ficha" phx-value-indice={indice}
+            class="w-6 h-6 rounded border border-gray-300 text-red-600 hover:bg-red-50 flex-shrink-0" title="Quitar">×</button>
+        </li>
+      </ul>
+      <p :if={@header.campos_llave_ficha == []} class="text-xs text-gray-400 mb-3">Sin configurar — se usan los campos del índice único de negocio.</p>
+
+      <div :if={length(@header.campos_llave_ficha) < 3} class="relative inline-block">
+        <button type="button" phx-click="abrir_selector_llave_ficha" class="text-purple-700 hover:text-purple-900 font-semibold text-sm">
+          + Agregar campo
+        </button>
+        <%= if @selector_abierto do %>
+          <div class="fixed inset-0 z-40" phx-click="cerrar_selector_llave_ficha"></div>
+          <div class="absolute left-0 bottom-full mb-1 w-64 max-h-56 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-1">
+            <button :for={c <- campos_disponibles_llave_ficha(@campos, @header.campos_llave_ficha)} type="button"
+              phx-click="agregar_llave_ficha" phx-value-campo={c.schema_context_field}
+              class="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-purple-50 hover:text-purple-700 text-xs">
+              {Map.get(c.schema_context_properties, "etiqueta") || c.schema_context_field}
+            </button>
+            <p :if={campos_disponibles_llave_ficha(@campos, @header.campos_llave_ficha) == []} class="px-3 py-2 text-gray-400 text-xs">Ya agregaste todos los campos disponibles.</p>
           </div>
         <% end %>
       </div>

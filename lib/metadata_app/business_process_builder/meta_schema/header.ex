@@ -113,6 +113,16 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # tienen una columna física con el mismo nombre que su clave lógica.
     field :orden_resultados, {:array, :map}, default: []
 
+    # "Llave de identificación" de la Ficha 360° (BC Motor, 2026-09-25) --
+    # hasta 3 campos de negocio elegidos a mano, mostrados junto al título
+    # ("Catálogo de productos #69 · Descripción: ... · Unidad: ...") para
+    # poder reconocer un registro más allá del id interno. Mismo criterio
+    # que orden_resultados: [] = sin configurar (FichaLive.llave_negocio/2
+    # cae a los campos del índice único de negocio real, ver
+    # CatalogoGenerador.campos_indice_unico/1). Orden = orden de
+    # aparición, igual que orden_resultados.
+    field :campos_llave_ficha, {:array, :string}, default: []
+
     # Catálogo Maestro-Detalle (ver docs/catalogo-maestro-detalle-requerimientos.md,
     # R1/R16) — no nulo implica "este catálogo es detalle de otro". No se
     # reusó schema_context_type (ya usa 2 para "carpeta", otra dimensión)
@@ -169,10 +179,12 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
           :mostrar_sales_unit_en_tabla,
           :mostrar_creado_por_en_tabla,
           :orden_columnas_tabla,
-          :orden_resultados
+          :orden_resultados,
+          :campos_llave_ficha
         ]
     )
     |> validate_required(@requeridos)
+    |> validate_length(:campos_llave_ficha, max: 3, message: "no puede tener más de 3 campos")
     |> update_change(:codigo_trn, &nil_si_vacio_o_mayusculas/1)
     |> validar_codigo_trn()
     |> validar_requiere_folio()

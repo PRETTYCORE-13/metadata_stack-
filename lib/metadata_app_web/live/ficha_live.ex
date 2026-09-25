@@ -1290,7 +1290,7 @@ defmodule MetadataAppWeb.FichaLive do
       end
 
     relaciones = cargar_relaciones(socket.assigns[:current_scope], tabla, registro.id)
-    llave_negocio = llave_negocio(tabla, registro)
+    llave_negocio = llave_negocio(header, registro)
 
     # Catálogo Maestro-Detalle: mismo criterio que ya usa CatalogoLive
     # (catalogos_detalle + detalle_renglones) — antes solo se podía
@@ -1331,32 +1331,33 @@ defmodule MetadataAppWeb.FichaLive do
     |> assign(:acciones_externas, acciones_externas_permitidas(socket, header))
   end
 
-  # "Llaves primarias del registro" junto al título de la Ficha 360°
-  # (2026-09-25, a pedido explícito, viendo "Catálogo de productos #69"
-  # sin ninguna pista de CUÁL producto es más allá del id interno) --
-  # los campos que de verdad identifican el registro de forma única son
-  # los del índice único de negocio REAL (CatalogoGenerador.campos_indice_unico/1,
-  # leído de Postgres, no de meta_schema_detail -- ver ese doc para el
-  # motivo: un catálogo con campos agregados después de creado puede
-  # tener un índice más angosto que sus campos de negocio actuales).
-  # "encabezado_id" se excluye -- es el FK sintético que el generador le
-  # agrega SOLO a un catálogo detalle, no un campo de negocio real que
-  # el usuario reconozca. Catálogos con requiere_folio: true no tienen
-  # este índice -- devuelve [] y la UI simplemente no muestra nada extra.
-  defp llave_negocio(tabla, registro) do
-    etiquetas =
-      tabla
-      |> MetaSchemaContext.listar_detalles()
-      |> Map.new(&{&1.schema_context_field, get_in(&1.schema_context_properties, ["etiqueta"]) || &1.schema_context_field})
+  # "Llave de identificación" junto al título de la Ficha 360° (2026-09-25,
+  # a pedido explícito, viendo "Catálogo de productos #69" sin ninguna
+  # pista de CUÁL producto es más allá del id interno) -- primero se
+  # probó automática (todos los campos del índice único de negocio real),
+  # pero el usuario pidió acotarla a máximo 3 campos elegidos a mano
+  # (Header.campos_llave_ficha, BcMotorLive.panel_llave_ficha/1) y mostrar
+  # solo el VALOR, nunca el nombre del campo -- se muestra tal cual el
+  # admin la ordenó ahí. [] = sin configurar todavía: cae a los campos del
+  # índice único real (CatalogoGenerador.campos_indice_unico/1, leído de
+  # Postgres -- un catálogo con campos agregados después de creado puede
+  # tener un índice más angosto que sus campos de negocio actuales),
+  # "encabezado_id" excluido (FK sintético de un catálogo detalle, no un
+  # campo de negocio reconocible), acotado a los primeros 3 igual.
+  defp llave_negocio(header, registro) do
+    header.campos_llave_ficha
+    |> then(fn
+      [] ->
+        header.schema_context_name
+        |> CatalogoGenerador.campos_indice_unico()
+        |> Enum.reject(&(&1 == "encabezado_id"))
 
-    tabla
-    |> CatalogoGenerador.campos_indice_unico()
-    |> Enum.reject(&(&1 == "encabezado_id"))
-    |> Enum.map(fn campo ->
-      valor = registro |> Map.get(String.to_existing_atom(campo)) |> to_string()
-      %{etiqueta: Map.get(etiquetas, campo, campo), valor: valor}
+      configurados ->
+        configurados
     end)
-    |> Enum.reject(&(&1.valor == ""))
+    |> Enum.take(3)
+    |> Enum.map(&(registro |> Map.get(String.to_existing_atom(&1)) |> to_string()))
+    |> Enum.reject(&(&1 == ""))
   end
 
   # RBAC (Fase 7 de "Integraciones") — mismo criterio que
@@ -1857,8 +1858,8 @@ defmodule MetadataAppWeb.FichaLive do
               </div>
               <h1 :if={@modo == :ver} class="text-base font-bold text-gray-900">{@header.schema_context_label} #{@registro.id}</h1>
               <div :if={@modo == :ver} class="flex items-center flex-wrap gap-2 text-xs text-gray-500">
-                <span :if={@llave_negocio != []} title="Campos del índice único de negocio de este catálogo">
-                  {Enum.map_join(@llave_negocio, " · ", fn %{etiqueta: etiqueta, valor: valor} -> "#{etiqueta}: #{valor}" end)}
+                <span :if={@llave_negocio != []}>
+                  {Enum.join(@llave_negocio, " · ")}
                 </span>
                 <span :for={{etiqueta, valor} <- @contexto_alcance}
                   class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-500"
