@@ -1961,7 +1961,7 @@ defmodule MetadataAppWeb.FichaLive do
         edicion={%{valores: @form_values, errores: @errores_campos, contexto: @contexto_formula, calculados: @valores_calculados, opciones_alcance: @opciones_alcance, scope: @current_scope}} />
       <.tab_relaciones :if={@tab == "relaciones"} relaciones={@relaciones} />
       <.tab_historial :if={@tab == "historial"} historial={@historial} estados_por_id={@estados_por_id} />
-      <.tab_detalle :if={@tab == "detalle"} modo={@modo} catalogos_detalle={@catalogos_detalle} detalle_renglones={@detalle_renglones}
+      <.tab_detalle :if={@catalogos_detalle != []} tab_activo={@tab} modo={@modo} catalogos_detalle={@catalogos_detalle} detalle_renglones={@detalle_renglones}
         otras_transiciones={@otras_transiciones} detalle_form_error={@detalle_form_error} estados_por_id={@estados_por_id}
         detalle_seleccion={@detalle_seleccion} detalle_campos_editables={@detalle_campos_editables} detalle_catalogo_activo={@detalle_catalogo_activo} />
       </div>
@@ -4032,6 +4032,7 @@ defmodule MetadataAppWeb.FichaLive do
     """
   end
 
+  attr :tab_activo, :string, required: true
   attr :modo, :atom, required: true
   attr :catalogos_detalle, :list, required: true
   attr :detalle_renglones, :map, required: true
@@ -4049,17 +4050,30 @@ defmodule MetadataAppWeb.FichaLive do
   # quedaban todos apilados verticalmente en la misma pestaña, cada vez
   # más largo cuantos más detalles tuviera el catálogo; ahora se arman
   # sub-pestañas (mismo patrón visual que las pestañas de arriba,
-  # Datos/Detalle/Relaciones) y se muestra solo la del catálogo activo
-  # (@detalle_catalogo_activo, ver cambiar_detalle_catalogo/3). El
-  # formulario nunca es un modal ni una fila expandida — siempre muestra
-  # el renglón "seleccionado" en la tabla de al lado (ver
-  # panel_detalle_catalogo/1).
+  # Datos/Detalle/Relaciones). El formulario nunca es un modal ni una fila
+  # expandida — siempre muestra el renglón "seleccionado" en la tabla de
+  # al lado (ver panel_detalle_catalogo/1).
+  #
+  # Bug real (2026-09-25, a pedido explícito -- "al hacer un registro con
+  # detalle e ingresar datos en este y regresar al encabezado, borra los
+  # datos"): esta pestaña (y cada panel de sub-catálogo) se montaba/
+  # desmontaba con `:if` al cambiar de pestaña o de sub-catálogo activo.
+  # `GridEditableComponents.grid` usa `phx-update="ignore"` — el hook JS
+  # GridEditable es el único dueño de ese DOM, y arranca su estado
+  # SOLO desde `data-filas` (filas YA persistidas, ver mounted() del
+  # hook). Cualquier fila nueva tipeada en modo alta vive nada más que en
+  # memoria del hook hasta el próximo `grid_sync` -- al desmontarse (el
+  # `:if` sacándolo del DOM), esa memoria se pierde para siempre, aunque
+  # el usuario nunca haya tocado "Guardar": volver a la pestaña remonta
+  # el hook desde cero, vacío. Por eso ahora TODO panel de detalle queda
+  # montado siempre que el catálogo tenga alguno (`:if={@catalogos_detalle
+  # != []}` en el call site) — se oculta con el atributo `hidden`, nunca
+  # se desmonta, así el hook nunca reinicia su memoria. `detalle_seleccion`
+  # ya es un mapa por catálogo (soporta esto de una); `detalle_campos_editables`
+  # es agnóstico del catálogo activo (viene de la transición del maestro).
   defp tab_detalle(assigns) do
-    assigns =
-      assign(assigns, :cat_activo, Enum.find(assigns.catalogos_detalle, &(&1.nombre == assigns.detalle_catalogo_activo)))
-
     ~H"""
-    <div class="space-y-4">
+    <div class="space-y-4" hidden={@tab_activo != "detalle"}>
       <div :if={@detalle_form_error} class="bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2">{@detalle_form_error}</div>
 
       <div :if={length(@catalogos_detalle) > 1} class="flex items-center gap-1 border-b border-gray-200">
@@ -4073,15 +4087,16 @@ defmodule MetadataAppWeb.FichaLive do
         </button>
       </div>
 
-      <.panel_detalle_catalogo :if={@cat_activo} cat={@cat_activo}
-        filas={Map.get(@detalle_renglones, @cat_activo.nombre, [])} otras_transiciones={@otras_transiciones}
-        estados_por_id={@estados_por_id} seleccion={Map.get(@detalle_seleccion, @cat_activo.nombre)}
+      <.panel_detalle_catalogo :for={cat <- @catalogos_detalle} cat={cat} activo={cat.nombre == @detalle_catalogo_activo}
+        filas={Map.get(@detalle_renglones, cat.nombre, [])} otras_transiciones={@otras_transiciones}
+        estados_por_id={@estados_por_id} seleccion={Map.get(@detalle_seleccion, cat.nombre)}
         campos_editables={@detalle_campos_editables} />
     </div>
     """
   end
 
   attr :cat, :map, required: true
+  attr :activo, :boolean, default: true
   attr :filas, :list, required: true
   attr :otras_transiciones, :list, required: true
   attr :estados_por_id, :map, required: true
@@ -4101,8 +4116,13 @@ defmodule MetadataAppWeb.FichaLive do
 
     assigns = assign(assigns, :id_fisico, id_fisico)
 
+    # `hidden`, nunca `:if` -- ver el comentario de tab_detalle/1: sacar
+    # este panel del DOM (con más de un catálogo detalle, al cambiar de
+    # sub-pestaña) desmontaría el hook GridEditable del catálogo que
+    # dejó de estar activo y perdería cualquier fila nueva sin sincronizar
+    # todavía.
     ~H"""
-    <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+    <div class="bg-white border border-gray-200 rounded-xl overflow-hidden" hidden={!@activo}>
       <div class="px-4 py-2.5 border-b border-gray-100 bg-gray-50">
         <span class="font-bold text-gray-700 text-sm">{@cat.etiqueta}</span>
       </div>
