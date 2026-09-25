@@ -31,7 +31,7 @@ defmodule MetadataAppWeb.FichaLive do
   alias MetadataApp.Repo
   alias MetadataApp.Autenticacion
   alias MetadataApp.Autenticacion.{Scope, Empresa}
-  alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerico}
+  alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerico, CatalogoGenerador}
   alias MetadataApp.MetaStateEngine
   alias MetadataApp.MetaAuditoria
   alias MetadataApp.Renglones
@@ -193,6 +193,10 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:otras_transiciones, [])
          |> assign(:relaciones, [])
          |> assign(:relaciones_total, 0)
+         # Llave de negocio (2026-09-25, a pedido explícito) -- solo tiene
+         # sentido para un registro YA PERSISTIDO (ver llave_negocio/2,
+         # cargar_registro/2), acá vacía nada más para que el assign exista.
+         |> assign(:llave_negocio, [])
          |> assign(:historial, [])
          |> assign(:form_values, form_values_iniciales)
          |> assign(:errores_campos, %{})
@@ -1286,6 +1290,7 @@ defmodule MetadataAppWeb.FichaLive do
       end
 
     relaciones = cargar_relaciones(socket.assigns[:current_scope], tabla, registro.id)
+    llave_negocio = llave_negocio(tabla, registro)
 
     # Catálogo Maestro-Detalle: mismo criterio que ya usa CatalogoLive
     # (catalogos_detalle + detalle_renglones) — antes solo se podía
@@ -1313,6 +1318,7 @@ defmodule MetadataAppWeb.FichaLive do
     |> assign(:otras_transiciones, otras_transiciones)
     |> assign(:relaciones, relaciones)
     |> assign(:relaciones_total, Enum.sum(Enum.map(relaciones, & &1.total)))
+    |> assign(:llave_negocio, llave_negocio)
     |> assign(:historial, cargar_historial(header.id, registro.id, catalogos_detalle, detalle_renglones))
     |> assign(:catalogos_detalle, catalogos_detalle)
     |> assign(:detalle_catalogo_activo, catalogo_detalle_activo_default(catalogos_detalle))
@@ -1323,6 +1329,34 @@ defmodule MetadataAppWeb.FichaLive do
     |> assign(:detalle_seleccion, %{})
     |> assign(:detalle_form_error, nil)
     |> assign(:acciones_externas, acciones_externas_permitidas(socket, header))
+  end
+
+  # "Llaves primarias del registro" junto al título de la Ficha 360°
+  # (2026-09-25, a pedido explícito, viendo "Catálogo de productos #69"
+  # sin ninguna pista de CUÁL producto es más allá del id interno) --
+  # los campos que de verdad identifican el registro de forma única son
+  # los del índice único de negocio REAL (CatalogoGenerador.campos_indice_unico/1,
+  # leído de Postgres, no de meta_schema_detail -- ver ese doc para el
+  # motivo: un catálogo con campos agregados después de creado puede
+  # tener un índice más angosto que sus campos de negocio actuales).
+  # "encabezado_id" se excluye -- es el FK sintético que el generador le
+  # agrega SOLO a un catálogo detalle, no un campo de negocio real que
+  # el usuario reconozca. Catálogos con requiere_folio: true no tienen
+  # este índice -- devuelve [] y la UI simplemente no muestra nada extra.
+  defp llave_negocio(tabla, registro) do
+    etiquetas =
+      tabla
+      |> MetaSchemaContext.listar_detalles()
+      |> Map.new(&{&1.schema_context_field, get_in(&1.schema_context_properties, ["etiqueta"]) || &1.schema_context_field})
+
+    tabla
+    |> CatalogoGenerador.campos_indice_unico()
+    |> Enum.reject(&(&1 == "encabezado_id"))
+    |> Enum.map(fn campo ->
+      valor = registro |> Map.get(String.to_existing_atom(campo)) |> to_string()
+      %{etiqueta: Map.get(etiquetas, campo, campo), valor: valor}
+    end)
+    |> Enum.reject(&(&1.valor == ""))
   end
 
   # RBAC (Fase 7 de "Integraciones") — mismo criterio que
@@ -1823,7 +1857,9 @@ defmodule MetadataAppWeb.FichaLive do
               </div>
               <h1 :if={@modo == :ver} class="text-base font-bold text-gray-900">{@header.schema_context_label} #{@registro.id}</h1>
               <div :if={@modo == :ver} class="flex items-center flex-wrap gap-2 text-xs text-gray-500">
-                <span>{@relaciones_total} relaciones</span>
+                <span :if={@llave_negocio != []} title="Campos del índice único de negocio de este catálogo">
+                  {Enum.map_join(@llave_negocio, " · ", fn %{etiqueta: etiqueta, valor: valor} -> "#{etiqueta}: #{valor}" end)}
+                </span>
                 <span :for={{etiqueta, valor} <- @contexto_alcance}
                   class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-500"
                   title={etiqueta}>
