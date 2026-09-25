@@ -26,7 +26,7 @@ end
 # también se puede probar sin recompilar.
 config :metadata_app, :nombre_empresa, System.get_env("NOMBRE_EMPRESA", "DemoCore Sa. de C.V")
 
-# Versión visible en el pie de página (SPEC-SYS-1809202603 R11) — hash
+# Versión visible en el pie de página (SPEC-ARQ-1809202603 R11) — hash
 # corto + fecha del commit que armó esta imagen (ci.yml los pasa como
 # build-args, Dockerfile los deja como ENV del contenedor). Vale para
 # todos los ambientes, no solo prod: sin esas env (dev local, mix test,
@@ -40,7 +40,7 @@ config :metadata_app, :version_footer,
 # Token de GitHub de SOLO LECTURA (scopes contents:read + actions:read,
 # nunca uno con permiso de disparar workflows) para que
 # MetadataApp.PropagacionContext consulte la API HTTP de GitHub en vez
-# de shellear `git`/`gh` (SPEC-SYS-1809202603 R9c) -- necesario porque
+# de shellear `git`/`gh` (SPEC-ARQ-1809202603 R9c) -- necesario porque
 # esta pantalla también se abre directo contra un pod ya desplegado, que
 # no tiene esos binarios instalados. Vale para todos los ambientes (no
 # solo prod), sin `raise` si falta: sin esta env, el resto de la app

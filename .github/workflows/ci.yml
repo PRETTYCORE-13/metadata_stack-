@@ -149,7 +149,7 @@ jobs:
           repo="${repo%[-._]}"
           echo "IMAGE_NAME=$repo" >> "$GITHUB_ENV"
 
-      # SPEC-SYS-1809202603 R11: hash corto + fecha del commit, para
+      # SPEC-ARQ-1809202603 R11: hash corto + fecha del commit, para
       # mostrar la versión en el pie de página de la app (cualquier
       # usuario, sin necesitar acceso a plataforma). Sobre el checkout
       # que este job ya tiene -- funciona con el shallow clone (depth=1)
@@ -193,7 +193,7 @@ jobs:
   # real 2026-08-28, "Actualizar ... en Docker Swarm" fallando en TODAS
   # las corridas recientes).
   #
-  # SPEC-SYS-0309202601 (Grupo E, §3): `metadata-stack-app` se recrea como
+  # SPEC-ARQ-0309202601 (Grupo E, §3): `metadata-stack-app` se recrea como
   # `metadata-unstable`, el primero de tres canales (unstable/testing/
   # stable) -- este job sigue siendo el único 100% automático (cada push a
   # main), y apunta SIEMPRE a unstable; propagar a testing/stable es manual

@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       sistema:
-        description: "Sistema de cliente destino (de priv/sistemas.json) — SPEC-SYS-0309202601, sin default, nunca un canal"
+        description: "Sistema de cliente destino (de priv/sistemas.json) — SPEC-ARQ-0309202601, sin default, nunca un canal"
         required: true
       catalogo:
         description: "Catálogo(s) raíz a desplegar (uno o varios separados por '-') — solo para identificar el run/tag, el paquete completo ya viene armado en el bundle"
@@ -145,7 +145,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # SPEC-SYS-1809202603 R11: mismo build-arg que ci.yml -- faltaba acá
+      # SPEC-ARQ-1809202603 R11: mismo build-arg que ci.yml -- faltaba acá
       # (encontrado real 2026-09-22: el footer de versión se quedaba vacío
       # en unstable después de publicar un BC, porque este workflow arma su
       # propia imagen `latest` sin pasar GIT_SHA_CORTO/GIT_SHA_FECHA, y su
@@ -178,7 +178,7 @@ jobs:
       # ya migrado a k3s, este workflow seguía con comandos viejos de
       # Swarm.
       #
-      # SPEC-SYS-0309202601 (2026-09-07): namespace/deployment fijos
+      # SPEC-ARQ-0309202601 (2026-09-07): namespace/deployment fijos
       # reemplazados por `metadata-${{ inputs.sistema }}` -- publicar un
       # catálogo ya no puede afectar accidentalmente a otro sistema. Se
       # despliega el tag ESPECÍFICO recién construido (`bc-<catalogo>-<run>`),

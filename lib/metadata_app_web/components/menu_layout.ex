@@ -361,7 +361,7 @@ defmodule MetadataAppWeb.MenuLayout do
 
       <div class="pc-footer">
         <span class="pc-footer-copyright">Prettycore {@anio_actual}</span>
-        <!-- SPEC-SYS-1809202603 R11: versión visible para cualquier usuario
+        <!-- SPEC-ARQ-1809202603 R11: versión visible para cualquier usuario
              autenticado -- hash corto + fecha del commit que armó esta
              imagen (config/runtime.exs, GIT_SHA_CORTO/GIT_SHA_FECHA). En
              dev/test esas env no existen -- @version_footer[:hash] da nil

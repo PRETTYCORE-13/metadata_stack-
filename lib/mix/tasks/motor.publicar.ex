@@ -18,7 +18,7 @@ defmodule Mix.Tasks.Motor.Publicar do
   `metadata_stack-` (ningún `pty_*` va a git, ver docs/roadmap.md
   #7 y la memoria de proyecto `project_git_cicd_pty_cleanup`).
 
-  `--sistema=` es OBLIGATORIO, sin default (SPEC-SYS-0309202601, R5) — con
+  `--sistema=` es OBLIGATORIO, sin default (SPEC-ARQ-0309202601, R5) — con
   varios sistemas de cliente en el mismo clúster, un default silencioso es
   la forma más fácil de mandarle una actualización al cliente equivocado.
   Se valida con `MetadataApp.MotorAlta.publicable?/1` antes de tocar nada

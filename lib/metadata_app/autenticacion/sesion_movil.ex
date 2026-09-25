@@ -1,6 +1,6 @@
 defmodule MetadataApp.Autenticacion.SesionMovil do
   @moduledoc """
-  Sesión de la app Flutter (SPEC-API-0409202601, design.md §2) -- el
+  Sesión de la app Flutter (SPEC-APP-0409202601, design.md §2) -- el
   refresh token de un login móvil. Mismo patrón que `UsuarioToken`
   (módulo puro: arma structs/queries, nunca llama a `Repo` -- eso vive
   en `MetadataApp.Autenticacion`) pero en tabla aparte, porque esta

@@ -46,7 +46,7 @@ defmodule MetadataApp.PanelControl.Cloudflare do
 
   @doc """
   Borra el registro A de `subdominio` en la zona de `dominio_base`, si
-  existe. Contraparte de `crear_registro_a/3` (SPEC-SYS-1709202603,
+  existe. Contraparte de `crear_registro_a/3` (SPEC-ARQ-1709202603,
   mecanismo de baja) -- idempotente a propósito, mismo criterio que el
   resto de este mecanismo: si el registro ya no existe (ej. una baja
   reintentada), no es error.

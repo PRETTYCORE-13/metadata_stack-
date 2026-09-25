@@ -35,7 +35,7 @@ defmodule MetadataApp.MotorAltaActualizacionTest do
     end
   end
 
-  # imagen_para_commit/1 (SPEC-SYS-1809202603 R8) usa "gh api" contra el
+  # imagen_para_commit/1 (SPEC-ARQ-1809202603 R8) usa "gh api" contra el
   # registro real de contenedores -- sin mock (mismo criterio que el resto
   # de este archivo), verificado real por separado (Grupo D, tarea 19).
   # Acá solo cubrimos lo que no depende de red: "gh" ausente del PATH.
@@ -53,7 +53,7 @@ defmodule MetadataApp.MotorAltaActualizacionTest do
     end
   end
 
-  # Guarda de idempotencia (SPEC-SYS-1809202603 R6-R7) -- fun_imagen_actual
+  # Guarda de idempotencia (SPEC-ARQ-1809202603 R6-R7) -- fun_imagen_actual
   # inyectada para no depender de SSH real (mismo criterio que
   # MotorAlta.Estado, ver estado_test.exs).
   describe "disparar_actualizacion/4 -- guarda de idempotencia" do

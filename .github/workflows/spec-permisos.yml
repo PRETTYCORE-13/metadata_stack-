@@ -1,0 +1,46 @@
+name: Permisos de SPEC
+
+# Cada commit que toca docs/specs/SPEC-<ÁREA>-* debe venir de alguien
+# con permiso en esa área (.github/spec-permisos.txt).
+#
+# Sin filtro de `paths` a propósito: es un check requerido en la
+# protección de main, y un check requerido que no corre deja el PR
+# esperando para siempre. El script ignora solo los archivos ajenos.
+on:
+  push:
+    branches: [main]
+  # pull_request_target corre con el workflow de main, no con el del PR:
+  # quien abre el PR no puede editar la regla que lo verifica. No se
+  # ejecuta nada del código del PR, solo se consulta la API de GitHub.
+  pull_request_target:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      # Script y permisos se toman del estado ANTERIOR al cambio (base del
+      # PR, o el commit previo al push), nunca del cambio que se verifica.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.base.sha || (github.event.before != '0000000000000000000000000000000000000000' && github.event.before || github.sha) }}
+
+      - name: Verificar autor de cada commit contra su área
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          COMMITS: ${{ join(github.event.commits.*.id, ' ') }}
+        run: |
+          if [ ! -f .github/scripts/verificar_permisos_spec.sh ]; then
+            echo "::notice::Primera versión de la regla, todavía no existe en el estado anterior; se verifica a partir del siguiente cambio."
+            exit 0
+          fi
+          if [ -n "$PR" ]; then
+            COMMITS=$(gh api --paginate "repos/$REPO/pulls/$PR/commits" --jq '.[].sha')
+          fi
+          bash .github/scripts/verificar_permisos_spec.sh "$REPO" $COMMITS

@@ -10,7 +10,7 @@ defmodule Mix.Tasks.Endpoint.Despublicar do
   Uso: mix endpoint.despublicar --sistema=<sistema> <consulta>
 
   `--sistema=` obligatorio, sin default, mismo criterio que `mix
-  motor.publicar`/`mix motor.despublicar` (SPEC-SYS-0309202601, R5/R10)
+  motor.publicar`/`mix motor.despublicar` (SPEC-ARQ-0309202601, R5/R10)
   -- se valida con `MetadataApp.MotorAlta.publicable?/1` antes de tocar
   nada: un cliente real de `priv/sistemas.json`, o `"unstable"` (nunca
   `"testing"`/`"stable"`).

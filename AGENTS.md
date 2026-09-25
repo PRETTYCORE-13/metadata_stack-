@@ -20,6 +20,24 @@ This is a web application written using the Phoenix web framework.
   (ej. "grilla" en vez de "tabla", encontrado real en
   `SPEC-SYS-1109202606`). Si se encuentra uno, corregirlo ahí mismo,
   no esperar a que el usuario lo señale.
+- **Área de una SPEC** (`SPEC-<ÁREA>-<DDMMAAAA><secuencia>-<slug>`,
+  convención completa en `docs/specs/README.md`):
+  - `SYS` = plataforma/sistema (funcionalidad del motor y sus pantallas).
+  - `ARQ` = Arquitectura (infraestructura, deploy, alta/baja de
+    sistemas, propagación entre ambientes).
+  - `ADN` = Administración de Negocio (configuración de negocio, no
+    plataforma).
+  - `APP` = aplicación móvil (app Flutter y su API: autenticación,
+    sesiones, endpoints que consume).
+- **Permisos por área de SPEC**: solo ciertas personas pueden alterar
+  cada área, según `.github/spec-permisos.txt` (lo hace cumplir el
+  workflow `spec-permisos.yml` por cada commit, contra el autor). Antes
+  de crear, editar, renombrar o borrar cualquier archivo de
+  `docs/specs/SPEC-<ÁREA>-*`, obtener el usuario de GitHub con
+  `gh api user --jq .login` y verificar que esté permitido en esa área
+  (en un renombrado, en ambas áreas). Si no lo está, no tocar la SPEC:
+  avisar quién sí puede hacerlo. Lo mismo para el archivo de permisos,
+  su script y su workflow (área `ADMIN`).
 - **Toda recomendación** debe pensarse en función de: experiencia del
   cliente final, alta capacidad de respuesta (performance),
   escalabilidad, y volumen transaccional masivo — no solo "que

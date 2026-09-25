@@ -103,7 +103,7 @@ defmodule MetadataApp.Autenticacion do
   @doc """
   Igual que `crear_empresa_para_usuario/2`, pero además deja
   Branch/SalesUnit/InventoryLocation genéricos, en la MISMA transacción
-  (SPEC-SYS-0309202601, R9 — Grupo C). Uso exclusivo del bootstrap de un
+  (SPEC-ARQ-0309202601, R9 — Grupo C). Uso exclusivo del bootstrap de un
   sistema NUEVO (wizard de primer arranque y `Release.setup/0`) -- **no**
   la pantalla de admin "Crear empresa" (`EmpresasLive`) ni
   `dev_auto_login.ex`, que agregan una empresa a un sistema YA en marcha
@@ -1014,7 +1014,7 @@ defmodule MetadataApp.Autenticacion do
     Repo.one(query)
   end
 
-  ## Sesiones móviles (SPEC-API-0409202601, design.md) -- mismo patrón
+  ## Sesiones móviles (SPEC-APP-0409202601, design.md) -- mismo patrón
   ## que las funciones de sesión web de arriba (el módulo construye,
   ## este contexto persiste), pero con SesionMovil/meta_schema_usuario_
   ## sesion_movil en vez de UsuarioToken -- ver ese schema para el

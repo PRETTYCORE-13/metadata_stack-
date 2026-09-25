@@ -3,7 +3,7 @@ defmodule MetadataApp.Caddy do
   Agrega/actualiza un bloque de un dominio en el Caddyfile remoto y
   recarga Caddy -- extraído de
   `MetadataApp.PanelControl.Desplegador.agregar_a_caddy/3` (2026-09-07,
-  SPEC-SYS-0309202601 Grupo F) para que `MetadataApp.MotorAlta` pueda
+  SPEC-ARQ-0309202601 Grupo F) para que `MetadataApp.MotorAlta` pueda
   reusar EXACTAMENTE la misma lógica (probada real en producción desde
   2026-08-31 con las primeras apps de Panel Control) en vez de duplicar
   el regex de reemplazo de bloque -- un bug arreglado ahí y no acá sería
@@ -76,7 +76,7 @@ defmodule MetadataApp.Caddy do
   end
 
   @doc """
-  Contraparte de `exponer/3` (SPEC-SYS-1709202603, mecanismo de baja) --
+  Contraparte de `exponer/3` (SPEC-ARQ-1709202603, mecanismo de baja) --
   quita el bloque de `host` del Caddyfile remoto (si existe) y recarga
   Caddy. Idempotente a propósito, mismo criterio que `exponer/3`: si
   `host` no tiene ningún bloque, no es error, no reescribe ni recarga

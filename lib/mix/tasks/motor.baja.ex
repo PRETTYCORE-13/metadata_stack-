@@ -2,13 +2,13 @@ defmodule Mix.Tasks.Motor.Baja do
   use Mix.Task
   alias MetadataApp.{Ambientes, MotorAlta}
 
-  @shortdoc "Da de baja un sistema existente (contraparte de motor.alta) -- SPEC-SYS-1709202603"
+  @shortdoc "Da de baja un sistema existente (contraparte de motor.alta) -- SPEC-ARQ-1709202603"
 
   @moduledoc """
   Uso: mix motor.baja <ambiente> <sistema>
 
   Mecanismo de baja de un sistema existente -- ver
-  `docs/specs/SPEC-SYS-1709202603-baja-sistema/01.requirements.md` para los
+  `docs/specs/SPEC-ARQ-1709202603-baja-sistema/01.requirements.md` para los
   requisitos (R1-R7). Contraparte de `mix motor.alta`: respalda la base
   de datos (R7, `pg_dump` a `/home/elixir/backups/` en el servidor), borra
   el Deployment/Service/Secret en k3s, la base, el registro DNS y el

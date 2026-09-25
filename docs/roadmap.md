@@ -124,7 +124,7 @@ Encontrado 2026-08-03, discutiendo el permiso "Eliminar" en Permission Sets. `Ca
 
 ## 16 — Configurar correo para alta y reactivación de cuentas (self-service para el sysadmin de cada sistema)
 
-Encontrado 2026-09-08, dando de alta el primer usuario real en un canal (`unstable`) recién creado: el "Log in with email" (magic-link) fallaba con `auth_failed` porque el `Secret` `smtp-compartido` (SPEC-SYS-0309202601, un solo SMTP compartido por TODOS los sistemas del clúster) tenía la contraseña corrompida — se armó copiándola por shell desde el secret viejo de `metadata-stack-app-env` antes de borrarlo, y algún carácter especial se mal-interpretó en el camino. Se arregló a mano por SSH (recreando el secret desde un archivo, sin pasar la contraseña por ninguna variable de shell) y re-probado real (`Autenticacion.deliver_login_instructions/2` devolviendo `{:ok, %Swoosh.Email{}}`) — pero el proceso completo depende de que Dev tenga acceso SSH al servidor y sepa hacerlo bien.
+Encontrado 2026-09-08, dando de alta el primer usuario real en un canal (`unstable`) recién creado: el "Log in with email" (magic-link) fallaba con `auth_failed` porque el `Secret` `smtp-compartido` (SPEC-ARQ-0309202601, un solo SMTP compartido por TODOS los sistemas del clúster) tenía la contraseña corrompida — se armó copiándola por shell desde el secret viejo de `metadata-stack-app-env` antes de borrarlo, y algún carácter especial se mal-interpretó en el camino. Se arregló a mano por SSH (recreando el secret desde un archivo, sin pasar la contraseña por ninguna variable de shell) y re-probado real (`Autenticacion.deliver_login_instructions/2` devolviendo `{:ok, %Swoosh.Email{}}`) — pero el proceso completo depende de que Dev tenga acceso SSH al servidor y sepa hacerlo bien.
 
 **El problema de fondo**: hoy no hay NINGÚN camino para que alguien sin acceso SSH (el propio sysadmin de un sistema, o ADN) configure o corrija el SMTP de su sistema — ni para verificar que sigue andando sin mandar un correo de prueba a mano por consola remota como se hizo hoy. Con varios sistemas de cliente reales (cada uno podría eventualmente querer su PROPIO remitente/dominio de correo, no necesariamente compartir el de la plataforma), esto se vuelve un cuello de botella real.
 
@@ -136,7 +136,7 @@ Encontrado 2026-09-08, dando de alta el primer usuario real en un canal (`unstab
 
 ## 17 — `testing` no puede migrar: `pty_dsd_mat_material` referencia `pty_dsd_mat_marca`, que no existe ahí ✅ RESUELTO (2026-09-21)
 
-Encontrado 2026-09-21, verificando en real `SPEC-SYS-1809202603` Grupo H (rollback de base de datos): al propagar cualquier commit nuevo a `testing`, `/app/bin/setup` falla migrando —
+Encontrado 2026-09-21, verificando en real `SPEC-ARQ-1809202603` Grupo H (rollback de base de datos): al propagar cualquier commit nuevo a `testing`, `/app/bin/setup` falla migrando —
 
 ```
 == Running 20260818225730 MetadataApp.Repo.Migrations.CrearPtyDsdMatMaterial20260818225730.change/0 forward

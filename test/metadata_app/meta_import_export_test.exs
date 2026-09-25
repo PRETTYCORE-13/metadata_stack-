@@ -320,7 +320,7 @@ defmodule MetadataApp.MetaImportExportTest do
     assert MetaSchemaContext.obtener_header_por_nombre(nombre).orden == 4
   end
 
-  # SPEC-SYS-0309202601, auditoría de replay desde cero (2026-09-04):
+  # SPEC-ARQ-0309202601, auditoría de replay desde cero (2026-09-04):
   # un catálogo con un campo "referencia" hacia otro catálogo SIN
   # relación de maestro/detalle tumbaba el import entero si el orden
   # alfabético del directorio los procesaba al revés (encontrado real:

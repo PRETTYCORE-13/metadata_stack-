@@ -42,7 +42,7 @@ defmodule MetadataAppWeb.UsuarioLive.PrimerArranqueTest do
       empresa = Repo.get_by(MetadataApp.Autenticacion.Empresa, nombre: "Empresa de Prueba")
       assert empresa
 
-      # SPEC-SYS-0309202601, R9 (Grupo C) -- el wizard deja el sistema
+      # SPEC-ARQ-0309202601, R9 (Grupo C) -- el wizard deja el sistema
       # con Branch/SalesUnit/InventoryLocation genéricos, no solo la
       # Empresa. Consulta directa, no solo "sin error".
       branch = Repo.get_by(MetadataApp.Autenticacion.Branch, empresa_id: empresa.id)

@@ -1,7 +1,7 @@
 defmodule MetadataApp.Autenticacion.LimiteIntentos do
   @moduledoc """
   Límite de intentos fallidos de `/api/movil/login` y `/api/movil/
-  verificar` (SPEC-API-0409202601, R10/R11, design.md §3) -- 5 fallos
+  verificar` (SPEC-APP-0409202601, R10/R11, design.md §3) -- 5 fallos
   en 15 minutos por email bloquean intentos nuevos para ESE email.
 
   Mismo patrón que `MetadataApp.Permissions.Cache`: GenServer dueño de

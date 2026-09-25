@@ -416,7 +416,7 @@
   font-weight: 500;
 }
 
-/* SPEC-SYS-1809202603 R11 -- hash corto + fecha del commit corriendo,
+/* SPEC-ARQ-1809202603 R11 -- hash corto + fecha del commit corriendo,
    junto al copyright. Monoespaciada como el resto de los hashes de
    commit ya mostrados en la app (propagacion_live.ex). */
 .pc-footer-version {

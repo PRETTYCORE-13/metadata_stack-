@@ -9,7 +9,7 @@ defmodule Mix.Tasks.Motor.Despublicar do
   Uso: mix motor.despublicar --sistema=<sistema> <catalogo>
 
   `--sistema=` obligatorio, sin default, mismo criterio que
-  `mix motor.publicar` (SPEC-SYS-0309202601, R5/R10) — se valida con
+  `mix motor.publicar` (SPEC-ARQ-0309202601, R5/R10) — se valida con
   `MetadataApp.MotorAlta.publicable?/1` antes de tocar nada: un cliente
   real de `priv/sistemas.json`, o `"unstable"` (nunca
   `"testing"`/`"stable"`).

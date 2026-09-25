@@ -1,6 +1,6 @@
 defmodule MetadataAppWeb.Sysadmin.SesionesMovilLive do
   @moduledoc """
-  Sesiones activas de la app Flutter del usuario logueado (SPEC-API-
+  Sesiones activas de la app Flutter del usuario logueado (SPEC-APP-
   0409202601, R7) -- listar y revocar puntualmente (ej. teléfono
   perdido). A propósito SOLO requiere estar logueado (`on_mount
   :mount_current_scope`), sin la capacidad `sysadmin_*` que usan las

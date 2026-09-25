@@ -445,7 +445,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
            seleccionados: nombres,
            catalogos: catalogos,
            problemas: problemas,
-           # SPEC-SYS-0309202601, R5: sin sistema elegido no hay a quién
+           # SPEC-ARQ-0309202601, R5: sin sistema elegido no hay a quién
            # publicarle -- nil a propósito, sin default, el botón
            # "Publicar" queda deshabilitado hasta que se elija uno.
            sistema: nil,
@@ -1215,7 +1215,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      update(socket, :accion_eliminar, &Map.merge(&1, %{error: "Error inesperado: #{inspect(razon)}", procesando?: false}))}
   end
 
-  # SPEC-SYS-0309202601, R5/R10 -- lista de sistemas válidos para el
+  # SPEC-ARQ-0309202601, R5/R10 -- lista de sistemas válidos para el
   # selector de los dos modales (publicar/despublicar): los clientes
   # reales de priv/sistemas.json + "unstable" (R10, 2026-09-07 -- probar
   # un BC antes de mandarlo a cualquier cliente real). Nunca

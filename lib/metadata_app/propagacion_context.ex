@@ -1,11 +1,11 @@
 defmodule MetadataApp.PropagacionContext do
   @moduledoc """
-  Fuente de datos de `/sysadmin/propagacion` (SPEC-SYS-1809202603 R9-R9b)
+  Fuente de datos de `/sysadmin/propagacion` (SPEC-ARQ-1809202603 R9-R9b)
   -- Elixir puro, sin LiveView, mismo criterio que cualquier Context de
   este proyecto. Todo sale EN VIVO de git + k3s (vía `MotorAlta.Estado`)
   + el historial de runs de GitHub Actions (R9a) -- nunca de una tabla
   propia (mismo principio ya aprobado en R8/§3 de
-  `SPEC-SYS-0309202601-alta-sistema-nuevo`).
+  `SPEC-ARQ-0309202601-alta-sistema-nuevo`).
   """
 
   alias MetadataApp.MotorAlta.Estado
@@ -28,14 +28,14 @@ defmodule MetadataApp.PropagacionContext do
   `{:ok, [commit]} | {:error, mensaje}` (R9c, 2026-09-22) -- consulta la
   API HTTP de GitHub, nunca shellea `git`/`gh` (esta pantalla también se
   abre directo contra un pod ya desplegado, que no los tiene instalados,
-  ver SPEC-SYS-1809202603 §5.3). `{:error, ...}` cubre tanto "falta el
+  ver SPEC-ARQ-1809202603 §5.3). `{:error, ...}` cubre tanto "falta el
   token" como cualquier falla de red/API -- nunca una lista vacía
   silenciosa que un admin pueda confundir con "no hay commits".
   """
   def linea_de_tiempo(ambiente, limite \\ 30) do
     case github_token() do
       nil ->
-        {:error, "Falta configurar GITHUB_TOKEN_LECTURA en este ambiente -- sin él, esta pantalla no puede consultar la API de GitHub (SPEC-SYS-1809202603 R9c)."}
+        {:error, "Falta configurar GITHUB_TOKEN_LECTURA en este ambiente -- sin él, esta pantalla no puede consultar la API de GitHub (SPEC-ARQ-1809202603 R9c)."}
 
       token ->
         with {:ok, commits} <- commits_recientes(token, limite),
@@ -119,7 +119,7 @@ defmodule MetadataApp.PropagacionContext do
   # cualquier otro nombre se trata como cliente (`priv/sistemas.json`),
   # ofrecible solo si `stable` ya está ahí -- mismo gate que ya impone
   # `actualizar-sistema.yml` del lado servidor (R6/R8 de
-  # SPEC-SYS-0309202601), ofrecerlo antes evita un disparo que el
+  # SPEC-ARQ-0309202601), ofrecerlo antes evita un disparo que el
   # workflow rechazaría igual, con menos contexto.
   @canales_candidatos ~w(testing stable)
 

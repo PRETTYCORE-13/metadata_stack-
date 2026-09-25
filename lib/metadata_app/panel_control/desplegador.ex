@@ -122,7 +122,7 @@ defmodule MetadataApp.PanelControl.Desplegador do
     "          env:\n#{entradas}\n"
   end
 
-  # Extraído a MetadataApp.Caddy (2026-09-07, SPEC-SYS-0309202601 Grupo
+  # Extraído a MetadataApp.Caddy (2026-09-07, SPEC-ARQ-0309202601 Grupo
   # F) -- MotorAlta necesitaba exactamente la misma lógica de
   # agregar/reemplazar un bloque, sin duplicar el regex de reemplazo (ver
   # el moduledoc de Caddy).

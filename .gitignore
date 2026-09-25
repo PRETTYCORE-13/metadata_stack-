@@ -84,7 +84,7 @@ priv/repo/migrations/*demo100_*.exs
 !lib/metadata_app/meta_business_process/catalogos/pty_folio_perfiles.ex
 !lib/metadata_app/meta_business_process/catalogos/pty_subtipos_transaccion.ex
 
-# Excepción real (2026-09-04, SPEC-SYS-0309202601, auditoría de replay
+# Excepción real (2026-09-04, SPEC-ARQ-0309202601, auditoría de replay
 # desde cero): estas migraciones caen bajo el patrón pty_* de más arriba,
 # pero no son catálogos opcionales de ADN -- son arreglos de ORDEN de
 # migración, necesarios para que CUALQUIER sistema nuevo (`mix
@@ -92,7 +92,7 @@ priv/repo/migrations/*demo100_*.exs
 # 100% vacía sin romperse. Sin comitearlas, el arreglo solo existe en el
 # checkout de quien lo hizo -- ni CI, ni producción, ni un sistema nuevo
 # real lo ven. Contenido real de cada una documentado en
-# docs/specs/SPEC-SYS-0309202601-alta-sistema-nuevo/tasks.md, tarea 10.
+# docs/specs/SPEC-ARQ-0309202601-alta-sistema-nuevo/tasks.md, tarea 10.
 !priv/repo/migrations/20260804192531_agregar_trn_a_pty_gasto_diario.exs
 !priv/repo/migrations/20260817201540_crear_pty_dsd_empleados_20260817201540.exs
 !priv/repo/migrations/20260817224628_crear_pty_dsd_empleadosdet_20260817224628.exs
@@ -104,7 +104,7 @@ priv/repo/migrations/*demo100_*.exs
 !priv/repo/migrations/20260903013358_agregar_campos_a_pty_gasto_diariov2_20260903013358.exs
 !priv/repo/migrations/20260813230955463_crear_pty_aly_marcas_20260813230955463.exs
 
-# Excepción real (2026-09-07, SPEC-SYS-0309202601, Grupo F -- primer alta
+# Excepción real (2026-09-07, SPEC-ARQ-0309202601, Grupo F -- primer alta
 # real de un canal): la auditoría de 2026-09-04 fixeó
 # 20260817201540_crear_pty_dsd_empleados (agrega la columna
 # pty_dsd_empleados_dsd_empleados_funcion) y 20260817224749_agregar_campos

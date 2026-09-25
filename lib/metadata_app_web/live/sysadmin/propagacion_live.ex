@@ -1,6 +1,6 @@
 defmodule MetadataAppWeb.Sysadmin.PropagacionLive do
   @moduledoc """
-  "Propagación" (SPEC-SYS-1809202603) — línea de tiempo de commits de
+  "Propagación" (SPEC-ARQ-1809202603) — línea de tiempo de commits de
   `origin/main` con, superpuesto, en qué commit está parado cada
   canal/sistema ahora mismo (R9), estilo lista de ejecuciones de GitHub
   Actions. Grupo F: además de solo-lectura (Grupo E), permite disparar

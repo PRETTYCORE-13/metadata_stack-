@@ -14,7 +14,7 @@ defmodule MetadataApp.Release do
   end
 
   # `nombres_archivo` -- lista de basenames de migración EXACTOS (nunca
-  # un solo "version" de corte -- SPEC-SYS-1809202603 Grupo H, bug real
+  # un solo "version" de corte -- SPEC-ARQ-1809202603 Grupo H, bug real
   # encontrado 2026-09-21: `Ecto.Migrator.run(:down, to: version)`
   # ordena TODAS las migraciones aplicadas por su número de versión, y
   # este proyecto tiene migraciones "doble timestamp" -- pty_* publicadas

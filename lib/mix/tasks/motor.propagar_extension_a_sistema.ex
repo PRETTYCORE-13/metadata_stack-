@@ -2,7 +2,7 @@ defmodule Mix.Tasks.Motor.PropagarExtensionASistema do
   use Mix.Task
   alias MetadataApp.{Ambientes, MotorAlta}
 
-  @shortdoc "Propaga una imagen ya construida a un sistema de cliente (SPEC-SYS-0309202601)"
+  @shortdoc "Propaga una imagen ya construida a un sistema de cliente (SPEC-ARQ-0309202601)"
 
   @moduledoc """
   Uso: mix motor.propagar_extension_a_sistema <ambiente> <sistema> <imagen>
@@ -12,10 +12,10 @@ defmodule Mix.Tasks.Motor.PropagarExtensionASistema do
   imagen ya construida, sin build nuevo -- dispara `actualizar-sistema.yml`
   (GitHub Actions) vía `gh workflow run`, mismo mecanismo que
   `mix motor.publicar`. Se llamaba `mix motor.actualizar` -- renombrado
-  (SPEC-SYS-1809202603 R2) para no colisionar en vocabulario con una
+  (SPEC-ARQ-1809202603 R2) para no colisionar en vocabulario con una
   futura propagación de artefactos de negocio.
 
-  `<ambiente>` -- agregado (SPEC-SYS-1809202603 R6-R7, antes este comando
+  `<ambiente>` -- agregado (SPEC-ARQ-1809202603 R6-R7, antes este comando
   no lo pedía): la guarda de idempotencia necesita SSH real para consultar
   qué imagen corre AHORA MISMO en `<sistema>` antes de disparar nada --
   mismo criterio "nunca infiere" que ya usa `mix motor.propagar_extension`,

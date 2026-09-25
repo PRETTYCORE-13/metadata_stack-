@@ -217,7 +217,7 @@ defmodule MetadataApp.MetaPublicador do
 
   @doc """
   Dispara bc-deploy.yml con el bundle ya armado, dirigido a `sistema`
-  (SPEC-SYS-0309202601, R5/R6 — obligatorio, sin default, ya validado por
+  (SPEC-ARQ-0309202601, R5/R6 — obligatorio, sin default, ya validado por
   el caller contra `priv/sistemas.json`). `nombres_raiz` es solo para la
   etiqueta legible del run (image tag / mensaje) — el contenido real del
   bundle ya tiene todo el paquete completo adentro. `mensaje` (opcional,

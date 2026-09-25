@@ -1,6 +1,6 @@
 defmodule MetadataApp.MotorAlta do
   @moduledoc """
-  Mecanismo de alta de un sistema nuevo (SPEC-SYS-0309202601). Lógica
+  Mecanismo de alta de un sistema nuevo (SPEC-ARQ-0309202601). Lógica
   compartida con `mix motor.alta` — el task es solo la interfaz de línea
   de comandos.
 
@@ -188,7 +188,7 @@ defmodule MetadataApp.MotorAlta do
   `validar_nombre/2` (que exige que NO esté registrado, para el alta),
   acá es al revés: tiene que estar registrado, y nunca puede ser uno de
   los canales de plataforma (`canales/0`) -- esos no se dan de baja por
-  este mecanismo (SPEC-SYS-1709202603 R2). `{:ok, sistema}` |
+  este mecanismo (SPEC-ARQ-1709202603 R2). `{:ok, sistema}` |
   `{:error, mensaje}`.
   """
   def validar_puede_bajar(sistema, path \\ ruta_sistemas())
@@ -207,7 +207,7 @@ defmodule MetadataApp.MotorAlta do
 
   @doc """
   Borra el Deployment, Service y Secret de `sistema` en k3s
-  (SPEC-SYS-1709202603 R1) -- contraparte de `aplicar_manifiestos/3`.
+  (SPEC-ARQ-1709202603 R1) -- contraparte de `aplicar_manifiestos/3`.
   Idempotente (R4): `--ignore-not-found` en los tres, así reintentar una
   baja que ya había borrado esto no falla.
 
@@ -227,7 +227,7 @@ defmodule MetadataApp.MotorAlta do
   end
 
   @doc """
-  Respalda `db_<sistema>` ANTES de borrarla (SPEC-SYS-1709202603 R7) --
+  Respalda `db_<sistema>` ANTES de borrarla (SPEC-ARQ-1709202603 R7) --
   `pg_dump` corrido dentro del pod (mismo mecanismo de acceso que
   `crear_base/2`, "aws-postgres" no tiene puerto publicado fuera del
   clúster) con la salida redirigida a un archivo en el HOST real (no
@@ -268,7 +268,7 @@ defmodule MetadataApp.MotorAlta do
   end
 
   @doc """
-  Borra `db_<sistema>` (SPEC-SYS-1709202603 R1) -- contraparte de
+  Borra `db_<sistema>` (SPEC-ARQ-1709202603 R1) -- contraparte de
   `crear_base/2`. `WITH (FORCE)` corta cualquier conexión activa antes de
   soltar la base (la app recién bajada puede tener conexiones colgando
   un instante). Idempotente (R4): `IF EXISTS` -- una base ya borrada en
@@ -288,7 +288,7 @@ defmodule MetadataApp.MotorAlta do
   end
 
   @doc """
-  Quita la exposición de `sistema` (SPEC-SYS-1709202603 R1) -- contraparte
+  Quita la exposición de `sistema` (SPEC-ARQ-1709202603 R1) -- contraparte
   de `exponer_dominio/3`: borra el registro DNS en Cloudflare y el bloque
   del Caddyfile remoto, en ese orden. Idempotente: cada paso ya lo es por
   su cuenta (`Cloudflare.eliminar_registro_a/2`, `Caddy.quitar/2`).
@@ -305,7 +305,7 @@ defmodule MetadataApp.MotorAlta do
   end
 
   @doc """
-  Quita `sistema` de `priv/sistemas.json` (SPEC-SYS-1709202603 R5) --
+  Quita `sistema` de `priv/sistemas.json` (SPEC-ARQ-1709202603 R5) --
   contraparte de `registrar_sistema/2`, último paso de la baja. Nunca se
   usa con un canal (`validar_puede_bajar/2` ya los rechaza antes). Sin
   esto, un sistema borrado de la infraestructura real pero que sigue
@@ -334,7 +334,7 @@ defmodule MetadataApp.MotorAlta do
   end
 
   @doc """
-  Verificación final de la baja (SPEC-SYS-1709202603 R6) -- confirma
+  Verificación final de la baja (SPEC-ARQ-1709202603 R6) -- confirma
   contra el servidor real que no queda ningún componente de `sistema`
   activo: sin Deployment en k3s, sin bloque en el Caddyfile. No repite el
   chequeo de DNS (Cloudflare no tiene forma barata de confirmarlo sin
@@ -649,7 +649,7 @@ defmodule MetadataApp.MotorAlta do
   (ya construida) directo en k3s. `{:ok, salida}` | `{:ok, :sin_cambios,
   mensaje}` | `{:error, mensaje}`.
 
-  **Guarda de idempotencia (SPEC-SYS-1809202603 R6-R7)**: antes de
+  **Guarda de idempotencia (SPEC-ARQ-1809202603 R6-R7)**: antes de
   disparar nada, consulta `imagen_actual/2` contra `ambiente` -- si
   `sistema` YA está exactamente en `imagen`, no se llama a `gh workflow
   run` ni se reinicia ningún pod, devuelve `{:ok, :sin_cambios, mensaje}`.
@@ -691,7 +691,7 @@ defmodule MetadataApp.MotorAlta do
   @registro_imagen "ghcr.io/prettycore-13/metadata_stack"
 
   @doc """
-  `--commit=<hash>` de `mix motor.propagar_extension` (SPEC-SYS-1809202603
+  `--commit=<hash>` de `mix motor.propagar_extension` (SPEC-ARQ-1809202603
   R8) -- arma la imagen completa para `hash` DESPUÉS de confirmar que
   existe un tag real con ese hash en el registro de contenedores (nunca a
   ciegas: un hash mal tipeado dispararía `actualizar-sistema.yml` con un
@@ -737,7 +737,7 @@ defmodule MetadataApp.MotorAlta do
   end
 
   @doc """
-  Rollback de base de datos (SPEC-SYS-1809202603 R10a/§6.3, Grupo H) --
+  Rollback de base de datos (SPEC-ARQ-1809202603 R10a/§6.3, Grupo H) --
   corre `/app/bin/rollback` DENTRO del pod `metadata-<sistema>` (mismo
   patrón de `aplicar_manifiestos/3` para encontrar el pod correcto:
   ordenar por `creationTimestamp`, tomar el último). Recibe
@@ -801,7 +801,7 @@ defmodule MetadataApp.MotorAlta do
     e in ErlangError -> {:error, "No se pudo ejecutar git: #{Exception.message(e)} -- ¿está instalado y en el PATH?"}
   end
 
-  # Función propia de la baja (SPEC-SYS-1709202603) -- deliberadamente NO
+  # Función propia de la baja (SPEC-ARQ-1709202603) -- deliberadamente NO
   # comparte código con comitear_y_pushear/2 del alta, aunque el cuerpo
   # sea casi idéntico salvo el mensaje: la baja no toca ninguna función
   # ya existente del mecanismo de alta, ni siquiera para agregarle un

@@ -3,16 +3,16 @@ name: Actualizar Sistema
 # Apunta un sistema YA existente en k3s (canal o cliente) a una imagen ya
 # construida -- sin build nuevo, a diferencia de bc-deploy.yml. Mismo
 # patrón (SSH + kubectl set image + rollout + bin/setup), pero sin bundle:
-# sirve para DOS cosas con la misma mecánica (SPEC-SYS-0309202601, §3):
+# sirve para DOS cosas con la misma mecánica (SPEC-ARQ-0309202601, §3):
 #
 #   - Propagación entre canales -- disparado por `mix motor.propagar_extension
 #     <origen> <destino>` (renombrado de `mix motor.promover`,
-#     SPEC-SYS-1809202603 R1), que ya consultó qué imagen corre HOY en
+#     SPEC-ARQ-1809202603 R1), que ya consultó qué imagen corre HOY en
 #     <origen> (R8) y la pasa acá tal cual. Mover el MISMO artefacto,
 #     nunca reconstruirlo.
 #   - Propagar a un sistema de cliente -- disparado por `mix motor.propagar_extension_a_sistema
 #     <sistema> <imagen>` (renombrado de `mix motor.actualizar`,
-#     SPEC-SYS-1809202603 R2). Acá SÍ hay un gate (ver abajo): la imagen tiene
+#     SPEC-ARQ-1809202603 R2). Acá SÍ hay un gate (ver abajo): la imagen tiene
 #     que ser la que está corriendo AHORA MISMO en metadata-stable, para
 #     que ningún cliente termine con algo que nunca pasó por los tres
 #     canales, sin importar quién dispare el comando o desde dónde.

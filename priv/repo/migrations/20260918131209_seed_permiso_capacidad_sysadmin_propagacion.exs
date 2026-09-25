@@ -1,7 +1,7 @@
 defmodule MetadataApp.Repo.Migrations.SeedPermisoCapacidadSysadminPropagacion do
   use Ecto.Migration
 
-  # Pantalla nueva de SPEC-SYS-1809202603 (Grupo E) -- mismo patrón que
+  # Pantalla nueva de SPEC-ARQ-1809202603 (Grupo E) -- mismo patrón que
   # 20260816022113 (Ambientes de Deploy): capacidad propia, separada de
   # la tanda original (20260816014352) porque esa ya corrió y se
   # desplegó. Verificado antes de escribir esto (mix run, en vivo) que

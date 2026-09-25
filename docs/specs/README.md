@@ -94,16 +94,49 @@ Cada spec vive en su propia carpeta, identificada por un código único:
 SPEC-<ÁREA>-<DDMMAAAA><secuencia>-<slug-corto>
 ```
 
-`<ÁREA>` agrupa por dominio (`SYS` = plataforma/sistema; se suman más
-según haga falta). `<secuencia>` es el número de spec ABIERTA ese día
+`<ÁREA>` agrupa por dominio (`SYS` = plataforma/sistema; `ARQ` =
+Arquitectura; `ADN` = Administración de Negocio; `APP` = aplicación móvil; se suman más según
+haga falta). `<secuencia>` es el número de spec ABIERTA ese día
 en esa área (01, 02, ...) — permite más de una por día sin colisión.
+
+## Quién puede alterar cada área
+
+Crear, editar, renombrar o borrar cualquier archivo de una carpeta
+`SPEC-<ÁREA>-*` está restringido por área:
+
+| Área | Pueden alterarla |
+|------|------------------|
+| `SYS` | Uriel, Lizbeth |
+| `ADN` | Todos |
+| `ARQ` | Uriel, Agustín |
+| `APP` | Uriel, Jesús |
+
+- **Dónde vive la regla**: `.github/spec-permisos.txt`, con los
+  usuarios de GitHub (`Urixsg` = Uriel, `X4GUSS` = Agustín,
+  `Lizbeth123143` = Lizbeth, `PRETTYCORE-13` = Jesús). Solo Uriel
+  (`ADMIN`) puede cambiar ese archivo, su script y su workflow.
+- **Quién la hace cumplir**: el workflow `Permisos de SPEC`
+  (`.github/workflows/spec-permisos.yml`) revisa cada commit de cada PR
+  y de cada push a `main`, y compara el **autor** del commit contra el
+  área de cada archivo que toca. Un renombrado entre áreas necesita
+  permiso en las dos.
+- **Si no tienes permiso**: el check sale en rojo y el PR no se puede
+  integrar. Pide a alguien del área que haga el cambio.
+- **Tu correo de git debe estar ligado a tu cuenta de GitHub**: así se
+  identifica al autor. Un commit con un correo que GitHub no reconoce
+  se rechaza en cualquier área.
+- **Área nueva**: antes de abrir la primera spec de un área nueva, hay
+  que darla de alta en `.github/spec-permisos.txt` y en la lista de
+  áreas de arriba; si no, cualquier commit sobre ella se rechaza.
+- Este README y cualquier archivo fuera de una carpeta `SPEC-*` no
+  tienen restricción.
 
 ## Features documentadas acá
 
 - [`SPEC-SYS-0109202601-administrador-folios/`](SPEC-SYS-0109202601-administrador-folios/) —
   motor de folios de negocio para documentos transaccionales
   (implementado, Grupos A-G completos).
-- [`SPEC-API-0409202601-autenticacion-movil/`](SPEC-API-0409202601-autenticacion-movil/) —
+- [`SPEC-APP-0409202601-autenticacion-movil/`](SPEC-APP-0409202601-autenticacion-movil/) —
   autenticación por token (access+refresh) para que la app Flutter
   autentique contra los mismos usuarios de metadata_stack, sin cookie
   de sesión web (implementado, Grupos A-G completos; `design.md` §4 es
@@ -187,7 +220,7 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   nunca datos, plantillas custom del Constructor, ni permisos ya
   otorgados (implementado, Grupos A-E completos, verificado contra
   Postgres real).
-- [`SPEC-SYS-2209202602-propagacion-artefactos-negocio/`](SPEC-SYS-2209202602-propagacion-artefactos-negocio/) —
+- [`SPEC-ARQ-2209202602-propagacion-artefactos-negocio/`](SPEC-ARQ-2209202602-propagacion-artefactos-negocio/) —
   documentación retroactiva de cómo se respalda/propaga un artefacto de
   negocio (catálogo `pty_*`): `mix motor.publicar` deja una copia en un
   GitHub Release (`bc-<catalogo>`) antes de desplegar; ese release se
@@ -195,7 +228,7 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   catálogo viaja siempre empaquetado dentro de la actualización
   completa (`mix motor.propagar_extension`), nunca aislado — "todo o
   nada" es diseño, no un descuido. Cierra la nota pendiente de
-  `SPEC-SYS-1809202603` (§1). Sin `tasks.md` a propósito (nada que
+  `SPEC-ARQ-1809202603` (§1). Sin `tasks.md` a propósito (nada que
   construir, comportamiento ya existente).
 - [`SPEC-SYS-2509202601-consulta-sql/`](SPEC-SYS-2509202601-consulta-sql/) —
   Consulta SQL / "SQL View" (BC tipo 4): un SQL de solo lectura que se

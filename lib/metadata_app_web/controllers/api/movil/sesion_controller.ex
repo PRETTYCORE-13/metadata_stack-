@@ -1,6 +1,6 @@
 defmodule MetadataAppWeb.Api.Movil.SesionController do
   @moduledoc """
-  Autenticación de la app Flutter (SPEC-API-0409202601, design.md §4)
+  Autenticación de la app Flutter (SPEC-APP-0409202601, design.md §4)
   -- verificar instancia+usuario (R11), login (R1/R2), renovar access
   token (R3/R4), logout (R8). Sin `action_fallback`: cada acción
   maneja sus propios códigos de error a propósito (el contrato de §4

@@ -2,7 +2,7 @@ defmodule MetadataApp.Repo.Migrations.CrearPtyDsdEmpleadosdet20260817224628 do
   use Ecto.Migration
 
   # Mismo motivo/mismo fix que 20260817201540_crear_pty_dsd_empleados
-  # (2026-09-04, SPEC-SYS-0309202601): `pty_dsd_empleados_funcion` vive en
+  # (2026-09-04, SPEC-ARQ-0309202601): `pty_dsd_empleados_funcion` vive en
   # el bloque de timestamp viejo de 17 dígitos, que en un replay desde
   # cero corre DESPUÉS de esta migración de 14 dígitos por valor numérico,
   # sin importar la fecha real.

@@ -24,7 +24,7 @@ defmodule MetadataAppWeb.Router do
     plug :fetch_current_scope_for_usuario
   end
 
-  # SPEC-API-0409202601 (design.md §1.2) -- autenticación por Bearer token,
+  # SPEC-APP-0409202601 (design.md §1.2) -- autenticación por Bearer token,
   # NO por cookie de sesión (a diferencia de :api de arriba) -- para la app
   # Flutter, que no puede participar de una sesión de navegador.
   #

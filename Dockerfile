@@ -118,7 +118,7 @@ RUN chown nobody /app
 # set runner ENV
 ENV MIX_ENV="prod"
 
-# SPEC-SYS-1809202603 R11: hash corto + fecha del commit que armó esta
+# SPEC-ARQ-1809202603 R11: hash corto + fecha del commit que armó esta
 # imagen -- config/runtime.exs los lee para mostrar la versión en el
 # pie de página. ARG viene de --build-arg (ci.yml), ENV los deja
 # disponibles en el contenedor ya corriendo (un ARG solo sin ENV no

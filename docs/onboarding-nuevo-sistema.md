@@ -2,8 +2,8 @@
 
 > Este documento describía un plan (2026-08-14, cuando el bootstrap de un
 > servidor nuevo tardaba horas de trabajo manual por SSH). Ese plan ya se
-> construyó e implementó completo -- **SPEC-SYS-0309202601 "Alta de
-> Sistema Nuevo"** (`docs/specs/SPEC-SYS-0309202601-alta-sistema-nuevo/`)
+> construyó e implementó completo -- **SPEC-ARQ-0309202601 "Alta de
+> Sistema Nuevo"** (`docs/specs/SPEC-ARQ-0309202601-alta-sistema-nuevo/`)
 > reemplazó las Fases 0-3 de la versión anterior de este documento con un
 > mecanismo real, probado en producción (2026-09-07: los tres canales
 > unstable/testing/stable y un primer cliente real, "ennova", dados de
@@ -95,7 +95,7 @@ que lee/escribe el Caddyfile remoto. Un sistema nuevo no lleva `Ingress`
   --sistema=<sistema> <catalogo>`.
 - **Propagar a un cliente una imagen ya construida**: `mix
   motor.propagar_extension_a_sistema <sistema> <imagen>` (renombrado de
-  `mix motor.actualizar`, SPEC-SYS-1809202603 R2) -- `actualizar-sistema.yml`
+  `mix motor.actualizar`, SPEC-ARQ-1809202603 R2) -- `actualizar-sistema.yml`
   (GitHub Actions) valida que `<imagen>` sea EXACTO lo que corre ahora
   mismo en `metadata-stable`, rechaza si no. Probado real (2026-09-07,
   cliente "ennova"): acepta la imagen correcta, rechaza una inventada sin
@@ -103,7 +103,7 @@ que lee/escribe el Caddyfile remoto. Un sistema nuevo no lleva `Ingress`
 - **Propagar entre canales** (`unstable→testing` o `testing→stable`,
   único par válido, nunca se saltea Testing): `mix motor.propagar_extension
   <ambiente> <origen> <destino>` (renombrado de `mix motor.promover`,
-  SPEC-SYS-1809202603 R1) -- consulta la imagen actual de
+  SPEC-ARQ-1809202603 R1) -- consulta la imagen actual de
   `<origen>` por SSH y la aplica sobre `<destino>` vía el mismo
   `actualizar-sistema.yml`. Nunca hay build nuevo, solo mover el mismo
   artefacto ya construido.
