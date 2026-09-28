@@ -43,6 +43,11 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaSqlEditorLiveTest do
   describe "BC List" do
     test "\"+ SQL View\" crea la SQL View y abre su editor", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/sysadmin/bc-list")
+      # Guardar navega fuera de BC Lista y eso mata la revisión "listo para
+      # publicarse" (start_async) si sigue corriendo; bajo el Sandbox,
+      # matarla a mitad de una consulta tira la conexión que comparte este
+      # test (SPEC-SYS-2809202601, 02.design.md D2).
+      render_async(view, 5_000)
       view |> element("#btn-nueva-sql-view") |> render_click()
       assert has_element?(view, "#form-sql-view")
 
