@@ -130,7 +130,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveTest do
       |> element("form[phx-submit=guardar_consulta]")
       |> render_submit()
 
-    refute html =~ "Definí la unión"
+    refute html =~ "Define la unión"
 
     header_creado = Enum.find(MetaSchemaContext.listar_headers(), &(&1.schema_context_label == "Reporte AB"))
     refute is_nil(header_creado)
@@ -158,7 +158,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveTest do
 
     # Intentar crear sin definir la unión: bloqueado con un error, nada se crea.
     html = view |> element("form[phx-submit=guardar_consulta]") |> render_submit()
-    assert html =~ "Definí la unión"
+    assert html =~ "Define la unión"
     assert MetaSchemaContext.obtener_header_por_nombre("consulta_reporte_ac") == nil
 
     # Definir la unión a mano.
@@ -174,7 +174,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveTest do
     refute html =~ "sin unión definida"
 
     html = view |> element("form[phx-submit=guardar_consulta]") |> render_submit()
-    refute html =~ "Definí la unión"
+    refute html =~ "Define la unión"
 
     header_creado = Enum.find(MetaSchemaContext.listar_headers(), &(&1.schema_context_label == "Reporte AC"))
     refute is_nil(header_creado)
@@ -202,7 +202,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveTest do
     # [] — no se puede refutar `html =~ nombre_b` a secas porque ese
     # catálogo también existe como fila real en el árbol de BC List, en
     # otra parte de la misma página.
-    assert html =~ "por ahora — agregá más tablas"
+    assert html =~ "por ahora — agrega más tablas"
   end
 
   # Maestro-detalle (R3) -- ver detectar_union_maestro_detalle/2 y
