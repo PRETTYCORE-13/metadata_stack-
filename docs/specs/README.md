@@ -263,3 +263,9 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   Alcance de Datos por usuario ni Configuración de Sales Unit, que la
   consumen desde specs propias. Sin `tasks.md` a propósito (nada que
   construir, comportamiento ya existente).
+- [`SPEC-SYS-2809202601-bc-lista/`](SPEC-SYS-2809202601-bc-lista/) —
+  BC Lista (`/sysadmin/bc-list`): documentación retroactiva de la
+  pantalla central de artefactos de negocio (árbol, búsqueda, crear,
+  ordenar, eliminar, Publicar paquete) + incremento de rapidez: la
+  revisión "¿listo para publicarse?" corre en segundo plano una vez por
+  visita, y ni buscar ni abrir carpetas consultan la base (R20–R26).
