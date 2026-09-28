@@ -85,7 +85,7 @@ defmodule Mix.Tasks.Motor.Desplegar do
 
           {:ok, codigo, salida} ->
             Mix.shell().info(salida)
-            Mix.raise("El deploy remoto terminó con código #{codigo} -- revisá la salida de arriba.")
+            Mix.raise("El deploy remoto terminó con código #{codigo} -- revisa la salida de arriba.")
 
           {:error, mensaje} ->
             Mix.raise(mensaje)

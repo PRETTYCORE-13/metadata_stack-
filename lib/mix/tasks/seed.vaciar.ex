@@ -98,7 +98,7 @@ defmodule Mix.Tasks.Seed.Vaciar do
     if inexistentes == [] do
       :ok
     else
-      {:error, "No existen como tabla: #{Enum.join(inexistentes, ", ")} -- revisá el nombre."}
+      {:error, "No existen como tabla: #{Enum.join(inexistentes, ", ")} -- revisa el nombre."}
     end
   end
 
@@ -110,7 +110,7 @@ defmodule Mix.Tasks.Seed.Vaciar do
   defp mostrar_y_ejecutar(orden, confirmado_de_antemano?) do
     Mix.shell().info("Se van a vaciar, en este orden:\n" <> Enum.map_join(orden, "\n", &"  - #{&1}"))
 
-    if confirmado_de_antemano? or Mix.shell().yes?("\n¿Confirmás? Esto borra TODAS las filas, sin poder deshacerlo.") do
+    if confirmado_de_antemano? or Mix.shell().yes?("\n¿Confirmas? Esto borra TODAS las filas, sin poder deshacerlo.") do
       Enum.each(orden, &vaciar_catalogo/1)
       Mix.shell().info("\nListo -- #{length(orden)} catálogo(s) vacío(s), estructura/motor de estados intactos.")
     else

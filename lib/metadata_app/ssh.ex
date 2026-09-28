@@ -47,7 +47,7 @@ defmodule MetadataApp.Ssh do
   end
 
   def ejecutar(_ambiente, _comando) do
-    {:error, "Este ambiente no tiene contraseña ni llave privada configurada -- editalo en /sysadmin/ambientes."}
+    {:error, "Este ambiente no tiene contraseña ni llave privada configurada -- edítalo en /sysadmin/ambientes."}
   end
 
   defp destino(ambiente), do: "#{ambiente.ssh_usuario}@#{ambiente.host}"

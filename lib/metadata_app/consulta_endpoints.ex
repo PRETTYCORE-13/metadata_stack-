@@ -508,7 +508,7 @@ defmodule MetadataApp.ConsultaEndpoints do
   end
 
   @doc """
-  R62-R64 (agregado 2026-09-14, revisado en el mismo día -- "regresalo
+  R62-R64 (agregado 2026-09-14, revisado en el mismo día -- "regrésalo
   como estaba por descripción"): cualquier campo tipo "referencia" en
   `attrs` (según el contrato real de `catalogo`, vía `meta_schema_detail`)
   se interpreta como el valor de su campo "acompañamiento" (ej.

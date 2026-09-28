@@ -168,7 +168,7 @@ defmodule MetadataAppWeb.CambiarUnidadOperativaModal do
               </svg>
             </button>
             <h2 class="text-white font-bold text-base">Cambiar Unidad Operativa</h2>
-            <p class="text-white/60 text-xs mt-1">Elegí empresa, sucursal, almacén y unidad de venta.</p>
+            <p class="text-white/60 text-xs mt-1">Elige empresa, sucursal, almacén y unidad de venta.</p>
           </div>
 
           <div class="px-6 py-5">
@@ -197,7 +197,7 @@ defmodule MetadataAppWeb.CambiarUnidadOperativaModal do
                 </select>
               </div>
               <p :if={@branches == []} class="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg p-3">
-                No tenés ninguna sucursal asignada en esta empresa.
+                No tienes ninguna sucursal asignada en esta empresa.
               </p>
 
               <div :if={@branches != [] and @inventory_locations != []}>
@@ -209,7 +209,7 @@ defmodule MetadataAppWeb.CambiarUnidadOperativaModal do
                 </select>
               </div>
               <p :if={@branches != [] and @inventory_locations == []} class="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg p-3">
-                Esa sucursal no tiene ningún almacén asignado para vos.
+                Esa sucursal no tiene ningún almacén asignado para ti.
               </p>
 
               <div :if={@branches != [] and @sales_units != []}>

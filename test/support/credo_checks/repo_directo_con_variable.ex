@@ -42,10 +42,10 @@ defmodule MetadataApp.CredoChecks.RepoDirectoConVariable do
       sin que nada lo bloquee.
 
       Si el schema es fijo (una tabla de sistema conocida, ej.
-      `MetadataApp.Autenticacion.Usuario`), escribilo como alias literal
+      `MetadataApp.Autenticacion.Usuario`), escríbelo como alias literal
       -- Repo.get(MiSchema, id) -- eso no dispara este check.
 
-      Si de verdad necesitás resolver el catálogo dinámicamente, pasá por
+      Si de verdad necesitas resolver el catálogo dinámicamente, pasa por
       MetadataApp.BusinessProcessBuilder.CatalogoGenerico.obtener!/3 (o
       MetaBcApi.obtener/2 si es una regla de negocio interna, con
       scope: :sistema).
@@ -81,7 +81,7 @@ defmodule MetadataApp.CredoChecks.RepoDirectoConVariable do
       issue_meta,
       message:
         "Repo.#{funcion}(#{schema_var}, ...) resuelve el schema en runtime -- salta el Alcance de Datos. " <>
-          "Si #{schema_var} puede ser un catálogo generado, usá CatalogoGenerico.obtener!/3 (o MetaBcApi con scope: :sistema).",
+          "Si #{schema_var} puede ser un catálogo generado, usa CatalogoGenerico.obtener!/3 (o MetaBcApi con scope: :sistema).",
       trigger: "Repo.#{funcion}",
       line_no: meta[:line]
     )

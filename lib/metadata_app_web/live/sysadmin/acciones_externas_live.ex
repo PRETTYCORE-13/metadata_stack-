@@ -203,7 +203,7 @@ defmodule MetadataAppWeb.Sysadmin.AccionesExternasLive do
           <div class="p-2 border-b border-gray-100">
             <button type="button" phx-click="nueva_accion"
               disabled={@credenciales == []}
-              title={if @credenciales == [], do: "Primero creá al menos una credencial", else: nil}
+              title={if @credenciales == [], do: "Primero crea al menos una credencial", else: nil}
               class="w-full px-3 py-1.5 rounded-lg bg-purple-600 text-white text-sm font-semibold hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed">
               + Nueva acción
             </button>
@@ -353,7 +353,7 @@ defmodule MetadataAppWeb.Sysadmin.AccionesExternasLive do
 
             <.panel_log :if={is_struct(@accion_seleccionada)} log={@log} />
           <% else %>
-            <p class="text-sm text-gray-400">Seleccioná una acción de la izquierda, o creá una nueva.</p>
+            <p class="text-sm text-gray-400">Selecciona una acción de la izquierda, o crea una nueva.</p>
           <% end %>
         </div>
       </div>

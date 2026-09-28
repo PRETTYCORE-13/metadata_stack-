@@ -714,13 +714,13 @@ defmodule MetadataApp.MetaImportacionDatos do
   # inventory) y quien importa no tiene uno elegido. `to_string/1` no
   # soporta tuplas (crasheaba acá), de ahí el catch-all con `inspect/1`.
   defp mensaje_de_motivo({:alcance_requerido, "branch_id"}),
-    do: "No hay una Sucursal activa — elegí una desde la banda de pie antes de importar."
+    do: "No hay una Sucursal activa — elige una desde la banda de pie antes de importar."
 
   defp mensaje_de_motivo({:alcance_requerido, "sales_unit_id"}),
-    do: "No hay una Unidad de Venta activa — elegí una desde la banda de pie antes de importar."
+    do: "No hay una Unidad de Venta activa — elige una desde la banda de pie antes de importar."
 
   defp mensaje_de_motivo({:alcance_requerido, "inventory_id"}),
-    do: "No hay un Almacén activo — elegí uno desde la banda de pie antes de importar."
+    do: "No hay un Almacén activo — elige uno desde la banda de pie antes de importar."
 
   # MetadataApp.IdentificadoresTransaccionales.asignar/4 — errores de
   # CONFIGURACIÓN del catálogo (Perfil de Folio), no del archivo que se
@@ -736,7 +736,7 @@ defmodule MetadataApp.MetaImportacionDatos do
     do: "Hay más de un Perfil de Folio que aplica a esta fila — la configuración del catálogo es ambigua, no tu archivo."
 
   defp mensaje_de_motivo(:subtipo_dado_de_baja),
-    do: "El subtipo de transacción de esta fila está dado de baja y no puede foliar — revisá el valor o avisale a un administrador."
+    do: "El subtipo de transacción de esta fila está dado de baja y no puede foliar — revisa el valor o avísale a un administrador."
 
   # SPEC-SYS-0909202604 (tarea E1) -- errores propios del camino de
   # actualización (Grupo C/D).
@@ -842,16 +842,16 @@ defmodule MetadataApp.MetaImportacionDatos do
 
   defp sugerencia_para(mensaje) do
     cond do
-      mensaje =~ "no tiene configurada la transición" -> "Configurá la transición \"Guardar\" para este catálogo en el Motor de Estados — sin ella no se puede editar un renglón ya existente, ni a mano ni por importación."
-      mensaje =~ "blank" or mensaje =~ "vacío" -> "Completá este campo — es obligatorio."
+      mensaje =~ "no tiene configurada la transición" -> "Configura la transición \"Guardar\" para este catálogo en el Motor de Estados — sin ella no se puede editar un renglón ya existente, ni a mano ni por importación."
+      mensaje =~ "blank" or mensaje =~ "vacío" -> "Completa este campo — es obligatorio."
       mensaje =~ "taken" or mensaje =~ "ya existe" or mensaje =~ "único" -> "Ya existe un registro con este valor — tiene que ser único."
-      mensaje =~ "no se encontró" -> "Revisá que el valor exista en el catálogo relacionado, escrito exactamente igual."
+      mensaje =~ "no se encontró" -> "Revisa que el valor exista en el catálogo relacionado, escrito exactamente igual."
       mensaje =~ "más de un" -> "El valor no identifica un único registro — hace falta un dato más específico."
-      mensaje =~ "invalid" or mensaje =~ "inválido" or mensaje =~ "formato" -> "El formato no es válido — revisá el tipo de dato esperado."
-      mensaje =~ "sin_scope" -> "No se pudo determinar la empresa/sucursal — iniciá sesión de nuevo e intentá otra vez."
-      mensaje =~ "no permite insertar renglones" -> "El estado actual del catálogo no permite cargar detalles — revisá los permisos por estado en el Motor."
-      mensaje =~ "Perfil de Folio" -> "No es algo que puedas resolver con el archivo — pedile a un administrador que revise la configuración de Folio de este catálogo."
-      true -> "Revisá el valor e intentá de nuevo."
+      mensaje =~ "invalid" or mensaje =~ "inválido" or mensaje =~ "formato" -> "El formato no es válido — revisa el tipo de dato esperado."
+      mensaje =~ "sin_scope" -> "No se pudo determinar la empresa/sucursal — inicia sesión de nuevo e intenta otra vez."
+      mensaje =~ "no permite insertar renglones" -> "El estado actual del catálogo no permite cargar detalles — revisa los permisos por estado en el Motor."
+      mensaje =~ "Perfil de Folio" -> "No es algo que puedas resolver con el archivo — pídele a un administrador que revise la configuración de Folio de este catálogo."
+      true -> "Revisa el valor e intenta de nuevo."
     end
   end
 

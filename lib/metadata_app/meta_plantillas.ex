@@ -50,7 +50,7 @@ defmodule MetadataApp.MetaPlantillas do
   tipo "referencia" — solo que su valor se pueda leer como entero)
   (`propiedades["campo_referencia"]`), lo usa como id para buscar UN
   registro en `propiedades["catalogo_destino"]`, y muestra de solo lectura
-  los campos listados en `propiedades["campos_destino"]` — ej. elegís un
+  los campos listados en `propiedades["campos_destino"]` — ej. eliges un
   cliente y aparecen su razón social y domicilio, sin guardar nada nuevo
   ni tocar otros controles. Se recalcula en cada render, igual que
   "campo_calculado" — si no hay selección o el registro no existe, no

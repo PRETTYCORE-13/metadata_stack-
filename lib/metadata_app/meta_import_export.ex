@@ -274,7 +274,7 @@ defmodule MetadataApp.MetaImportExport do
   end
 
   # Encontrado real (2026-09-17, mismo barrido que "orden" arriba):
-  # orden_columnas_tabla (orden combinado de la grilla Get Config) y
+  # orden_columnas_tabla (orden combinado de la tabla Get Config) y
   # orden_resultados (orden de filas por default) tampoco viajaban en el
   # .meta.json -- exportar_header/2 no los incluía. `nil` (bundle viejo,
   # sin la clave) se ignora; `[]` (el default real del campo, o vaciado a
@@ -503,7 +503,7 @@ defmodule MetadataApp.MetaImportExport do
   # "visible" y "orden" de un campo YA existente (2026-09-17, mismo barrido
   # que orden_columnas_tabla/orden_resultados arriba) -- mismo criterio que
   # sincronizar_etiquetas_campos/2: presentación pura del Get Config
-  # (columna oculta/visible, posición en la grilla de campos), nunca toca
+  # (columna oculta/visible, posición en la tabla de campos), nunca toca
   # la columna física. Antes de esto, ocultar o reordenar un campo YA
   # publicado y volver a publicar no se sincronizaba -- solo un campo
   # NUEVO se creaba con su visible/orden correctos (sincronizar_detalles_nuevos/2).

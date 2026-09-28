@@ -260,7 +260,7 @@ defmodule MetadataAppWeb.Sysadmin.CredencialesLive do
               </div>
             </.form>
           <% else %>
-            <p class="text-sm text-gray-400">Seleccioná una credencial de la izquierda, o creá una nueva.</p>
+            <p class="text-sm text-gray-400">Selecciona una credencial de la izquierda, o crea una nueva.</p>
           <% end %>
         </div>
       </div>

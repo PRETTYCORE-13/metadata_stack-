@@ -632,7 +632,7 @@ defmodule MetadataAppWeb.CatalogoLive do
     cantidad = MapSet.size(socket.assigns.seleccionados)
 
     if cantidad > @excel_max_filas do
-      {:noreply, put_flash(socket, :error, "Hay #{cantidad} registros seleccionados — más de lo que Excel puede recibir de una.")}
+      {:noreply, put_flash(socket, :error, "Hay #{cantidad} registros seleccionados — más de lo que Excel puede recibir de una sola vez.")}
     else
       enviar_excel(socket, filas_export_seleccionados(socket))
     end
@@ -644,7 +644,7 @@ defmodule MetadataAppWeb.CatalogoLive do
        put_flash(
          socket,
          :error,
-         "Hay #{socket.assigns.total_filas} registros para exportar — más de lo que Excel puede recibir de una. Filtrá más antes de descargar."
+         "Hay #{socket.assigns.total_filas} registros para exportar — más de lo que Excel puede recibir de una sola vez. Filtra más antes de descargar."
        )}
     else
       enviar_excel(socket, filas_export(socket))
@@ -1236,7 +1236,7 @@ defmodule MetadataAppWeb.CatalogoLive do
     # resultados" del admin SOLO para esta sesión -- nunca se persiste en
     # `consulta` (eso sigue siendo Get Config). Una sola columna a la vez,
     # a diferencia de la lista con prioridad del admin -- el patrón típico
-    # de "clic para ordenar" de cualquier grilla, no una combinación.
+    # de "clic para ordenar" de cualquier tabla, no una combinación.
     consulta_ordenada = if orden_usuario, do: %{consulta | orden_por: [orden_usuario]}, else: consulta
 
     scope = socket.assigns[:current_scope]
@@ -1627,7 +1627,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <tr>
                   <td class="px-4 py-10 text-center text-gray-400 text-sm" colspan={max(length(@columnas), 1) + 1}>
                     <%= if @sin_filtro? do %>
-                      Seleccioná un filtro o buscá algo para ver los datos.
+                      Selecciona un filtro o busca algo para ver los datos.
                     <% else %>
                       Sin registros con ese filtro.
                     <% end %>
@@ -1779,7 +1779,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <tr>
                   <td class="px-4 py-10 text-center text-gray-400 text-sm" colspan={length(@columnas_render) + 1}>
                     <%= if @sin_filtro? do %>
-                      Seleccioná un filtro o buscá algo para ver los datos.
+                      Selecciona un filtro o busca algo para ver los datos.
                     <% else %>
                       Sin registros con ese filtro.
                     <% end %>
@@ -1847,7 +1847,7 @@ defmodule MetadataAppWeb.CatalogoLive do
           </div>
 
           <%= if @modal["paso"] == "plantilla" do %>
-            <p class="text-gray-500 mb-2">Elegí qué plantilla vas a usar:</p>
+            <p class="text-gray-500 mb-2">Elige qué plantilla vas a usar:</p>
             <div class="flex flex-col gap-2">
               <button :for={p <- @plantillas} type="button" phx-click="importar_elegir_plantilla" phx-value-id={p.id}
                 class="text-left border border-gray-200 rounded-lg px-3 py-2 hover:border-purple-400 hover:bg-purple-50">
@@ -1859,7 +1859,7 @@ defmodule MetadataAppWeb.CatalogoLive do
 
           <%= if @modal["paso"] == "cargar" do %>
             <div class="flex items-center justify-between gap-3 mb-2.5">
-              <p class="text-gray-600">Completá la plantilla con tus datos (la fila 2 es solo un ejemplo) y subila acá.</p>
+              <p class="text-gray-600">Completa la plantilla con tus datos (la fila 2 es solo un ejemplo) y súbela acá.</p>
               <%!-- target="_blank" a propósito (bug real reportado): un <a href>
                    normal hace que LiveView detecte "va a navegar" y mate el
                    socket de ESTA página ANTES de saber que la respuesta es una
@@ -2111,7 +2111,7 @@ defmodule MetadataAppWeb.CatalogoLive do
            hoja de estilo nativa del navegador, ninguna clase CSS lo
            pisa -- confirmado real contra Chrome/Edge). Un <div> con
            ícono adentro da control total del color sin pelear con el
-           checkbox nativo -- mismo criterio de "escribí tu propio
+           checkbox nativo -- mismo criterio de "escribe tu propio
            componente" que ya rige para daisyUI. --%>
       <div :if={@booleano?} class={[
         "w-4 h-4 rounded border flex items-center justify-center",

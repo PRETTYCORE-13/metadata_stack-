@@ -198,7 +198,7 @@ defmodule MetadataApp.SeedMasterdata do
     if opciones != [] and Enum.all?(opciones, fn {_id, etiqueta} -> etiqueta_sin_configurar?(etiqueta) end) do
       {:error,
        "\"#{props["catalogo"]}\" no tiene campo_visualizacion ni campos_acompanamiento configurado -- " <>
-         "no se puede referenciar por valor natural desde un fixture, configuralo primero en BC Motor (Configuración → el campo \"referencia\" correspondiente)."}
+         "no se puede referenciar por valor natural desde un fixture, configúralo primero en BC Motor (Configuración → el campo \"referencia\" correspondiente)."}
     else
       case Enum.find(opciones, fn {_id, etiqueta} -> etiqueta == valor end) do
         {id, _etiqueta} -> {:ok, id}

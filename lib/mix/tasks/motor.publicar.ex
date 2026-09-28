@@ -166,7 +166,7 @@ defmodule Mix.Tasks.Motor.Publicar do
 
                 Mix.shell().info(
                   "Disparado — #{Enum.join(nombres, ", ")} va(n) camino a \"#{sistema}\". " <>
-                    "Seguí el progreso con \"gh run list\" / \"gh run watch\"."
+                    "Sigue el progreso con \"gh run list\" / \"gh run watch\"."
                 )
 
               {:error, mensaje} ->

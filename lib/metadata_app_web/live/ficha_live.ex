@@ -375,7 +375,7 @@ defmodule MetadataAppWeb.FichaLive do
 
     # Busca contra TODAS las acciones del catálogo (no solo
     # @acciones_externas, ya filtrada por permiso) para poder distinguir
-    # "no existe" de "no tenés permiso" -- defensa en profundidad contra un
+    # "no existe" de "no tienes permiso" -- defensa en profundidad contra un
     # permiso revocado en OTRA pestaña/sesión mientras esta ficha seguía
     # abierta con la lista vieja en memoria, no el camino normal (el botón
     # ya no aparece si @acciones_externas no la incluye).
@@ -571,7 +571,7 @@ defmodule MetadataAppWeb.FichaLive do
         valores_finales = limpiar_descendientes_cambiados(catalogo, columnas, %{}, valores_previos, valores_merged)
         nueva_seleccion = %{seleccion | valores: valores_finales}
 
-        # Refleja en la celda de la grilla (solo lectura) tanto lo que el
+        # Refleja en la celda de la tabla (solo lectura) tanto lo que el
         # usuario tocó a mano como cualquier descendiente que se vació
         # solo (Municipio/Localidad si cambió Estado) — no solo `campos`.
         valores_a_reflejar =
@@ -1091,7 +1091,7 @@ defmodule MetadataAppWeb.FichaLive do
     campo.schema_context_field in campos_editables
   end
 
-  # "Campo calculado" en la grilla de renglones: mismo criterio que
+  # "Campo calculado" en la tabla de renglones: mismo criterio que
   # campo_row/1 (recalcula en vivo con Formula.evaluar/2, el guardado real
   # de todas formas lo vuelve a calcular server-side — ver
   # MetaSchemaContext.aplicar_campos_calculados/2) pero acotado a los
@@ -1391,7 +1391,7 @@ defmodule MetadataAppWeb.FichaLive do
       # carga sin ningún gate especial en cuanto se navega a la ficha
       # PROPIA de ese renglón (misma función, cat.nombre pasa a ser
       # `tabla`), así que lo único que hace falta acá es saber si existe
-      # ese link "Ver detalle" desde dentro de la grilla del maestro (ver
+      # ese link "Ver detalle" desde dentro de la tabla del maestro (ver
       # formulario_renglon/1) — nunca un grid anidado.
       %{
         nombre: h.schema_context_name,
@@ -1663,10 +1663,10 @@ defmodule MetadataAppWeb.FichaLive do
   # para el modal de renglones — acá cubre además la ejecución de
   # transiciones de estado desde la Ficha 360°.
   defp formatear_error(:conflicto_concurrencia),
-    do: "El estado del registro cambió mientras tenías la ficha abierta — actualízala e intentá de nuevo."
+    do: "El estado del registro cambió mientras tenías la ficha abierta — actualízala e intenta de nuevo."
 
   defp formatear_error({:transicion_invalida, _}),
-    do: "Esa transición ya no está disponible desde el estado actual — actualizá la ficha."
+    do: "Esa transición ya no está disponible desde el estado actual — actualiza la ficha."
 
   defp formatear_error({:precondiciones, fallas}),
     do: Enum.map_join(fallas, " | ", & &1.mensaje)
@@ -1697,13 +1697,13 @@ defmodule MetadataAppWeb.FichaLive do
   # accionable: le dice exactamente qué hacer (ir a la banda de pie), no
   # solo que algo falló.
   defp formatear_error({:alcance_requerido, "branch_id"}),
-    do: "No tienes una Sucursal activa — elegí una desde la banda de pie para poder crear este registro."
+    do: "No tienes una Sucursal activa — elige una desde la banda de pie para poder crear este registro."
 
   defp formatear_error({:alcance_requerido, "sales_unit_id"}),
-    do: "No tienes una Unidad de Venta activa — elegí una desde la banda de pie para poder crear este registro."
+    do: "No tienes una Unidad de Venta activa — elige una desde la banda de pie para poder crear este registro."
 
   defp formatear_error({:alcance_requerido, "inventory_id"}),
-    do: "No tienes un Almacén activo — elegí uno desde la banda de pie para poder crear este registro."
+    do: "No tienes un Almacén activo — elige uno desde la banda de pie para poder crear este registro."
 
   # MetadataApp.IdentificadoresTransaccionales.asignar/4 -- errores de
   # CONFIGURACIÓN del catálogo (Perfil de Folio), no de lo que el usuario
@@ -1713,7 +1713,7 @@ defmodule MetadataAppWeb.FichaLive do
   # "No se pudo completar la operación." sin ninguna pista, mientras el
   # de importar ya traducía el mismo error de forma clara).
   defp formatear_error(:perfil_no_encontrado),
-    do: "Este catálogo requiere folio, pero no tiene ningún Perfil de Folio configurado — avisale a un administrador."
+    do: "Este catálogo requiere folio, pero no tiene ningún Perfil de Folio configurado — avísale a un administrador."
 
   defp formatear_error(:configuracion_ambigua),
     do: "Hay más de un Perfil de Folio que aplica a este registro — la configuración del catálogo es ambigua."
@@ -1812,7 +1812,7 @@ defmodule MetadataAppWeb.FichaLive do
     más el espacio en PC") -- la Ficha 360° ya reflowea con flex/grid
     adentro (el aside de la derecha es w-60 fijo, el resto es flex-1), así
     que crece sola con el ancho real de la ventana en vez de dejar una
-    franja vacía en monitores anchos. Achicaba justo la grilla de
+    franja vacía en monitores anchos. Achicaba justo la tabla de
     Renglones (Catálogo Maestro-Detalle), que ya necesitaba scroll
     horizontal con columnas de sobra. --%>
     <div class="p-6">
@@ -1859,7 +1859,7 @@ defmodule MetadataAppWeb.FichaLive do
 
           <div class="pc-ficha-acciones flex items-center gap-2 flex-wrap">
             <select :if={@vistas_disponibles != []} phx-change="cambiar_vista" name="id"
-              title="Elegí cómo ver este registro — el admin del catálogo definió estas vistas alternativas."
+              title="Elige cómo ver este registro — el admin del catálogo definió estas vistas alternativas."
               class="border border-gray-300 rounded-lg text-xs px-2 py-1 text-gray-700">
               <option value="" selected={is_nil(@plantilla) or not Enum.any?(@vistas_disponibles, &(&1.id == @plantilla.id))}>
                 Vista: Predeterminada
@@ -2145,7 +2145,7 @@ defmodule MetadataAppWeb.FichaLive do
     ~H"""
     <form id="form-ficha-datos" phx-change="validar" phx-submit="guardar">
       <div :if={map_size(@edicion.errores) > 0} class="bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2 mb-3">
-        No se pudo guardar: revisá los campos marcados en rojo.
+        No se pudo guardar: revisa los campos marcados en rojo.
       </div>
       <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <.campo_row :for={col <- @columnas} col={col} registro={@registro} campos_editables={@campos_editables} edicion={@edicion} columnas={@columnas} />
@@ -2178,7 +2178,7 @@ defmodule MetadataAppWeb.FichaLive do
     ~H"""
     <form id="form-ficha-datos" phx-change="validar" phx-submit="guardar" class="space-y-4">
       <div :if={map_size(@edicion.errores) > 0} class="bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2">
-        No se pudo guardar: revisá los campos marcados en rojo.
+        No se pudo guardar: revisa los campos marcados en rojo.
       </div>
       <div class="pc-grid-dinamica" style={@estilo_grid}>
         <.celda_grid :for={hijo <- @hijos} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
@@ -2620,7 +2620,7 @@ defmodule MetadataAppWeb.FichaLive do
       </div>
       <.contenido_relacionado :if={match?({:ok, _}, @resultado)} pares={elem(@resultado, 1)} mostrar={@mostrar} />
       <p :if={match?({:error, _}, @resultado)} class="px-4 py-3 text-center text-gray-400 text-xs">
-        Elegí un valor en el campo de referencia para autocompletar.
+        Elige un valor en el campo de referencia para autocompletar.
       </p>
     </div>
     """
@@ -2821,7 +2821,7 @@ defmodule MetadataAppWeb.FichaLive do
     ~H"""
     <.renglones_relacion :if={@detalle_info} titulo={@titulo} columnas={@columnas} filas={@filas}
       mostrar_total={@mostrar_total} total={@total} etiqueta_total={@etiqueta_total} />
-    <p :if={!@detalle_info} class="text-center text-gray-400 text-xs py-4">Elegí un detalle en las propiedades de este componente.</p>
+    <p :if={!@detalle_info} class="text-center text-gray-400 text-xs py-4">Elige un detalle en las propiedades de este componente.</p>
     """
   end
 
@@ -2930,7 +2930,7 @@ defmodule MetadataAppWeb.FichaLive do
   # orden de lista = orden visual), acá cada hijo lleva su posición real en
   # propiedades["celda"] — celda_grid/1 hace de puente entre esa metadata y
   # el <div> real posicionado con CSS Grid explícito (grid-column/grid-row),
-  # SIN ningún borde de grilla (eso es solo del Constructor, ver .gc-editor
+  # SIN ningún borde de cuadrícula (eso es solo del Constructor, ver .gc-editor
   # en app.css) — .pc-grid-dinamica colapsa a 1 columna bajo 640px salvo que
   # el nodo pida un override puntual (responsive.colspan_movil/orden_movil).
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "grid"}} = assigns) do
@@ -2987,7 +2987,7 @@ defmodule MetadataAppWeb.FichaLive do
     confirmar =
       if assigns.nodo["propiedades"]["confirmar_antes"] == true do
         case assigns.nodo["propiedades"]["mensaje_confirmacion"] do
-          texto when texto in [nil, ""] -> "¿Confirmás esta acción?"
+          texto when texto in [nil, ""] -> "¿Confirmas esta acción?"
           texto -> texto
         end
       end
@@ -3967,7 +3967,7 @@ defmodule MetadataAppWeb.FichaLive do
 
   # "Vista" = Tarjetas (Diseñador de Tabla relacionada) -- MISMOS datos que
   # tabla_relacion/1 (@r.filas, @columnas), solo cambia el layout: una
-  # grilla de bloques clickeables en vez de una tabla de filas/columnas.
+  # cuadrícula de bloques clickeables en vez de una tabla de filas/columnas.
   defp tarjetas_relacion(assigns) do
     ~H"""
     <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">

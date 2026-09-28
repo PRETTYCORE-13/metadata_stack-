@@ -195,7 +195,7 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
 
     cond do
       catalogo == "" ->
-        {:error, "Elegí a qué catálogo apunta la referencia."}
+        {:error, "Elige a qué catálogo apunta la referencia."}
 
       is_nil(destino) or destino == false ->
         {:error, "Ese catálogo destino ya no existe."}
@@ -897,7 +897,7 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
 
   defp config_capacidad("placeholder", assigns) do
     ~H"""
-    <input type="text" name="placeholder_texto" value={@form["placeholder_texto"]} placeholder="Ej. Escribí tu nombre completo"
+    <input type="text" name="placeholder_texto" value={@form["placeholder_texto"]} placeholder="Ej. Escribe tu nombre completo"
       class="w-full border border-gray-300 rounded-lg px-2 py-1" />
     """
   end
@@ -1000,7 +1000,7 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
 
   defp config_capacidad("mostrar_varios", assigns) do
     ~H"""
-    <div :if={@form["catalogo"] in [nil, ""]} class="text-gray-400">Elegí primero el catálogo destino.</div>
+    <div :if={@form["catalogo"] in [nil, ""]} class="text-gray-400">Elige primero el catálogo destino.</div>
     <div :if={@form["catalogo"] not in [nil, ""]} class="flex flex-col gap-1">
       <p class="text-gray-500">Campos que trae de {etiqueta_catalogo(@catalogos, @form["catalogo"])}:</p>
       <label :for={c <- @campos_destino} class="flex items-center gap-1.5">

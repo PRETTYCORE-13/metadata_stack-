@@ -83,7 +83,7 @@ defmodule MetadataAppWeb.Sysadmin.SesionesMovilLive do
         <div>
           <h1 class="text-2xl font-bold">Sesiones móviles</h1>
           <p class="text-xs text-gray-400">
-            Dispositivos donde tenés sesión abierta en la app -- cerrá cualquiera si perdiste el teléfono.
+            Dispositivos donde tienes sesión abierta en la app -- cierra cualquiera si perdiste el teléfono.
           </p>
         </div>
       </div>

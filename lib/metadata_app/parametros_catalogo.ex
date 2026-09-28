@@ -37,7 +37,7 @@ defmodule MetadataApp.ParametrosCatalogo do
   # -- branch/inventory_location/sales_unit son conceptualmente una
   # referencia aunque su "tipo" guardado sea nil (no vienen de
   # meta_schema_detail). Un catálogo (BC) normal nunca alimenta acá un
-  # campo con "control" => true (su grilla de Parámetro solo cubre
+  # campo con "control" => true (su tabla de Parámetro solo cubre
   # campos de negocio, ver design.md §1.4) -- estas cláusulas quedan
   # inertes para ese origen, no hace falta separarlas por origen.
   @controles_referencia ~w(branch inventory_location sales_unit)

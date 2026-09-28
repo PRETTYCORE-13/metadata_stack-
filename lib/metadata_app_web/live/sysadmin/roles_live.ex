@@ -371,7 +371,7 @@ defmodule MetadataAppWeb.Sysadmin.RolesLive do
             </ul>
           <% else %>
             <div class="flex items-center justify-center h-full min-h-[18rem] text-sm text-gray-400 text-center px-8">
-              Elegí un rol de la izquierda para ver y gestionar sus usuarios.
+              Elige un rol de la izquierda para ver y gestionar sus usuarios.
             </div>
           <% end %>
         </div>

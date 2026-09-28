@@ -772,7 +772,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     else
       {:error,
        "confirmar_filas no coincide — el catálogo tiene #{filas} fila(s) ahora mismo. " <>
-         "Consultá GET /api/catalogos/#{schema_context_name}/impacto antes de borrar."}
+         "Consulta GET /api/catalogos/#{schema_context_name}/impacto antes de borrar."}
     end
   end
 
@@ -782,7 +782,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
         :ok
 
       dependientes ->
-        {:error, "catálogo(s) dependientes, borralos primero: #{Enum.join(dependientes, ", ")}"}
+        {:error, "catálogo(s) dependientes, bórralos primero: #{Enum.join(dependientes, ", ")}"}
     end
   end
 

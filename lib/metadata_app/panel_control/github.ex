@@ -103,7 +103,7 @@ defmodule MetadataApp.PanelControl.Github do
 
   defp token do
     case Integraciones.obtener_credencial_por_sistema("github") do
-      nil -> {:error, "No hay ninguna credencial de GitHub configurada -- creá una en /sysadmin/credenciales con sistema_externo \"github\" (Personal Access Token con scopes repo + workflow)."}
+      nil -> {:error, "No hay ninguna credencial de GitHub configurada -- crea una en /sysadmin/credenciales con sistema_externo \"github\" (Personal Access Token con scopes repo + workflow)."}
       %{api_key: token} -> {:ok, token}
     end
   end
@@ -324,7 +324,7 @@ defmodule MetadataApp.PanelControl.Github do
   end
 
   def esperar_run(_owner, _repo, _head_sha, _token, 0) do
-    {:error, "El build no terminó después de varios minutos -- revisá el estado directo en GitHub Actions."}
+    {:error, "El build no terminó después de varios minutos -- revisa el estado directo en GitHub Actions."}
   end
 
   def esperar_run(owner, repo, head_sha, token, intentos) do

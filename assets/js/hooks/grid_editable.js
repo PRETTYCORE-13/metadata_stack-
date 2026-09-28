@@ -89,7 +89,7 @@ export function detectarDuplicados(filas, columns) {
   return duplicados
 }
 
-// Fila de resumen configurable (pie fijo, siempre al fondo de la grilla) —
+// Fila de resumen configurable (pie fijo, siempre al fondo de la tabla) —
 // cálculo puro para poder probarlo sin DOM
 // (ver assets/js/hooks/__tests__/grid_editable.test.mjs). `ventana`, si no
 // es null, es {inicio, fin} (mismo shape que devuelve calcularVentana) —

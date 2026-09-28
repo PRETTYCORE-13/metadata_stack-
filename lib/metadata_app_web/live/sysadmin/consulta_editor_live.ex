@@ -311,7 +311,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
 
   # <select> (lookup, 2026-08-27 -- reemplaza la fila de botones "Tipo":
   # con 3-4 opciones se amontonaba/enrollaba en la columna angosta de la
-  # grilla) -- name-based con form="form-guardar-columnas", mismo motivo
+  # tabla) -- name-based con form="form-guardar-columnas", mismo motivo
   # que el resto de los controles con phx-change de este panel.
   def handle_event("cambiar_tipo_filtro", %{"tipo_filtro" => mapa}, socket) do
     {id, tipo_filtro} = mapa |> Map.to_list() |> List.first()

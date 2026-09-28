@@ -70,7 +70,7 @@ defmodule Mix.Tasks.Motor.Despublicar do
     if existe? do
       Mix.raise(
         "\"#{catalogo}\" todavía existe en esta base -- despublicar es para un catálogo YA " <>
-          "borrado local (BC List → Eliminar). Para publicar uno que SÍ existe, usá \"mix motor.publicar\"."
+          "borrado local (BC List → Eliminar). Para publicar uno que SÍ existe, usa \"mix motor.publicar\"."
       )
     end
 
@@ -109,7 +109,7 @@ defmodule Mix.Tasks.Motor.Despublicar do
             case MetaPublicador.disparar_deploy(sistema, [catalogo], bundle_path) do
               {:ok, salida} ->
                 Mix.shell().info(salida)
-                Mix.shell().info("Disparado — el borrado de #{catalogo} va camino a \"#{sistema}\". Seguí con \"gh run list\" / \"gh run watch\".")
+                Mix.shell().info("Disparado — el borrado de #{catalogo} va camino a \"#{sistema}\". Sigue con \"gh run list\" / \"gh run watch\".")
 
               {:error, mensaje} ->
                 Mix.raise(mensaje)

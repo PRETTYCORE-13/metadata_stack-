@@ -96,7 +96,7 @@ defmodule MetadataApp.MetaImportExportTest do
   end
 
   # Encontrado real (2026-09-17): captura mostrando el orden de Get Config
-  # (grilla de columnas + orden de filas por default) sin efecto tras
+  # (tabla de columnas + orden de filas por default) sin efecto tras
   # publicar -- exportar_header/2 no incluía orden_columnas_tabla ni
   # orden_resultados en el .meta.json.
   test "republicar un catálogo ya existente sincroniza orden_columnas_tabla y orden_resultados" do

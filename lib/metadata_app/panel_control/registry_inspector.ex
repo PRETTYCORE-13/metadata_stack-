@@ -55,7 +55,7 @@ defmodule MetadataApp.PanelControl.RegistryInspector do
     e -> {:error, "Excepción inspeccionando la imagen: #{Exception.message(e)}"}
   end
 
-  def inspeccionar(_), do: {:error, "Escribí primero el nombre de la imagen."}
+  def inspeccionar(_), do: {:error, "Escribe primero el nombre de la imagen."}
 
   # --- referencia -------------------------------------------------------
 

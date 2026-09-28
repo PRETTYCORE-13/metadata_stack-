@@ -307,11 +307,11 @@ defmodule MetadataApp.MetaConsultas do
   # es el campo remoto, solo de qué lado está la referencia:
   #
   #   Dirección A: la tabla que se agrega TIENE el campo referencia hacia
-  #   alguna tabla ya presente (caso típico: agregás el lado "muchos"
+  #   alguna tabla ya presente (caso típico: agregas el lado "muchos"
   #   cuando el "uno" ya estaba).
   #
   #   Dirección B: alguna tabla ya presente tiene un campo referencia
-  #   HACIA la tabla que se agrega (agregás el lado "uno" cuando el
+  #   HACIA la tabla que se agrega (agregas el lado "uno" cuando el
   #   "muchos" ya estaba).
   @doc """
   Igual que la detección que hace `agregar_tabla/2` internamente, pero

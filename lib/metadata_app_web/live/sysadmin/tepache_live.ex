@@ -89,7 +89,7 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
       {:noreply,
        socket
        |> assign(:tag_importar, tag)
-       |> assign(:resultado_import, {:error, "Ingresá un tag (ej. TEPACHE-000002)."})}
+       |> assign(:resultado_import, {:error, "Ingresa un tag (ej. TEPACHE-000002)."})}
     else
       importar(socket, tag)
     end
@@ -146,7 +146,7 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
       <div class="rounded-xl border border-gray-200 p-5">
         <h2 class="text-lg font-bold text-gray-900 mb-1">Exportar</h2>
         <p class="text-sm text-gray-500 mb-4">
-          Armá un tepache con uno o más catálogos para que otro desarrollador lo importe en su Postgres local — sin publicar nada a producción.
+          Arma un tepache con uno o más catálogos para que otro desarrollador lo importe en su Postgres local — sin publicar nada a producción.
         </p>
 
         <input
@@ -207,7 +207,7 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
       <div class="rounded-xl border border-gray-200 p-5">
         <h2 class="text-lg font-bold text-gray-900 mb-1">Importar</h2>
         <p class="text-sm text-gray-500 mb-4">
-          Pegá el tag de un tepache que te compartió otro desarrollador (ej. <span class="font-mono">TEPACHE-000001</span>) para traerlo a tu Postgres local.
+          Pega el tag de un tepache que te compartió otro desarrollador (ej. <span class="font-mono">TEPACHE-000001</span>) para traerlo a tu Postgres local.
         </p>
 
         <form phx-submit="importar_tepache" class="flex items-center gap-2">
@@ -304,7 +304,7 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
         <span :for={p <- @problemas}>[{p.severidad}] {p.mensaje}<br /></span>
       </p>
       <p class="text-xs text-green-700">
-        Compartí el tag <span class="font-mono">{@tag}</span> para que alguien lo importe.
+        Comparte el tag <span class="font-mono">{@tag}</span> para que alguien lo importe.
       </p>
     </div>
     """
@@ -333,7 +333,7 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
       <p class="font-bold">Listo — <span class="font-mono">{Enum.join(@catalogos, ", ")}</span> ya está en tu Postgres local.</p>
       <p :for={m <- @mensajes} class="text-xs text-green-700">{m}</p>
       <p class="text-xs text-green-700">
-        Para probarlo con un rol puntual, concedeselo desde Bisness Context.
+        Para probarlo con un rol puntual, concédeselo desde Bisness Context.
       </p>
     </div>
     """

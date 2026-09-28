@@ -530,13 +530,13 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
               </button>
             </li>
             <li :if={@resultados_catalogo_picker == []} class="px-3 py-2 text-xs text-gray-400">
-              Buscá un catálogo para empezar.
+              Busca un catálogo para empezar.
             </li>
           </ul>
         </div>
 
         <div :if={!@catalogo and !@embebido?} class="flex items-center justify-center rounded-xl border border-dashed border-gray-300 text-sm text-gray-400 p-12">
-          Elegí un catálogo de la izquierda para ver y editar sus permisos.
+          Elige un catálogo de la izquierda para ver y editar sus permisos.
         </div>
 
         <div :if={@catalogo} class="overflow-x-auto rounded-xl border border-gray-200">
@@ -651,7 +651,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
           <% true -> %>
           <p class="text-[11px] text-red-600 mt-0.5 max-w-2xl">
             Esta Consulta no tiene su configuración armada (falta la fila en
-            <code class="font-mono">meta_schema_consulta</code>) — no se puede resolver su catálogo base ni su Alcance de Datos. Revisala desde BC Motor antes de seguir configurando sus permisos.
+            <code class="font-mono">meta_schema_consulta</code>) — no se puede resolver su catálogo base ni su Alcance de Datos. Revísala desde BC Motor antes de seguir configurando sus permisos.
           </p>
         <% end %>
       </div>
@@ -733,7 +733,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
             </td>
           </tr>
           <tr :if={@roles == []}>
-            <td colspan="2" class="px-4 py-6 text-center text-sm text-gray-400">Ningún rol tiene permisos en este catálogo todavía — configuralos arriba primero.</td>
+            <td colspan="2" class="px-4 py-6 text-center text-sm text-gray-400">Ningún rol tiene permisos en este catálogo todavía — configúralos arriba primero.</td>
           </tr>
         </tbody>
       </table>

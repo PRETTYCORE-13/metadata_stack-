@@ -147,7 +147,7 @@ defmodule MetadataApp.Release do
       IO.puts("== Empresa inicial ==")
       asegurar_empresa_inicial()
     else
-      IO.puts("SYSADMIN_EMAIL no configurado -- completá el primer arranque desde el navegador (wizard).")
+      IO.puts("SYSADMIN_EMAIL no configurado -- completa el primer arranque desde el navegador (wizard).")
     end
 
     IO.puts("Setup completo.")

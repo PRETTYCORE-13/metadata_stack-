@@ -386,7 +386,7 @@ const RecordarSeccion = {
     this.el.addEventListener("toggle", () => localStorage.setItem(this.llave, this.el.open))
   },
   // Bug real (2026-09-02): cualquier phx-change/phx-click DENTRO de la
-  // sección (ej. tipear en la grilla de Get Config) parchea este <details>
+  // sección (ej. tipear en la tabla de Get Config) parchea este <details>
   // -- el HTML del servidor nunca manda `open` (es 100% cliente), así que
   // morphdom lo borraba del DOM en cada patch y la sección se cerraba sola.
   // Reaplicar acá lo mismo que mounted() evita que el patch pise el estado.

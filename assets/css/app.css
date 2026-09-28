@@ -184,7 +184,7 @@ body {
    colspan/rowspan de móvil (--celda-colspan-movil/--celda-rowspan-movil,
    ver celda_classes/1) — si no los pidió, `auto` los deja fluir apilados
    como cualquier hijo más de una sola columna. Nunca lleva bordes de
-   grilla acá — esos son solo del Constructor (ver .gc-editor más abajo). */
+   cuadrícula acá — esos son solo del Constructor (ver .gc-editor más abajo). */
 .pc-grid-dinamica {
   display: grid;
   grid-template-columns: repeat(var(--pc-grid-cols, 1), minmax(0, 1fr));

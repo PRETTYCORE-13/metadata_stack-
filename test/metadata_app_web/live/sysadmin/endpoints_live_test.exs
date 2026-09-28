@@ -173,7 +173,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLiveTest do
       |> form("form[phx-submit=crear_credencial]", %{"nombre" => "ERP", "campos_permitidos" => [clave]})
       |> render_submit()
 
-    assert html_credencial =~ "Copiá esta API key ahora"
+    assert html_credencial =~ "Copia esta API key ahora"
     [_, key_mostrada] = Regex.run(~r/block break-all">([^<]+)<\/code>/, html_credencial)
 
     {:ok, view2, _html_recargado} = live(conn, ~p"/sysadmin/endpoints/#{header.schema_context_name}")

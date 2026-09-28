@@ -185,7 +185,7 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
         <%= if @current_scope.usuario.super_admin do %>
           Todas las empresas del sistema (sos super admin) — crear una, o unirte como administrador a una que ya existe.
         <% else %>
-          Las empresas a las que pertenecés — crear una te deja adentro como administrador.
+          Las empresas a las que perteneces — crear una te deja adentro como administrador.
         <% end %>
       </p>
 
@@ -235,7 +235,7 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
             </tr>
             <tr :if={@empresas == []}>
               <td colspan="2" class="px-4 py-6 text-center text-sm text-gray-400">
-                Todavía no pertenecés a ninguna empresa.
+                Todavía no perteneces a ninguna empresa.
               </td>
             </tr>
           </tbody>

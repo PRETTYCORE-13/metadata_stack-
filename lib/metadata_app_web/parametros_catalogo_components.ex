@@ -1,7 +1,7 @@
 defmodule MetadataAppWeb.ParametrosCatalogoComponents do
   @moduledoc """
   SPEC-SYS-0209202601, Grupo C — celdas de Parámetro/Tipo/Acotado/Default/
-  Totales de la grilla "Columnas del GET", movidas de
+  Totales de la tabla "Columnas del GET", movidas de
   `consulta_editor_live.ex` (donde nacieron) para que `bc_motor_live.ex`
   las use tal cual, sin copiar/pegar.
 
@@ -39,7 +39,7 @@ defmodule MetadataAppWeb.ParametrosCatalogoComponents do
   # elegible (boolean/enum/nil) cae en el fallback: celdas apagadas,
   # nada configurable -- ParametrosCatalogo.tipo_elegible?/1 es la MISMA
   # regla que usa el motor para decidir si un campo participa de
-  # Parámetro estándar, así la grilla nunca puede mostrar interactivo
+  # Parámetro estándar, así la tabla nunca puede mostrar interactivo
   # algo que el motor de todos modos va a ignorar.
   attr :campo, :map, required: true
   attr :tipo_efectivo, :any, required: true
@@ -111,7 +111,7 @@ defmodule MetadataAppWeb.ParametrosCatalogoComponents do
     ~H"""
     <button type="button" phx-click="cambiar_es_parametro" phx-value-campo={@id}
       disabled={@campo["visible"] != true}
-      title={if @campo["visible"] != true, do: "Primero marcá \"Visible\" y guardá columnas -- Parámetro exige que la columna sea visible"}
+      title={if @campo["visible"] != true, do: "Primero marca \"Visible\" y guarda columnas -- Parámetro exige que la columna sea visible"}
       class={[
         "text-[10px] font-semibold rounded-full px-2 py-1",
         @campo["es_parametro"] && "bg-purple-600 text-white",
@@ -342,7 +342,7 @@ defmodule MetadataAppWeb.ParametrosCatalogoComponents do
 
   # --- Celda de Totales (Tot.) -- unifica lo que antes era
   # panel_filtros_resumen/1 (4 botones en filas separadas) en una sola
-  # celda de la grilla. Mín./Máx./Total página/Total general son chips
+  # celda de la tabla. Mín./Máx./Total página/Total general son chips
   # inline (mismo patrón visual/evento que ya probó producción); Máscara
   # es un popover chico aparte porque son 2 <select> -- no entran cómodos
   # como chip. Solo campos numéricos (integer/decimal) tienen algo que

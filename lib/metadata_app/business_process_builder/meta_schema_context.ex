@@ -581,7 +581,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   defp validar_nombre_libre(nombre_sistema) do
     case obtener_header_por_nombre(nombre_sistema) do
       nil -> :ok
-      _otro -> {:error, "\"#{nombre_sistema}\" ya existe — elegí otro nombre."}
+      _otro -> {:error, "\"#{nombre_sistema}\" ya existe — elige otro nombre."}
     end
   end
 
@@ -600,7 +600,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   defp validar_nav_libre(nav) do
     case obtener_header_por_nav(nav) do
       nil -> :ok
-      _otro -> {:error, "Esa ruta de navegación ya la usa otro catálogo o carpeta — elegí otra."}
+      _otro -> {:error, "Esa ruta de navegación ya la usa otro catálogo o carpeta — elige otra."}
     end
   end
 
@@ -729,7 +729,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   # schema_context_name de todo catálogo que bloquea el borrado total de
   # schema_context_name -- dos motivos distintos, unificados en una sola
   # lista porque ambos usan el mismo mensaje/UX ("catálogo(s)
-  # dependientes, borralos primero"):
+  # dependientes, bórralos primero"):
   #
   #   1) tiene un detalle tipo "referencia" apuntando acá (de siempre).
   #   2) es un catálogo DETALLE de este maestro (schema_encabezado_id
@@ -1778,18 +1778,18 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     end
   end
 
-  defp validar_config_visualizacion(_config, _campos_reales), do: {:error, "elegí un campo de visualización"}
+  defp validar_config_visualizacion(_config, _campos_reales), do: {:error, "elige un campo de visualización"}
 
   defp validar_campo_existente(campo, etiqueta, campos_reales) do
     cond do
-      campo in [nil, ""] -> {:error, "elegí #{etiqueta}"}
+      campo in [nil, ""] -> {:error, "elige #{etiqueta}"}
       campo not in campos_reales -> {:error, "#{etiqueta} inexistente: #{campo}"}
       true -> :ok
     end
   end
 
   defp validar_texto_no_vacio(texto, etiqueta) do
-    if texto in [nil, ""], do: {:error, "completá #{etiqueta}"}, else: :ok
+    if texto in [nil, ""], do: {:error, "completa #{etiqueta}"}, else: :ok
   end
 
   # Solo valida referencias simples "{campo}" contra los campos reales del
@@ -2025,7 +2025,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   reordenar_campos/2 de arriba, esto NO toca schema_context_properties de
   ningún campo (el orden de la pestaña Campos/Ficha/contrato de API sigue
   intacto); vive aparte, en Header.orden_columnas_tabla, exclusivo de esta
-  grilla.
+  tabla.
   """
   def reordenar_columnas_tabla(%Header{} = header, orden) do
     actualizar_header(header, %{"orden_columnas_tabla" => orden})

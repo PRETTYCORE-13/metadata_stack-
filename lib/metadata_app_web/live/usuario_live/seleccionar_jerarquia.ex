@@ -26,7 +26,7 @@ defmodule MetadataAppWeb.UsuarioLive.SeleccionarJerarquia do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope}>
       <div class="mx-auto max-w-sm">
-        <.header>Elegí con qué sucursal y almacén querés operar</.header>
+        <.header>Elige con qué sucursal y almacén quieres operar</.header>
 
         <form method="post" action={~p"/meta_schema_usuario/jerarquia/activar"} class="mt-6 space-y-4">
           <input type="hidden" name="_csrf_token" value={Phoenix.Controller.get_csrf_token()} />
@@ -92,7 +92,7 @@ defmodule MetadataAppWeb.UsuarioLive.SeleccionarJerarquia do
       <label class="text-sm text-gray-500">{@etiqueta}</label>
       <select name={@nombre} phx-change={@phx_change} class="select select-bordered w-full" required={!@opcional?}>
         <option :if={@opcional?} value="">Ninguna</option>
-        <option value="" disabled selected>Elegí una opción...</option>
+        <option value="" disabled selected>Elige una opción...</option>
         <option :for={opcion <- @opciones} value={opcion.id}>{Map.fetch!(opcion, @campo_nombre)}</option>
       </select>
     </div>
@@ -106,12 +106,12 @@ defmodule MetadataAppWeb.UsuarioLive.SeleccionarJerarquia do
   # Sucursal en {:vacio} = de verdad no tiene ninguna asignada. Almacén
   # en {:vacio} puede ser por lo mismo, O porque la sucursal todavía está
   # {:pendiente} de elegir arriba -- mensaje distinto para no confundir
-  # "no tenés nada" con "elegí la sucursal primero".
+  # "no tienes nada" con "elige la sucursal primero".
   defp campo_jerarquia(%{estado: {:vacio}, nombre: "inventory_location_id", branch_estado: {:pendiente, _}} = assigns) do
     ~H"""
     <div>
       <p class="text-sm text-gray-500">{@etiqueta}</p>
-      <p class="alert alert-outline">Elegí primero una sucursal.</p>
+      <p class="alert alert-outline">Elige primero una sucursal.</p>
     </div>
     """
   end
@@ -121,7 +121,7 @@ defmodule MetadataAppWeb.UsuarioLive.SeleccionarJerarquia do
     <div>
       <p class="text-sm text-gray-500">{@etiqueta}</p>
       <p class="alert alert-outline">
-        Todavía no tenés ninguna sucursal/almacén asignado. Contactá a un administrador.
+        Todavía no tienes ninguna sucursal/almacén asignado. Contacta a un administrador.
       </p>
     </div>
     """
@@ -148,7 +148,7 @@ defmodule MetadataAppWeb.UsuarioLive.SeleccionarJerarquia do
 
   # Disparado al elegir una sucursal del <select> "pendiente" -- re-resuelve
   # Almacén/Unidad de venta EN VIVO para esa sucursal puntual (antes de
-  # esto, ni siquiera existía el concepto de "elegí primero la sucursal",
+  # esto, ni siquiera existía el concepto de "elige primero la sucursal",
   # todo se resolvía junto e independiente). branch_estado NO cambia acá
   # a propósito (sigue {:pendiente, opciones}, es el <select> el que ya
   # tiene la elección) -- si al final el usuario cambia de sucursal otra

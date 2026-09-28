@@ -158,10 +158,10 @@ defmodule MetadataAppWeb.Sysadmin.AmbientesLive do
 
     cond do
       ambiente_temporal.host in [nil, ""] or ambiente_temporal.ssh_usuario in [nil, ""] ->
-        {:noreply, put_flash(socket, :error, "Completá host y usuario SSH antes de detectar la imagen.")}
+        {:noreply, put_flash(socket, :error, "Completa host y usuario SSH antes de detectar la imagen.")}
 
       ambiente_temporal.ssh_password in [nil, ""] and ambiente_temporal.ssh_llave_privada in [nil, ""] ->
-        {:noreply, put_flash(socket, :error, "Completá la contraseña o la llave privada antes de detectar la imagen.")}
+        {:noreply, put_flash(socket, :error, "Completa la contraseña o la llave privada antes de detectar la imagen.")}
 
       true ->
         {:noreply,
@@ -383,7 +383,7 @@ defmodule MetadataAppWeb.Sysadmin.AmbientesLive do
                     type="button"
                     phx-click="detectar_imagen"
                     disabled={@detectando_imagen or not datos_ssh_completos?(@form, @ambiente_seleccionado)}
-                    title={if not datos_ssh_completos?(@form, @ambiente_seleccionado), do: "Completá host, usuario y contraseña/llave antes de detectar"}
+                    title={if not datos_ssh_completos?(@form, @ambiente_seleccionado), do: "Completa host, usuario y contraseña/llave antes de detectar"}
                     class="text-[11px] text-purple-600 hover:underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed"
                   >
                     {if @detectando_imagen, do: "Detectando...", else: "Detectar automáticamente"}
@@ -413,7 +413,7 @@ defmodule MetadataAppWeb.Sysadmin.AmbientesLive do
               </div>
             </.form>
           <% else %>
-            <p class="text-sm text-gray-400">Seleccioná un ambiente de la izquierda, o creá uno nuevo.</p>
+            <p class="text-sm text-gray-400">Selecciona un ambiente de la izquierda, o crea uno nuevo.</p>
           <% end %>
         </div>
       </div>

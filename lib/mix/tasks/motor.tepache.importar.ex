@@ -23,10 +23,10 @@ defmodule Mix.Tasks.Motor.Tepache.Importar do
 
   Registra automáticamente los permisos de cada catálogo importado
   (leer/crear/editar/eliminar + cada transición real), SIN concedérselos
-  a ningún rol — si querés probarlo con un rol que no sea administrador,
-  concedeselo vos desde Permission Sets, a propósito.
+  a ningún rol — si quieres probarlo con un rol que no sea administrador,
+  concédeselo tú desde Permission Sets, a propósito.
 
-  Después de mirar/probar, si no lo querés dejar: usá la misma opción
+  Después de mirar/probar, si no lo quieres dejar: usa la misma opción
   "Eliminar" de BC List sobre el catálogo importado.
   """
 
@@ -60,7 +60,7 @@ defmodule Mix.Tasks.Motor.Tepache.Importar do
       Mix.shell().info("  #{nombre}: #{Enum.join(campos, ", ")}")
     end)
 
-    if Mix.shell().yes?("\n¿Confirmás eliminarlos (se pierden los datos de esas columnas)?") do
+    if Mix.shell().yes?("\n¿Confirmas eliminarlos (se pierden los datos de esas columnas)?") do
       aplicar(info)
     else
       Mix.shell().info("Cancelado — no se tocó nada.")
@@ -82,7 +82,7 @@ defmodule Mix.Tasks.Motor.Tepache.Importar do
 
         Mix.shell().info(
           "\nListo — #{Enum.join(catalogos, ", ")} ya está en tu Postgres local. " <>
-            "Para probarlo con un rol puntual, concedeselo desde Permission Sets."
+            "Para probarlo con un rol puntual, concédeselo desde Permission Sets."
         )
     end
   end

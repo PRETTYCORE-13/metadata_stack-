@@ -92,8 +92,8 @@ defmodule MetadataAppWeb.GridEditableComponents do
   end
 
   @doc """
-  Fila de resumen (pie fijo de la grilla, ver `grid/1` + hook `GridEditable`)
-  — estándar fijo para TODAS las grillas de renglones, sin configuración
+  Fila de resumen (pie fijo de la tabla, ver `grid/1` + hook `GridEditable`)
+  — estándar fijo para TODAS las tablas de renglones, sin configuración
   por catálogo: toda columna numérica suma por default; el resto no
   muestra nada por default, pero sí admite "Recuento" (cuántos renglones
   tienen algo cargado ahí) con clic derecho — sumar/promediar/etc no

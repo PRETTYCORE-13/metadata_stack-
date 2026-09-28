@@ -69,7 +69,7 @@ defmodule Mix.Tasks.Motor.PropagarExtensionASistema do
 
           {:ok, salida} ->
             Mix.shell().info(salida)
-            Mix.shell().info("Disparado -- seguí el progreso con \"gh run list\" / \"gh run watch\".")
+            Mix.shell().info("Disparado -- sigue el progreso con \"gh run list\" / \"gh run watch\".")
 
           {:error, mensaje} ->
             Mix.raise(mensaje)

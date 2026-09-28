@@ -47,7 +47,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   # Get View unificado (panel_get_view/1) — descriptores fijos de los
   # campos de control, mezclados con @campos (de negocio) en una sola
-  # grilla arrastrable. `visible_key` es el campo booleano real en Header
+  # tabla arrastrable. `visible_key` es el campo booleano real en Header
   # (Header.mostrar_id_en_tabla, etc.) — "empresa"/"branch"/
   # "inventory_location"/"sales_unit" solo se ofrecen cuando el catálogo
   # tiene Alcance de Datos activado (esas columnas ni existen físicamente
@@ -854,7 +854,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       {:error, {:crash, _excepcion}} ->
         {:noreply,
-         put_flash(socket, :error, "No se pudo actualizar la obligatoriedad por una falla de conexión con la base — nada se guardó, probá de nuevo en unos segundos.")}
+         put_flash(socket, :error, "No se pudo actualizar la obligatoriedad por una falla de conexión con la base — nada se guardó, prueba de nuevo en unos segundos.")}
     end
   end
 
@@ -893,7 +893,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     actualizar_campo_y_regenerar(socket, detalle, props, "el valor default")
   end
 
-  # Grilla unificada de Get View (panel_get_view/1) — mismo hook
+  # Tabla unificada de Get View (panel_get_view/1) — mismo hook
   # ListaOrdenable que el de la pestaña Campos, pero con un
   # `data-contenedor-id` propio ("columnas-get-view") para no confundirse
   # con esa: acá se mezclan claves de control ("id"/"estado"/...) con
@@ -931,7 +931,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   end
 
   # "Todos por default" — a diferencia de Totales/Parámetro (que se
-  # eligen por CAMPO, ver celda_totales/celdas_parametro en la grilla de
+  # eligen por CAMPO, ver celda_totales/celdas_parametro en la tabla de
   # arriba), esto es a nivel de todo el catálogo: si está prendido,
   # CatalogoLive trae todos los registros y
   # columnas apenas se abre la tabla, sin esperar que el usuario final
@@ -1083,7 +1083,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   # --- Get View: qué campos ve el usuario final en la tabla del catálogo ------
 
-  # Grilla unificada (2026-08-18): un solo submit guarda la visibilidad de
+  # Tabla unificada (2026-08-18): un solo submit guarda la visibilidad de
   # campos de negocio (schema_context_properties.visible, como siempre) Y
   # de campos de control (Header.mostrar_*_en_tabla, antes cada uno se
   # guardaba solo/inmediato con su propio botón toggle_mostrar_*_en_tabla
@@ -1228,7 +1228,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     actualizar_props_por_id(socket, id, fn props -> Map.put(props, "defaults", Map.put(props["defaults"] || %{}, "valores", [])) end, "Default actualizado.")
   end
 
-  # --- Get View: Totales (unificados en la grilla, SPEC-SYS-0209202601) --
+  # --- Get View: Totales (unificados en la tabla, SPEC-SYS-0209202601) --
   # cambiar_minmax_recomendado/cambiar_total_pagina/cambiar_total_general/
   # cambiar_mascara YA existen más abajo (venían de panel_filtros_resumen,
   # retirado) y funcionan sin cambios -- celda_totales/1 les manda el
@@ -1423,7 +1423,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
          "error" => nil
        })}
     else
-      {:noreply, put_flash(socket, :error, "Agregá al menos un campo antes de agregar estados.")}
+      {:noreply, put_flash(socket, :error, "Agrega al menos un campo antes de agregar estados.")}
     end
   end
 
@@ -1492,7 +1492,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         {:noreply, socket |> put_flash(:info, "Estado \"#{estado.nombre}\" eliminado.") |> cargar_motor()}
 
       {:error, :tiene_transiciones} ->
-        {:noreply, put_flash(socket, :error, "Ese estado todavía lo usa una transición — quitá la transición primero.")}
+        {:noreply, put_flash(socket, :error, "Ese estado todavía lo usa una transición — quita la transición primero.")}
 
       {:error, _changeset} ->
         {:noreply, put_flash(socket, :error, "No se pudo eliminar el estado.")}
@@ -1520,7 +1520,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
          "error" => nil
        })}
     else
-      {:noreply, put_flash(socket, :error, "Definí un estado inicial antes de agregar transiciones.")}
+      {:noreply, put_flash(socket, :error, "Define un estado inicial antes de agregar transiciones.")}
     end
   end
 
@@ -1819,7 +1819,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
         {:ok, %{"habilitada" => false}}
 
       form["patron"] in [nil, ""] ->
-        {:error, "Definí un patrón para la máscara."}
+        {:error, "Define un patrón para la máscara."}
 
       true ->
         {:ok,
@@ -1892,7 +1892,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       {:error, {:crash, _excepcion}} ->
         {:noreply,
-         put_flash(socket, :error, "No se pudo regenerar el catálogo por una falla de conexión con la base — nada se guardó, probá de nuevo en unos segundos.")}
+         put_flash(socket, :error, "No se pudo regenerar el catálogo por una falla de conexión con la base — nada se guardó, prueba de nuevo en unos segundos.")}
     end
   end
 
@@ -1964,7 +1964,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       {:error, {:crash, _excepcion}} ->
         {:noreply,
-         update(socket, :campo_form, &Map.put(&1, "error", "No se pudo generar la columna por una falla de conexión con la base — nada se guardó, probá de nuevo en unos segundos."))}
+         update(socket, :campo_form, &Map.put(&1, "error", "No se pudo generar la columna por una falla de conexión con la base — nada se guardó, prueba de nuevo en unos segundos."))}
     end
   end
 
@@ -2731,7 +2731,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   attr :header, :any, required: true
 
   # "Get View": qué columnas ve el usuario final en la tabla de
-  # CatalogoLive — grilla ÚNICA (2026-08-18, a pedido explícito: antes
+  # CatalogoLive — tabla ÚNICA (2026-08-18, a pedido explícito: antes
   # Campos de Control eran 7 botones sueltos sin orden, en una secuencia
   # fija en CatalogoLive, separados de la tabla de Campos de negocio; "no
   # tiene caso tenerlo separado") con Campos de Control + Campos de
@@ -2984,7 +2984,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # Combina los campos de negocio (@campos) con los descriptores fijos de
   # control (@campos_control, filtrados por alcance_habilitado) en una
   # sola lista, ordenada por Header.orden_columnas_tabla — lo que no esté
-  # listado ahí (catálogo que nunca tocó esta grilla) cae al final,
+  # listado ahí (catálogo que nunca tocó esta tabla) cae al final,
   # control primero y de negocio después, mismo orden visual que tenía la
   # versión vieja separada (compatibilidad con todo lo ya publicado).
   # Enum.sort_by/2 es estable: los empates (todo lo no listado) no
@@ -3047,7 +3047,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   # "Filtros por default": qué ve el usuario final apenas ABRE la tabla
   # del catálogo, antes de elegir nada — aparte de Totales (Suma/Promedio/
-  # Conteo, ver celda_totales/1 en la grilla de arriba, no filtra filas).
+  # Conteo, ver celda_totales/1 en la tabla de arriba, no filtra filas).
   # Dos opciones
   # INDEPENDIENTES entre sí (una no depende de la otra prendida, cada una
   # se puede usar sola o las dos juntas), cada una en su propia caja:
@@ -3264,7 +3264,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       </div>
       <div class="p-3 pt-4 overflow-x-auto">
         <%= if @estados == [] do %>
-          <p class="text-gray-400">Definí estados primero.</p>
+          <p class="text-gray-400">Define estados primero.</p>
         <% else %>
           <table class="min-w-full">
             <thead class="bg-gray-50">

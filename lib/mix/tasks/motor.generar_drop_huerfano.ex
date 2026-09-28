@@ -75,7 +75,7 @@ defmodule Mix.Tasks.Motor.GenerarDropHuerfano do
       Mix.raise(
         "\"#{catalogo}\" TODAVÍA existe local -- este task es para un catálogo huérfano " <>
           "(vivo en algún ambiente desplegado, ausente en TODOS lados local). Para borrar uno " <>
-          "que sí existe acá, usá \"BC List → Eliminar\" (que ya deja la migración de DROP lista " <>
+          "que sí existe acá, usa \"BC List → Eliminar\" (que ya deja la migración de DROP lista " <>
           "para \"mix motor.despublicar\")."
       )
     end
@@ -90,7 +90,7 @@ defmodule Mix.Tasks.Motor.GenerarDropHuerfano do
           "Listo -- \"#{catalogo}\" ya no existe local (ni header ni tabla, si la había).\n\n" <>
             "Para propagar a un ambiente puntual:\n" <>
             "  mix motor.despublicar --sistema=<sistema> #{catalogo}\n\n" <>
-            "Si \"#{catalogo}\" no es pty_*/demo100_* (no está gitignored), además commiteá/pusheá " <>
+            "Si \"#{catalogo}\" no es pty_*/demo100_* (no está gitignored), además haz commit/push de " <>
             "#{path} para que llegue a testing/stable por promoción normal."
         )
 

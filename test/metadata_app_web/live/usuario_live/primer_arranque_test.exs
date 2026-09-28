@@ -13,7 +13,7 @@ defmodule MetadataAppWeb.UsuarioLive.PrimerArranqueTest do
 
       {:ok, _lv, html} = live(conn, ~p"/primer-arranque")
 
-      assert html =~ "Configurá tu sistema"
+      assert html =~ "Configura tu sistema"
       assert html =~ "Nombre de la empresa"
     end
 

@@ -88,7 +88,7 @@ defmodule Mix.Tasks.Endpoint.Despublicar do
       :tiene_endpoint ->
         Mix.raise(
           "\"#{consulta_nombre}\" todavía tiene un Endpoint vivo -- despublicar es para uno YA borrado " <>
-            "local (sección Endpoints -> Eliminar). Para publicar el que existe, usá \"mix motor.publicar\"."
+            "local (sección Endpoints -> Eliminar). Para publicar el que existe, usa \"mix motor.publicar\"."
         )
 
       :ok ->
@@ -122,7 +122,7 @@ defmodule Mix.Tasks.Endpoint.Despublicar do
             case MetaPublicador.disparar_deploy(sistema, [consulta_nombre], bundle_path) do
               {:ok, salida} ->
                 Mix.shell().info(salida)
-                Mix.shell().info("Disparado -- el borrado de #{consulta_nombre} va camino a \"#{sistema}\". Seguí con \"gh run list\" / \"gh run watch\".")
+                Mix.shell().info("Disparado -- el borrado de #{consulta_nombre} va camino a \"#{sistema}\". Sigue con \"gh run list\" / \"gh run watch\".")
 
               {:error, mensaje} ->
                 Mix.raise(mensaje)

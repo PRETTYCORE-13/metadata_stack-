@@ -33,7 +33,7 @@ defmodule MetadataAppWeb.UsuarioLive.Settings do
           field={@alias_form[:alias]}
           type="text"
           label="Alias"
-          placeholder="Cómo querés que te muestre la barra superior"
+          placeholder="Cómo quieres que te muestre la barra superior"
           maxlength="40"
         />
         <.button variant="primary" phx-disable-with="Guardando...">Guardar alias</.button>

@@ -8,7 +8,7 @@ defmodule MetadataAppWeb.UsuarioLive.SeleccionarEmpresa do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope}>
       <div class="mx-auto max-w-sm">
-        <.header>Elegí con qué empresa querés trabajar</.header>
+        <.header>Elige con qué empresa quieres trabajar</.header>
 
         <ul :if={@empresas != []} class="mt-6 space-y-2">
           <li :for={empresa <- @empresas}>

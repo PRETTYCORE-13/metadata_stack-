@@ -125,7 +125,7 @@ defmodule MetadataAppWeb.EncabezadoBcComponents do
 
     error =
       if segmento != "" and colisiona_con_otro?(nav, header_id) do
-        "Esa ruta ya la usa otro catálogo o carpeta — elegí otra."
+        "Esa ruta ya la usa otro catálogo o carpeta — elige otra."
       end
 
     %{
@@ -162,7 +162,7 @@ defmodule MetadataAppWeb.EncabezadoBcComponents do
         {:error, Map.put(params, "error", "La navegación no puede quedar vacía.")}
 
       colisiona_con_otro?(nav, header.id) ->
-        {:error, Map.put(params, "error", "Esa ruta ya la usa otro catálogo o carpeta — elegí otra.")}
+        {:error, Map.put(params, "error", "Esa ruta ya la usa otro catálogo o carpeta — elige otra.")}
 
       true ->
         attrs = %{

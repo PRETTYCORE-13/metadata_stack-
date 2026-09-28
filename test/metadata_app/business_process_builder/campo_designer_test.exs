@@ -211,7 +211,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CampoDesignerTest do
 
     test "referencia sin catálogo elegido rechaza" do
       form = form_base("referencia")
-      assert {:error, "Elegí a qué catálogo apunta la referencia."} = FieldDesignerComponents.construir_propiedades(form, [], "cat")
+      assert {:error, "Elige a qué catálogo apunta la referencia."} = FieldDesignerComponents.construir_propiedades(form, [], "cat")
     end
   end
 end

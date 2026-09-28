@@ -92,13 +92,13 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :mostrar_creado_por_en_tabla, :boolean, default: false
 
     # Get View unificado (Campos de Control + Campos de negocio en una
-    # sola grilla arrastrable) — orden combinado de claves: nombres de
+    # sola tabla arrastrable) — orden combinado de claves: nombres de
     # campo real (schema_context_field) y claves fijas de control ("id",
     # "estado", "trn", "empresa", "branch", "inventory_location",
     # "sales_unit", "creado_por"). [] = nunca configurado, CatalogoLive
     # cae al orden de siempre. No reemplaza el "orden" propio de cada
     # campo (schema_context_properties, usado por la pestaña Campos/Ficha/
-    # contrato de API) — es aparte, específico de esta grilla.
+    # contrato de API) — es aparte, específico de esta tabla.
     field :orden_columnas_tabla, {:array, :string}, default: []
 
     # "Orden de resultados" del Get Config (BC Motor, 2026-09-02) -- mismo
@@ -191,7 +191,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     |> validar_encabezado()
     |> unique_constraint(:schema_context_name,
       name: :meta_schema_header_schema_context_name_unico_index,
-      message: "ya existe un catálogo con este nombre — elegí otro"
+      message: "ya existe un catálogo con este nombre — elige otro"
     )
     |> unique_constraint(:codigo_trn, name: :meta_schema_header_codigo_trn_unico_index)
   end

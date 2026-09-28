@@ -133,7 +133,7 @@ defmodule MetadataAppWeb.Api.ConsultaEndpointController do
   # incorrecto, nombres de campo viejos/mal escritos, etc.) -- lista los
   # campos que SÍ acepta para que el caller pueda comparar de una.
   defp mensaje_error_alta({:body_sin_coincidencias, campos_alta}) do
-    "El body no coincide con ningún campo habilitado para este endpoint -- revisá que el header " <>
+    "El body no coincide con ningún campo habilitado para este endpoint -- revisa que el header " <>
       "\"Content-Type: application/json\" esté presente y que los nombres de campo sean exactamente: " <>
       Enum.join(campos_alta, ", ")
   end

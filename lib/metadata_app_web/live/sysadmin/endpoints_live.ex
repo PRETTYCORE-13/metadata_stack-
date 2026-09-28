@@ -337,14 +337,14 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
         {:noreply, push_navigate(socket, to: ~p"/sysadmin/endpoints/#{nombre}")}
 
       nil ->
-        {:noreply, assign(socket, :error_nuevo, "Elegí un catálogo base.")}
+        {:noreply, assign(socket, :error_nuevo, "Elige un catálogo base.")}
 
       {:error, :sin_union} ->
         {:noreply,
          assign(
            socket,
            :error_nuevo,
-           "No se pudo detectar automáticamente la relación entre esas dos tablas -- elegí otra tabla de detalle o dejalo en \"Ninguna\"."
+           "No se pudo detectar automáticamente la relación entre esas dos tablas -- elige otra tabla de detalle o déjalo en \"Ninguna\"."
          )}
 
       {:error, _otro} ->
@@ -587,7 +587,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
      |> assign(:ambiente_procesando?, false)
      |> put_flash(
        :info,
-       "Publicado -- va camino a \"#{socket.assigns.ambiente_sistema}\". Seguí el progreso con \"gh run watch\" o \"gh run list\"."
+       "Publicado -- va camino a \"#{socket.assigns.ambiente_sistema}\". Sigue el progreso con \"gh run watch\" o \"gh run list\"."
      )}
   end
 
@@ -597,7 +597,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
      |> assign(:ambiente_procesando?, false)
      |> put_flash(
        :info,
-       "Quitado de \"#{socket.assigns.ambiente_sistema}\" -- el endpoint sigue publicado local. Seguí el progreso con \"gh run watch\"."
+       "Quitado de \"#{socket.assigns.ambiente_sistema}\" -- el endpoint sigue publicado local. Sigue el progreso con \"gh run watch\"."
      )}
   end
 
@@ -908,7 +908,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
 
     <div :if={!@bpb_habilitado} class="mb-4 rounded-xl border border-blue-200 bg-blue-50 text-blue-700 px-3 py-2">
       La configuración de este endpoint (campos, ruta, parámetros) solo se edita en local (Business Process Builder) --
-      acá podés generar/rotar credenciales y ver la documentación de qué mandar.
+      acá puedes generar/rotar credenciales y ver la documentación de qué mandar.
     </div>
 
     <div class="flex flex-col gap-4">
@@ -1180,7 +1180,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
         <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-3">Credenciales</div>
 
         <div :if={@credencial_key_temporal} class="mb-3 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          <p class="font-semibold text-amber-800 mb-1">Copiá esta API key ahora — no se va a volver a mostrar completa.</p>
+          <p class="font-semibold text-amber-800 mb-1">Copia esta API key ahora — no se va a volver a mostrar completa.</p>
           <code class="font-mono text-[11px] bg-white border border-amber-200 rounded px-2 py-1 block break-all">{@credencial_key_temporal}</code>
         </div>
 

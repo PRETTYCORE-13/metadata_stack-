@@ -73,7 +73,7 @@ defmodule MetadataAppWeb.Sysadmin.BuscadorTrnLive do
     socket |> assign(:query, query) |> assign(:resultado, resultado) |> assign(:error, error)
   end
 
-  defp resolver(""), do: {:error, "Escribí un TRN (ej. VENT-260721-104537-4832) o un ULID para buscar."}
+  defp resolver(""), do: {:error, "Escribe un TRN (ej. VENT-260721-104537-4832) o un ULID para buscar."}
 
   defp resolver(query) do
     case buscar_en_registro(query) do

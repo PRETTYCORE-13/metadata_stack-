@@ -79,7 +79,7 @@ defmodule Mix.Tasks.Motor.Baja do
     """)
 
     respuesta =
-      Mix.shell().prompt("Escribí el nombre del sistema (\"#{sistema}\") para confirmar:")
+      Mix.shell().prompt("Escribe el nombre del sistema (\"#{sistema}\") para confirmar:")
       |> String.trim()
 
     if respuesta != sistema do

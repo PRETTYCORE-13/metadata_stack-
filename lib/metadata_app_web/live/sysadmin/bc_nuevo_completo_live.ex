@@ -180,7 +180,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
 
     case catalogo do
       "" ->
-        {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Elegí a qué catálogo apunta la referencia."))}
+        {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Elige a qué catálogo apunta la referencia."))}
 
       _catalogo ->
         case Enum.find(socket.assigns.catalogos_referenciables, &(&1.nombre == catalogo)) do
@@ -288,7 +288,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
          "error" => nil
        })}
     else
-      {:noreply, put_flash(socket, :error, "Agregá al menos un campo antes de agregar estados.")}
+      {:noreply, put_flash(socket, :error, "Agrega al menos un campo antes de agregar estados.")}
     end
   end
 
@@ -393,7 +393,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       Enum.any?(socket.assigns.transiciones, &(&1["estado_origen"] == nombre or &1["estado_destino"] == nombre))
 
     if referenciado? do
-      {:noreply, put_flash(socket, :error, "Ese estado ya lo usa una transición — quitá la transición primero.")}
+      {:noreply, put_flash(socket, :error, "Ese estado ya lo usa una transición — quita la transición primero.")}
     else
       {:noreply, update(socket, :estados, &List.delete_at(&1, idx))}
     end
@@ -415,7 +415,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
          "error" => nil
        })}
     else
-      {:noreply, put_flash(socket, :error, "Definí un estado inicial antes de agregar transiciones.")}
+      {:noreply, put_flash(socket, :error, "Define un estado inicial antes de agregar transiciones.")}
     end
   end
 
@@ -434,7 +434,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
         {:noreply, update(socket, :transicion_form, &Map.put(&1, "error", "La acción no puede quedar vacía."))}
 
       destino == "" ->
-        {:noreply, update(socket, :transicion_form, &Map.put(&1, "error", "Elegí un estado destino."))}
+        {:noreply, update(socket, :transicion_form, &Map.put(&1, "error", "Elige un estado destino."))}
 
       # Encontrado en vivo (2026-09-10): sin esto, una transición sin
       # "Estado origen" (la entrada al catálogo, el botón "Nuevo") con
@@ -575,7 +575,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
 
   defp formatear_error_creacion({:error, _paso, %Ecto.Changeset{} = changeset, _cambios}) do
     if Keyword.has_key?(changeset.errors, :codigo_trn) do
-      "Código #{Ecto.Changeset.get_field(changeset, :codigo_trn)} (TRN) ya existe — elegí otro."
+      "Código #{Ecto.Changeset.get_field(changeset, :codigo_trn)} (TRN) ya existe — elige otro."
     else
       resumen_errores(changeset)
     end
@@ -761,7 +761,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
             <strong>Nuevo/Guardar/Baja/Reactivar</strong> — el punto de partida del ~70% de los catálogos.
           </p>
           <button type="button" phx-click="crear_bc_base" disabled={@campos == []}
-            title={if @campos == [], do: "Agregá al menos un campo primero"}
+            title={if @campos == [], do: "Agrega al menos un campo primero"}
             class="shrink-0 px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors">
             Crea BC Base
           </button>
@@ -930,7 +930,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
         <label class="font-medium text-gray-900 pt-1">Navegación:</label>
         <div>
           <select name="contexto[carpeta_padre]"
-            title="El segmento final ya lo definiste en Nombre — acá solo elegís bajo qué carpeta del menú va."
+            title="El segmento final ya lo definiste en Nombre — acá solo eliges bajo qué carpeta del menú va."
             class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 w-full focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500">
             <option value="" selected={@contexto["carpeta_padre"] in [nil, ""]}>— Sin carpeta (raíz) —</option>
             <%= for carpeta <- @carpetas do %>
@@ -1005,7 +1005,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
         <label class="font-medium text-gray-900 pt-1">Detalle de:</label>
         <div>
           <select name="contexto[encabezado_de]"
-            title="Si este catálogo es el detalle de otro (ej. items de un pedido), elegí acá su maestro."
+            title="Si este catálogo es el detalle de otro (ej. items de un pedido), elige acá su maestro."
             class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 w-full focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500">
             <option value="" selected={(@contexto["encabezado_de"] || "") == ""}>— No es detalle de nada (catálogo normal) —</option>
             <%= for catalogo <- @catalogos_maestro_candidatos do %>

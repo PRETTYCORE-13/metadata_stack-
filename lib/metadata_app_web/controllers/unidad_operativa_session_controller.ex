@@ -50,7 +50,7 @@ defmodule MetadataAppWeb.UnidadOperativaSessionController do
     else
       _ ->
         conn
-        |> put_flash(:error, "No se pudo cambiar la Unidad Operativa -- revisá la selección.")
+        |> put_flash(:error, "No se pudo cambiar la Unidad Operativa -- revisa la selección.")
         |> redirect(to: pagina_de_origen(conn))
     end
   end

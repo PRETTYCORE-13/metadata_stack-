@@ -91,7 +91,7 @@ defmodule Mix.Tasks.Motor.PropagarExtension do
                 Mix.shell().info(salida)
 
                 Mix.shell().info(
-                  "Disparado -- \"#{destino}\" va camino a #{imagen}. Seguí el progreso con \"gh run list\" / \"gh run watch\"."
+                  "Disparado -- \"#{destino}\" va camino a #{imagen}. Sigue el progreso con \"gh run list\" / \"gh run watch\"."
                 )
 
               {:error, mensaje} ->

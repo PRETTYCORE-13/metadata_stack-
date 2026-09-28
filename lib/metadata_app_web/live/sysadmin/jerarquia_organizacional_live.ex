@@ -362,7 +362,7 @@ defmodule MetadataAppWeb.Sysadmin.JerarquiaOrganizacionalLive do
             </button>
           </div>
 
-          <p :if={!@empresa_seleccionada} class="text-xs text-gray-400 p-3">Elegí una empresa.</p>
+          <p :if={!@empresa_seleccionada} class="text-xs text-gray-400 p-3">Elige una empresa.</p>
 
           <div :if={@empresa_seleccionada} class="overflow-y-auto" style="height: calc(75vh - 36px)">
             <div :if={@branch_form} class="p-3 border-b border-gray-100 bg-gray-50">
@@ -408,7 +408,7 @@ defmodule MetadataAppWeb.Sysadmin.JerarquiaOrganizacionalLive do
         </div>
 
         <div class="flex-1 border border-gray-200 rounded-xl p-4" style="min-height: 75vh">
-          <p :if={!@branch_seleccionada} class="text-sm text-gray-400">Elegí una sucursal para ver sus unidades de venta y ubicaciones de inventario.</p>
+          <p :if={!@branch_seleccionada} class="text-sm text-gray-400">Elige una sucursal para ver sus unidades de venta y ubicaciones de inventario.</p>
 
           <div :if={@branch_seleccionada} class="grid grid-cols-2 gap-4">
             <div class="border border-gray-200 rounded-lg p-3">
