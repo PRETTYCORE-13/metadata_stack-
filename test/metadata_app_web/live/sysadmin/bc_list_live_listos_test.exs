@@ -8,7 +8,13 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveListosTest do
   # para "Copiar". Por eso el caso "listo" se prueba sobre el componente
   # filas_arbol/1 y el de falla llamando handle_async/3 directo; el
   # LiveView completo se prueba con catálogos que NO están listos.
-  use MetadataAppWeb.ConnCase, async: true
+  #
+  # async: false a propósito: BC Lista escucha el PubSub global
+  # ("bc_contextos") y relanza la revisión con cada {:bc_creado, _} o
+  # {:bc_actualizado, _}. Un test asíncrono de otro módulo que crea un
+  # catálogo en paralelo haría reaparecer el indicador justo después de
+  # render_async/2 (falla real en CI, 2026-09-28).
+  use MetadataAppWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
   import ExUnit.CaptureLog

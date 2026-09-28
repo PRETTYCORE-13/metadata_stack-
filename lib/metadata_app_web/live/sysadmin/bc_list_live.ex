@@ -2549,7 +2549,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               Sistema destino
             </label>
             <form phx-change="elegir_sistema_despublicar">
-              <select name="sistema" class="select select-bordered w-full text-sm">
+              <select name="sistema" class="w-full bg-white border border-gray-300 rounded-lg text-gray-900 text-sm px-3 py-2 cursor-pointer hover:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors">
                 <option value="" selected={is_nil(@accion.sistema)}>Elige un sistema…</option>
                 <option :for={sistema <- @sistemas_disponibles} value={sistema} selected={@accion.sistema == sistema}>
                   {sistema}
@@ -2735,7 +2735,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             <form phx-change="elegir_sistema_publicar">
               <select
                 name="sistema"
-                class="select select-bordered w-full text-sm"
+                class="w-full bg-white border border-gray-300 rounded-lg text-gray-900 text-sm px-3 py-2 cursor-pointer hover:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors"
               >
                 <option value="" selected={is_nil(@wizard.sistema)}>Elige un sistema…</option>
                 <option :for={sistema <- @sistemas_disponibles} value={sistema} selected={@wizard.sistema == sistema}>
