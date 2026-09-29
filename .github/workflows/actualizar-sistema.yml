@@ -39,7 +39,7 @@ on:
 # (ej. "unstable -> testing") en vez del generico "Actualizar Sistema #24" --
 # `origen` es puramente informativo (ver comentario del input arriba).
 run-name: >-
-  ${{ inputs.origen != '' && format('{0} -> {1}', inputs.origen, inputs.sistema) || format('-> {0}', inputs.sistema) }}
+  ${{ inputs.origen != '' && format('{0} → {1}', inputs.origen, inputs.sistema) || format('→ {0}', inputs.sistema) }}
 
 jobs:
   actualizar:
