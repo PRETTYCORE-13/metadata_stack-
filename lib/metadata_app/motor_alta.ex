@@ -665,18 +665,24 @@ defmodule MetadataApp.MotorAlta do
   `MotorAlta.Estado.consultar_todo/2`) -- `imagen_actual/2` necesita SSH
   real, sin mock en este proyecto.
   """
-  def disparar_actualizacion(ambiente, sistema, imagen, fun_imagen_actual \\ &imagen_actual/2) do
+  def disparar_actualizacion(ambiente, sistema, imagen, fun_imagen_actual \\ &imagen_actual/2, origen \\ nil) do
     case fun_imagen_actual.(ambiente, sistema) do
       {:ok, ^imagen} ->
         {:ok, :sin_cambios, "\"#{sistema}\" ya está en #{imagen} -- no se disparó ningún workflow."}
 
       _otro_o_error ->
-        disparar_actualizacion_sin_guarda(sistema, imagen)
+        disparar_actualizacion_sin_guarda(sistema, imagen, origen)
     end
   end
 
-  defp disparar_actualizacion_sin_guarda(sistema, imagen) do
-    args = ["workflow", "run", "actualizar-sistema.yml", "-f", "sistema=#{sistema}", "-f", "imagen=#{imagen}"]
+  # `origen` es puramente informativo (solo para el `run-name` del
+  # workflow, ej. "unstable -> testing" en vez del generico "Actualizar
+  # Sistema #24") -- nil cuando se dispara con --commit= (SPEC-ARQ-1809202603
+  # R8), donde no hay un canal de origen real que mostrar.
+  defp disparar_actualizacion_sin_guarda(sistema, imagen, origen) do
+    args =
+      ["workflow", "run", "actualizar-sistema.yml", "-f", "sistema=#{sistema}", "-f", "imagen=#{imagen}"] ++
+        if(origen, do: ["-f", "origen=#{origen}"], else: [])
 
     case System.cmd("gh", args, stderr_to_stdout: true) do
       {salida, 0} -> {:ok, salida}

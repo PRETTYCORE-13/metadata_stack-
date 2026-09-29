@@ -63,7 +63,7 @@ defmodule Mix.Tasks.Motor.PropagarExtensionASistema do
       ambiente ->
         Mix.shell().info("== disparando actualizar-sistema.yml: \"#{sistema}\" -> #{imagen} ==")
 
-        case MotorAlta.disparar_actualizacion(ambiente, sistema, imagen) do
+        case MotorAlta.disparar_actualizacion(ambiente, sistema, imagen, &MotorAlta.imagen_actual/2, "stable") do
           {:ok, :sin_cambios, mensaje} ->
             Mix.shell().info(mensaje)
 

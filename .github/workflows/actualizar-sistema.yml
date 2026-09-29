@@ -30,6 +30,16 @@ on:
       imagen:
         description: "Imagen completa (ghcr.io/.../metadata_stack:<tag>), sin default -- nunca 'la última' implícita"
         required: true
+      origen:
+        description: "Solo para mostrar en el nombre del run (ej. 'unstable') -- opcional, no se usa para nada mas"
+        required: false
+        default: ""
+
+# Solo para que el run se identifique de un vistazo en la lista de Actions
+# (ej. "unstable -> testing") en vez del generico "Actualizar Sistema #24" --
+# `origen` es puramente informativo (ver comentario del input arriba).
+run-name: >-
+  ${{ inputs.origen != '' && format('{0} -> {1}', inputs.origen, inputs.sistema) || format('-> {0}', inputs.sistema) }}
 
 jobs:
   actualizar:

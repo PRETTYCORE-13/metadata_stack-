@@ -83,7 +83,9 @@ defmodule Mix.Tasks.Motor.PropagarExtension do
             Mix.shell().info("  #{imagen}")
             Mix.shell().info("== disparando actualizar-sistema.yml: \"#{destino}\" -> #{imagen} ==")
 
-            case MotorAlta.disparar_actualizacion(ambiente, destino, imagen) do
+            origen_para_mostrar = if is_nil(commit), do: origen, else: nil
+
+            case MotorAlta.disparar_actualizacion(ambiente, destino, imagen, &MotorAlta.imagen_actual/2, origen_para_mostrar) do
               {:ok, :sin_cambios, mensaje} ->
                 Mix.shell().info(mensaje)
 
