@@ -66,6 +66,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
      |> assign(:sidebar_open, false)
      |> assign(:carpetas, MetaSchemaContext.listar_carpetas_existentes())
      |> assign(:catalogos_referenciables, MetaSchemaContext.listar_catalogos_referenciables())
+     |> assign(:modulos, MetaSchemaContext.listar_modulos())
      |> assign(:catalogos_maestro_candidatos, MetaSchemaContext.listar_catalogos_maestro_candidatos())
      |> assign(:iconos_sugeridos, @iconos_sugeridos)
      |> assign(:mensaje, nil)
@@ -143,6 +144,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
        "precision" => "",
        "escala" => "",
        "catalogo" => "",
+       "modulo" => modulo_inicial(socket),
        "opcional" => false,
        "error" => nil
      })}
@@ -164,9 +166,18 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       "precision" => params["precision"] || "",
       "escala" => params["escala"] || "",
       "catalogo" => params["catalogo"] || "",
+      "modulo" => socket.assigns.campo_form["modulo"] || "",
       "opcional" => params["opcional"] == "true",
       "error" => nil
     }
+
+    campo_form =
+      FieldDesignerComponents.aplicar_modulo(
+        campo_form,
+        params,
+        socket.assigns.catalogos_referenciables,
+        socket.assigns.modulos
+      )
 
     {:noreply, assign(socket, :campo_form, campo_form)}
   end
@@ -607,6 +618,15 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
 
   defdelegate componer_nav(carpeta_padre, nombre), to: MetaSchemaContext
 
+  # SPEC-SYS-1109202601 R37: el módulo de la carpeta elegida en Navegación
+  # (cualquier ruta hija de esa carpeta cae en el mismo módulo).
+  defp modulo_inicial(socket) do
+    case socket.assigns.contexto["carpeta_padre"] do
+      carpeta when carpeta in [nil, ""] -> ""
+      carpeta -> MetaSchemaContext.modulo_de_nav(socket.assigns.modulos, "/" <> carpeta <> "/_")
+    end
+  end
+
   defp detalle_attrs(c) do
     propiedades =
       %{"etiqueta" => c["etiqueta"], "tipo" => c["tipo"], "orden" => 1, "visible" => true, "editable" => true, "opcional" => c["opcional"]}
@@ -777,7 +797,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
       </div>
     </div>
 
-    <.modal_campo :if={@campo_form} form={@campo_form} tipos={@tipos_campo} catalogos={@catalogos_referenciables} nombre_base={nombre_sistema_desde(@contexto["nombre"])} />
+    <.modal_campo :if={@campo_form} form={@campo_form} tipos={@tipos_campo} catalogos={@catalogos_referenciables} modulos={@modulos} nombre_base={nombre_sistema_desde(@contexto["nombre"])} />
     <.modal_estado :if={@estado_form} form={@estado_form} />
     <.modal_transicion :if={@transicion_form} form={@transicion_form} estados={@estados} campos={@campos} />
     """
@@ -1182,9 +1202,13 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   attr :form, :map, required: true
   attr :tipos, :list, required: true
   attr :catalogos, :list, required: true
+  attr :modulos, :list, required: true
   attr :nombre_base, :string, required: true
 
   defp modal_campo(assigns) do
+    assigns =
+      assign(assigns, :catalogos_visibles, MetaSchemaContext.catalogos_del_modulo(assigns.catalogos, assigns.form["modulo"] || "", assigns.modulos))
+
     ~H"""
     <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
       <div class="bg-white rounded-xl shadow-lg max-w-sm w-full p-4 text-xs">
@@ -1202,11 +1226,12 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
                NO se capturan — se derivan del catálogo destino, siempre
                obligatoria. Mismo criterio que BcMotorLive. --%>
           <%= if @form["tipo"] == "referencia" do %>
+            <FieldDesignerComponents.selector_modulo id="campo-modulo" modulos={@modulos} valor={@form["modulo"]} />
             <div>
               <label class="block text-gray-700 mb-0.5">Catálogo destino</label>
-              <select name="catalogo" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+              <select id="campo-catalogo" name="catalogo" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
                 <option value="">— Elegir —</option>
-                <%= for c <- @catalogos do %>
+                <%= for c <- @catalogos_visibles do %>
                   <option value={c.nombre} selected={@form["catalogo"] == c.nombre}>{c.etiqueta}</option>
                 <% end %>
               </select>
