@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "elixir \"$CLAUDE_PROJECT_DIR/.claude/hooks/requiere_spec.exs\"",
+            "timeout": 30,
+            "statusMessage": "Verificando SPEC activa..."
+          }
+        ]
+      }
+    ]
+  }
+}
