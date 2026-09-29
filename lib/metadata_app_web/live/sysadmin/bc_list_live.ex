@@ -556,12 +556,23 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       |> Map.put("visible", contexto["visible"] == "true")
       |> Map.put("nav_final", normalizar_slug_carpeta(contexto["nav_final"]))
       |> Map.put("icono", normalizar_icono_carpeta(contexto["icono"]))
+      |> Map.put("prefijo", normalizar_prefijo_carpeta(contexto["prefijo"]))
 
     nav = componer_nav_carpeta(contexto["carpeta_padre"], contexto["nav_final"])
 
     error =
-      if nav != "" and MetaSchemaContext.obtener_header_por_nav(nav) do
-        "Esa ruta ya la usa otro catálogo o carpeta."
+      cond do
+        nav != "" and MetaSchemaContext.obtener_header_por_nav(nav) ->
+          "Esa ruta ya la usa otro catálogo o carpeta."
+
+        contexto["prefijo"] != "" ->
+          case validar_prefijo_libre_carpeta(contexto["prefijo"], nil) do
+            :ok -> nil
+            {:error, motivo} -> motivo
+          end
+
+        true ->
+          nil
       end
 
     {:noreply,
@@ -579,6 +590,11 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       contexto
       |> Map.put("nav", componer_nav_carpeta(contexto["carpeta_padre"], contexto["nav_final"]))
       |> then(&Map.put(&1, "nombre", nombre_desde_nav_carpeta(&1["nav"])))
+      |> Map.put("prefijo", normalizar_prefijo_carpeta(contexto["prefijo"]))
+
+    # Para volver a pintar el formulario si algo falla: la plantilla compara
+    # "visible" contra true, y del navegador llega como "true"/"false".
+    form_con_error = Map.put(contexto, "visible", contexto["visible"] == "true")
 
     case validar_formulario_carpeta(contexto) do
       :ok ->
@@ -589,6 +605,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           "schema_visible" => contexto["visible"] == "true",
           "schema_context_type" => 2,
           "schema_context_icono" => nil_si_vacio_carpeta(normalizar_icono_carpeta(contexto["icono"])),
+          "prefijo_directorio" => contexto["prefijo"],
           "detalles" => []
         }
 
@@ -606,14 +623,14 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           {:error, changeset} ->
             {:noreply,
              socket
-             |> assign(:carpeta_form, contexto)
-             |> assign(:carpeta_error, resumen_errores_carpeta(changeset))}
+             |> assign(:carpeta_form, form_con_error)
+             |> assign(:carpeta_error, mensaje_error_guardado_carpeta(changeset, contexto["prefijo"], nil))}
         end
 
       {:error, motivo} ->
         {:noreply,
          socket
-         |> assign(:carpeta_form, contexto)
+         |> assign(:carpeta_form, form_con_error)
          |> assign(:carpeta_error, motivo)}
     end
   end
@@ -879,7 +896,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   # "Editar carpeta" — mismo cambio que "Nueva carpeta": antes era
   # BcEditarCarpetaLive en ventana emergente, ahora es un modal interno acá
-  # mismo. Solo etiqueta/ícono/visible son editables — nombre de sistema y
+  # mismo. Solo etiqueta/prefijo/ícono/visible son editables — nombre de sistema y
   # navegación se muestran de solo lectura (cambiarlos desconectaría
   # catálogos ya anidados adentro).
   def handle_event("abrir_editar_carpeta", %{"nombre" => nombre}, socket) do
@@ -904,8 +921,22 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       contexto
       |> Map.put("icono", normalizar_icono_carpeta(contexto["icono"]))
       |> Map.put("visible", contexto["visible"] == "true")
+      |> Map.put("prefijo", normalizar_prefijo_carpeta(contexto["prefijo"]))
 
-    {:noreply, update(socket, :carpeta_editar, &Map.put(&1, :contexto, contexto))}
+    %{header: header} = socket.assigns.carpeta_editar
+
+    error =
+      if contexto["prefijo"] != "" do
+        case validar_prefijo_libre_carpeta(contexto["prefijo"], header.id) do
+          :ok -> nil
+          {:error, motivo} -> motivo
+        end
+      end
+
+    {:noreply,
+     socket
+     |> update(:carpeta_editar, &Map.put(&1, :contexto, contexto))
+     |> assign(:carpeta_editar_error, error)}
   end
 
   def handle_event("elegir_icono_editar_carpeta", %{"icono" => icono}, socket) do
@@ -917,37 +948,43 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   def handle_event("guardar_editar_carpeta", %{"contexto" => contexto}, socket) do
     %{header: header} = socket.assigns.carpeta_editar
+    contexto = Map.put(contexto, "prefijo", normalizar_prefijo_carpeta(contexto["prefijo"]))
 
-    case validar_etiqueta_carpeta(contexto["etiqueta"]) do
-      :ok ->
-        attrs = %{
-          "schema_context_label" => String.trim(contexto["etiqueta"]),
-          "schema_context_icono" => nil_si_vacio_carpeta(normalizar_icono_carpeta(contexto["icono"])),
-          "schema_visible" => contexto["visible"] == "true"
-        }
+    # Mismo motivo que en guardar_carpeta: la plantilla compara "visible"
+    # contra true.
+    form_con_error = Map.put(contexto, "visible", contexto["visible"] == "true")
 
-        case MetaSchemaContext.actualizar_header(header, attrs) do
-          {:ok, header_actualizado} ->
-            Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:bc_actualizado, header_actualizado})
+    with :ok <- validar_etiqueta_carpeta(contexto["etiqueta"]),
+         :ok <- validar_prefijo_carpeta(contexto["prefijo"], header.id) do
+      attrs = %{
+        "schema_context_label" => String.trim(contexto["etiqueta"]),
+        "prefijo_directorio" => contexto["prefijo"],
+        "schema_context_icono" => nil_si_vacio_carpeta(normalizar_icono_carpeta(contexto["icono"])),
+        "schema_visible" => contexto["visible"] == "true"
+      }
 
-            {:noreply,
-             socket
-             |> assign(:carpeta_editar, nil)
-             |> assign(:carpeta_editar_error, nil)
-             |> put_flash(:info, "Carpeta '#{header_actualizado.schema_context_label}' actualizada.")
-             |> recargar()}
+      case MetaSchemaContext.actualizar_header(header, attrs) do
+        {:ok, header_actualizado} ->
+          Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:bc_actualizado, header_actualizado})
 
-          {:error, changeset} ->
-            {:noreply,
-             socket
-             |> update(:carpeta_editar, &Map.put(&1, :contexto, contexto))
-             |> assign(:carpeta_editar_error, resumen_errores_carpeta(changeset))}
-        end
+          {:noreply,
+           socket
+           |> assign(:carpeta_editar, nil)
+           |> assign(:carpeta_editar_error, nil)
+           |> put_flash(:info, "Carpeta '#{header_actualizado.schema_context_label}' actualizada.")
+           |> recargar()}
 
+        {:error, changeset} ->
+          {:noreply,
+           socket
+           |> update(:carpeta_editar, &Map.put(&1, :contexto, form_con_error))
+           |> assign(:carpeta_editar_error, mensaje_error_guardado_carpeta(changeset, contexto["prefijo"], header.id))}
+      end
+    else
       {:error, motivo} ->
         {:noreply,
          socket
-         |> update(:carpeta_editar, &Map.put(&1, :contexto, contexto))
+         |> update(:carpeta_editar, &Map.put(&1, :contexto, form_con_error))
          |> assign(:carpeta_editar_error, motivo)}
     end
   end
@@ -1367,6 +1404,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       "etiqueta" => "Catálogo de ",
       "carpeta_padre" => "",
       "nav_final" => "",
+      "prefijo" => "",
       "icono" => "",
       "visible" => true
     }
@@ -1417,6 +1455,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   defp contexto_editar_desde_header(header) do
     %{
       "etiqueta" => header.schema_context_label,
+      "prefijo" => header.prefijo_directorio || "",
       "icono" => header.schema_context_icono || "",
       "visible" => header.schema_visible
     }
@@ -1442,9 +1481,41 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   defp validar_formulario_carpeta(contexto) do
     with :ok <- validar_regex_carpeta(contexto["nombre"], @identificador_carpeta, "Nombre de sistema"),
          :ok <- validar_regex_carpeta(contexto["nav"], @nav_carpeta, "Navegación"),
-         :ok <- validar_completado_carpeta(contexto["etiqueta"], "Catálogo de", "Etiqueta") do
+         :ok <- validar_completado_carpeta(contexto["etiqueta"], "Catálogo de", "Etiqueta"),
+         :ok <- validar_prefijo_carpeta(contexto["prefijo"], nil) do
       validar_nav_libre_carpeta(contexto["nav"])
     end
+  end
+
+  # Prefijo obligatorio en toda carpeta nueva o editada (una carpeta
+  # anterior a este campo lo pide la próxima vez que se edite).
+  # `propio_id` excluye a la misma carpeta al editarla.
+  @prefijo_carpeta ~r/^[A-Z0-9]{1,5}$/
+
+  defp validar_prefijo_carpeta(prefijo, propio_id) do
+    if prefijo && Regex.match?(@prefijo_carpeta, prefijo) do
+      validar_prefijo_libre_carpeta(prefijo, propio_id)
+    else
+      {:error, "El prefijo es obligatorio: de 1 a 5 letras/dígitos (ej. CH)."}
+    end
+  end
+
+  defp validar_prefijo_libre_carpeta(prefijo, propio_id) do
+    case MetaSchemaContext.obtener_header_por_prefijo_directorio(prefijo) do
+      nil -> :ok
+      %{id: ^propio_id} -> :ok
+      otro -> {:error, "El prefijo '#{prefijo}' ya lo usa '#{otro.schema_context_label}' — elige otro."}
+    end
+  end
+
+  # Mayúsculas, sin acentos ni nada que no sea letra/dígito, máximo 5 —
+  # así el campo se corrige solo mientras se teclea.
+  defp normalizar_prefijo_carpeta(valor) do
+    (valor || "")
+    |> quitar_acentos_carpeta()
+    |> String.upcase()
+    |> String.replace(~r/[^A-Z0-9]/, "")
+    |> String.slice(0, 5)
   end
 
   defp validar_regex_carpeta(valor, regex, etiqueta) do
@@ -1557,6 +1628,19 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   end
 
   defp resumen_errores_carpeta(changeset), do: changeset |> MetadataApp.MetaErrores.traducir() |> inspect()
+
+  # R7 (SPEC-SYS-2909202601): si otro guardado ganó el mismo prefijo entre
+  # la revisión en vivo y este guardado, el índice único lo rechaza aquí;
+  # se muestra el mismo aviso de R5 en vez del error crudo del changeset.
+  defp mensaje_error_guardado_carpeta(changeset, prefijo, propio_id) do
+    with {_mensaje, detalles} <- changeset.errors[:prefijo_directorio],
+         :unique <- detalles[:constraint],
+         {:error, motivo} <- validar_prefijo_libre_carpeta(prefijo, propio_id) do
+      motivo
+    else
+      _ -> resumen_errores_carpeta(changeset)
+    end
+  end
 
   def render(assigns) do
     ~H"""
@@ -1688,6 +1772,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                 </th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Nombre de sistema</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Etiqueta</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide" title="Prefijo de directorio (solo carpetas)">Prefijo</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Navegación</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Estado</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Acciones</th>
@@ -1697,7 +1782,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               <.filas_arbol nodos={@arbol} carpetas_expandidas={@carpetas_expandidas} seleccionados={@seleccionados} ids_con_detalle={@ids_con_detalle} listos={@listos} />
               <%= if @arbol == [] do %>
                 <tr>
-                  <td class="px-4 py-6 text-center text-gray-400" colspan="6">
+                  <td class="px-4 py-6 text-center text-gray-400" colspan="7">
                     {if @busqueda == "", do: "Todavía no hay contextos creados", else: "Sin resultados para \"#{@busqueda}\""}
                   </td>
                 </tr>
@@ -1904,6 +1989,37 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     """
   end
 
+  # Prefijo de directorio (SPEC-SYS-2909202601, R1-R3) — compartido por
+  # "Nueva carpeta" y "Editar carpeta". El hook PrefijoDirectorio
+  # (assets/js/app.js) corrige mientras se teclea, porque LiveView no
+  # reescribe un campo con el foco; el servidor normaliza igual
+  # (normalizar_prefijo_carpeta/1) y es quien hace cumplir la regla.
+  attr :id, :string, required: true
+  attr :valor, :string, default: ""
+
+  defp campo_prefijo_directorio(assigns) do
+    ~H"""
+    <label for={@id} class="font-medium text-gray-900 pt-1">Prefijo:</label>
+    <div>
+      <input
+        type="text"
+        id={@id}
+        name="contexto[prefijo]"
+        value={@valor}
+        required
+        maxlength="5"
+        autocomplete="off"
+        spellcheck="false"
+        phx-hook="PrefijoDirectorio"
+        phx-debounce="300"
+        class="w-24 border border-gray-300 rounded-lg text-gray-900 font-mono uppercase tracking-wider px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors"
+        placeholder="CH"
+      />
+      <p class="mt-0.5 text-[11px] text-gray-500">1 a 5 letras o números, ej. CH. No se puede repetir.</p>
+    </div>
+    """
+  end
+
   # "Nueva carpeta" como modal interno — mismo patrón visual que
   # modal_estado/modal_transicion en BcMotorLive (fixed inset-0 + tarjeta
   # centrada), ya no una ventana emergente del navegador aparte.
@@ -1931,13 +2047,15 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           </div>
         <% end %>
 
-        <form phx-submit="guardar_carpeta" phx-change="validar_carpeta" class="p-4 space-y-3 text-xs">
+        <form id="form-nueva-carpeta" phx-submit="guardar_carpeta" phx-change="validar_carpeta" class="p-4 space-y-3 text-xs">
           <fieldset class="border border-gray-200 rounded-lg">
             <legend class="px-1.5 ml-2 font-bold uppercase tracking-wide text-[11px] text-gray-500">Contexto</legend>
             <div class="grid grid-cols-1 sm:grid-cols-[110px_1fr] gap-y-1.5 gap-x-2 p-2.5 items-start">
               <label class="font-medium text-gray-900 pt-1">Etiqueta:</label>
               <input type="text" name="contexto[etiqueta]" value={@form["etiqueta"]} required maxlength="100"
                 class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="Catálogo de carros" />
+
+              <.campo_prefijo_directorio id="prefijo-nueva-carpeta" valor={@form["prefijo"]} />
 
               <label class="font-medium text-gray-900 pt-1">Navegación:</label>
               <div class="min-w-0">
@@ -2251,7 +2369,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           </div>
         <% end %>
 
-        <form phx-submit="guardar_editar_carpeta" phx-change="validar_editar_carpeta" class="p-4 space-y-3 text-xs">
+        <form id="form-editar-carpeta" phx-submit="guardar_editar_carpeta" phx-change="validar_editar_carpeta" class="p-4 space-y-3 text-xs">
           <fieldset class="border border-gray-200 rounded-lg">
             <legend class="px-1.5 ml-2 font-bold uppercase tracking-wide text-[11px] text-gray-500">Contexto</legend>
             <div class="grid grid-cols-1 sm:grid-cols-[110px_1fr] gap-y-1.5 gap-x-2 p-2.5 items-start">
@@ -2271,6 +2389,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               <label class="font-medium text-gray-900 pt-1">Etiqueta:</label>
               <input type="text" name="contexto[etiqueta]" value={@contexto["etiqueta"]} required maxlength="100"
                 class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="Catálogo de carros" />
+
+              <.campo_prefijo_directorio id="prefijo-editar-carpeta" valor={@contexto["prefijo"]} />
 
               <label class="font-medium text-gray-900 pt-1">Ícono:</label>
               <div>
@@ -2839,25 +2959,45 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             />
           </td>
           <td
-            colspan="5"
+            colspan="2"
             class="px-4 py-2 text-xs select-none"
             style={"padding-left: #{16 + @nivel * 20}px"}
           >
-            <div class="flex items-center justify-between gap-2">
-              <button
-                type="button"
-                phx-click="toggle_carpeta"
-                phx-value-ruta={ruta}
-                class="pc-carpeta-fila flex items-center gap-2 font-normal text-gray-600 uppercase tracking-wide cursor-pointer flex-1 text-left"
-              >
-                <span class="pc-carpeta-chevron inline-block w-3 text-gray-400">{if expandida?, do: "▾", else: "▸"}</span>
-                <span class="w-6 h-6 rounded-md bg-gray-400/30 text-(--pc-texto) flex items-center justify-center flex-shrink-0">
-                  <span class="material-symbols-outlined" style="font-size: 15px">
-                    {if Map.get(nodo, :icono) not in [nil, ""], do: nodo.icono, else: "folder"}
-                  </span>
+            <button
+              type="button"
+              phx-click="toggle_carpeta"
+              phx-value-ruta={ruta}
+              class="pc-carpeta-fila flex items-center gap-2 font-normal text-gray-600 uppercase tracking-wide cursor-pointer w-full text-left"
+            >
+              <span class="pc-carpeta-chevron inline-block w-3 text-gray-400">{if expandida?, do: "▾", else: "▸"}</span>
+              <span class="w-6 h-6 rounded-md bg-gray-400/30 text-(--pc-texto) flex items-center justify-center flex-shrink-0">
+                <span class="material-symbols-outlined" style="font-size: 15px">
+                  {if Map.get(nodo, :icono) not in [nil, ""], do: nodo.icono, else: "folder"}
                 </span>
-                {nodo.nombre}
-              </button>
+              </span>
+              {nodo.nombre}
+            </button>
+          </td>
+          <%!-- Prefijo de directorio (SPEC-SYS-2909202601, R11): solo en
+               carpetas explícitas; "Sin prefijo" marca las creadas antes de
+               que existiera (R9), para ubicarlas de un vistazo. --%>
+          <td class="px-4 py-2 text-xs">
+            <%= cond do %>
+              <% nodo.id == nil -> %>
+              <% Map.get(nodo, :prefijo_directorio) not in [nil, ""] -> %>
+                <span id={"prefijo-#{nodo.id}"} class="font-mono font-semibold tracking-wider text-gray-800">{nodo.prefijo_directorio}</span>
+              <% true -> %>
+                <span
+                  id={"sin-prefijo-#{nodo.id}"}
+                  title="Esta carpeta se creó antes de que existiera el prefijo; lo pedirá la próxima vez que se edite."
+                  class="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-amber-100 text-amber-700"
+                >
+                  Sin prefijo
+                </span>
+            <% end %>
+          </td>
+          <td colspan="3" class="px-4 py-2 text-xs select-none">
+            <div class="flex items-center justify-end gap-2">
               <%= if nodo.id || (@nivel == 0 and nodo.hijos != []) do %>
                 <div class="flex items-center gap-2 normal-case tracking-normal flex-shrink-0 pc-acciones-chip rounded-lg px-2.5 py-1">
                   <%= if nodo.id do %>
@@ -2944,6 +3084,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             </span>
             {nodo.label}
           </td>
+          <td class="px-4 py-2.5"></td>
           <td class="px-4 py-2.5 text-gray-600 max-w-[260px]">
             <div class="flex items-center gap-1 min-w-0">
               <span class="truncate" title={nodo.nav}>{nodo.nav}</span>

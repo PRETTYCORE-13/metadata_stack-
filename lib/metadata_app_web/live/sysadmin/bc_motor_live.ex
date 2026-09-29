@@ -91,6 +91,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       |> assign(:iconos_sugeridos, EncabezadoBcComponents.iconos_sugeridos())
       |> assign(:carpetas, MetaSchemaContext.listar_carpetas_existentes())
       |> assign(:catalogos_referenciables, MetaSchemaContext.listar_catalogos_referenciables())
+      |> assign(:modulos, MetaSchemaContext.listar_modulos())
       |> assign(:reglas_mensajes, %{"pre" => nil, "post" => nil})
       |> assign(:compilar_disponible, MetaReglasCodigo.compilar_disponible?())
       |> assign(:selector_orden_resultados_abierto, false)
@@ -224,7 +225,10 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # --- Campos: agregar -----------------------------------------------------
 
   def handle_event("abrir_form_campo", _params, socket) do
-    {:noreply, assign(socket, :campo_form, FieldDesignerComponents.estado_inicial())}
+    # SPEC-SYS-1109202601 R37: "Catálogo destino" arranca filtrado por el
+    # módulo de este BC.
+    modulo = MetaSchemaContext.modulo_de_nav(socket.assigns.modulos, socket.assigns.header.schema_context_nav)
+    {:noreply, assign(socket, :campo_form, Map.put(FieldDesignerComponents.estado_inicial(), "modulo", modulo))}
   end
 
   def handle_event("cerrar_form_campo", _params, socket) do
@@ -258,7 +262,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   def handle_event("asistente_cambiar", params, socket) do
     {:noreply,
      update(socket, :campo_form, fn form ->
-       FieldDesignerComponents.aplicar_cambios(form, params, socket.assigns.campos)
+       form
+       |> FieldDesignerComponents.aplicar_cambios(params, socket.assigns.campos)
+       |> FieldDesignerComponents.aplicar_modulo(params, socket.assigns.catalogos_referenciables, socket.assigns.modulos)
      end)}
   end
 
@@ -2299,7 +2305,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       </div>
     </div>
 
-    <FieldDesignerComponents.asistente :if={@campo_form} form={@campo_form} catalogos={@catalogos_referenciables} nombre_base={@header.schema_context_name} campos={@campos} />
+    <FieldDesignerComponents.asistente :if={@campo_form} form={@campo_form} catalogos={@catalogos_referenciables} modulos={@modulos} nombre_base={@header.schema_context_name} campos={@campos} />
     <.modal_eliminar_campo :if={@eliminar_campo_form} form={@eliminar_campo_form} />
     <.modal_estado :if={@estado_form} form={@estado_form} />
     <.modal_transicion :if={@transicion_form} form={@transicion_form} estados={@estados} campos={@campos} catalogos_detalle={@catalogos_detalle} />

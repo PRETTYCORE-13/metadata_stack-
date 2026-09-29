@@ -998,10 +998,32 @@ const FiltrarListaRoles = {
   },
 }
 
+// Prefijo de directorio (bc_list_live.ex, SPEC-SYS-2909202601 R3):
+// mayúsculas, sin acentos, solo A-Z0-9, máximo 5 -- mientras se teclea.
+// LiveView no reescribe un <input> con el foco, así que la normalización
+// del servidor (normalizar_prefijo_carpeta/1, la que hace cumplir la
+// regla) no se vería hasta salir del campo. El listener va en el propio
+// <input>, así corre antes que el phx-change del <form> (burbujeo).
+const PrefijoDirectorio = {
+  mounted() {
+    this.el.addEventListener("input", () => this.normalizar())
+  },
+  normalizar() {
+    const limpiar = (texto) =>
+      texto.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "")
+    const valor = this.el.value
+    const limpio = limpiar(valor).slice(0, 5)
+    if (limpio === valor) return
+    const cursor = Math.min(limpiar(valor.slice(0, this.el.selectionStart ?? valor.length)).length, limpio.length)
+    this.el.value = limpio
+    this.el.setSelectionRange(cursor, cursor)
+  },
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField, UnidadOperativaWatcher, RecordarSeccion, AutoImprimir, ZoomLienzo, DescargarArchivo, SeleccionarTodosCheckbox, FiltrarListaRoles},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField, UnidadOperativaWatcher, RecordarSeccion, AutoImprimir, ZoomLienzo, DescargarArchivo, SeleccionarTodosCheckbox, FiltrarListaRoles, PrefijoDirectorio},
 })
 
 // Show progress bar on live navigation and form submits

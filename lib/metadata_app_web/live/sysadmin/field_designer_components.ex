@@ -75,6 +75,21 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
     |> Map.put("paso", 2)
     |> Map.put("nombre", form["nombre"] || "")
     |> Map.put("etiqueta", form["etiqueta"] || "")
+    |> Map.put("modulo", form["modulo"] || "")
+  end
+
+  # Filtro por módulo de "Catálogo destino" (SPEC-SYS-1109202601 R35-R40),
+  # compartido con BcNuevoCompletoLive. Va DESPUÉS de leer "catalogo" de los
+  # params: si el destino elegido quedó fuera del módulo, se vacía (R38).
+  # Filtra en memoria, sin base de datos (R40).
+  def aplicar_modulo(form, params, catalogos, modulos) do
+    modulo = Map.get(params, "modulo", form["modulo"] || "")
+    visibles = MetaSchemaContext.catalogos_del_modulo(catalogos, modulo, modulos)
+    catalogo = if Enum.any?(visibles, &(&1.nombre == form["catalogo"])), do: form["catalogo"], else: ""
+
+    form
+    |> Map.put("modulo", modulo)
+    |> Map.put("catalogo", catalogo)
   end
 
   # phx-change único de toda la pantalla del Paso 2 — capacidades,
@@ -645,8 +660,28 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
   # Render
   # =========================================================================
 
+  # Selector "Módulo" arriba de "Catálogo destino" (SPEC-SYS-1109202601
+  # R35): "Todos" + un módulo por directorio con prefijo. Compartido por
+  # el asistente de BcMotorLive y el modal de BcNuevoCompletoLive.
+  attr :id, :string, required: true
+  attr :modulos, :list, required: true
+  attr :valor, :string, default: ""
+
+  def selector_modulo(assigns) do
+    ~H"""
+    <div>
+      <label for={@id} class="block text-gray-700 mb-0.5 font-semibold">Módulo</label>
+      <select id={@id} name="modulo" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+        <option value="" selected={@valor in [nil, ""]}>Todos</option>
+        <option :for={m <- @modulos} value={m.prefijo} selected={@valor == m.prefijo}>{m.prefijo} — {m.etiqueta}</option>
+      </select>
+    </div>
+    """
+  end
+
   attr :form, :map, required: true
   attr :catalogos, :list, required: true
+  attr :modulos, :list, default: []
   attr :nombre_base, :string, required: true
   attr :campos, :list, required: true
 
@@ -709,6 +744,7 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
       |> assign(:sugerencias, sugerencias_para(assigns.form["etiqueta"] || "", assigns.form["tipo"]))
       |> assign(:campos_destino, campos_destino_referencia(assigns.form["catalogo"]))
       |> assign(:otros_referencia, Enum.filter(assigns.campos, &(&1.schema_context_properties["tipo"] == "referencia")))
+      |> assign(:catalogos_visibles, MetaSchemaContext.catalogos_del_modulo(assigns.catalogos, assigns.form["modulo"] || "", assigns.modulos))
 
     ~H"""
     <div class="grid grid-cols-[1fr_260px]">
@@ -720,11 +756,12 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
         </div>
 
         <%= if @form["tipo"] == "referencia" do %>
+          <.selector_modulo id="asistente-modulo" modulos={@modulos} valor={@form["modulo"]} />
           <div>
             <label class="block text-gray-700 mb-0.5 font-semibold">Catálogo destino</label>
-            <select name="catalogo" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
+            <select id="asistente-catalogo" name="catalogo" class="w-full border border-gray-300 rounded-lg px-2 py-1.5">
               <option value="">— Elegir —</option>
-              <option :for={c <- @catalogos} value={c.nombre} selected={@form["catalogo"] == c.nombre}>{c.etiqueta}</option>
+              <option :for={c <- @catalogos_visibles} value={c.nombre} selected={@form["catalogo"] == c.nombre}>{c.etiqueta}</option>
             </select>
             <p class="mt-0.5 text-gray-500">El nombre y la etiqueta del campo se toman del catálogo elegido — siempre obligatorio.</p>
           </div>

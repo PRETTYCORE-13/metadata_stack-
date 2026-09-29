@@ -8,6 +8,13 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :schema_context_type, :integer, default: 1
     field :schema_context_nav, :string
     field :schema_context_icono, :string
+
+    # Prefijo de directorio (SPEC-SYS-2909202601): abreviatura de una
+    # carpeta (tipo 2), 1 a 5 letras/dígitos en mayúsculas, ej. "CH" para
+    # Capital Humano. No confundir con el prefijo propio de un BC (otro
+    # atributo, otra spec). Único entre headers vivos (índice parcial
+    # meta_schema_header_prefijo_directorio_unico_index).
+    field :prefijo_directorio, :string
     field :schema_visible, :boolean
     field :schema_set_permissions, :map
     field :schema_profiles, :map
@@ -160,6 +167,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
       @requeridos ++
         [
           :schema_context_icono,
+          :prefijo_directorio,
           :schema_set_permissions,
           :schema_profiles,
           :schema_es_transaccional,
@@ -187,6 +195,10 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     |> validate_length(:campos_llave_ficha, max: 3, message: "no puede tener más de 3 campos")
     |> update_change(:codigo_trn, &nil_si_vacio_o_mayusculas/1)
     |> validar_codigo_trn()
+    |> update_change(:prefijo_directorio, &nil_si_vacio_o_mayusculas/1)
+    |> validate_format(:prefijo_directorio, ~r/^[A-Z0-9]{1,5}$/,
+      message: "debe tener de 1 a 5 letras/dígitos, sin espacios ni acentos (ej. CH)"
+    )
     |> validar_requiere_folio()
     |> validar_encabezado()
     |> unique_constraint(:schema_context_name,
@@ -194,6 +206,10 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
       message: "ya existe un catálogo con este nombre — elige otro"
     )
     |> unique_constraint(:codigo_trn, name: :meta_schema_header_codigo_trn_unico_index)
+    |> unique_constraint(:prefijo_directorio,
+      name: :meta_schema_header_prefijo_directorio_unico_index,
+      message: "ya lo usa otra carpeta — elige otro"
+    )
   end
 
   defp nil_si_vacio_o_mayusculas(nil), do: nil
