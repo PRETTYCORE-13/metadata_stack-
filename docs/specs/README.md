@@ -275,3 +275,11 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   tabla; y el directorio viaja completo al publicar (etiqueta,
   visibilidad, ícono, orden y prefijo). No confundir con el prefijo del
   BC (`CH-EMP`), que queda para otra spec. Implementado (Grupos A-F).
+- [`SPEC-ADN-2909202601-canal-precio/`](SPEC-ADN-2909202601-canal-precio/) —
+  lista de precios de cadena por canal y cascada de precio base por
+  producto: lista especial del cliente → lista de cadena del canal →
+  lista maestra de la sucursal → "sin precio". La cascada es una SQL
+  View (`pty_sql_precio_base`); incluye los detalles de precios y
+  sucursales de la lista. Documentos 00-03 escritos, sin tareas
+  iniciadas; el consumo por dirección depende de una spec SYS de filtros
+  por columna.
