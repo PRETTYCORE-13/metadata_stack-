@@ -206,9 +206,15 @@ defmodule MetadataApp.MetaTepache do
   Próximo tag `TEPACHE-NNNNNN` — lista los releases existentes con ese
   prefijo y le suma 1 al mayor consecutivo encontrado (0 si no hay
   ninguno todavía). {:ok, tag} | {:error, mensaje}
+
+  `--limit 1000` explícito -- bug real (2026-09-29): `gh release list`
+  sin límite trae solo los 30 más recientes por default. Con cientos de
+  releases `bc-*` ya publicados, los TEPACHE-* viejos quedan fuera de
+  esos 30, así que este cálculo los ignoraba y volvía a proponer
+  "TEPACHE-000001", chocando con el que ya existía.
   """
   def siguiente_tag do
-    case ejecutar("gh", ["release", "list", "--json", "tagName"]) do
+    case ejecutar("gh", ["release", "list", "--json", "tagName", "--limit", "1000"]) do
       {:ok, {salida, 0}} ->
         numero =
           salida

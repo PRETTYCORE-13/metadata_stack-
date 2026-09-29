@@ -91,10 +91,23 @@ defmodule MetadataApp.Permissions do
     )
   end
 
-  @doc "Borra la entrada de cache (permisos Y alcance) de un usuario/empresa — se recalcula sola en el próximo can?/3 o alcance_tipo_efectivo/2."
+  @doc """
+  Borra la entrada de cache (permisos Y alcance) de un usuario/empresa —
+  se recalcula sola en el próximo can?/3 o alcance_tipo_efectivo/2.
+
+  No-op si la tabla no existe (bug real, 2026-09-29): tasks `mix motor.*`
+  corren con `Ecto.Migrator.with_repo/3`, sin arrancar la app completa
+  -- `MetadataApp.Permissions.Cache` (parte del árbol de supervisión
+  normal) nunca llega a crear su ETS table ahí, y sin este chequeo
+  `:ets.delete/2` explotaba con ArgumentError en cualquier camino que
+  registrara/revocara permisos desde una task (ej. `mix motor.tepache.importar`).
+  """
   def invalidar_cache(usuario_id, empresa_id) do
-    :ets.delete(Cache.tabla(), {usuario_id, empresa_id})
-    :ets.delete(Cache.tabla(), {:alcance, usuario_id, empresa_id})
+    if :ets.whereis(Cache.tabla()) != :undefined do
+      :ets.delete(Cache.tabla(), {usuario_id, empresa_id})
+      :ets.delete(Cache.tabla(), {:alcance, usuario_id, empresa_id})
+    end
+
     :ok
   end
 
