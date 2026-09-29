@@ -163,8 +163,10 @@ defmodule MetadataApp.MetaImportExport do
             raise "Error importando #{nombre}: #{mensaje}"
 
           {:ok, contexto} ->
+            {contexto, aviso_prefijo} = separar_prefijo_ocupado(contexto)
+
             case MetaSchemaContext.crear_header_con_detalles(contexto) do
-              {:ok, {_header, _detalles}} -> "+ #{nombre}: creado"
+              {:ok, {_header, _detalles}} -> Enum.join(Enum.reject(["+ #{nombre}: creado", aviso_prefijo], &is_nil/1), "; ")
               {:error, motivo} -> raise "Error importando #{nombre}: #{inspect(motivo)}"
             end
         end
@@ -228,6 +230,8 @@ defmodule MetadataApp.MetaImportExport do
             &is_nil/1
           )
 
+        cambios = cambios_de_directorio(existente, contexto) ++ cambios
+
         case cambios do
           [] -> "= #{nombre}: ya existía, sin cambios"
           cambios -> "~ #{nombre}: ya existía, #{Enum.join(cambios, "; ")}"
@@ -251,6 +255,96 @@ defmodule MetadataApp.MetaImportExport do
 
       {:error, changeset} ->
         raise "Error sincronizando ícono de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+    end
+  end
+
+  # Directorio (schema_context_type 2, SPEC-SYS-2909202601 R13-R15): viaja
+  # completo -- además de ícono y orden (comunes a todo header, arriba),
+  # su etiqueta, visibilidad y prefijo de directorio. Solo directorios: en
+  # catálogos la etiqueta/visibilidad del header nunca se sincronizó, y
+  # cambiarlo queda fuera de esa spec. La ruta no se toca (no es editable).
+  defp cambios_de_directorio(%{schema_context_type: 2} = existente, contexto) do
+    Enum.reject(
+      [
+        if(sincronizar_campo_header(existente, :schema_context_label, contexto["schema_context_label"]),
+          do: "etiqueta actualizada"
+        ),
+        if(sincronizar_campo_header(existente, :schema_visible, contexto["schema_visible"]),
+          do: "visibilidad actualizada"
+        ),
+        sincronizar_prefijo_directorio(existente, contexto["prefijo_directorio"])
+      ],
+      &is_nil/1
+    )
+  end
+
+  defp cambios_de_directorio(_existente, _contexto), do: []
+
+  # Mismo criterio que sincronizar_icono/2 (nil = el bundle no lo trae, no
+  # se toca), para un campo cualquiera del header.
+  defp sincronizar_campo_header(_header, _campo, nil), do: false
+
+  defp sincronizar_campo_header(header, campo, valor) do
+    if Map.get(header, campo) == valor do
+      false
+    else
+      case MetaSchemaContext.actualizar_header(header, %{campo => valor}) do
+        {:ok, _header} ->
+          true
+
+        {:error, changeset} ->
+          raise "Error sincronizando #{campo} de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+      end
+    end
+  end
+
+  # R14: nil (directorio sin prefijo en el origen) no borra el del destino.
+  # R15: si otro directorio del destino ya lo usa, no se escribe y se
+  # devuelve el aviso -- el resto del directorio sí se aplica. Devuelve el
+  # texto para el mensaje del import, o nil si no hubo nada que hacer.
+  defp sincronizar_prefijo_directorio(_header, nil), do: nil
+
+  defp sincronizar_prefijo_directorio(%{prefijo_directorio: mismo}, mismo), do: nil
+
+  defp sincronizar_prefijo_directorio(header, prefijo_nuevo) do
+    case aviso_prefijo_ocupado(prefijo_nuevo, header.id) do
+      nil ->
+        case MetaSchemaContext.actualizar_header(header, %{"prefijo_directorio" => prefijo_nuevo}) do
+          {:ok, _header} ->
+            "prefijo de directorio actualizado"
+
+          {:error, changeset} ->
+            raise "Error sincronizando prefijo de directorio de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+        end
+
+      aviso ->
+        aviso
+    end
+  end
+
+  # Alta de un directorio (R12) cuyo prefijo ya usa otro directorio del
+  # destino (R15): se crea sin prefijo, y el aviso viaja en el mensaje.
+  defp separar_prefijo_ocupado(%{"schema_context_type" => 2, "prefijo_directorio" => prefijo} = contexto)
+       when is_binary(prefijo) and prefijo != "" do
+    case aviso_prefijo_ocupado(prefijo, nil) do
+      nil -> {contexto, nil}
+      aviso -> {Map.delete(contexto, "prefijo_directorio"), aviso}
+    end
+  end
+
+  defp separar_prefijo_ocupado(contexto), do: {contexto, nil}
+
+  defp aviso_prefijo_ocupado(prefijo, propio_id) do
+    case MetaSchemaContext.obtener_header_por_prefijo_directorio(prefijo) do
+      nil ->
+        nil
+
+      %{id: ^propio_id} ->
+        nil
+
+      otro ->
+        "AVISO: prefijo de directorio \"#{prefijo}\" no aplicado, ya lo usa " <>
+          "\"#{otro.schema_context_label}\" (#{otro.schema_context_name})"
     end
   end
 

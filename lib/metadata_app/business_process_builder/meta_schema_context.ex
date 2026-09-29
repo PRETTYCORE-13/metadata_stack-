@@ -164,6 +164,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
       nav: h.schema_context_nav,
       visible: h.schema_visible,
       icono: h.schema_context_icono,
+      prefijo_directorio: h.prefijo_directorio,
       orden: h.orden,
       es_carpeta: h.schema_context_type == 2,
       es_consulta: h.schema_context_type == 3,
@@ -182,7 +183,15 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     items
     |> Enum.reduce(%{}, fn item, arbol ->
       if item.es_carpeta do
-        insertar_carpeta_explicita(arbol, segmentos(item.nav), item.label, item[:icono], item.id, item[:orden], "", ordenes_implicitas)
+        atributos = %{
+          nombre: item.label,
+          icono: item[:icono],
+          id: item.id,
+          orden: item[:orden],
+          prefijo_directorio: item[:prefijo_directorio]
+        }
+
+        insertar_carpeta_explicita(arbol, segmentos(item.nav), atributos, "", ordenes_implicitas)
       else
         insertar_en_arbol(arbol, segmentos_con_carpeta(item), item, "", ordenes_implicitas)
       end
@@ -248,9 +257,11 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   # viaja también, para que la UI de administración sepa qué carpeta tiene
   # un Header real detrás (editable/eliminable) y cuál es solo un segmento
   # de ruta inferido de sus hijos (no hay nada que editar/eliminar ahí).
-  defp insertar_carpeta_explicita(mapa, [], _label, _icono, _id, _orden, _ruta_padre, _ordenes_implicitas), do: mapa
+  # `atributos` = %{nombre:, icono:, id:, orden:, prefijo_directorio:} del
+  # Header, en un solo mapa para no crecer la aridad con cada atributo nuevo.
+  defp insertar_carpeta_explicita(mapa, [], _atributos, _ruta_padre, _ordenes_implicitas), do: mapa
 
-  defp insertar_carpeta_explicita(mapa, [ultimo], label, icono, id, orden, _ruta_padre, _ordenes_implicitas) do
+  defp insertar_carpeta_explicita(mapa, [ultimo], atributos, _ruta_padre, _ordenes_implicitas) do
     # Map.merge en vez de %{nodo | ...}: si esta carpeta ya existía en el
     # mapa como nodo "inferido" (creado por insertar_en_arbol/3 al procesar
     # una página hija que se coló primero en el Enum.reduce — el orden
@@ -258,12 +269,10 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     # nodo no tiene las claves :icono/:id/:orden todavía. %{nodo | ...}
     # exige que ya existan (KeyError si no) — Map.merge las agrega sin
     # problema.
-    Map.update(mapa, {:carpeta, ultimo}, %{nombre: label, icono: icono, id: id, orden: orden, hijos: %{}}, fn nodo ->
-      Map.merge(nodo, %{nombre: label, icono: icono, id: id, orden: orden})
-    end)
+    Map.update(mapa, {:carpeta, ultimo}, Map.put(atributos, :hijos, %{}), &Map.merge(&1, atributos))
   end
 
-  defp insertar_carpeta_explicita(mapa, [seg | resto], label, icono, id, orden, ruta_padre, ordenes_implicitas) do
+  defp insertar_carpeta_explicita(mapa, [seg | resto], atributos, ruta_padre, ordenes_implicitas) do
     ruta = ruta_con(ruta_padre, seg)
 
     nodo_default = %{
@@ -271,11 +280,11 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
       icono: nil,
       id: nil,
       orden: Map.get(ordenes_implicitas, ruta),
-      hijos: insertar_carpeta_explicita(%{}, resto, label, icono, id, orden, ruta, ordenes_implicitas)
+      hijos: insertar_carpeta_explicita(%{}, resto, atributos, ruta, ordenes_implicitas)
     }
 
     Map.update(mapa, {:carpeta, seg}, nodo_default, fn nodo ->
-      %{nodo | hijos: insertar_carpeta_explicita(nodo.hijos, resto, label, icono, id, orden, ruta, ordenes_implicitas)}
+      %{nodo | hijos: insertar_carpeta_explicita(nodo.hijos, resto, atributos, ruta, ordenes_implicitas)}
     end)
   end
 
@@ -296,6 +305,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
           icono: Map.get(nodo, :icono),
           id: Map.get(nodo, :id),
           orden: Map.get(nodo, :orden),
+          prefijo_directorio: Map.get(nodo, :prefijo_directorio),
           hijos: mapa_a_lista_ordenada(nodo.hijos)
         }
     end)
@@ -530,6 +540,15 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   def obtener_header_por_nav(nav) do
     Repo.one(
       from h in Header, where: h.schema_context_nav == ^nav and is_nil(h.delete_guid)
+    )
+  end
+
+  # Mismo criterio que el índice parcial meta_schema_header_prefijo_directorio_unico_index
+  # (solo headers vivos) — para avisar en el formulario antes de chocar
+  # con la restricción al guardar.
+  def obtener_header_por_prefijo_directorio(prefijo) do
+    Repo.one(
+      from h in Header, where: h.prefijo_directorio == ^prefijo and is_nil(h.delete_guid)
     )
   end
 
@@ -1833,6 +1852,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
           schema_context_type: header.schema_context_type,
           schema_context_nav: header.schema_context_nav,
           schema_context_icono: header.schema_context_icono,
+          prefijo_directorio: header.prefijo_directorio,
           schema_visible: header.schema_visible,
           orden: header.orden,
           schema_set_permissions: header.schema_set_permissions,

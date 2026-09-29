@@ -269,3 +269,9 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   ordenar, eliminar, Publicar paquete) + incremento de rapidez: la
   revisión "¿listo para publicarse?" corre en segundo plano una vez por
   visita, y ni buscar ni abrir carpetas consultan la base (R20–R26).
+- [`SPEC-SYS-2909202601-prefijo-directorio/`](SPEC-SYS-2909202601-prefijo-directorio/) —
+  prefijo de directorio: abreviatura obligatoria y única (1 a 5 letras o
+  números, ej. `CH`) de cada carpeta de BC List, con columna propia en la
+  tabla; y el directorio viaja completo al publicar (etiqueta,
+  visibilidad, ícono, orden y prefijo). No confundir con el prefijo del
+  BC (`CH-EMP`), que queda para otra spec. Implementado (Grupos A-F).
