@@ -38,6 +38,25 @@ This is a web application written using the Phoenix web framework.
   (en un renombrado, en ambas áreas). Si no lo está, no tocar la SPEC:
   avisar quién sí puede hacerlo. Lo mismo para el archivo de permisos,
   su script y su workflow (área `ADMIN`).
+- **SDD obligatorio — nunca programar sin SPEC aprobada.** Todo cambio
+  funcional (aunque sea chico: un atributo nuevo, un campo en un modal,
+  una validación) arranca con la skill `spec`: crear o actualizar la
+  SPEC en `docs/specs/SPEC-<ÁREA>-*`, mostrar cada fase y esperar
+  aprobación explícita antes de tocar `lib/`, `priv/repo/migrations/`,
+  `assets/` o `test/`. Si el pedido llega como "agrega X", se interpreta
+  como "documenta X en la SPEC y propónlo", no como "prográmalo".
+  Excepciones, solo si el usuario lo dice explícitamente: "sin spec",
+  "hotfix", o correcciones de texto/typos.
+  - Guardarraíl del equipo: el hook `PreToolUse` de
+    `.claude/settings.json` (versionado; script
+    `.claude/hooks/requiere_spec.exs`, en Elixir para correr igual en
+    Windows y en el devcontainer) bloquea Edit/Write en esas carpetas si
+    `.claude/spec-activa` no existe. Permisos personales de Claude Code
+    van en `.claude/settings.local.json`, nunca en `settings.json`. Ese archivo (una línea, fuera de git) se escribe **solo
+    después** de que el usuario aprueba la SPEC: la ruta
+    `docs/specs/SPEC-...` (debe tener `03.tasks.md`) o `hotfix` si el
+    usuario lo autoriza. Al cerrar la SPEC se borra. Nunca crearlo para
+    destrabar el bloqueo por cuenta propia.
 - **Toda recomendación** debe pensarse en función de: experiencia del
   cliente final, alta capacidad de respuesta (performance),
   escalabilidad, y volumen transaccional masivo — no solo "que
