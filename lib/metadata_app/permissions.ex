@@ -13,6 +13,8 @@ defmodule MetadataApp.Permissions do
   alias MetadataApp.Repo
   alias MetadataApp.Autenticacion.{Scope, Rol, RolPermiso, Permiso, UsuarioRol, Usuario, UsuarioEmpresa, RolAlcance}
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
+  alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
+  alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.Permissions.Cache
 
   @ttl_ms :timer.minutes(5)
@@ -201,6 +203,41 @@ defmodule MetadataApp.Permissions do
     end
 
     resultado
+  end
+
+  @doc """
+  Registra en `meta_schema_permiso` el CRUD estándar (leer/crear/editar/
+  eliminar) + el nombre de cada transición real del catálogo — SIN
+  concederlo a ningún rol. Sin este registro ni "administrador" podría
+  ver/ejecutar algo recién importado (ve todo lo YA REGISTRADO, no es un
+  comodín ciego — ver `can?/3`). Ignora en silencio los que ya existan
+  (idempotente, mismo criterio que `MetaImportExport.importar_meta/1`).
+
+  Movido acá (2026-09-30) desde `MetaTepache`, que era el único caller —
+  bug real: `mix motor.publicar` publica un catálogo a un ambiente real
+  pero nunca registraba sus permisos ahí (solo `mix motor.tepache.importar`
+  lo hacía), dejándolo invisible incluso para un administrador. El lugar
+  correcto es acá, llamado desde `MetaImportExport.importar_contexto_base/1`
+  -- el único código que de verdad corre en TODOS los caminos de import
+  (CI/CD, `mix meta.import` manual, y el release de producción vía
+  `rel/overlays/bin/import_meta`), a diferencia de `mix motor.publicar`
+  (que solo arma y sube el paquete desde la máquina de quien publica,
+  nunca toca la base del ambiente destino).
+  """
+  def registrar_permisos_catalogo(nombre_catalogo) do
+    case MetaSchemaContext.obtener_header_por_nombre(nombre_catalogo) do
+      nil ->
+        {:error, "\"#{nombre_catalogo}\" no se encontró — ¿faltó importar_meta antes?"}
+
+      header ->
+        acciones =
+          (["leer", "crear", "editar", "eliminar"] ++
+             Enum.map(MetaEstadosAdmin.listar_transiciones(header.id), & &1.accion))
+          |> Enum.uniq()
+
+        Enum.each(acciones, &crear_permiso(%{recurso: nombre_catalogo, accion: &1}))
+        :ok
+    end
   end
 
   defp invalidar_cache_de_administradores do
