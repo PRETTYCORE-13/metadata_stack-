@@ -37,6 +37,9 @@ defmodule MetadataApp.ConsultasSql do
 
   def tipo, do: @tipo
 
+  @doc "Valida los parámetros declarados de un Servicio (R35). Ver `ConsultasSql.Parametros.validar/1`."
+  defdelegate validar_parametros(parametros), to: MetadataApp.ConsultasSql.Parametros, as: :validar
+
   @doc """
   Nombre técnico a partir de la navegación (`/carpeta/slug`): cada
   segmento normalizado (minúsculas, sin acentos, solo `[a-z0-9_]`, sin
@@ -546,6 +549,26 @@ defmodule MetadataApp.ConsultasSql do
   def validar_cambio(nombre, nuevo_uso, nuevo_visible) do
     consulta_sql = obtener_por_catalogo(nombre)
 
+    case validar_cambio_servicio(consulta_sql, nuevo_uso, nuevo_visible) do
+      :ok -> validar_cambio_diccionario(nombre, consulta_sql, nuevo_uso, nuevo_visible)
+      error -> error
+    end
+  end
+
+  # R39: un Servicio nunca cambia de uso ni se vuelve visible, y nada pasa
+  # a Servicio (sus parámetros y su función no existen en los otros usos).
+  defp validar_cambio_servicio(%ConsultaSql{uso: "servicio"}, nuevo_uso, _visible) when nuevo_uso != "servicio",
+    do: {:error, "Un Servicio no puede cambiar de uso."}
+
+  defp validar_cambio_servicio(%ConsultaSql{uso: "servicio"}, _uso, true),
+    do: {:error, "Un Servicio no puede ser visible: no aparece en el menú."}
+
+  defp validar_cambio_servicio(%ConsultaSql{uso: uso}, "servicio", _visible) when uso != "servicio",
+    do: {:error, "Una Consulta SQL no puede pasar a Servicio: crea un Servicio nuevo."}
+
+  defp validar_cambio_servicio(_consulta_sql, _uso, _visible), do: :ok
+
+  defp validar_cambio_diccionario(nombre, consulta_sql, nuevo_uso, nuevo_visible) do
     cambia? = consulta_sql && consulta_sql.uso == "diccionario" and (nuevo_uso == "consulta" or nuevo_visible == true)
 
     case cambia? && campos_que_usan(nombre) do

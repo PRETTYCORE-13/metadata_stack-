@@ -354,6 +354,54 @@ defmodule MetadataApp.ConsultasSqlTest do
     end
   end
 
+  describe "cambio de uso con Servicio (SPEC-SYS-2509202601 K5, R39)" do
+    defp alta(uso) do
+      {:ok, {header, _}} =
+        ConsultasSql.crear(%{"etiqueta" => uso, "nav" => "/k5_#{uso}_#{unique()}", "uso" => uso})
+
+      header.schema_context_name
+    end
+
+    test "un Servicio no cambia a Diccionario ni a Consulta" do
+      nombre = alta("servicio")
+
+      for uso <- ["diccionario", "consulta"] do
+        assert ConsultasSql.cambiar_uso(nombre, uso) ==
+                 {:error, "Un Servicio no puede cambiar de uso."}
+      end
+
+      assert ConsultasSql.obtener_por_catalogo(nombre).uso == "servicio"
+    end
+
+    test "un Diccionario o una Consulta no pasan a Servicio" do
+      for uso <- ["diccionario", "consulta"] do
+        nombre = alta(uso)
+
+        assert ConsultasSql.cambiar_uso(nombre, "servicio") ==
+                 {:error, "Una Consulta SQL no puede pasar a Servicio: crea un Servicio nuevo."}
+
+        assert ConsultasSql.obtener_por_catalogo(nombre).uso == uso
+      end
+    end
+
+    test "un Servicio no puede marcarse como visible" do
+      nombre = alta("servicio")
+
+      assert ConsultasSql.validar_cambio(nombre, "servicio", true) ==
+               {:error, "Un Servicio no puede ser visible: no aparece en el menú."}
+
+      assert ConsultasSql.validar_cambio(nombre, "servicio", false) == :ok
+    end
+
+    test "Diccionario y Consulta siguen cambiando entre sí como antes (R58)" do
+      nombre = alta("diccionario")
+      assert {:ok, %ConsultaSql{uso: "consulta"}} = ConsultasSql.cambiar_uso(nombre, "consulta")
+
+      assert {:ok, %ConsultaSql{uso: "diccionario"}} =
+               ConsultasSql.cambiar_uso(nombre, "diccionario")
+    end
+  end
+
   describe "tope de renglones de un Servicio (SPEC-SYS-2509202601 K1)" do
     setup do
       {:ok, {_header, consulta_sql}} =
