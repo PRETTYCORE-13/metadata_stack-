@@ -188,6 +188,7 @@ defmodule MetadataAppWeb.MenuLayout do
                 in: {"ease-out duration-150", "opacity-0 scale-95", "opacity-100 scale-100"},
                 out: {"ease-in duration-100", "opacity-100 scale-100", "opacity-0 scale-95"}
               )
+              |> cerrar_submenu_developer("sidebar-config-dropdown")
             }
             title="Configuración"
             aria-label="Configuración"
@@ -515,72 +516,63 @@ defmodule MetadataAppWeb.MenuLayout do
 
   def menu_administrativo(assigns) do
     ~H"""
-    <div id={@id} class="pc-admin-menu-panel" phx-click-away={JS.hide(to: "##{@id}")}>
+    <div id={@id} class="pc-admin-menu-panel" phx-click-away={JS.hide(to: "##{@id}") |> cerrar_submenu_developer(@id)}>
       <div class="pc-flyout-header">
         <span class="pc-flyout-header-nombre">Configuración</span>
-        <button type="button" class="pc-flyout-cerrar" phx-click={JS.hide(to: "##{@id}")} title="Cerrar" aria-label="Cerrar">
+        <button type="button" class="pc-flyout-cerrar" phx-click={JS.hide(to: "##{@id}") |> cerrar_submenu_developer(@id)} title="Cerrar" aria-label="Cerrar">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
           </svg>
         </button>
       </div>
-      <nav class="pc-flyout-nav">
-        <.link :if={"sysadmin_bc" in @opciones_plataforma} navigate="/sysadmin/bc-list" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">build</span></span>
-          <span class="pc-admin-menu-label">Business Process Builder</span>
-        </.link>
-        <.link :if={"sysadmin_endpoints" in @opciones_plataforma} navigate="/sysadmin/endpoints" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">api</span></span>
-          <span class="pc-admin-menu-label">Endpoints</span>
-        </.link>
-        <.link :if={"sysadmin_endpoints" in @opciones_plataforma} navigate="/sysadmin/servicios" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">hub</span></span>
-          <span class="pc-admin-menu-label">Servicios</span>
-        </.link>
-        <.link :if={"sysadmin_tepache" in @opciones_plataforma} navigate="/sysadmin/tepache" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">sync_alt</span></span>
-          <span class="pc-admin-menu-label">Tepache Exp/Imp</span>
-        </.link>
-        <.link :if={"sysadmin_roles" in @opciones_administrativas} navigate="/sysadmin/roles" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">badge</span></span>
-          <span class="pc-admin-menu-label">Roles Admin</span>
-        </.link>
-        <.link :if={"sysadmin_empresas" in @opciones_administrativas} navigate="/sysadmin/empresas" class="pc-admin-menu-item">
+      <.link :if={"sysadmin_empresas" in @opciones_administrativas} navigate="/sysadmin/empresas" class="pc-admin-menu-item">
           <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">apartment</span></span>
           <span class="pc-admin-menu-label">Empresas</span>
         </.link>
+      <.link :if={"sysadmin_jerarquia" in @opciones_administrativas} navigate="/sysadmin/jerarquia" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">account_tree</span></span>
+          <span class="pc-admin-menu-label">Jerarquía Org.</span>
+        </.link>
+        <.link :if={"sysadmin_roles" in @opciones_administrativas} navigate="/sysadmin/roles" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">badge</span></span>
+          <span class="pc-admin-menu-label">Roles</span>
+        </.link>
         <.link :if={"sysadmin_usuarios" in @opciones_administrativas} navigate="/sysadmin/usuarios" class="pc-admin-menu-item">
           <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">group</span></span>
-          <span class="pc-admin-menu-label">RBAC Usuarios</span>
+          <span class="pc-admin-menu-label">Permisos Usuarios</span>
         </.link>
         <.link :if={"sysadmin_catalogos_permisos" in @opciones_administrativas} navigate="/sysadmin/catalogos/permisos" class="pc-admin-menu-item">
           <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">security</span></span>
-          <span class="pc-admin-menu-label">RBAC Bisness Context</span>
+          <span class="pc-admin-menu-label">Permisos ADN </span>
         </.link>
-        <.link :if={"sysadmin_jerarquia" in @opciones_administrativas} navigate="/sysadmin/jerarquia" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">account_tree</span></span>
-          <span class="pc-admin-menu-label">Jerarquía organizacional</span>
-        </.link>
-        <.link :if={"sysadmin_credenciales" in @opciones_plataforma} navigate="/sysadmin/credenciales" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">key</span></span>
-          <span class="pc-admin-menu-label">Credenciales</span>
-        </.link>
-        <.link :if={"sysadmin_ambientes" in @opciones_plataforma} navigate="/sysadmin/ambientes" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">cloud</span></span>
-          <span class="pc-admin-menu-label">Ambientes de Deploy</span>
-        </.link>
-        <.link :if={"sysadmin_panel_control" in @opciones_plataforma} navigate="/sysadmin/panel-control" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">tune</span></span>
-          <span class="pc-admin-menu-label">Panel Control</span>
-        </.link>
-        <.link :if={"sysadmin_acciones_externas" in @opciones_plataforma} navigate="/sysadmin/acciones-externas" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">bolt</span></span>
-          <span class="pc-admin-menu-label">Acciones externas</span>
-        </.link>
-        <.link :if={"sysadmin_propagacion" in @opciones_plataforma} navigate="/sysadmin/propagacion" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">rocket_launch</span></span>
-          <span class="pc-admin-menu-label">Propagación</span>
-        </.link>
+        <div class="pc-flyout-header"></div>
+      <nav class="pc-flyout-nav">
+        <%!-- Opciones de plataforma agrupadas en el submenú "Developer"
+             (R13d): solo el botón vive en el menú; los links, en el panel
+             #{@id}-developer de abajo. --%>
+        <button
+          :if={@opciones_plataforma != []}
+          type="button"
+          id={"#{@id}-developer-btn"}
+          class="pc-admin-menu-item"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-controls={"#{@id}-developer"}
+          phx-click={
+            JS.toggle(
+              to: "##{@id}-developer",
+              display: "flex",
+              in: {"ease-out duration-150", "opacity-0 scale-95", "opacity-100 scale-100"},
+              out: {"ease-in duration-100", "opacity-100 scale-100", "opacity-0 scale-95"}
+            )
+            |> JS.toggle_class("pc-admin-menu-item-activo", to: "##{@id}-developer-btn")
+            |> JS.toggle_attribute({"aria-expanded", "true", "false"}, to: "##{@id}-developer-btn")
+          }
+        >
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">code</span></span>
+          <span class="pc-admin-menu-label">Developer</span>
+          <span class="pc-admin-menu-chevron"><span class="material-symbols-outlined">chevron_right</span></span>
+        </button>
         <div :if={@opciones_administrativas != [] or @opciones_plataforma != []} class="pc-admin-menu-divisor"></div>
         <button
           :if={@current_scope && @current_scope.empresa_activa}
@@ -588,6 +580,7 @@ defmodule MetadataAppWeb.MenuLayout do
           class="pc-admin-menu-item"
           phx-click={
             JS.hide(to: "##{@id}")
+            |> cerrar_submenu_developer(@id)
             |> JS.push("abrir", target: "#cambiar-unidad-modal")
           }
         >
@@ -599,6 +592,7 @@ defmodule MetadataAppWeb.MenuLayout do
           class="pc-admin-menu-item"
           phx-click={
             JS.hide(to: "##{@id}")
+            |> cerrar_submenu_developer(@id)
             |> JS.push("abrir", target: "#config-cuenta-modal")
           }
         >
@@ -615,8 +609,91 @@ defmodule MetadataAppWeb.MenuLayout do
           <span class="pc-admin-menu-label">Cerrar sesión</span>
         </.link>
       </nav>
+      <%!-- Hijo del panel principal a propósito: así un clic adentro no
+           cuenta como phx-click-away del menú, y se oculta junto con él. --%>
+      <div
+        :if={@opciones_plataforma != []}
+        id={"#{@id}-developer"}
+        class="pc-admin-menu-panel pc-admin-submenu"
+        role="menu"
+        aria-label="Developer"
+      >
+        <div class="pc-flyout-header">
+          <button
+            type="button"
+            id={"#{@id}-developer-regresar"}
+            class="pc-admin-submenu-regresar"
+            phx-click={cerrar_submenu_developer(@id)}
+          >
+            <span class="material-symbols-outlined">arrow_back</span>
+            Regresar
+          </button>
+          <span class="pc-flyout-header-nombre">Developer</span>
+          <button
+            type="button"
+            class="pc-flyout-cerrar"
+            phx-click={cerrar_submenu_developer(@id)}
+            title="Cerrar"
+            aria-label="Cerrar Developer"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <nav class="pc-flyout-nav">
+          <.link :if={"sysadmin_bc" in @opciones_plataforma} navigate="/sysadmin/bc-list" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">build</span></span>
+            <span class="pc-admin-menu-label">Business Process Builder</span>
+          </.link>
+          <.link :if={"sysadmin_endpoints" in @opciones_plataforma} navigate="/sysadmin/endpoints" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">api</span></span>
+            <span class="pc-admin-menu-label">Endpoints</span>
+          </.link>
+          <.link :if={"sysadmin_endpoints" in @opciones_plataforma} navigate="/sysadmin/servicios" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">hub</span></span>
+            <span class="pc-admin-menu-label">Servicios</span>
+          </.link>
+          <.link :if={"sysadmin_tepache" in @opciones_plataforma} navigate="/sysadmin/tepache" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">sync_alt</span></span>
+            <span class="pc-admin-menu-label">Tepache Exp/Imp</span>
+          </.link>
+          <.link :if={"sysadmin_credenciales" in @opciones_plataforma} navigate="/sysadmin/credenciales" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">key</span></span>
+            <span class="pc-admin-menu-label">Credenciales</span>
+          </.link>
+          <.link :if={"sysadmin_ambientes" in @opciones_plataforma} navigate="/sysadmin/ambientes" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">cloud</span></span>
+            <span class="pc-admin-menu-label">Ambientes de Deploy</span>
+          </.link>
+          <.link :if={"sysadmin_panel_control" in @opciones_plataforma} navigate="/sysadmin/panel-control" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">tune</span></span>
+            <span class="pc-admin-menu-label">Panel Control</span>
+          </.link>
+          <.link :if={"sysadmin_acciones_externas" in @opciones_plataforma} navigate="/sysadmin/acciones-externas" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">bolt</span></span>
+            <span class="pc-admin-menu-label">Acciones externas</span>
+          </.link>
+          <.link :if={"sysadmin_propagacion" in @opciones_plataforma} navigate="/sysadmin/propagacion" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">rocket_launch</span></span>
+            <span class="pc-admin-menu-label">Propagación</span>
+          </.link>
+        </nav>
+      </div>
     </div>
     """
+  end
+
+  # Cierra el submenú "Developer" y deja su botón como recién abierto el
+  # menú (sin resaltar, aria-expanded=false). Se encadena en todo lo que
+  # cierra el panel principal, para que el submenú siempre arranque cerrado.
+  def cerrar_submenu_developer(js \\ %JS{}, id) do
+    boton = "##{id}-developer-btn"
+
+    js
+    |> JS.hide(to: "##{id}-developer")
+    |> JS.remove_class("pc-admin-menu-item-activo", to: boton)
+    |> JS.set_attribute({"aria-expanded", "false"}, to: boton)
   end
 
   ## MENÚ EN ÁRBOL — estilo explorador de Windows: nav="/carpeta/pagina" se

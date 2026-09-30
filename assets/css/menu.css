@@ -350,6 +350,81 @@
   background: #e5e7eb;
 }
 
+/* Submenú "Developer" (SPEC-SYS-0909202601 R13d): hijo del panel
+   principal, que es position:fixed y por lo tanto su bloque contenedor.
+   Se pega a su derecha, alineado por abajo; hereda fondo, borde, sombra y
+   display:none de .pc-admin-menu-panel. */
+.pc-admin-submenu {
+  top: auto;
+  right: auto;
+  left: calc(100% + 8px);
+  bottom: -1px;
+}
+
+.pc-admin-menu-chevron {
+  display: flex;
+  margin-left: auto;
+  color: #9ca3af;
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.pc-admin-menu-chevron .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.pc-admin-menu-item-activo {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.pc-admin-menu-item-activo .pc-admin-menu-chevron {
+  color: #6b7280;
+  transform: translateX(2px);
+}
+
+/* "← Regresar": solo en móvil, donde el submenú se abre encima del menú. */
+.pc-admin-submenu-regresar {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px 2px 2px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pc-admin-submenu-regresar .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.pc-admin-submenu-regresar:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+@media (max-width: 768px) {
+  .pc-admin-submenu {
+    left: -1px;
+    bottom: -1px;
+    width: calc(100% + 2px);
+  }
+
+  .pc-admin-submenu-regresar {
+    display: flex;
+  }
+
+  /* Con "Regresar" a la izquierda, el título ya no encabeza: se centra. */
+  .pc-admin-submenu .pc-flyout-header-nombre {
+    flex: 1;
+    text-align: center;
+  }
+}
+
 /* ---- TOPBAR (branding: logo + nombre de empresa configurable) ---- */
 .pc-topbar {
   display: flex;
@@ -785,6 +860,21 @@
 
 .pc-platform-sidebar-open #sidebar-config-dropdown {
   left: calc(var(--pc-sidebar-width, 200px) + 8px);
+}
+
+/* Móvil: el sidebar deslizable tiene transform (lo vuelve el bloque
+   contenedor de este panel fixed) y overflow:hidden, con 280px fijos --
+   a left:56px + 260px de ancho el panel quedaba recortado (sin su ✕ ni el
+   chevron de "Developer"). Aquí se ajusta al ancho del sidebar. Va
+   después de las dos reglas de arriba para ganarles con igual
+   especificidad. */
+@media (max-width: 768px) {
+  .pc-platform-sidebar #sidebar-config-dropdown,
+  .pc-platform-sidebar-open #sidebar-config-dropdown {
+    left: 12px;
+    right: 12px;
+    width: auto;
+  }
 }
 
 /* ---- NAV ---- */

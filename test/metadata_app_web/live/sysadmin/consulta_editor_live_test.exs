@@ -507,9 +507,16 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
 
     {:ok, _view, html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
 
-    orden_esperado = ["Configuración", "Contrato", "Permisos", "Get Config", "SQL"]
-    posiciones = Enum.map(orden_esperado, &:binary.match(html, &1))
-    assert posiciones == Enum.sort_by(posiciones, &elem(&1, 0))
+    # Solo los botones de tab: el layout también dice "Configuración" y
+    # "Permisos …" (menú administrativo), y buscar en todo el HTML los
+    # confundía con los tabs.
+    tabs =
+      html
+      |> LazyHTML.from_document()
+      |> LazyHTML.query(~s(button[phx-click="cambiar_tab"]))
+      |> Enum.map(&(&1 |> LazyHTML.text() |> String.trim()))
+
+    assert tabs == ["Configuración", "Contrato", "Permisos", "Get Config", "SQL"]
 
     assert html =~ "solo la etiqueta es editable"
   end
