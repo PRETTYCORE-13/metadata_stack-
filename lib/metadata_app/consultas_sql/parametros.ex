@@ -116,6 +116,61 @@ defmodule MetadataApp.ConsultasSql.Parametros do
   end
 
   @doc """
+  Valores de una llamada, en el orden declarado de `parametros`, listos
+  para pasarse como `$1..$n` (R40, diseño §11.4 paso 1). Un valor vacío
+  (`nil` o `""`) toma el default; si sigue vacío y el parámetro es
+  obligatorio, la llamada se rechaza. Cada valor se convierte a su tipo.
+  `valores` puede traer llaves string o átomo; las que no corresponden a
+  ningún parámetro se ignoran (por `GET` pueden llegar otras, como
+  paginación). `{:ok, [valor]}` o `{:error, mensaje}` que nombra el
+  parámetro.
+  """
+  def preparar(parametros, valores) when is_map(valores) do
+    parametros
+    |> Enum.reduce_while({:ok, []}, fn parametro, {:ok, acumulados} ->
+      case preparar_uno(parametro, valor_recibido(valores, parametro["nombre"])) do
+        {:ok, valor} -> {:cont, {:ok, [valor | acumulados]}}
+        error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, preparados} -> {:ok, Enum.reverse(preparados)}
+      error -> error
+    end
+  end
+
+  def preparar(_parametros, _valores),
+    do: {:error, "Los parámetros de la llamada tienen que ser un mapa."}
+
+  defp preparar_uno(%{"nombre" => nombre, "tipo" => tipo} = parametro, recibido) do
+    crudo = if recibido in [nil, ""], do: parametro["default"], else: recibido
+
+    case convertir(tipo, crudo) do
+      {:ok, nil} ->
+        if parametro["obligatorio"],
+          do: {:error, "Falta el parámetro obligatorio «#{nombre}»."},
+          else: {:ok, nil}
+
+      {:ok, valor} ->
+        {:ok, valor}
+
+      :error ->
+        {:error,
+         "El parámetro «#{nombre}» no es un valor válido de tipo #{tipo}: #{inspect(crudo)}."}
+    end
+  end
+
+  # Sin crear átomos: se compara el nombre contra cada llave como texto.
+  # `Enum.find` y no `find_value`: un `false` recibido es un valor, no
+  # "no llegó".
+  defp valor_recibido(valores, nombre) do
+    case Enum.find(valores, fn {llave, _valor} -> to_string(llave) == nombre end) do
+      {_llave, valor} -> valor
+      nil -> nil
+    end
+  end
+
+  @doc """
   Convierte `valor` al tipo Elixir de `tipo` (tabla del diseño §11.2).
   Acepta la forma nativa y la forma texto, porque por `GET` todo llega
   como texto. `{:ok, convertido}` o `:error`. `nil` es `{:ok, nil}`: la

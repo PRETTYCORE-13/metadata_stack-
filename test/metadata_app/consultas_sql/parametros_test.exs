@@ -149,6 +149,58 @@ defmodule MetadataApp.ConsultasSql.ParametrosTest do
     end
   end
 
+  describe "preparar/2 (M1, R40)" do
+    setup do
+      {:ok, parametros} =
+        Parametros.validar([
+          %{"nombre" => "dir", "tipo" => "entero", "obligatorio" => true},
+          %{"nombre" => "ids", "tipo" => "lista_enteros", "obligatorio" => true},
+          %{"nombre" => "fecha", "tipo" => "fecha", "default" => "2026-10-01"},
+          %{"nombre" => "activo", "tipo" => "booleano", "default" => true},
+          %{"nombre" => "monto", "tipo" => "decimal"}
+        ])
+
+      %{parametros: parametros}
+    end
+
+    test "convierte en el orden declarado y completa defaults", %{parametros: p} do
+      assert Parametros.preparar(p, %{"dir" => "7", "ids" => "1,2", "monto" => "10.5"}) ==
+               {:ok, [7, [1, 2], ~D[2026-10-01], true, Decimal.new("10.5")]}
+    end
+
+    test "un false recibido es un valor, no toma el default", %{parametros: p} do
+      assert {:ok, [7, [], _, false, nil]} =
+               Parametros.preparar(p, %{"dir" => 7, "ids" => [], "activo" => false})
+    end
+
+    test "acepta llaves átomo e ignora las que no son parámetros", %{parametros: p} do
+      assert {:ok, [7, [3], _, _, _]} =
+               Parametros.preparar(p, %{"otra" => "x", dir: 7, ids: [3], pagina: 2})
+    end
+
+    test "falta un obligatorio: el error lo nombra", %{parametros: p} do
+      assert Parametros.preparar(p, %{"ids" => [1]}) ==
+               {:error, "Falta el parámetro obligatorio «dir»."}
+
+      assert Parametros.preparar(p, %{"dir" => "", "ids" => [1]}) ==
+               {:error, "Falta el parámetro obligatorio «dir»."}
+    end
+
+    test "un valor que no es de su tipo: el error nombra el parámetro", %{parametros: p} do
+      assert {:error, mensaje} =
+               Parametros.preparar(p, %{"dir" => "1; DROP TABLE x", "ids" => [1]})
+
+      assert mensaje =~ "«dir» no es un valor válido de tipo entero"
+
+      assert {:error, mensaje} = Parametros.preparar(p, %{"dir" => 1, "ids" => "1,x"})
+      assert mensaje =~ "«ids» no es un valor válido de tipo lista_enteros"
+    end
+
+    test "valores que no son mapa", %{parametros: p} do
+      assert {:error, _} = Parametros.preparar(p, [1, 2])
+    end
+  end
+
   describe "traducir/2 (K3, D3)" do
     setup do
       {:ok, parametros} =

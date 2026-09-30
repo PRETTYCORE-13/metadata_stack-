@@ -649,6 +649,262 @@ defmodule MetadataApp.ConsultasSqlTest do
     end
   end
 
+  describe "ejecutar un Servicio (SPEC-SYS-2509202601 grupo M)" do
+    @datos "(VALUES (1, 10, 5, 'a'), (2, 20, 5, 'b'), (3, NULL, 6, 'c')) AS t(id, branch_id, empresa_id, descripcion)"
+
+    defp servicio(sql, parametros, tope \\ 1000) do
+      {:ok, {header, _}} =
+        ConsultasSql.crear(%{"etiqueta" => "M", "nav" => "/m_#{unique()}", "uso" => "servicio"})
+
+      {:ok, _} =
+        ConsultasSql.guardar_sql(header.schema_context_name, sql, %{
+          "parametros" => parametros,
+          "tope_renglones" => tope
+        })
+
+      header.schema_context_name
+    end
+
+    defp ids_de({:ok, %{filas: filas}}), do: filas |> Enum.map(& &1["id"]) |> Enum.sort()
+
+    setup do
+      nombre =
+        servicio(
+          "SELECT * FROM #{@datos} WHERE t.id = ANY(:ids) AND (:excluir IS NULL OR t.descripcion <> :excluir)",
+          [
+            %{"nombre" => "ids", "tipo" => "lista_enteros", "obligatorio" => true},
+            %{"nombre" => "excluir", "tipo" => "texto"}
+          ]
+        )
+
+      %{nombre: nombre}
+    end
+
+    test "M2: regresa columnas y filas como mapas", %{nombre: nombre} do
+      assert {:ok, %{columnas: ["id", "branch_id", "empresa_id", "descripcion"], filas: filas}} =
+               ConsultasSql.ejecutar_servicio(nombre, %{"ids" => "1,3"}, :sistema)
+
+      assert Enum.sort_by(filas, & &1["id"]) == [
+               %{"id" => 1, "branch_id" => 10, "empresa_id" => 5, "descripcion" => "a"},
+               %{"id" => 3, "branch_id" => nil, "empresa_id" => 6, "descripcion" => "c"}
+             ]
+    end
+
+    test "M2 (R41): un texto malicioso es solo un valor", %{nombre: nombre} do
+      resultado =
+        ConsultasSql.ejecutar_servicio(
+          nombre,
+          %{"ids" => [1, 2], "excluir" => "a'; DROP TABLE meta_fixture_equipo; --"},
+          :sistema
+        )
+
+      assert ids_de(resultado) == [1, 2]
+
+      assert Repo.query!("SELECT to_regclass('meta_fixture_equipo') IS NOT NULL", []).rows == [
+               [true]
+             ]
+    end
+
+    test "M1 (R40): un valor inválido se rechaza sin ejecutar", %{nombre: nombre} do
+      assert ConsultasSql.ejecutar_servicio(nombre, %{"ids" => "1; DROP TABLE x"}, :sistema) ==
+               {:error,
+                "El parámetro «ids» no es un valor válido de tipo lista_enteros: \"1; DROP TABLE x\"."}
+
+      assert ConsultasSql.ejecutar_servicio(nombre, %{}, :sistema) ==
+               {:error, "Falta el parámetro obligatorio «ids»."}
+    end
+
+    test "M3 (R44): alcance por tipo", %{nombre: nombre} do
+      todos = %{"ids" => [1, 2, 3]}
+
+      scope = %MetadataApp.Autenticacion.Scope{
+        usuario: %{id: -1},
+        empresa_activa: %{id: -1},
+        branches_permitidos: [10]
+      }
+
+      assert ids_de(ConsultasSql.ejecutar_servicio(nombre, todos, :sistema)) == [1, 2, 3]
+      assert ids_de(ConsultasSql.ejecutar_servicio(nombre, todos, scope)) == [1, 3]
+      assert ids_de(ConsultasSql.ejecutar_servicio(nombre, todos, nil)) == []
+      assert ids_de(ConsultasSql.ejecutar_servicio(nombre, todos, {:empresa_fija, 5})) == [1, 2]
+    end
+
+    test "M3: sin columnas de control no acota" do
+      nombre =
+        servicio("SELECT t.id FROM #{@datos} WHERE t.id = ANY(:ids)", [
+          %{"nombre" => "ids", "tipo" => "lista_enteros", "obligatorio" => true}
+        ])
+
+      scope = %MetadataApp.Autenticacion.Scope{
+        usuario: %{id: -1},
+        empresa_activa: %{id: -1},
+        branches_permitidos: []
+      }
+
+      assert ids_de(ConsultasSql.ejecutar_servicio(nombre, %{"ids" => [1, 2, 3]}, scope)) == [
+               1,
+               2,
+               3
+             ]
+
+      assert ids_de(
+               ConsultasSql.ejecutar_servicio(nombre, %{"ids" => [1, 2, 3]}, {:empresa_fija, 5})
+             ) == [1, 2, 3]
+    end
+
+    test "M5 (R43): pasar el tope rechaza la llamada completa; justo en el tope pasa" do
+      sql = "SELECT t.id FROM #{@datos} WHERE t.id = ANY(:ids)"
+      parametros = [%{"nombre" => "ids", "tipo" => "lista_enteros", "obligatorio" => true}]
+
+      nombre = servicio(sql, parametros, 2)
+
+      assert {:error, mensaje} =
+               ConsultasSql.ejecutar_servicio(nombre, %{"ids" => [1, 2, 3]}, :sistema)
+
+      assert mensaje =~ "excede el tope de 2 renglones"
+
+      assert ids_de(ConsultasSql.ejecutar_servicio(nombre, %{"ids" => [1, 2]}, :sistema)) == [
+               1,
+               2
+             ]
+    end
+
+    # El sandbox abre su transacción por fuera de Ecto, así que ahí
+    # `Repo.in_transaction?()` da false y la ejecución tomaría el camino
+    # sin transacción. Una regla real siempre corre dentro de
+    # `Repo.transaction`: esto la emula para probar el camino del savepoint.
+    defp como_regla(fun) do
+      {:ok, resultado} =
+        Repo.transaction(fn ->
+          assert Repo.in_transaction?()
+          fun.()
+        end)
+
+      resultado
+    end
+
+    test "M4 (D5, R47): dentro de una transacción ve lo no confirmado y la deja sana" do
+      Repo.query!("CREATE TABLE m4_tabla (id bigint)", [])
+
+      nombre =
+        servicio("SELECT id FROM m4_tabla WHERE id = :x", [
+          %{"nombre" => "x", "tipo" => "entero", "obligatorio" => true}
+        ])
+
+      como_regla(fn ->
+        [[timeout_antes]] = Repo.query!("SHOW statement_timeout", []).rows
+        Repo.query!("INSERT INTO m4_tabla VALUES (42)", [])
+
+        assert {:ok, %{filas: [%{"id" => 42}]}} =
+                 ConsultasSql.ejecutar_servicio(nombre, %{"x" => 42}, :sistema)
+
+        assert Repo.query!("SHOW statement_timeout", []).rows == [[timeout_antes]]
+        assert Repo.query!("SHOW transaction_read_only", []).rows == [["off"]]
+        Repo.query!("INSERT INTO m4_tabla VALUES (43)", [])
+        assert Repo.query!("SELECT count(*) FROM m4_tabla", []).rows == [[2]]
+      end)
+    end
+
+    test "M4 (K4): un Servicio que llama a una función que escribe se rechaza y la transacción sigue sana" do
+      Repo.query!("CREATE TABLE m4_escrita (id bigint)", [])
+
+      Repo.query!(
+        "CREATE FUNCTION m4_escribe(p bigint) RETURNS bigint LANGUAGE plpgsql VOLATILE AS $$ BEGIN INSERT INTO m4_escrita VALUES (p); RETURN p; END $$",
+        []
+      )
+
+      nombre =
+        servicio("SELECT m4_escribe(:x) AS escrito", [
+          %{"nombre" => "x", "tipo" => "entero", "obligatorio" => true}
+        ])
+
+      como_regla(fn ->
+        assert {:error, mensaje} = ConsultasSql.ejecutar_servicio(nombre, %{"x" => 1}, :sistema)
+        assert mensaje =~ "read-only"
+        assert Repo.query!("SELECT count(*) FROM m4_escrita", []).rows == [[0]]
+        assert Repo.query!("SHOW transaction_read_only", []).rows == [["off"]]
+        Repo.query!("INSERT INTO m4_escrita VALUES (9)", [])
+      end)
+
+      # Fuera de una transacción (camino READ ONLY) también se rechaza.
+      assert {:error, mensaje} = ConsultasSql.ejecutar_servicio(nombre, %{"x" => 1}, :sistema)
+      assert mensaje =~ "read-only"
+      assert Repo.query!("SELECT count(*) FROM m4_escrita", []).rows == [[1]]
+    end
+
+    test "M4 (R13.1): lo mismo aplica a una vista (Diccionario/Consulta) dentro de una transacción" do
+      Repo.query!("CREATE TABLE m4_escrita_v (id bigint)", [])
+
+      Repo.query!(
+        "CREATE FUNCTION m4_escribe_v() RETURNS bigint LANGUAGE plpgsql VOLATILE AS $$ BEGIN INSERT INTO m4_escrita_v VALUES (1); RETURN 1; END $$",
+        []
+      )
+
+      {:ok, {header, _}} =
+        ConsultasSql.crear(%{"etiqueta" => "V", "nav" => "/m4v_#{unique()}", "uso" => "consulta"})
+
+      {:ok, _} =
+        ConsultasSql.guardar_sql(header.schema_context_name, "SELECT m4_escribe_v() AS escrito")
+
+      como_regla(fn ->
+        assert {:error, mensaje} = ConsultasSql.vista_previa(header.schema_context_name)
+        assert mensaje =~ "read-only"
+        assert Repo.query!("SELECT count(*) FROM m4_escrita_v", []).rows == [[0]]
+        assert Repo.query!("SHOW transaction_read_only", []).rows == [["off"]]
+        assert Repo.query!("SELECT 1", []).rows == [[1]]
+      end)
+    end
+
+    test "M4: un error de ejecución no aborta la transacción de afuera" do
+      nombre =
+        servicio("SELECT 1 / :d AS r", [
+          %{"nombre" => "d", "tipo" => "entero", "obligatorio" => true}
+        ])
+
+      como_regla(fn ->
+        assert {:error, mensaje} = ConsultasSql.ejecutar_servicio(nombre, %{"d" => 0}, :sistema)
+        assert mensaje =~ "division by zero"
+        assert Repo.query!("SELECT 1", []).rows == [[1]]
+      end)
+    end
+
+    @tag timeout: 30_000
+    test "M6 (R42): excede el tiempo máximo" do
+      nombre =
+        servicio("SELECT 1 AS x FROM pg_sleep(:s)", [
+          %{"nombre" => "s", "tipo" => "decimal", "obligatorio" => true}
+        ])
+
+      assert ConsultasSql.ejecutar_servicio(nombre, %{"s" => "6"}, :sistema) ==
+               {:error, :tiempo_excedido}
+
+      assert Repo.query!("SELECT 1", []).rows == [[1]]
+    end
+
+    test "errores claros: no existe, no es Servicio o no tiene SQL" do
+      inexistente = "pty_sql_no_existe_#{unique()}"
+
+      assert ConsultasSql.ejecutar_servicio(inexistente, %{}, :sistema) ==
+               {:error, "No existe el servicio #{inexistente} en este ambiente."}
+
+      {:ok, {consulta, _}} =
+        ConsultasSql.crear(%{"etiqueta" => "C", "nav" => "/mc_#{unique()}", "uso" => "consulta"})
+
+      assert {:error, m1} =
+               ConsultasSql.ejecutar_servicio(consulta.schema_context_name, %{}, :sistema)
+
+      assert m1 =~ "no es un Servicio"
+
+      {:ok, {vacio, _}} =
+        ConsultasSql.crear(%{"etiqueta" => "S", "nav" => "/ms_#{unique()}", "uso" => "servicio"})
+
+      assert {:error, m2} =
+               ConsultasSql.ejecutar_servicio(vacio.schema_context_name, %{}, :sistema)
+
+      assert m2 =~ "todavía no tiene SQL"
+    end
+  end
+
   describe "cambio de uso con Servicio (SPEC-SYS-2509202601 K5, R39)" do
     defp alta(uso) do
       {:ok, {header, _}} =

@@ -471,15 +471,18 @@ defmodule MetadataApp.ConsultasSql do
   # --- Ejecución segura (R13, R33) ------------------------------------------
 
   @doc """
-  Corre `fun` (que lee de una vista `pty_sql_*`) con tiempo máximo y, si
-  no hay una transacción abierta, en una transacción de solo lectura.
-  Dentro de una transacción ya abierta (ej. la validación de un campo al
-  guardar un registro) `SET TRANSACTION READ ONLY` no se puede, así que
-  solo aplica el tiempo máximo y lo restaura al terminar. `{:ok,
+  Corre `fun` (que lee de una vista o función `pty_sql_*`) en solo
+  lectura y con tiempo máximo (R13, R13.1). Sin transacción abierta, en
+  una transacción `READ ONLY`. Dentro de una transacción ya abierta (la
+  validación de un campo al guardar un registro, o la regla de un BC que
+  llama a un Servicio), en un `SAVEPOINT` con `transaction_read_only` y
+  `statement_timeout` locales, que se revierte siempre: un error o un
+  tiempo excedido no abortan la transacción de afuera, y ninguna función
+  llamada desde el SQL puede escribir (hallazgo de K4). `{:ok,
   resultado}`, `{:error, :tiempo_excedido}` o `{:error, mensaje}`.
   """
   def ejecutar(fun) do
-    if Repo.in_transaction?(), do: ejecutar_anidado(fun), else: ejecutar_solo_lectura(fun)
+    if Repo.in_transaction?(), do: ejecutar_en_savepoint(fun), else: ejecutar_solo_lectura(fun)
   end
 
   defp ejecutar_solo_lectura(fun) do
@@ -492,16 +495,21 @@ defmodule MetadataApp.ConsultasSql do
     error -> error_de_ejecucion(error)
   end
 
-  defp ejecutar_anidado(fun) do
-    [[anterior]] = Repo.query!("SHOW statement_timeout", []).rows
-    Repo.query!("SET LOCAL statement_timeout = #{@timeout_ms}", [])
+  # `ROLLBACK TO SAVEPOINT` revierte los `SET LOCAL` y deja sana la
+  # transacción de afuera aunque la consulta haya fallado; el `RELEASE`
+  # quita el savepoint para no acumularlos en una transacción larga.
+  defp ejecutar_en_savepoint(fun) do
+    Repo.query!("SAVEPOINT consulta_sql", [])
 
     try do
+      Repo.query!("SET LOCAL transaction_read_only = on", [])
+      Repo.query!("SET LOCAL statement_timeout = #{@timeout_ms}", [])
       {:ok, fun.()}
     rescue
       error -> error_de_ejecucion(error)
     after
-      Repo.query("SET LOCAL statement_timeout = '#{anterior}'", [])
+      Repo.query!("ROLLBACK TO SAVEPOINT consulta_sql", [])
+      Repo.query!("RELEASE SAVEPOINT consulta_sql", [])
     end
   end
 
@@ -511,6 +519,80 @@ defmodule MetadataApp.ConsultasSql do
   @doc "Mensaje para pantalla de `{:error, motivo}` de `ejecutar/1`."
   def mensaje_ejecucion(:tiempo_excedido), do: "La consulta tardó más de #{div(@timeout_ms, 1000)} segundos y se canceló."
   def mensaje_ejecucion(mensaje) when is_binary(mensaje), do: mensaje
+
+  @doc """
+  Ejecuta el Servicio `nombre` con `valores` (R40-R45, diseño §11.4).
+  `alcance`: `%Scope{}` (una regla o la pantalla), `nil` (sin sesión:
+  cero filas), `:sistema` (sin acotar) o `{:empresa_fija, empresa_id}`
+  (un Endpoint). Los valores viajan siempre como `$n`, nunca dentro del
+  texto del SQL (R41). Si el resultado excede `tope_renglones`, la
+  llamada se rechaza completa; nunca se recorta (R43).
+  `{:ok, %{columnas: [texto], filas: [%{texto => valor}]}}` o
+  `{:error, :tiempo_excedido | mensaje}`.
+  """
+  def ejecutar_servicio(nombre, valores, alcance) do
+    with {:ok, servicio} <- servicio_guardado(nombre),
+         {:ok, argumentos} <- Parametros.preparar(servicio.parametros, valores) do
+      marcadores = Enum.map_join(1..length(argumentos)//1, ", ", &"$#{&1}")
+      {condicion, valores_alcance} = condicion_alcance(alcance, servicio.columnas, length(argumentos) + 1)
+      tope = servicio.tope_renglones
+
+      sql = "SELECT * FROM #{identificador!(nombre)}(#{marcadores}) AS r#{condicion} LIMIT #{tope + 1}"
+
+      case ejecutar(fn -> Repo.query!(sql, argumentos ++ valores_alcance) end) do
+        {:ok, %{rows: filas}} when length(filas) > tope ->
+          {:error, "El resultado excede el tope de #{tope} renglones del servicio #{nombre}; no se regresa un resultado incompleto."}
+
+        {:ok, %{columns: columnas, rows: filas}} ->
+          {:ok, %{columnas: columnas, filas: Enum.map(filas, &(columnas |> Enum.zip(&1) |> Map.new()))}}
+
+        error ->
+          error
+      end
+    end
+  end
+
+  defp servicio_guardado(nombre) do
+    case obtener_por_catalogo(nombre) do
+      nil -> {:error, "No existe el servicio #{nombre} en este ambiente."}
+      %ConsultaSql{uso: uso} when uso != "servicio" -> {:error, "#{nombre} no es un Servicio."}
+      %ConsultaSql{sql: nil} -> {:error, "El servicio #{nombre} todavía no tiene SQL guardado."}
+      servicio -> {:ok, servicio}
+    end
+  end
+
+  # Condición `WHERE` (con sus valores) sobre las columnas de control que
+  # exponga el Servicio, desde el marcador `$siguiente`. Mismo criterio que
+  # `alcance_por_columnas/3`, pero en SQL: `fragment` de Ecto no admite un
+  # número variable de argumentos.
+  defp condicion_alcance(nil, _columnas, _siguiente), do: {" WHERE false", []}
+  defp condicion_alcance(:sistema, _columnas, _siguiente), do: {"", []}
+
+  defp condicion_alcance({:empresa_fija, empresa_id}, columnas, siguiente) do
+    if Enum.any?(columnas, &(&1["nombre"] == "empresa_id")),
+      do: {" WHERE (r.empresa_id IS NULL OR r.empresa_id = $#{siguiente})", [empresa_id]},
+      else: {"", []}
+  end
+
+  defp condicion_alcance(%Scope{} = scope, columnas, siguiente) do
+    if administrador?(scope) do
+      {"", []}
+    else
+      nombres = MapSet.new(columnas, & &1["nombre"])
+
+      {condiciones, valores, _} =
+        Enum.reduce(@columnas_alcance, {[], [], siguiente}, fn {columna, _campo, lista}, {conds, vals, n} ->
+          if MapSet.member?(nombres, columna),
+            do: {["(r.#{columna} IS NULL OR r.#{columna} = ANY($#{n}))" | conds], [Map.fetch!(scope, lista) | vals], n + 1},
+            else: {conds, vals, n}
+        end)
+
+      case condiciones do
+        [] -> {"", []}
+        _ -> {" WHERE " <> Enum.join(Enum.reverse(condiciones), " AND "), Enum.reverse(valores)}
+      end
+    end
+  end
 
   @doc "Primeras 5 filas de la vista (R12), con la ejecución segura."
   def vista_previa(nombre) do
