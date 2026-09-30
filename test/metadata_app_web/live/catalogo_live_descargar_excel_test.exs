@@ -29,7 +29,7 @@ defmodule MetadataAppWeb.CatalogoLiveDescargarExcelTest do
 
     rol_admin = Repo.get_by!(Rol, nombre: "administrador")
     {:ok, _} = Permissions.asignar_rol(usuario.id, rol_admin.id, empresa.id)
-    {:ok, _} = Permissions.crear_permiso(%{recurso: "meta_fixture_cliente", accion: "leer"})
+    Permissions.crear_permiso(%{recurso: "meta_fixture_cliente", accion: "leer"})
 
     conn =
       conn
@@ -149,7 +149,7 @@ defmodule MetadataAppWeb.CatalogoLiveDescargarExcelTest do
       })
 
     {:ok, _consulta} = MetaConsultas.crear(header, "meta_fixture_cliente")
-    {:ok, _} = Permissions.crear_permiso(%{recurso: header.schema_context_name, accion: "leer"})
+    Permissions.crear_permiso(%{recurso: header.schema_context_name, accion: "leer"})
 
     sufijo = unique()
     uno = fixture_cliente(%{meta_fixture_cliente_nombre: "Excel Consulta #{sufijo}", meta_fixture_cliente_edad: 30, meta_fixture_cliente_venta: Decimal.new("1")})

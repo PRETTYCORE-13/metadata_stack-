@@ -64,7 +64,7 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
       })
 
     {:ok, consulta} = MetaConsultas.crear(header, "meta_fixture_cliente")
-    {:ok, _} = Permissions.crear_permiso(%{recurso: nombre, accion: "leer"})
+    Permissions.crear_permiso(%{recurso: nombre, accion: "leer"})
 
     {header, consulta, nav}
   end
