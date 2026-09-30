@@ -25,7 +25,7 @@ defmodule MetadataAppWeb.CatalogoLiveBooleanoTest do
 
     rol_admin = Repo.get_by!(Rol, nombre: "administrador")
     {:ok, _} = Permissions.asignar_rol(usuario.id, rol_admin.id, empresa.id)
-    {:ok, _} = Permissions.crear_permiso(%{recurso: "meta_fixture_cliente", accion: "leer"})
+    Permissions.crear_permiso(%{recurso: "meta_fixture_cliente", accion: "leer"})
 
     conn =
       conn

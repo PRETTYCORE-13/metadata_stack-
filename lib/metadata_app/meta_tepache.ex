@@ -141,7 +141,7 @@ defmodule MetadataApp.MetaTepache do
           Enum.each(campos, &eliminar_campo_local(nombre, &1))
         end)
 
-        Enum.each(nombres, &registrar_permisos/1)
+        Enum.each(nombres, &Permissions.registrar_permisos_catalogo/1)
 
         {:ok, %{catalogos: nombres, mensajes: mensajes, campos_removidos: campos_removidos}}
     end
@@ -423,27 +423,4 @@ defmodule MetadataApp.MetaTepache do
     end
   end
 
-  @doc """
-  Registra en `meta_schema_permiso` el CRUD estándar (leer/crear/editar/
-  eliminar) + el nombre de cada transición real del catálogo — SIN
-  concederlo a ningún rol. Sin este registro ni "administrador" podría
-  ejecutar una transición recién importada (ve todo lo YA REGISTRADO, no
-  es un comodín ciego — ver `Permissions.can?/3`). Ignora en silencio los
-  que ya existan (idempotente, mismo criterio que `importar_meta/1`).
-  """
-  def registrar_permisos(nombre_catalogo) do
-    case MetaSchemaContext.obtener_header_por_nombre(nombre_catalogo) do
-      nil ->
-        {:error, "\"#{nombre_catalogo}\" no se encontró — ¿faltó importar_meta antes?"}
-
-      header ->
-        acciones =
-          (["leer", "crear", "editar", "eliminar"] ++
-             Enum.map(MetaEstadosAdmin.listar_transiciones(header.id), & &1.accion))
-          |> Enum.uniq()
-
-        Enum.each(acciones, &Permissions.crear_permiso(%{recurso: nombre_catalogo, accion: &1}))
-        :ok
-    end
-  end
 end

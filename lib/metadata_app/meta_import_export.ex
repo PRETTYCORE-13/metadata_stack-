@@ -21,6 +21,7 @@ defmodule MetadataApp.MetaImportExport do
   alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaConsultas
   alias MetadataApp.ConsultaEndpoints
+  alias MetadataApp.Permissions
   alias MetadataApp.Autenticacion.Empresa
   alias MetadataApp.MetaSchema.Consulta
   alias MetadataApp.Repo
@@ -166,12 +167,27 @@ defmodule MetadataApp.MetaImportExport do
             {contexto, aviso_prefijo} = separar_prefijo_ocupado(contexto)
 
             case MetaSchemaContext.crear_header_con_detalles(contexto) do
-              {:ok, {_header, _detalles}} -> Enum.join(Enum.reject(["+ #{nombre}: creado", aviso_prefijo], &is_nil/1), "; ")
-              {:error, motivo} -> raise "Error importando #{nombre}: #{inspect(motivo)}"
+              {:ok, {_header, _detalles}} ->
+                # Bug real (2026-09-30): "mix motor.publicar" nunca registraba
+                # los permisos del catalogo en el ambiente destino (solo
+                # "mix motor.tepache.importar" lo hacia) -- quedaba invisible
+                # incluso para un administrador (Permissions.can?/3 solo ve
+                # permisos YA REGISTRADOS, nunca es un comodin ciego). Este es
+                # el unico codigo que corre en TODOS los caminos de import
+                # (CI/CD, manual, y el release via rel/overlays/bin/import_meta).
+                Permissions.registrar_permisos_catalogo(nombre)
+                Enum.join(Enum.reject(["+ #{nombre}: creado", aviso_prefijo], &is_nil/1), "; ")
+
+              {:error, motivo} ->
+                raise "Error importando #{nombre}: #{inspect(motivo)}"
             end
         end
 
       existente ->
+        # Idempotente (ver registrar_permisos_catalogo/1) -- corre tambien acá
+        # para que una transicion agregada DESPUÉS de la creación original
+        # (ej. una nueva versión del catálogo ya publicado) quede registrada.
+        Permissions.registrar_permisos_catalogo(nombre)
         cambios =
           Enum.reject(
             [
