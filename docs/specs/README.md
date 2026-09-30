@@ -279,7 +279,23 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   lista de precios de cadena por canal y cascada de precio base por
   producto: lista especial del cliente → lista de cadena del canal →
   lista maestra de la sucursal → "sin precio". La cascada es una SQL
-  View (`pty_sql_precio_base`); incluye los detalles de precios y
-  sucursales de la lista. Documentos 00-03 escritos, sin tareas
-  iniciadas; el consumo por dirección depende de una spec SYS de filtros
-  por columna.
+  View (`pty_sql_materiales_precio_base`); incluye los detalles de precios y
+  sucursales de la lista, y las listas vacías "SIN LISTA ESPECIAL" y "SIN
+  LISTA DE CADENA" (las referencias son obligatorias en la plataforma).
+  Grupos A-D verificados en dev; pendiente la publicación. La vista se
+  retira cuando exista el servicio de SPEC-ADN-2909202602.
+- [`SPEC-SYS-2909202602-consulta-sql-parametros/`](SPEC-SYS-2909202602-consulta-sql-parametros/) —
+  Consulta SQL de uso **Servicio**: un SQL de solo lectura con
+  parámetros tipados (incluida lista de enteros) que se convierte en una
+  función de Postgres. Se ejecuta desde las reglas de cualquier BC
+  (`MetaBcApi.ejecutar_servicio/3`, dentro de la transacción en curso) o
+  por un Endpoint con credencial. Base para "resolvedores" de negocio
+  como el precio, el crédito o las promociones. Documentos 00-03
+  escritos, sin tareas iniciadas.
+- [`SPEC-ADN-2909202602-servicio-precio/`](SPEC-ADN-2909202602-servicio-precio/) —
+  servicio de precio de venta: recibe dirección de entrega, productos y
+  fecha, y deduce cliente, canal y sucursal. Regresa por producto el
+  precio por caja sin impuestos, su nivel, su lista y un estado (`ok`,
+  `sin_precio` o `direccion_invalida`). Punto único para el pedido, la
+  app y las integraciones; crecerá con descuentos e impuestos. Bloqueada
+  hasta que SPEC-SYS-2909202602 cierre sus grupos A-E.
