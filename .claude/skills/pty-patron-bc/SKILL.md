@@ -1,5 +1,5 @@
 ---
-name: patron-bc
+name: pty-patron-bc
 description: Cómo dar de alta un Business Context (catálogo) siguiendo el patrón estándar del proyecto — nombre snake_case con prefijo pty_, autómata Activo/Baja con alta/guardar/baja/reactivar, alcance y permisos de rol, GET/POST Config por default. Incluye la variante maestro-detalle (un catálogo maestro + una o más tablas detalle/renglones colgadas de él, ej. pedido+items): tabla(s) detalle sin autómata propio, "Detalle de" apuntando al maestro, sin TRN ni Serie+Folio por ser esclava, y permisos de insertar/actualizar/borrar renglones por estado. Usar cuando el usuario pide crear un "BC básico"/"patrón BC", un catálogo maestro-detalle, o dice "dale el patrón de siempre" a un catálogo nuevo.
 ---
 

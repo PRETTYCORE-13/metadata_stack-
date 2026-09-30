@@ -1,5 +1,5 @@
 ---
-name: spec
+name: pty-sdd
 description: Cómo ejecutar trabajo SDD-anchored (requirements→design→tasks) en docs/specs/ de este proyecto. Usar cuando el usuario pide arrancar o continuar una spec, dice "seguí tasks.md"/"continuemos el spec", o cuando se va a implementar algo dentro de una carpeta docs/specs/SPEC-*.
 ---
 
