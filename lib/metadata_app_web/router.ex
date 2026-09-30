@@ -288,6 +288,13 @@ defmodule MetadataAppWeb.Router do
       live "/sysadmin/endpoints", Sysadmin.EndpointsLive, :index
       live "/sysadmin/endpoints/:nombre", Sysadmin.EndpointsLive, :editar
 
+      # SPEC-SYS-2509202601 R53.1: contrato y credenciales de cada Servicio
+      # en cualquier ambiente (el editor de SQL solo existe en local). Mismo
+      # criterio que Endpoints: metadata pura, protegida por el permiso
+      # "sysadmin_endpoints".
+      live "/sysadmin/servicios", Sysadmin.ServiciosLive, :index
+      live "/sysadmin/servicios/:nombre", Sysadmin.ServiciosLive, :ver
+
       # Buscar TRN: siempre disponible (2026-08-04, a pedido explícito) —
       # a diferencia del resto del BPB de arriba, no depende de código que
       # no exista en un release de producción (solo lee

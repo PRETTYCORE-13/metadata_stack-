@@ -136,6 +136,29 @@ defmodule MetadataApp.ConsultasSql do
     Repo.one(from c in ConsultaSql, where: c.meta_schema_header_id == ^header_id and is_nil(c.delete_guid))
   end
 
+  @doc """
+  Los Servicios (uso "servicio") con su Endpoint, si tienen, en una sola
+  consulta (§11.6, R53.1): `[%{nombre, etiqueta, parametros, endpoint_ruta,
+  endpoint_estado}]`, ordenados por etiqueta.
+  """
+  def listar_servicios do
+    from(c in ConsultaSql,
+      join: h in assoc(c, :header),
+      left_join: e in MetadataApp.MetaSchema.ConsultaEndpoint,
+      on: e.meta_schema_consulta_sql_id == c.id and is_nil(e.delete_guid),
+      where: c.uso == "servicio" and is_nil(c.delete_guid) and is_nil(h.delete_guid),
+      order_by: h.schema_context_label,
+      select: %{
+        nombre: h.schema_context_name,
+        etiqueta: h.schema_context_label,
+        parametros: c.parametros,
+        endpoint_ruta: e.ruta,
+        endpoint_estado: e.estado
+      }
+    )
+    |> Repo.all()
+  end
+
   def obtener_por_catalogo(nombre) do
     case MetaSchemaContext.obtener_header_por_nombre(nombre) do
       %{schema_context_type: @tipo} = header -> obtener_por_header_id(header.id)

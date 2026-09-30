@@ -774,7 +774,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
               <.link
                 navigate={
                   if ConsultaEndpoints.de_servicio?(endpoint),
-                    do: ~p"/sysadmin/bc-list/#{ConsultaEndpoints.nombre_de_origen(endpoint)}/consulta-sql",
+                    do: ~p"/sysadmin/servicios/#{ConsultaEndpoints.nombre_de_origen(endpoint)}",
                     else: ~p"/sysadmin/endpoints/#{ConsultaEndpoints.nombre_de_origen(endpoint)}"
                 }
                 class="text-blue-600 hover:text-blue-800 font-semibold mr-3">

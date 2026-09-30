@@ -235,7 +235,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLiveTest do
     {:ok, view, html} = live(conn, ~p"/sysadmin/endpoints")
     assert html =~ "Endpoint de servicio"
     assert html =~ "SERVICIO"
-    assert has_element?(view, ~s|a[href="/sysadmin/bc-list/#{nombre}/consulta-sql"]|)
+    assert has_element?(view, ~s|a[href="/sysadmin/servicios/#{nombre}"]|)
 
     html_borrado = render_click(view, "eliminar_endpoint", %{"nombre" => nombre})
     refute html_borrado =~ "Endpoint de servicio"
