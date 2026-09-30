@@ -62,7 +62,7 @@ defmodule RequiereSpec do
       {:error, _} ->
         bloquear(
           "no se puede editar '#{relativa}' sin una SPEC aprobada. Documenta primero con la " <>
-            "skill 'spec' y, ya aprobada por el usuario, declara la ruta de la SPEC en " <>
+            "skill 'pty-sdd' y, ya aprobada por el usuario, declara la ruta de la SPEC en " <>
             ".claude/spec-activa (o 'hotfix' si el usuario lo autoriza explícitamente)."
         )
 

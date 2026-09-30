@@ -40,7 +40,7 @@ This is a web application written using the Phoenix web framework.
   su script y su workflow (área `ADMIN`).
 - **SDD obligatorio — nunca programar sin SPEC aprobada.** Todo cambio
   funcional (aunque sea chico: un atributo nuevo, un campo en un modal,
-  una validación) arranca con la skill `spec`: crear o actualizar la
+  una validación) arranca con la skill `pty-sdd`: crear o actualizar la
   SPEC en `docs/specs/SPEC-<ÁREA>-*`, mostrar cada fase y esperar
   aprobación explícita antes de tocar `lib/`, `priv/repo/migrations/`,
   `assets/` o `test/`. Si el pedido llega como "agrega X", se interpreta
