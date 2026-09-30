@@ -196,6 +196,10 @@ defmodule MetadataAppWeb.Router do
     # no LiveView (un socket no puede stream-ear un archivo al navegador),
     # ver ImportacionDescargaController.
     get "/sysadmin/importacion/:plantilla_id/descargar", ImportacionDescargaController, :descargar
+
+    # Logo de empresa para la top bar -- controller (respuesta binaria con
+    # caché inmutable por versión), ver EmpresaLogoController.
+    get "/empresas/:id/logo/:version", EmpresaLogoController, :mostrar
   end
 
   scope "/", MetadataAppWeb do

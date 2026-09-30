@@ -368,16 +368,46 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
   text-decoration: none;
   cursor: pointer;
 }
 
-.pc-topbar-logo {
-  height: 30px;
+/* Logo de la empresa activa (SPEC-SYS-3009202601 D6): caja fija de 32 px
+   de alto y hasta 160 de ancho; la imagen cabe dentro conservando su
+   proporción, así que nunca se deforma ni cambia la altura de la barra. */
+.pc-topbar-logo-caja {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  max-width: 160px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  border-radius: 6px;
+}
+
+.pc-topbar-logo-empresa {
+  display: block;
+  max-height: 100%;
+  max-width: 100%;
+  width: auto;
+  height: auto;
   object-fit: contain;
 }
 
+/* Contenido oscuro (tema invertido, ver :root arriba): fondo claro para
+   que un logo oscuro con fondo transparente no desaparezca. */
+:root[data-theme="light"] .pc-topbar-logo-caja {
+  background: #f8fafc;
+  padding: 3px 6px;
+}
+
 .pc-topbar-empresa {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 14px;
   font-weight: 600;
   color: var(--pc-texto);

@@ -11,6 +11,8 @@ defmodule MetadataApp.Autenticacion do
     UsuarioToken,
     UsuarioNotifier,
     Empresa,
+    EmpresaLogo,
+    ImagenLogo,
     UsuarioEmpresa,
     UsuarioRol,
     Rol,
@@ -254,6 +256,85 @@ defmodule MetadataApp.Autenticacion do
     |> Ecto.Changeset.change(%{update_guid: generar_guid()})
     |> Repo.update()
   end
+
+  ## Logo de empresa (SPEC-SYS-3009202601). El binario vive en EmpresaLogo;
+  ## Empresa.logo_version (hash corto) es lo único que viaja con el scope y
+  ## arma la URL cacheable del logo.
+
+  @doc """
+  Valida el binario con `ImagenLogo` y guarda (o reemplaza) el logo de la
+  empresa junto con su `logo_version`, en una sola transacción.
+  Devuelve `{:ok, empresa}` o `{:error, mensaje}`.
+  """
+  def guardar_logo_empresa(%Empresa{} = empresa, binario) when is_binary(binario) do
+    with {:ok, info} <- ImagenLogo.inspeccionar(binario) do
+      hash = :crypto.hash(:sha256, binario) |> Base.encode16(case: :lower)
+      ahora = DateTime.utc_now(:second)
+
+      logo = %EmpresaLogo{
+        empresa_id: empresa.id,
+        contenido: binario,
+        content_type: info.content_type,
+        ancho: info.ancho,
+        alto: info.alto,
+        tamano_bytes: info.tamano_bytes,
+        hash: hash,
+        inserted_at: ahora,
+        updated_at: ahora
+      }
+
+      Repo.transaction(fn ->
+        Repo.insert!(logo,
+          on_conflict: {:replace, [:contenido, :content_type, :ancho, :alto, :tamano_bytes, :hash, :updated_at]},
+          conflict_target: :empresa_id
+        )
+
+        empresa
+        |> Ecto.Changeset.change(%{logo_version: version_logo(hash), update_guid: generar_guid()})
+        |> Repo.update!()
+      end)
+    end
+  end
+
+  @doc "Quita el logo de la empresa (la top bar vuelve a mostrar solo el nombre)."
+  def quitar_logo_empresa(%Empresa{} = empresa) do
+    Repo.transaction(fn ->
+      Repo.delete_all(from(l in EmpresaLogo, where: l.empresa_id == ^empresa.id))
+
+      empresa
+      |> Ecto.Changeset.change(%{logo_version: nil, update_guid: generar_guid()})
+      |> Repo.update!()
+    end)
+  end
+
+  @doc """
+  Logo de una empresa viva, solo si `usuario` pertenece a ella o es
+  `super_admin` (vista previa en /sysadmin/empresas de empresas ajenas).
+  Una sola consulta; `nil` si no hay logo o no hay acceso.
+  """
+  def obtener_logo_empresa(%Usuario{} = usuario, empresa_id) do
+    query =
+      from(l in EmpresaLogo,
+        join: e in Empresa,
+        on: e.id == l.empresa_id and is_nil(e.delete_guid),
+        where: l.empresa_id == ^empresa_id
+      )
+
+    query =
+      if usuario.super_admin do
+        query
+      else
+        from([l, e] in query,
+          join: ue in UsuarioEmpresa,
+          on: ue.empresa_id == e.id and ue.usuario_id == ^usuario.id and is_nil(ue.delete_guid)
+        )
+      end
+
+    Repo.one(query)
+  end
+
+  @doc "Versión corta (16 caracteres) del hash de un logo; es la que va en la URL."
+  def version_logo(hash), do: binary_part(hash, 0, 16)
 
   defp generar_guid do
     Ecto.UUID.generate() |> String.replace("-", "")

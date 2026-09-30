@@ -35,6 +35,7 @@ defmodule MetadataAppWeb.MenuLayout do
       assigns
       |> assign(:nodo_actual, buscar_nodo_actual(assigns.menu_items, assigns.current_page))
       |> assign(:nombre_empresa, nombre_empresa_activa(assigns[:current_scope]))
+      |> assign(:logo_empresa_url, logo_empresa_url(assigns[:current_scope]))
       |> assign(:jerarquia_opciones, opciones_jerarquia_activa(assigns[:current_scope]))
       |> assign(:firma_unidad_operativa, firma_unidad_operativa(assigns[:current_scope]))
       |> assign(:anio_actual, Date.utc_today().year)
@@ -273,6 +274,7 @@ defmodule MetadataAppWeb.MenuLayout do
           </svg>
         </button>
         <.link navigate="/" class="pc-topbar-brand">
+          <.logo_empresa id="topbar-logo-empresa" src={@logo_empresa_url} nombre={@nombre_empresa} />
           <span class="pc-topbar-empresa">{@nombre_empresa}</span>
         </.link>
         <div class="pc-topbar-derecha">
@@ -805,6 +807,36 @@ defmodule MetadataAppWeb.MenuLayout do
   # por las dudas).
   defp nombre_empresa_activa(%MetadataApp.Autenticacion.Scope{empresa_activa: %{nombre: nombre}}), do: nombre
   defp nombre_empresa_activa(_), do: Application.get_env(:metadata_app, :nombre_empresa, "Prettycore")
+
+  # Sale de logo_version, que ya viene en la empresa del scope: la top bar
+  # no hace ninguna consulta extra por el logo (SPEC-SYS-3009202601 D6).
+  defp logo_empresa_url(%MetadataApp.Autenticacion.Scope{empresa_activa: %{} = empresa}),
+    do: url_logo_empresa(empresa)
+
+  defp logo_empresa_url(_), do: nil
+
+  @doc "URL cacheable del logo de una empresa (cambia con cada versión), o nil si no tiene."
+  def url_logo_empresa(%{id: id, logo_version: version}) when is_binary(version),
+    do: "/empresas/#{id}/logo/#{version}"
+
+  def url_logo_empresa(_), do: nil
+
+  @doc """
+  Logo de empresa en su caja fija de la top bar (32 px de alto, hasta 160
+  de ancho, sin deformarse). Sin `src` no renderiza nada. Lo reusa la
+  vista previa de /sysadmin/empresas para que se vea idéntica.
+  """
+  attr :id, :string, required: true
+  attr :src, :string, default: nil
+  attr :nombre, :string, default: nil
+
+  def logo_empresa(assigns) do
+    ~H"""
+    <span :if={@src} id={@id} class="pc-topbar-logo-caja">
+      <img src={@src} alt={@nombre} class="pc-topbar-logo-empresa" />
+    </span>
+    """
+  end
 
   # Opciones del selector de jerarquía operativa de la banda de pie (Fase
   # 4, 2026-08-11) — un query directo por render (mismo criterio que
