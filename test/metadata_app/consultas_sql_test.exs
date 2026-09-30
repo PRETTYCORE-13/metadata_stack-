@@ -10,8 +10,11 @@ defmodule MetadataApp.ConsultasSqlTest do
 
   describe "nombre_desde_nav/1" do
     test "prefijo pty_sql_ y segmentos normalizados" do
-      assert ConsultasSql.nombre_desde_nav("/Ventas/Rutas Preventa-Activas") == "pty_sql_ventas_rutaspreventaactivas"
-      assert ConsultasSql.nombre_desde_nav("/Almacén/2026 Empleados") == "pty_sql_almacen_empleados"
+      assert ConsultasSql.nombre_desde_nav("/Ventas/Rutas Preventa-Activas") ==
+               "pty_sql_ventas_rutaspreventaactivas"
+
+      assert ConsultasSql.nombre_desde_nav("/Almacén/2026 Empleados") ==
+               "pty_sql_almacen_empleados"
     end
 
     test "vacío si la navegación no deja nada utilizable" do
@@ -29,18 +32,39 @@ defmodule MetadataApp.ConsultasSqlTest do
       s = unique()
 
       assert {:ok, {header, consulta_sql}} =
-               ConsultasSql.crear(%{"etiqueta" => "Rutas preventa", "nav" => "/dic_rutas_#{s}", "uso" => "diccionario"})
+               ConsultasSql.crear(%{
+                 "etiqueta" => "Rutas preventa",
+                 "nav" => "/dic_rutas_#{s}",
+                 "uso" => "diccionario"
+               })
 
       assert header.schema_context_name == "pty_sql_dic_rutas_#{s}"
       assert header.schema_context_type == 4
       assert header.schema_visible == false
-      assert %ConsultaSql{uso: "diccionario", sql: nil, columnas: [], bcs_autorizados: []} = consulta_sql
+
+      assert %ConsultaSql{uso: "diccionario", sql: nil, columnas: [], bcs_autorizados: []} =
+               consulta_sql
+
       assert ConsultasSql.obtener_por_catalogo(header.schema_context_name).id == consulta_sql.id
     end
 
     test "acepta el uso consulta" do
       assert {:ok, {_header, %ConsultaSql{uso: "consulta"}}} =
-               ConsultasSql.crear(%{"etiqueta" => "Reporte", "nav" => "/rep_#{unique()}", "uso" => "consulta"})
+               ConsultasSql.crear(%{
+                 "etiqueta" => "Reporte",
+                 "nav" => "/rep_#{unique()}",
+                 "uso" => "consulta"
+               })
+    end
+
+    # SPEC-SYS-2509202601 K1
+    test "acepta el uso servicio, sin parámetros y con el tope por default" do
+      assert {:ok, {_header, %ConsultaSql{uso: "servicio", parametros: [], tope_renglones: 1000}}} =
+               ConsultasSql.crear(%{
+                 "etiqueta" => "Servicio",
+                 "nav" => "/svc_#{unique()}",
+                 "uso" => "servicio"
+               })
     end
 
     test "rechaza etiqueta vacía, uso inválido y ruta repetida" do
@@ -50,7 +74,9 @@ defmodule MetadataApp.ConsultasSqlTest do
       assert {:error, _} = ConsultasSql.crear(%{"etiqueta" => "X", "nav" => nav, "uso" => "otro"})
 
       assert {:ok, _} = ConsultasSql.crear(%{"etiqueta" => "X", "nav" => nav})
-      assert {:error, "Esa ruta ya la usa otro catálogo o carpeta."} = ConsultasSql.crear(%{"etiqueta" => "Y", "nav" => nav})
+
+      assert {:error, "Esa ruta ya la usa otro catálogo o carpeta."} =
+               ConsultasSql.crear(%{"etiqueta" => "Y", "nav" => nav})
     end
 
     test "un fallo no deja un Header huérfano" do
@@ -67,78 +93,143 @@ defmodule MetadataApp.ConsultasSqlTest do
   describe "validar_sql/3 (Grupo B)" do
     test "detecta columnas con su tipo" do
       assert {:ok, columnas} =
-               ConsultasSql.validar_sql("SELECT id, branch_name AS nombre, 1.5::numeric AS saldo FROM meta_schema_branch;", "diccionario")
+               ConsultasSql.validar_sql(
+                 "SELECT id, branch_name AS nombre, 1.5::numeric AS saldo FROM meta_schema_branch;",
+                 "diccionario"
+               )
 
-      assert [%{"nombre" => "id", "tipo" => "integer"}, %{"nombre" => "nombre", "tipo" => "string"}, %{"nombre" => "saldo", "tipo" => "decimal"}] =
+      assert [
+               %{"nombre" => "id", "tipo" => "integer"},
+               %{"nombre" => "nombre", "tipo" => "string"},
+               %{"nombre" => "saldo", "tipo" => "decimal"}
+             ] =
                columnas
     end
 
     test "rechaza SQL vacío, varias sentencias y todo lo que no sea lectura" do
-      assert {:error, "Escribe el SQL antes de guardar."} = ConsultasSql.validar_sql("  ", "consulta")
+      assert {:error, "Escribe el SQL antes de guardar."} =
+               ConsultasSql.validar_sql("  ", "consulta")
+
       assert {:error, _} = ConsultasSql.validar_sql("SELECT 1 AS a; SELECT 2 AS b", "consulta")
-      assert {:error, _} = ConsultasSql.validar_sql("INSERT INTO meta_schema_branch (branch_name) VALUES ('x')", "consulta")
+
+      assert {:error, _} =
+               ConsultasSql.validar_sql(
+                 "INSERT INTO meta_schema_branch (branch_name) VALUES ('x')",
+                 "consulta"
+               )
+
       assert {:error, _} = ConsultasSql.validar_sql("DROP TABLE meta_schema_branch", "consulta")
 
       assert {:error, mensaje} =
-               ConsultasSql.validar_sql("WITH x AS (DELETE FROM meta_schema_branch WHERE false RETURNING id) SELECT id FROM x", "consulta")
+               ConsultasSql.validar_sql(
+                 "WITH x AS (DELETE FROM meta_schema_branch WHERE false RETURNING id) SELECT id FROM x",
+                 "consulta"
+               )
 
       assert mensaje =~ "data-modifying"
     end
 
     test "rechaza tablas inexistentes y errores de sintaxis con el mensaje de la base" do
-      assert {:error, mensaje} = ConsultasSql.validar_sql("SELECT id FROM tabla_que_no_existe", "consulta")
+      assert {:error, mensaje} =
+               ConsultasSql.validar_sql("SELECT id FROM tabla_que_no_existe", "consulta")
+
       assert mensaje =~ "tabla_que_no_existe"
-      assert {:error, _} = ConsultasSql.validar_sql("SELEC id FROM meta_schema_branch", "consulta")
+
+      assert {:error, _} =
+               ConsultasSql.validar_sql("SELEC id FROM meta_schema_branch", "consulta")
     end
 
     test "reglas de Diccionario: id entero y al menos una columna más" do
-      assert {:error, m1} = ConsultasSql.validar_sql("SELECT branch_name FROM meta_schema_branch", "diccionario")
+      assert {:error, m1} =
+               ConsultasSql.validar_sql(
+                 "SELECT branch_name FROM meta_schema_branch",
+                 "diccionario"
+               )
+
       assert m1 =~ "«id»"
-      assert {:error, _} = ConsultasSql.validar_sql("SELECT branch_name AS id, 1 AS x FROM meta_schema_branch", "diccionario")
-      assert {:error, m2} = ConsultasSql.validar_sql("SELECT id FROM meta_schema_branch", "diccionario")
+
+      assert {:error, _} =
+               ConsultasSql.validar_sql(
+                 "SELECT branch_name AS id, 1 AS x FROM meta_schema_branch",
+                 "diccionario"
+               )
+
+      assert {:error, m2} =
+               ConsultasSql.validar_sql("SELECT id FROM meta_schema_branch", "diccionario")
+
       assert m2 =~ "descripción"
     end
 
     test "una Consulta no exige id" do
-      assert {:ok, [%{"nombre" => "nombre"}]} = ConsultasSql.validar_sql("SELECT branch_name AS nombre FROM meta_schema_branch", "consulta")
+      assert {:ok, [%{"nombre" => "nombre"}]} =
+               ConsultasSql.validar_sql(
+                 "SELECT branch_name AS nombre FROM meta_schema_branch",
+                 "consulta"
+               )
     end
 
     test "rechaza nombres de columna que no sirven como identificador" do
-      assert {:error, mensaje} = ConsultasSql.validar_sql(~s(SELECT id, branch_name AS "Nombre Sucursal" FROM meta_schema_branch), "consulta")
+      assert {:error, mensaje} =
+               ConsultasSql.validar_sql(
+                 ~s(SELECT id, branch_name AS "Nombre Sucursal" FROM meta_schema_branch),
+                 "consulta"
+               )
+
       assert mensaje =~ "AS"
     end
 
     test "R11: no deja quitar columnas que usan los campos" do
-      assert {:error, mensaje} = ConsultasSql.validar_sql("SELECT id, branch_name AS nombre FROM meta_schema_branch", "diccionario", ["id", "sucursal"])
+      assert {:error, mensaje} =
+               ConsultasSql.validar_sql(
+                 "SELECT id, branch_name AS nombre FROM meta_schema_branch",
+                 "diccionario",
+                 ["id", "sucursal"]
+               )
+
       assert mensaje =~ "sucursal"
     end
 
     test "no deja la vista temporal viva en la conexión" do
       {:ok, _} = ConsultasSql.validar_sql("SELECT 1 AS id, 'a' AS d", "diccionario")
-      assert {:ok, %{rows: [[nil]]}} = Repo.query("SELECT to_regclass('_validacion_sql')::text", [])
+
+      assert {:ok, %{rows: [[nil]]}} =
+               Repo.query("SELECT to_regclass('_validacion_sql')::text", [])
     end
   end
 
   describe "ejecución segura (Grupo B)" do
     test "corta la consulta al pasar el tiempo máximo" do
-      assert {:error, :tiempo_excedido} = ConsultasSql.ejecutar(fn -> Repo.query!("SELECT pg_sleep(6)", []) end)
+      assert {:error, :tiempo_excedido} =
+               ConsultasSql.ejecutar(fn -> Repo.query!("SELECT pg_sleep(6)", []) end)
     end
 
     test "es de solo lectura" do
-      assert {:error, mensaje} = ConsultasSql.ejecutar(fn -> Repo.query!("SELECT nextval('meta_schema_branch_id_seq')", []) end)
+      assert {:error, mensaje} =
+               ConsultasSql.ejecutar(fn ->
+                 Repo.query!("SELECT nextval('meta_schema_branch_id_seq')", [])
+               end)
+
       assert mensaje =~ "read-only"
     end
 
     test "vista_previa/1 regresa a lo más 5 filas" do
       nombre = "pty_sql_vp_#{unique()}"
-      Repo.query!("CREATE VIEW #{nombre} AS SELECT g AS id, 'fila ' || g AS descripcion FROM generate_series(1, 8) g", [])
 
-      assert {:ok, %{columnas: ["id", "descripcion"], filas: filas}} = ConsultasSql.vista_previa(nombre)
+      Repo.query!(
+        "CREATE VIEW #{nombre} AS SELECT g AS id, 'fila ' || g AS descripcion FROM generate_series(1, 8) g",
+        []
+      )
+
+      assert {:ok, %{columnas: ["id", "descripcion"], filas: filas}} =
+               ConsultasSql.vista_previa(nombre)
+
       assert length(filas) == 5
     end
 
     test "vista_previa/1 no acepta nombres que no sean pty_sql_*" do
-      assert_raise ArgumentError, fn -> ConsultasSql.vista_previa("meta_schema_branch; DROP TABLE x") end
+      assert_raise ArgumentError, fn ->
+        ConsultasSql.vista_previa("meta_schema_branch; DROP TABLE x")
+      end
     end
   end
 
@@ -151,7 +242,10 @@ defmodule MetadataApp.ConsultasSqlTest do
         []
       )
 
-      %{nombre: nombre, columnas: [%{"nombre" => "id"}, %{"nombre" => "branch_id"}, %{"nombre" => "descripcion"}]}
+      %{
+        nombre: nombre,
+        columnas: [%{"nombre" => "id"}, %{"nombre" => "branch_id"}, %{"nombre" => "descripcion"}]
+      }
     end
 
     defp ids(nombre, scope, columnas) do
@@ -160,8 +254,16 @@ defmodule MetadataApp.ConsultasSqlTest do
       |> Repo.all()
     end
 
-    test "acota por branch_id y deja visibles las filas sin valor", %{nombre: nombre, columnas: columnas} do
-      scope = %MetadataApp.Autenticacion.Scope{usuario: %{id: -1}, empresa_activa: %{id: -1}, branches_permitidos: [10]}
+    test "acota por branch_id y deja visibles las filas sin valor", %{
+      nombre: nombre,
+      columnas: columnas
+    } do
+      scope = %MetadataApp.Autenticacion.Scope{
+        usuario: %{id: -1},
+        empresa_activa: %{id: -1},
+        branches_permitidos: [10]
+      }
+
       assert ids(nombre, scope, columnas) == [1, 3]
     end
 
@@ -172,31 +274,68 @@ defmodule MetadataApp.ConsultasSqlTest do
     test "sin columnas de control no acota", %{nombre: nombre} do
       scope = %MetadataApp.Autenticacion.Scope{usuario: %{id: -1}, empresa_activa: %{id: -1}}
       assert ids(nombre, scope, [%{"nombre" => "id"}]) == [1, 2, 3]
-      assert ConsultasSql.columnas_de_alcance([%{"nombre" => "id"}, %{"nombre" => "sales_unit_id"}]) == ["sales_unit_id"]
+
+      assert ConsultasSql.columnas_de_alcance([
+               %{"nombre" => "id"},
+               %{"nombre" => "sales_unit_id"}
+             ]) == ["sales_unit_id"]
     end
   end
 
   describe "dependencias con catálogos (Grupo H, R29)" do
     setup do
-      {:ok, {header, _}} = ConsultasSql.crear(%{"etiqueta" => "Dep", "nav" => "/dep_#{unique()}", "uso" => "consulta"})
-      {:ok, _} = ConsultasSql.guardar_sql(header.schema_context_name, "SELECT id, meta_fixture_equipo_nombre_equipo AS nombre FROM meta_fixture_equipo")
+      {:ok, {header, _}} =
+        ConsultasSql.crear(%{
+          "etiqueta" => "Dep",
+          "nav" => "/dep_#{unique()}",
+          "uso" => "consulta"
+        })
+
+      {:ok, _} =
+        ConsultasSql.guardar_sql(
+          header.schema_context_name,
+          "SELECT id, meta_fixture_equipo_nombre_equipo AS nombre FROM meta_fixture_equipo"
+        )
+
       %{nombre: header.schema_context_name}
     end
 
     test "detecta la SQL View que usa una tabla o una columna", %{nombre: nombre} do
-      assert Enum.any?(ConsultasSql.vistas_que_dependen("meta_fixture_equipo"), &(&1.nombre == nombre))
-      assert Enum.any?(ConsultasSql.vistas_que_dependen("meta_fixture_equipo", "meta_fixture_equipo_nombre_equipo"), &(&1.nombre == nombre))
-      refute Enum.any?(ConsultasSql.vistas_que_dependen("meta_fixture_equipo", "fecha_registro"), &(&1.nombre == nombre))
+      assert Enum.any?(
+               ConsultasSql.vistas_que_dependen("meta_fixture_equipo"),
+               &(&1.nombre == nombre)
+             )
+
+      assert Enum.any?(
+               ConsultasSql.vistas_que_dependen(
+                 "meta_fixture_equipo",
+                 "meta_fixture_equipo_nombre_equipo"
+               ),
+               &(&1.nombre == nombre)
+             )
+
+      refute Enum.any?(
+               ConsultasSql.vistas_que_dependen("meta_fixture_equipo", "fecha_registro"),
+               &(&1.nombre == nombre)
+             )
     end
 
     test "eliminar_campo/4 rechaza antes de tocar la columna, nombrando la SQL View" do
       campo = "meta_fixture_equipo_nombre_equipo"
 
       assert {:error, mensaje} =
-               MetadataApp.BusinessProcessBuilder.CatalogoGenerador.eliminar_campo("meta_fixture_equipo", campo, campo)
+               MetadataApp.BusinessProcessBuilder.CatalogoGenerador.eliminar_campo(
+                 "meta_fixture_equipo",
+                 campo,
+                 campo
+               )
 
       assert mensaje =~ "SQL View"
-      assert Enum.any?(MetaSchemaContext.listar_detalles("meta_fixture_equipo"), &(&1.schema_context_field == campo))
+
+      assert Enum.any?(
+               MetaSchemaContext.listar_detalles("meta_fixture_equipo"),
+               &(&1.schema_context_field == campo)
+             )
     end
   end
 
@@ -206,8 +345,61 @@ defmodule MetadataApp.ConsultasSqlTest do
       b = ConsultasSql.ruta_migracion("vista", "pty_sql_x", "20260925180448")
 
       assert a == "priv/repo/migrations/20260925180122_vista_pty_sql_x_20260925180122.exs"
-      nombre = fn ruta -> ruta |> Path.basename(".exs") |> String.split("_", parts: 2) |> List.last() end
+
+      nombre = fn ruta ->
+        ruta |> Path.basename(".exs") |> String.split("_", parts: 2) |> List.last()
+      end
+
       refute nombre.(a) == nombre.(b)
+    end
+  end
+
+  describe "tope de renglones de un Servicio (SPEC-SYS-2509202601 K1)" do
+    setup do
+      {:ok, {_header, consulta_sql}} =
+        ConsultasSql.crear(%{
+          "etiqueta" => "Servicio",
+          "nav" => "/svc_tope_#{unique()}",
+          "uso" => "servicio"
+        })
+
+      %{consulta_sql: consulta_sql}
+    end
+
+    test "acepta de 1 a 5000", %{consulta_sql: consulta_sql} do
+      for tope <- [1, 5000] do
+        assert {:ok, %ConsultaSql{tope_renglones: ^tope}} =
+                 consulta_sql
+                 |> ConsultaSql.changeset(%{"tope_renglones" => tope})
+                 |> Repo.update()
+      end
+    end
+
+    test "rechaza fuera de rango", %{consulta_sql: consulta_sql} do
+      for tope <- [0, 5001] do
+        changeset = ConsultaSql.changeset(consulta_sql, %{"tope_renglones" => tope})
+        refute changeset.valid?
+        assert Keyword.has_key?(changeset.errors, :tope_renglones)
+      end
+    end
+
+    test "el constraint de la base también lo rechaza", %{consulta_sql: consulta_sql} do
+      assert_raise Postgrex.Error, ~r/tope_renglones_rango/, fn ->
+        Repo.query!("UPDATE meta_schema_consulta_sql SET tope_renglones = 0 WHERE id = $1", [
+          consulta_sql.id
+        ])
+      end
+    end
+
+    test "guarda los parámetros tal cual", %{consulta_sql: consulta_sql} do
+      parametros = [
+        %{"nombre" => "fecha", "tipo" => "fecha", "obligatorio" => false, "default" => nil}
+      ]
+
+      assert {:ok, %ConsultaSql{parametros: ^parametros}} =
+               consulta_sql
+               |> ConsultaSql.changeset(%{"parametros" => parametros})
+               |> Repo.update()
     end
   end
 end

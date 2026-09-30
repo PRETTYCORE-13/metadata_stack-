@@ -238,6 +238,13 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   (listado de solo lectura). Validación por Postgres, ejecución de solo
   lectura con tiempo máximo, alcance por columnas de control, GET de API,
   dependencias vía `pg_depend` y publicación con `motor.publicar`.
+  Ampliación en curso (§11, grupos K-Q, desde 2026-09-29): tercer uso
+  **Servicio**, un SQL con parámetros tipados (incluida lista de
+  enteros) que se convierte en una función de Postgres y se ejecuta
+  desde las reglas de cualquier BC (`MetaBcApi.ejecutar_servicio/3`,
+  dentro de la transacción en curso) o por un Endpoint con credencial.
+  Base para "resolvedores" de negocio como el precio, el crédito o las
+  promociones. K1 hecho.
 - [`SPEC-SYS-2509202602-consulta-ecto/`](SPEC-SYS-2509202602-consulta-ecto/) —
   documentación retroactiva de la Consulta Ecto (Consulta/Reporte, BC de
   solo lectura sobre un catálogo principal + tablas relacionadas): alta
@@ -284,18 +291,10 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   LISTA DE CADENA" (las referencias son obligatorias en la plataforma).
   Grupos A-D verificados en dev; pendiente la publicación. La vista se
   retira cuando exista el servicio de SPEC-ADN-2909202602.
-- [`SPEC-SYS-2909202602-consulta-sql-parametros/`](SPEC-SYS-2909202602-consulta-sql-parametros/) —
-  Consulta SQL de uso **Servicio**: un SQL de solo lectura con
-  parámetros tipados (incluida lista de enteros) que se convierte en una
-  función de Postgres. Se ejecuta desde las reglas de cualquier BC
-  (`MetaBcApi.ejecutar_servicio/3`, dentro de la transacción en curso) o
-  por un Endpoint con credencial. Base para "resolvedores" de negocio
-  como el precio, el crédito o las promociones. Documentos 00-03
-  escritos, sin tareas iniciadas.
 - [`SPEC-ADN-2909202602-servicio-precio/`](SPEC-ADN-2909202602-servicio-precio/) —
   servicio de precio de venta: recibe dirección de entrega, productos y
   fecha, y deduce cliente, canal y sucursal. Regresa por producto el
   precio por caja sin impuestos, su nivel, su lista y un estado (`ok`,
   `sin_precio` o `direccion_invalida`). Punto único para el pedido, la
   app y las integraciones; crecerá con descuentos e impuestos. Bloqueada
-  hasta que SPEC-SYS-2909202602 cierre sus grupos A-E.
+  hasta que SPEC-SYS-2509202601 cierre los grupos K-O de su uso Servicio.
