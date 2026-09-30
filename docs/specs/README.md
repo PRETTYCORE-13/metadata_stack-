@@ -241,7 +241,7 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   Ampliación en curso (§11, grupos K-Q, desde 2026-09-29): tercer uso
   **Servicio**, un SQL con parámetros tipados (incluida lista de
   enteros) que se convierte en una función de Postgres y se ejecuta
-  desde las reglas de cualquier BC (`MetaBcApi.ejecutar_servicio/3`,
+  desde las reglas de cualquier BC (`MetaBcApi.ejecutar_servicio/2`,
   dentro de la transacción en curso) o por un Endpoint con credencial.
   Base para "resolvedores" de negocio como el precio, el crédito o las
   promociones. K1 hecho.

@@ -905,6 +905,58 @@ defmodule MetadataApp.ConsultasSqlTest do
     end
   end
 
+  describe "MetaBcApi.ejecutar_servicio/2 (SPEC-SYS-2509202601 N1)" do
+    setup do
+      nombre =
+        servicio("SELECT * FROM #{@datos} WHERE t.id = ANY(:ids)", [
+          %{"nombre" => "ids", "tipo" => "lista_enteros", "obligatorio" => true}
+        ])
+
+      %{nombre: nombre}
+    end
+
+    test "corre como sistema: no acota aunque el Servicio exponga branch_id (R44)", %{
+      nombre: nombre
+    } do
+      assert ids_de(MetadataApp.MetaBcApi.ejecutar_servicio(nombre, %{"ids" => [1, 2, 3]})) == [
+               1,
+               2,
+               3
+             ]
+    end
+
+    test "da lo mismo que ejecutar_servicio/3 con :sistema (R45)", %{nombre: nombre} do
+      assert MetadataApp.MetaBcApi.ejecutar_servicio(nombre, %{ids: [2]}) ==
+               ConsultasSql.ejecutar_servicio(nombre, %{"ids" => [2]}, :sistema)
+    end
+
+    test "error claro si el Servicio no existe en el ambiente (R48)" do
+      assert MetadataApp.MetaBcApi.ejecutar_servicio("pty_sql_no_publicado", %{}) ==
+               {:error, "No existe el servicio pty_sql_no_publicado en este ambiente."}
+    end
+
+    test "dentro de una transición ve lo no confirmado y un error no la aborta (R46, R47)" do
+      Repo.query!("CREATE TABLE n1_tabla (id bigint)", [])
+
+      nombre =
+        servicio("SELECT id, 10 / id AS r FROM n1_tabla WHERE id = :x", [
+          %{"nombre" => "x", "tipo" => "entero", "obligatorio" => true}
+        ])
+
+      como_regla(fn ->
+        Repo.query!("INSERT INTO n1_tabla VALUES (5), (0)", [])
+
+        assert {:ok, %{filas: [%{"id" => 5, "r" => 2}]}} =
+                 MetadataApp.MetaBcApi.ejecutar_servicio(nombre, %{"x" => 5})
+
+        assert {:error, mensaje} = MetadataApp.MetaBcApi.ejecutar_servicio(nombre, %{"x" => 0})
+        assert mensaje =~ "division by zero"
+        Repo.query!("INSERT INTO n1_tabla VALUES (6)", [])
+        assert Repo.query!("SELECT count(*) FROM n1_tabla", []).rows == [[3]]
+      end)
+    end
+  end
+
   describe "cambio de uso con Servicio (SPEC-SYS-2509202601 K5, R39)" do
     defp alta(uso) do
       {:ok, {header, _}} =
