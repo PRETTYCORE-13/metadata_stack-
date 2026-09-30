@@ -133,6 +133,10 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
     {:noreply, assign(socket, error_logo: nil)}
   end
 
+  def handle_event("cancelar_carga_logo", %{"ref" => ref}, socket) do
+    {:noreply, socket |> cancel_upload(:logo, ref) |> assign(error_logo: nil)}
+  end
+
   def handle_event("descartar_logo", _params, socket) do
     {:noreply, descartar_logo_pendiente(socket)}
   end
@@ -422,7 +426,8 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
         url_actual: MenuLayout.url_logo_empresa(assigns.empresa),
         errores_upload:
           Enum.map(upload_errors(assigns.upload), &error_upload_logo/1) ++
-            Enum.flat_map(assigns.upload.entries, &Enum.map(upload_errors(assigns.upload, &1), fn e -> error_upload_logo(e) end))
+            Enum.flat_map(assigns.upload.entries, &Enum.map(upload_errors(assigns.upload, &1), fn e -> error_upload_logo(e) end)),
+        cargando: Enum.find(assigns.upload.entries, &(!&1.done? and upload_errors(assigns.upload, &1) == []))
       )
 
     ~H"""
@@ -457,10 +462,45 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLive do
       </div>
 
       <form id="logo-empresa-form" phx-change="validar_logo" phx-submit="guardar_logo">
+        <%!-- Mientras sube, la barra reemplaza al área de carga. El label se
+             oculta pero no se quita: el live_file_input debe seguir en el
+             DOM para que la subida continúe. --%>
+        <div
+          :if={@cargando}
+          id="logo-empresa-progreso"
+          role="progressbar"
+          aria-label="Subiendo logo"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow={@cargando.progress}
+          class="w-full rounded-lg border border-purple-200 bg-purple-50/50 px-3 py-2.5"
+        >
+          <div class="flex items-center justify-between gap-3 text-xs text-gray-600 mb-1.5">
+            <span class="truncate">Subiendo {@cargando.client_name}</span>
+            <span class="font-semibold text-purple-700 tabular-nums">{@cargando.progress}%</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="h-2 flex-1 rounded-full bg-gray-200 overflow-hidden">
+              <div class="h-full rounded-full bg-purple-600 transition-[width] duration-200 ease-out" style={"width: #{@cargando.progress}%"}></div>
+            </div>
+            <button
+              type="button"
+              id="logo-empresa-cancelar-carga"
+              phx-click="cancelar_carga_logo"
+              phx-value-ref={@cargando.ref}
+              class="text-xs font-semibold text-gray-600 hover:text-red-600 transition-colors"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
         <label
           for={@upload.ref}
           phx-drop-target={@upload.ref}
-          class="flex items-center justify-center gap-2 w-full border-2 border-dashed border-gray-300 rounded-lg px-3 py-3 text-sm text-gray-600 cursor-pointer hover:border-purple-400 hover:bg-purple-50/50 transition-colors"
+          class={[
+            "flex items-center justify-center gap-2 w-full border-2 border-dashed border-gray-300 rounded-lg px-3 py-3 text-sm text-gray-600 cursor-pointer hover:border-purple-400 hover:bg-purple-50/50 transition-colors",
+            @cargando && "hidden"
+          ]}
         >
           <span class="material-symbols-outlined" style="font-size: 18px">upload</span>
           {if @url_actual || @pendiente, do: "Elegir otro archivo", else: "Elegir archivo"}

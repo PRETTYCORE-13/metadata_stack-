@@ -104,6 +104,58 @@ defmodule MetadataAppWeb.Sysadmin.EmpresasLiveLogoTest do
     assert has_element?(view, ".logo-empresa-error", "200 KB")
   end
 
+  describe "barra de progreso" do
+    # 100 bytes exactos: render_upload/3 solo puede cortar chunks en
+    # porcentajes enteros del tamaño del archivo.
+    defp subir_parcial(view, porcentaje) do
+      base = png(320, 64)
+      contenido = base <> :binary.copy(<<0>>, 100 - byte_size(base))
+
+      archivo =
+        file_input(view, "#logo-empresa-form", :logo, [
+          %{name: "logo.png", content: contenido, type: "image/png"}
+        ])
+
+      render_upload(archivo, "logo.png", porcentaje)
+      archivo
+    end
+
+    test "a mitad de la carga muestra el porcentaje y oculta el área de carga",
+         %{conn: conn, empresa: empresa} do
+      view = abrir_editar(conn, empresa)
+      subir_parcial(view, 50)
+
+      assert has_element?(view, "#logo-empresa-progreso[role=progressbar][aria-valuenow=\"50\"]")
+      assert has_element?(view, "#logo-empresa-progreso", "logo.png")
+      assert has_element?(view, "label.hidden[phx-drop-target]")
+      refute has_element?(view, "#logo-empresa-vista-previa")
+    end
+
+    test "cancelar quita la barra sin dejar vista previa ni errores",
+         %{conn: conn, empresa: empresa} do
+      view = abrir_editar(conn, empresa)
+      subir_parcial(view, 50)
+
+      view |> element("#logo-empresa-cancelar-carga") |> render_click()
+
+      refute has_element?(view, "#logo-empresa-progreso")
+      refute has_element?(view, "#logo-empresa-vista-previa")
+      refute has_element?(view, ".logo-empresa-error")
+      refute has_element?(view, "label.hidden[phx-drop-target]")
+    end
+
+    test "al completar la barra desaparece y aparece la vista previa",
+         %{conn: conn, empresa: empresa} do
+      view = abrir_editar(conn, empresa)
+      archivo = subir_parcial(view, 50)
+
+      render_upload(archivo, "logo.png", 50)
+
+      refute has_element?(view, "#logo-empresa-progreso")
+      assert has_element?(view, "#logo-empresa-vista-previa")
+    end
+  end
+
   test "descartar quita la vista previa sin guardar", %{conn: conn, empresa: empresa} do
     view = abrir_editar(conn, empresa)
     subir(view, "logo.png", png(320, 64), "image/png")
