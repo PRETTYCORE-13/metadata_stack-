@@ -339,6 +339,143 @@ defmodule MetadataApp.ConsultasSqlTest do
     end
   end
 
+  describe "dependencias de un Servicio (SPEC-SYS-2509202601 L4, R54)" do
+    setup do
+      {:ok, {header, _}} =
+        ConsultasSql.crear(%{
+          "etiqueta" => "DepSvc",
+          "nav" => "/dep_svc_#{unique()}",
+          "uso" => "servicio"
+        })
+
+      {:ok, _} =
+        ConsultasSql.guardar_sql(
+          header.schema_context_name,
+          "SELECT id, meta_fixture_equipo_nombre_equipo AS nombre FROM meta_fixture_equipo WHERE id = :equipo",
+          %{"parametros" => [%{"nombre" => "equipo", "tipo" => "entero", "obligatorio" => true}]}
+        )
+
+      %{nombre: header.schema_context_name}
+    end
+
+    test "detecta el Servicio que usa una tabla o una columna", %{nombre: nombre} do
+      assert Enum.any?(
+               ConsultasSql.vistas_que_dependen("meta_fixture_equipo"),
+               &(&1.nombre == nombre)
+             )
+
+      assert Enum.any?(
+               ConsultasSql.vistas_que_dependen(
+                 "meta_fixture_equipo",
+                 "meta_fixture_equipo_nombre_equipo"
+               ),
+               &(&1.nombre == nombre)
+             )
+
+      refute Enum.any?(
+               ConsultasSql.vistas_que_dependen("meta_fixture_equipo", "fecha_registro"),
+               &(&1.nombre == nombre)
+             )
+    end
+
+    test "eliminar_campo/4 rechaza la columna que usa el Servicio" do
+      campo = "meta_fixture_equipo_nombre_equipo"
+
+      assert {:error, mensaje} =
+               MetadataApp.BusinessProcessBuilder.CatalogoGenerador.eliminar_campo(
+                 "meta_fixture_equipo",
+                 campo,
+                 campo
+               )
+
+      assert mensaje =~ "SQL View"
+
+      assert Enum.any?(
+               MetaSchemaContext.listar_detalles("meta_fixture_equipo"),
+               &(&1.schema_context_field == campo)
+             )
+    end
+
+    test "catalogos_que_usa/1 da lo mismo que para una vista con el mismo SQL", %{nombre: nombre} do
+      {:ok, {vista, _}} =
+        ConsultasSql.crear(%{
+          "etiqueta" => "DepV",
+          "nav" => "/dep_v_#{unique()}",
+          "uso" => "consulta"
+        })
+
+      {:ok, _} =
+        ConsultasSql.guardar_sql(
+          vista.schema_context_name,
+          "SELECT id, meta_fixture_equipo_nombre_equipo AS nombre FROM meta_fixture_equipo WHERE id = 1"
+        )
+
+      assert ConsultasSql.catalogos_que_usa(nombre) ==
+               ConsultasSql.catalogos_que_usa(vista.schema_context_name)
+    end
+
+    test "L5 (R55): no se elimina si lo mencionan las reglas de un catálogo", %{nombre: nombre} do
+      {:ok, {otro, _}} =
+        ConsultasSql.crear(%{
+          "etiqueta" => "Pedido de prueba",
+          "nav" => "/l5_#{unique()}",
+          "uso" => "consulta"
+        })
+
+      regla =
+        %MetadataApp.MetaSchema.ReglaCodigo{}
+        |> MetadataApp.MetaSchema.ReglaCodigo.changeset(%{
+          meta_schema_header_id: otro.id,
+          tipo: "post",
+          codigo_fuente: ~s|MetaBcApi.ejecutar_servicio("#{nombre}", %{}, contexto)|
+        })
+        |> Ecto.Changeset.change(%{insert_guid: "l5prueba"})
+        |> Repo.insert!()
+
+      assert [%{catalogo: _, etiqueta: "Pedido de prueba", tipo: "post"}] =
+               ConsultasSql.reglas_que_usan(nombre)
+
+      assert {:error, mensaje} = ConsultasSql.eliminar(nombre)
+      assert mensaje == "No se puede eliminar: lo usan las reglas de Pedido de prueba (POST)."
+      assert ConsultasSql.obtener_por_catalogo(nombre)
+
+      regla |> Ecto.Changeset.change(%{delete_guid: "borrada"}) |> Repo.update!()
+      assert ConsultasSql.reglas_que_usan(nombre) == []
+      assert ConsultasSql.eliminar(nombre) == :ok
+    end
+
+    test "L5: el _ del nombre no actúa como comodín", %{nombre: nombre} do
+      {:ok, {otro, _}} =
+        ConsultasSql.crear(%{
+          "etiqueta" => "Otro",
+          "nav" => "/l5c_#{unique()}",
+          "uso" => "consulta"
+        })
+
+      parecido = String.replace(nombre, "_", "X")
+
+      %MetadataApp.MetaSchema.ReglaCodigo{}
+      |> MetadataApp.MetaSchema.ReglaCodigo.changeset(%{
+        meta_schema_header_id: otro.id,
+        tipo: "pre",
+        codigo_fuente: "# #{parecido}"
+      })
+      |> Ecto.Changeset.change(%{insert_guid: "l5comodin"})
+      |> Repo.insert!()
+
+      assert ConsultasSql.reglas_que_usan(nombre) == []
+    end
+
+    test "Postgres también bloquea borrar la columna directamente", %{nombre: _nombre} do
+      assert_raise Postgrex.Error, ~r/depend/, fn ->
+        Repo.query!(
+          "ALTER TABLE meta_fixture_equipo DROP COLUMN meta_fixture_equipo_nombre_equipo",
+          []
+        )
+      end
+    end
+  end
+
   describe "nombre de la migración de la vista" do
     test "cada guardado genera un nombre de migración único (Ecto no acepta nombres repetidos)" do
       a = ConsultasSql.ruta_migracion("vista", "pty_sql_x", "20260925180122")
@@ -351,6 +488,164 @@ defmodule MetadataApp.ConsultasSqlTest do
       end
 
       refute nombre.(a) == nombre.(b)
+    end
+  end
+
+  describe "guardar un Servicio (SPEC-SYS-2509202601 L1-L2)" do
+    setup do
+      {:ok, {header, _}} =
+        ConsultasSql.crear(%{
+          "etiqueta" => "Svc",
+          "nav" => "/l_svc_#{unique()}",
+          "uso" => "servicio"
+        })
+
+      parametros = [
+        %{"nombre" => "empresa", "tipo" => "entero", "obligatorio" => true},
+        %{"nombre" => "ids", "tipo" => "lista_enteros", "obligatorio" => true},
+        %{"nombre" => "desde", "tipo" => "fecha"}
+      ]
+
+      %{nombre: header.schema_context_name, parametros: parametros}
+    end
+
+    defp funcion_existe(nombre) do
+      case Repo.query!(
+             "SELECT pg_get_function_identity_arguments(oid) FROM pg_proc WHERE proname = $1",
+             [nombre]
+           ).rows do
+        [[argumentos]] -> argumentos
+        [] -> nil
+      end
+    end
+
+    @sql_valido """
+    SELECT e.id AS empresa_id, e.nombre, :desde AS desde
+      FROM meta_schema_empresa e
+     WHERE e.id = :empresa OR e.id = ANY(:ids)
+    """
+
+    test "crea la función con sus argumentos y guarda parámetros y columnas", %{
+      nombre: nombre,
+      parametros: parametros
+    } do
+      assert {:ok, guardada} =
+               ConsultasSql.guardar_sql(nombre, @sql_valido, %{
+                 "parametros" => parametros,
+                 "tope_renglones" => 50
+               })
+
+      assert funcion_existe(nombre) == "p_empresa bigint, p_ids bigint[], p_desde date"
+      assert Enum.map(guardada.columnas, & &1["nombre"]) == ["empresa_id", "nombre", "desde"]
+      assert Enum.find(guardada.columnas, &(&1["nombre"] == "desde"))["tipo"] == "date"
+
+      assert [
+               %{"obligatorio" => true},
+               %{"obligatorio" => true},
+               %{"nombre" => "desde", "obligatorio" => false}
+             ] = guardada.parametros
+
+      assert guardada.tope_renglones == 50
+      assert guardada.sql == String.trim(@sql_valido)
+    end
+
+    test "la función responde con sus argumentos (Postgres real)", %{
+      nombre: nombre,
+      parametros: parametros
+    } do
+      # Sin depender de datos de la base de test: devuelve lo que recibe.
+      sql =
+        "SELECT :empresa AS empresa, cardinality(:ids) AS cuantos, COALESCE(:desde, DATE '2000-01-01') AS desde"
+
+      {:ok, _} = ConsultasSql.guardar_sql(nombre, sql, %{"parametros" => parametros})
+
+      assert %{columns: ["empresa", "cuantos", "desde"], rows: [[7, 3, ~D[2026-10-01]]]} =
+               Repo.query!("SELECT * FROM #{nombre}($1, $2, $3)", [7, [1, 2, 3], ~D[2026-10-01]])
+
+      assert %{rows: [[7, 0, ~D[2000-01-01]]]} =
+               Repo.query!("SELECT * FROM #{nombre}($1, $2, $3)", [7, [], nil])
+    end
+
+    test "volver a guardar con otras columnas reemplaza la función (DROP + CREATE)", %{
+      nombre: nombre,
+      parametros: parametros
+    } do
+      {:ok, _} = ConsultasSql.guardar_sql(nombre, @sql_valido, %{"parametros" => parametros})
+
+      assert {:ok, guardada} =
+               ConsultasSql.guardar_sql(
+                 nombre,
+                 "SELECT count(*) AS total FROM meta_schema_empresa WHERE id = :empresa OR id = ANY(:ids)"
+               )
+
+      assert Enum.map(guardada.columnas, & &1["nombre"]) == ["total"]
+
+      assert guardada.parametros ==
+               Enum.map(parametros, &Map.put_new(&1, "obligatorio", false))
+               |> Enum.map(&Map.put_new(&1, "default", nil))
+    end
+
+    test "rechaza sin crear nada: parámetro no declarado, escritura, tope inválido o SQL vacío",
+         %{nombre: nombre, parametros: parametros} do
+      casos = [
+        {"SELECT :empresa, :ids, :otro", %{"parametros" => parametros},
+         "no están declarados: :otro"},
+        {"DELETE FROM meta_schema_empresa WHERE id = :empresa OR id = ANY(:ids)",
+         %{"parametros" => parametros}, "syntax error"},
+        {@sql_valido, %{"parametros" => parametros, "tope_renglones" => 0}, "tope"},
+        {"  ;  ", %{"parametros" => parametros}, "Escribe el SQL"}
+      ]
+
+      for {sql, extras, esperado} <- casos do
+        assert {:error, mensaje} = ConsultasSql.guardar_sql(nombre, sql, extras)
+        assert mensaje =~ esperado
+        assert funcion_existe(nombre) == nil
+      end
+
+      assert %ConsultaSql{sql: nil, parametros: []} = ConsultasSql.obtener_por_catalogo(nombre)
+    end
+
+    test "eliminar un Servicio quita la función", %{nombre: nombre, parametros: parametros} do
+      {:ok, _} = ConsultasSql.guardar_sql(nombre, @sql_valido, %{"parametros" => parametros})
+      assert funcion_existe(nombre)
+
+      assert ConsultasSql.eliminar(nombre) == :ok
+      assert funcion_existe(nombre) == nil
+      assert ConsultasSql.obtener_por_catalogo(nombre) == nil
+    end
+
+    test "un Diccionario sigue guardándose como vista (R58)" do
+      {:ok, {header, _}} =
+        ConsultasSql.crear(%{
+          "etiqueta" => "Dic",
+          "nav" => "/l_dic_#{unique()}",
+          "uso" => "diccionario"
+        })
+
+      assert {:ok, _} =
+               ConsultasSql.guardar_sql(
+                 header.schema_context_name,
+                 "SELECT id, nombre FROM meta_schema_empresa"
+               )
+
+      assert Repo.query!("SELECT count(*) FROM pg_views WHERE viewname = $1", [
+               header.schema_context_name
+             ]).rows == [[1]]
+    end
+
+    test "definicion_funcion/4 y la ruta de la migración" do
+      parametros = [
+        %{"nombre" => "a", "tipo" => "entero"},
+        %{"nombre" => "b", "tipo" => "lista_enteros"}
+      ]
+
+      columnas = [%{"nombre" => "order", "tipo_pg" => "numeric(20,4)"}]
+
+      assert ConsultasSql.definicion_funcion("pty_sql_x", parametros, columnas, "SELECT 1") ==
+               ~s|CREATE FUNCTION pty_sql_x(p_a bigint, p_b bigint[]) RETURNS TABLE ("order" numeric(20,4)) LANGUAGE sql STABLE BEGIN ATOMIC SELECT 1; END|
+
+      assert ConsultasSql.ruta_migracion("funcion", "pty_sql_x", "20260929120000") ==
+               "priv/repo/migrations/20260929120000_funcion_pty_sql_x_20260929120000.exs"
     end
   end
 

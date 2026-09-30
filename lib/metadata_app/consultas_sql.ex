@@ -18,6 +18,8 @@ defmodule MetadataApp.ConsultasSql do
   alias MetadataApp.Permissions
   alias MetadataApp.Autenticacion.Scope
   alias MetadataApp.MetaSchema.ConsultaSql
+  alias MetadataApp.ConsultasSql.Parametros
+  alias MetadataApp.MetaSchema.ReglaCodigo
   alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador}
 
   @tipo 4
@@ -281,10 +283,17 @@ defmodule MetadataApp.ConsultasSql do
   archivo y no se toca la metadata. Solo donde se permite generar en
   caliente (dev/test), igual que los catálogos.
   """
-  def guardar_sql(nombre, sql) do
+  def guardar_sql(nombre, sql, extras \\ %{}) do
     with :ok <- permitido_generar(),
-         %ConsultaSql{} = consulta_sql <- obtener_por_catalogo(nombre) || {:error, "No existe la Consulta SQL #{nombre}."},
-         {:ok, columnas} <- validar_sql(sql, consulta_sql.uso, columnas_en_uso(nombre)),
+         %ConsultaSql{} = consulta_sql <- obtener_por_catalogo(nombre) || {:error, "No existe la Consulta SQL #{nombre}."} do
+      if consulta_sql.uso == "servicio",
+        do: guardar_servicio(consulta_sql, nombre, sql, extras),
+        else: guardar_vista(consulta_sql, nombre, sql)
+    end
+  end
+
+  defp guardar_vista(consulta_sql, nombre, sql) do
+    with {:ok, columnas} <- validar_sql(sql, consulta_sql.uso, columnas_en_uso(nombre)),
          :ok <- escribir_y_correr_migracion(nombre, limpiar_sql(sql)) do
       consulta_sql
       |> ConsultaSql.changeset(%{"sql" => limpiar_sql(sql), "columnas" => columnas})
@@ -294,6 +303,99 @@ defmodule MetadataApp.ConsultasSql do
         {:ok, actualizada} -> {:ok, actualizada}
         {:error, changeset} -> {:error, resumen_errores(changeset)}
       end
+    end
+  end
+
+  # Uso Servicio (§11.3): el SQL se valida con `:nombre` -> `(NULL::tipo)`
+  # y se guarda como función de Postgres con `:nombre` -> `p_nombre`. El
+  # changeset se revisa ANTES de generar la migración, para no dejar una
+  # función creada con una metadata que después no se pudo guardar.
+  # `extras` trae "parametros" y "tope_renglones"; si falta alguno se
+  # conserva el guardado.
+  defp guardar_servicio(consulta_sql, nombre, sql, extras) do
+    sql = limpiar_sql(sql)
+    parametros_nuevos = Map.get(extras, "parametros", consulta_sql.parametros)
+    tope = Map.get(extras, "tope_renglones", consulta_sql.tope_renglones)
+
+    with :ok <- sql_no_vacio(sql),
+         {:ok, parametros} <- Parametros.validar(parametros_nuevos),
+         {:ok, %{validacion: validacion, funcion: cuerpo}} <- Parametros.traducir(sql, parametros),
+         {:ok, columnas} <- columnas_de_sql(validacion),
+         :ok <- validar_nombres(columnas),
+         :ok <- validar_uso(columnas, "servicio"),
+         changeset =
+           consulta_sql
+           |> ConsultaSql.changeset(%{"sql" => sql, "columnas" => columnas, "parametros" => parametros, "tope_renglones" => tope})
+           |> Ecto.Changeset.change(%{update_guid: generar_guid()}),
+         :ok <- changeset_valido(changeset),
+         :ok <- escribir_y_correr_funcion(nombre, definicion_funcion(nombre, parametros, columnas, cuerpo)) do
+      case Repo.update(changeset) do
+        {:ok, actualizada} -> {:ok, actualizada}
+        {:error, changeset} -> {:error, resumen_errores(changeset)}
+      end
+    end
+  end
+
+  defp sql_no_vacio(""), do: {:error, "Escribe el SQL antes de guardar."}
+  defp sql_no_vacio(_sql), do: :ok
+
+  defp changeset_valido(%Ecto.Changeset{valid?: true}), do: :ok
+  defp changeset_valido(changeset), do: {:error, resumen_errores(changeset)}
+
+  @doc """
+  `CREATE FUNCTION` de un Servicio (diseño §11.3 paso 4). Los argumentos
+  van en el orden declarado de `parametros` (la llamada de §11.4 los pasa
+  en ese mismo orden). Las columnas de salida van entre comillas dobles
+  para no chocar con palabras reservadas; sus nombres ya pasaron por
+  `validar_nombres/1`.
+  """
+  def definicion_funcion(nombre, parametros, columnas, cuerpo) do
+    argumentos = Enum.map_join(parametros, ", ", &"p_#{&1["nombre"]} #{Parametros.tipo_pg(&1["tipo"])}")
+    retorno = Enum.map_join(columnas, ", ", &~s("#{&1["nombre"]}" #{&1["tipo_pg"]}))
+
+    "CREATE FUNCTION #{nombre}(#{argumentos}) RETURNS TABLE (#{retorno}) LANGUAGE sql STABLE BEGIN ATOMIC #{cuerpo}; END"
+  end
+
+  # `DROP` + `CREATE` y no `CREATE OR REPLACE`: este último no permite
+  # cambiar las columnas de salida (mismo criterio que la vista).
+  defp escribir_y_correr_funcion(nombre, crear) do
+    if vista_directa?() do
+      Repo.query!("DROP FUNCTION IF EXISTS #{nombre}", [])
+      Repo.query!(crear, [])
+      :ok
+    else
+      timestamp = CatalogoGenerador.timestamp_migracion()
+      modulo = "FuncionPtySql" <> Macro.camelize(String.replace_prefix(nombre, @prefijo, "")) <> timestamp
+
+      contenido = """
+      defmodule MetadataApp.Repo.Migrations.#{modulo} do
+        use Ecto.Migration
+
+        # Generada por MetadataApp.ConsultasSql.guardar_sql/3, uso Servicio
+        # (SPEC-SYS-2509202601 §11.3).
+        def up do
+          execute "DROP FUNCTION IF EXISTS #{nombre}"
+          execute #{inspect(crear)}
+        end
+
+        def down, do: execute("DROP FUNCTION IF EXISTS #{nombre}")
+      end
+      """
+
+      escribir_y_correr(ruta_migracion("funcion", nombre, timestamp), contenido, "No se pudo crear la función")
+    end
+  end
+
+  defp escribir_y_correr(path, contenido, mensaje_falla) do
+    File.write!(path, contenido)
+
+    try do
+      CatalogoGenerador.correr_migraciones_pendientes()
+      :ok
+    rescue
+      error ->
+        File.rm(path)
+        {:error, "#{mensaje_falla}: #{mensaje_de_error(error)}"}
     end
   end
 
@@ -325,7 +427,7 @@ defmodule MetadataApp.ConsultasSql do
   `*_vista_pty_sql_x.exs` y `Phoenix.Ecto.CheckRepoStatus` tumbaba toda
   pantalla en dev). Mismo patrón que `crear_pty_x_<ts>` de los catálogos.
   """
-  def ruta_migracion(accion, nombre, timestamp) when accion in ["vista", "eliminar_vista"],
+  def ruta_migracion(accion, nombre, timestamp) when accion in ["vista", "eliminar_vista", "funcion", "eliminar_funcion"],
     do: "priv/repo/migrations/#{timestamp}_#{accion}_#{nombre}_#{timestamp}.exs"
 
   defp escribir_y_correr_archivo(nombre, sql) do
@@ -610,8 +712,8 @@ defmodule MetadataApp.ConsultasSql do
   def eliminar(nombre) do
     with :ok <- permitido_generar(),
          %ConsultaSql{} = consulta_sql <- obtener_por_catalogo(nombre) || {:error, "No existe la Consulta SQL #{nombre}."},
-         [] <- campos_que_usan(nombre) do
-      with :ok <- escribir_y_correr_migracion_baja(nombre) do
+         :ok <- validar_sin_usos(consulta_sql, nombre) do
+      with :ok <- escribir_y_correr_migracion_baja(nombre, consulta_sql.uso) do
         header = MetaSchemaContext.obtener_header_por_nombre(nombre)
 
         Repo.transaction(fn ->
@@ -627,13 +729,68 @@ defmodule MetadataApp.ConsultasSql do
           {:error, motivo} -> {:error, if(is_binary(motivo), do: motivo, else: inspect(motivo))}
         end
       end
-    else
-      usos when is_list(usos) -> {:error, "No se puede eliminar: estos campos usan el Diccionario: #{describir_usos(usos)}."}
-      error -> error
     end
   end
 
-  defp escribir_y_correr_migracion_baja(nombre) do
+  # R30 (Diccionario usado por campos) y R55 (Servicio usado por reglas).
+  # El uso de un Servicio desde un Endpoint se suma con la FK de O1.
+  defp validar_sin_usos(%ConsultaSql{uso: "servicio"}, nombre) do
+    case reglas_que_usan(nombre) do
+      [] -> :ok
+      usos -> {:error, "No se puede eliminar: lo usan las reglas de #{describir_reglas(usos)}."}
+    end
+  end
+
+  defp validar_sin_usos(_consulta_sql, nombre) do
+    case campos_que_usan(nombre) do
+      [] -> :ok
+      usos -> {:error, "No se puede eliminar: estos campos usan el Diccionario: #{describir_usos(usos)}."}
+    end
+  end
+
+  @doc """
+  Catálogos cuyo código de reglas (`Pre`/`Post`) menciona al Servicio
+  `nombre` (R55, diseño §11.7). Es una búsqueda por texto: un comentario
+  que lo nombre cuenta como uso (falso positivo aceptado), pero una
+  llamada real nunca se escapa. `strpos` y no `LIKE`, porque el `_` de
+  `pty_sql_` es comodín en `LIKE`. `[%{catalogo:, etiqueta:, tipo:}]`.
+  """
+  def reglas_que_usan(nombre) do
+    from(r in ReglaCodigo,
+      join: h in assoc(r, :header),
+      where: is_nil(r.delete_guid) and is_nil(h.delete_guid) and fragment("strpos(?, ?) > 0", r.codigo_fuente, ^nombre),
+      order_by: [h.schema_context_name, r.tipo],
+      select: %{catalogo: h.schema_context_name, etiqueta: h.schema_context_label, tipo: r.tipo}
+    )
+    |> Repo.all()
+  end
+
+  defp describir_reglas(usos), do: Enum.map_join(usos, ", ", &"#{&1.etiqueta || &1.catalogo} (#{String.upcase(&1.tipo)})")
+
+  # Un Servicio es una función, no una vista (§11.3).
+  defp escribir_y_correr_migracion_baja(nombre, "servicio") do
+    if vista_directa?() do
+      Repo.query!("DROP FUNCTION IF EXISTS #{nombre}", [])
+      :ok
+    else
+      timestamp = CatalogoGenerador.timestamp_migracion()
+      modulo = "EliminarFuncionPtySql" <> Macro.camelize(String.replace_prefix(nombre, @prefijo, "")) <> timestamp
+
+      contenido = """
+      defmodule MetadataApp.Repo.Migrations.#{modulo} do
+        use Ecto.Migration
+
+        # Generada por MetadataApp.ConsultasSql.eliminar/1, uso Servicio
+        # (SPEC-SYS-2509202601 §11.3).
+        def change, do: execute("DROP FUNCTION IF EXISTS #{nombre}", "SELECT 1")
+      end
+      """
+
+      escribir_y_correr(ruta_migracion("eliminar_funcion", nombre, timestamp), contenido, "No se pudo quitar la función")
+    end
+  end
+
+  defp escribir_y_correr_migracion_baja(nombre, _uso) do
     if vista_directa?() do
       Repo.query!("DROP VIEW IF EXISTS #{nombre}", [])
       :ok
@@ -732,6 +889,14 @@ defmodule MetadataApp.ConsultasSql do
         JOIN pg_class v ON v.oid = r.ev_class
         JOIN pg_class t ON t.oid = d.refobjid
         WHERE v.relname = $1 AND t.relname <> $1 AND t.relkind IN ('r', 'v', 'p')
+        UNION
+        -- Servicio (§11.7): con BEGIN ATOMIC, Postgres registra lo que usa
+        -- el cuerpo de la función como dependencia de pg_proc.
+        SELECT DISTINCT t.relname
+        FROM pg_depend d
+        JOIN pg_proc p ON p.oid = d.objid AND d.classid = 'pg_proc'::regclass
+        JOIN pg_class t ON t.oid = d.refobjid AND d.refclassid = 'pg_class'::regclass
+        WHERE p.proname = $1 AND t.relkind IN ('r', 'v', 'p')
         """,
         [nombre]
       ).rows
@@ -763,6 +928,15 @@ defmodule MetadataApp.ConsultasSql do
         JOIN pg_class t ON t.oid = d.refobjid
         LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
         WHERE t.relname = $1 AND v.relname <> $1 AND v.relname LIKE 'pty\\_sql\\_%'
+          AND ($2::text IS NULL OR a.attname = $2)
+        UNION
+        -- Servicio (§11.7): funciones `pty_sql_*` cuyo cuerpo usa la tabla/columna.
+        SELECT DISTINCT p.proname
+        FROM pg_depend d
+        JOIN pg_proc p ON p.oid = d.objid AND d.classid = 'pg_proc'::regclass
+        JOIN pg_class t ON t.oid = d.refobjid AND d.refclassid = 'pg_class'::regclass
+        LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
+        WHERE t.relname = $1 AND p.proname LIKE 'pty\\_sql\\_%'
           AND ($2::text IS NULL OR a.attname = $2)
         """,
         [tabla, columna]
