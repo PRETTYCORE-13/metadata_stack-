@@ -285,16 +285,25 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
 - [`SPEC-ADN-2909202601-canal-precio/`](SPEC-ADN-2909202601-canal-precio/) —
   lista de precios de cadena por canal y cascada de precio base por
   producto: lista especial del cliente → lista de cadena del canal →
-  lista maestra de la sucursal → "sin precio". La cascada es una SQL
-  View (`pty_sql_materiales_precio_base`); incluye los detalles de precios y
+  lista maestra de la sucursal → "sin precio". La cascada nació como la
+  SQL View `pty_sql_materiales_precio_base`, retirada el 2026-09-30 en
+  favor del Servicio de SPEC-ADN-2909202602; incluye los detalles de precios y
   sucursales de la lista, y las listas vacías "SIN LISTA ESPECIAL" y "SIN
   LISTA DE CADENA" (las referencias son obligatorias en la plataforma).
-  Grupos A-D verificados en dev; pendiente la publicación. La vista se
-  retira cuando exista el servicio de SPEC-ADN-2909202602.
+  Grupos A-D verificados en dev; pendiente la publicación.
 - [`SPEC-ADN-2909202602-servicio-precio/`](SPEC-ADN-2909202602-servicio-precio/) —
   servicio de precio de venta: recibe dirección de entrega, productos y
   fecha, y deduce cliente, canal y sucursal. Regresa por producto el
   precio por caja sin impuestos, su nivel, su lista y un estado (`ok`,
   `sin_precio` o `direccion_invalida`). Punto único para el pedido, la
-  app y las integraciones; crecerá con descuentos e impuestos. Bloqueada
-  hasta que SPEC-SYS-2509202601 cierre los grupos K-O de su uso Servicio.
+  app y las integraciones; crecerá con descuentos e impuestos. En curso
+  desde 2026-09-30 (el uso Servicio de SPEC-SYS-2509202601 ya existe).
+- [`SPEC-SYS-3009202602-endpoints-externos/`](SPEC-SYS-3009202602-endpoints-externos/) —
+  Endpoints Externos (antes "Acciones externas"): llamadas configuradas a
+  APIs de otros sistemas, con credencial cifrada, botón en la ficha,
+  llamada desde reglas y bitácora. Documentación retroactiva de lo que
+  existe desde 2026-08-06, más lo nuevo: guardar datos de la respuesta en
+  el registro (mapeo), rechazo con el mensaje del sistema externo,
+  respuesta en la bitácora (30 días) y ejecución en segundo plano con
+  reintentos. Documentada, sin programar. La sincronización masiva de
+  catálogos queda para otra SPEC.
