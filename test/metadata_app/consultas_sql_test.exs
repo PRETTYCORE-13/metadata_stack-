@@ -605,6 +605,20 @@ defmodule MetadataApp.ConsultasSqlTest do
       assert %ConsultaSql{sql: nil, parametros: []} = ConsultasSql.obtener_por_catalogo(nombre)
     end
 
+    test "= ANY(:x) con un parámetro que no es lista: el error dice qué cambiar", %{
+      nombre: nombre
+    } do
+      parametros = [%{"nombre" => "ids", "tipo" => "entero", "obligatorio" => true}]
+
+      assert {:error, mensaje} =
+               ConsultasSql.guardar_sql(nombre, "SELECT 1 AS x WHERE 1 = ANY(:ids)", %{
+                 "parametros" => parametros
+               })
+
+      assert mensaje =~ "ANY/ALL (array) requires array"
+      assert mensaje =~ ~s|cambia su tipo a "Lista de enteros": :ids.|
+    end
+
     test "eliminar un Servicio quita la función", %{nombre: nombre, parametros: parametros} do
       {:ok, _} = ConsultasSql.guardar_sql(nombre, @sql_valido, %{"parametros" => parametros})
       assert funcion_existe(nombre)
@@ -954,6 +968,110 @@ defmodule MetadataApp.ConsultasSqlTest do
         Repo.query!("INSERT INTO n1_tabla VALUES (6)", [])
         assert Repo.query!("SELECT count(*) FROM n1_tabla", []).rows == [[3]]
       end)
+    end
+  end
+
+  describe "Endpoint sobre un Servicio: modelo y R55 (SPEC-SYS-2509202601 O1)" do
+    alias MetadataApp.MetaSchema.ConsultaEndpoint
+
+    setup do
+      nombre =
+        servicio("SELECT t.id FROM #{@datos} WHERE t.id = ANY(:ids)", [
+          %{"nombre" => "ids", "tipo" => "lista_enteros", "obligatorio" => true}
+        ])
+
+      {:ok, empresa} =
+        %MetadataApp.Autenticacion.Empresa{}
+        |> MetadataApp.Autenticacion.Empresa.changeset(%{nombre: "Empresa O1 #{unique()}"})
+        |> Repo.insert()
+
+      %{nombre: nombre, servicio: ConsultasSql.obtener_por_catalogo(nombre), empresa: empresa}
+    end
+
+    defp attrs_endpoint(empresa, extra \\ %{}) do
+      Map.merge(
+        %{
+          "nombre" => "Precios",
+          "metodo" => "post",
+          "ruta" => "o1-#{unique()}",
+          "empresa_id" => empresa.id
+        },
+        extra
+      )
+    end
+
+    defp insertar_endpoint(attrs, origen) do
+      %ConsultaEndpoint{}
+      |> ConsultaEndpoint.changeset(attrs, origen)
+      |> Ecto.Changeset.change(%{insert_guid: "o1prueba"})
+      |> Repo.insert()
+    end
+
+    test "copia los parámetros del Servicio, ignora los de afuera y apaga el alta", %{
+      servicio: servicio,
+      empresa: empresa
+    } do
+      attrs =
+        attrs_endpoint(empresa, %{
+          "parametros" => [%{"campo" => "otro", "obligatorio" => true}],
+          "permite_alta" => true,
+          "campos_alta" => ["x"]
+        })
+
+      assert {:ok, endpoint} = insertar_endpoint(attrs, servicio)
+      assert endpoint.meta_schema_consulta_sql_id == servicio.id
+      assert endpoint.meta_schema_consulta_id == nil
+      assert endpoint.parametros == servicio.parametros
+      assert endpoint.permite_alta == false
+      assert endpoint.campos_alta == []
+    end
+
+    test "sin origen, o con los dos, no se acepta", %{servicio: servicio, empresa: empresa} do
+      refute ConsultaEndpoint.changeset(%ConsultaEndpoint{}, attrs_endpoint(empresa)).valid?
+
+      ambos =
+        ConsultaEndpoint.changeset(
+          %ConsultaEndpoint{},
+          attrs_endpoint(empresa, %{"meta_schema_consulta_id" => 1}),
+          servicio
+        )
+
+      refute ambos.valid?
+
+      assert {"el endpoint tiene que colgar de una Consulta o de un Servicio, no de los dos", _} =
+               ambos.errors[:meta_schema_consulta_id]
+    end
+
+    test "el constraint de la base también exige exactamente un origen", %{empresa: empresa} do
+      assert_raise Postgrex.Error, ~r/origen_unico/, fn ->
+        Repo.query!(
+          "INSERT INTO meta_schema_consulta_endpoint (nombre, metodo, ruta, empresa_id, parametros, estado, insert_guid, inserted_at, updated_at) VALUES ('x', 'get', 'o1-sin-origen-#{unique()}', $1, '[]', 'borrador', 'x', now(), now())",
+          [empresa.id]
+        )
+      end
+    end
+
+    test "a lo más un Endpoint por Servicio", %{servicio: servicio, empresa: empresa} do
+      assert {:ok, _} = insertar_endpoint(attrs_endpoint(empresa), servicio)
+      assert {:error, changeset} = insertar_endpoint(attrs_endpoint(empresa), servicio)
+      assert Keyword.has_key?(changeset.errors, :meta_schema_consulta_sql_id)
+    end
+
+    test "R55: un Servicio con Endpoint no se elimina", %{
+      nombre: nombre,
+      servicio: servicio,
+      empresa: empresa
+    } do
+      {:ok, endpoint} =
+        insertar_endpoint(attrs_endpoint(empresa, %{"nombre" => "Precio venta"}), servicio)
+
+      assert {:error, mensaje} = ConsultasSql.eliminar(nombre)
+
+      assert mensaje ==
+               "No se puede eliminar: lo usa el Endpoint «Precio venta» (/#{endpoint.ruta}). Elimina primero el Endpoint."
+
+      Repo.delete!(endpoint)
+      assert ConsultasSql.eliminar(nombre) == :ok
     end
   end
 

@@ -1098,6 +1098,19 @@ defmodule MetadataApp.MetaImportExport do
     error -> "! #{nombre}: #{Exception.message(error)}"
   end
 
+  # Endpoint de un Servicio (SPEC-SYS-2509202601 §11.6): el Servicio ya
+  # llegó por importar_meta/1 (su definición) y su migración `funcion`;
+  # acá solo se crea, actualiza o borra el endpoint que cuelga de él.
+  defp importar_endpoint_datos(%{"catalogo" => nombre, "servicio" => true} = datos) do
+    case MetadataApp.ConsultasSql.obtener_por_catalogo(nombre) do
+      nil ->
+        "- #{nombre}: servicio no encontrado, saltado (¿faltó importar_meta antes?)"
+
+      servicio ->
+        importar_endpoint_de_servicio(nombre, servicio, datos)
+    end
+  end
+
   defp importar_endpoint_datos(%{"catalogo" => nombre, "eliminado" => true}) do
     case MetaConsultas.obtener_por_catalogo(nombre) do
       nil ->
@@ -1136,6 +1149,34 @@ defmodule MetadataApp.MetaImportExport do
               {:ok, _endpoint} -> "+ #{nombre} endpoint: creado"
               {:error, changeset} -> raise "Error importando endpoint de #{nombre}: #{inspect(changeset.errors)}"
             end
+        end
+    end
+  end
+
+  defp importar_endpoint_de_servicio(nombre, servicio, %{"eliminado" => true}) do
+    case ConsultaEndpoints.obtener_por_servicio(servicio.id) do
+      nil ->
+        "= #{nombre} endpoint: ya no existía"
+
+      endpoint ->
+        Repo.delete!(endpoint)
+        "- #{nombre} endpoint: eliminado"
+    end
+  end
+
+  defp importar_endpoint_de_servicio(nombre, servicio, datos) do
+    case resolver_empresa_por_nombre(datos["empresa_nombre"]) do
+      {:error, mensaje} ->
+        "! #{nombre} endpoint: #{mensaje}"
+
+      {:ok, empresa} ->
+        existia? = ConsultaEndpoints.obtener_por_servicio(servicio.id) != nil
+        attrs = datos |> Map.drop(["servicio", "catalogo"]) |> Map.put("empresa_id", empresa.id)
+
+        case ConsultaEndpoints.crear_o_actualizar(servicio, attrs) do
+          {:ok, _endpoint} when existia? -> "~ #{nombre} endpoint: actualizado"
+          {:ok, _endpoint} -> "+ #{nombre} endpoint: creado"
+          {:error, changeset} -> raise "Error importando endpoint de #{nombre}: #{inspect(changeset.errors)}"
         end
     end
   end

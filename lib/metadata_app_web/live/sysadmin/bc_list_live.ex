@@ -1862,12 +1862,16 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             <label class="font-medium text-gray-900 pt-1">Uso:</label>
             <div class="flex flex-col gap-1">
               <label class="flex items-center gap-1.5 cursor-pointer">
-                <input type="radio" name="contexto[uso]" value="diccionario" checked={@form["uso"] != "consulta"} class="accent-purple-600" />
+                <input type="radio" name="contexto[uso]" value="diccionario" checked={@form["uso"] not in ["consulta", "servicio"]} class="accent-purple-600" />
                 <span><strong>Diccionario</strong> — lista para los combos de campos referencia</span>
               </label>
               <label class="flex items-center gap-1.5 cursor-pointer">
                 <input type="radio" name="contexto[uso]" value="consulta" checked={@form["uso"] == "consulta"} class="accent-purple-600" />
                 <span><strong>Consulta</strong> — reporte de solo lectura</span>
+              </label>
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" id="uso-servicio" name="contexto[uso]" value="servicio" checked={@form["uso"] == "servicio"} class="accent-purple-600" />
+                <span><strong>Servicio</strong> — recibe parámetros; lo llaman las reglas de un BC o una API</span>
               </label>
             </div>
           </div>

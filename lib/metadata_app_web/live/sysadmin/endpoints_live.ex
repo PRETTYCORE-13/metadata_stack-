@@ -263,7 +263,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
 
   def handle_event("eliminar_endpoint", %{"nombre" => nombre}, socket) do
     caso =
-      Enum.find(socket.assigns.endpoints, fn e -> e.consulta.header.schema_context_name == nombre end)
+      Enum.find(socket.assigns.endpoints, fn e -> ConsultaEndpoints.nombre_de_origen(e) == nombre end)
 
     case caso && ConsultaEndpoints.eliminar(caso) do
       :ok -> {:noreply, assign(socket, :endpoints, ConsultaEndpoints.listar_todos())}
@@ -754,7 +754,10 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
         <tbody class="divide-y divide-gray-100">
           <tr :for={endpoint <- @endpoints}>
             <td class="px-3 py-2.5 font-semibold text-gray-800">{endpoint.nombre}</td>
-            <td class="px-3 py-2.5 text-gray-500">{Enum.join(MetaConsultas.catalogos_presentes(endpoint.consulta), " + ")}</td>
+            <td :if={ConsultaEndpoints.de_servicio?(endpoint)} class="px-3 py-2.5 text-gray-500">
+              <span class="text-[10px] font-bold text-teal-700 mr-1">SERVICIO</span>{ConsultaEndpoints.nombre_de_origen(endpoint)}
+            </td>
+            <td :if={!ConsultaEndpoints.de_servicio?(endpoint)} class="px-3 py-2.5 text-gray-500">{Enum.join(MetaConsultas.catalogos_presentes(endpoint.consulta), " + ")}</td>
             <td class="px-3 py-2.5 font-mono text-gray-500">
               <span class="uppercase text-[10px] font-bold text-purple-600 mr-1">{endpoint.metodo}</span>{endpoint.ruta}
             </td>
@@ -768,11 +771,16 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
               </span>
             </td>
             <td class="px-3 py-2.5 text-right">
-              <.link navigate={~p"/sysadmin/endpoints/#{endpoint.consulta.header.schema_context_name}"}
+              <.link
+                navigate={
+                  if ConsultaEndpoints.de_servicio?(endpoint),
+                    do: ~p"/sysadmin/bc-list/#{ConsultaEndpoints.nombre_de_origen(endpoint)}/consulta-sql",
+                    else: ~p"/sysadmin/endpoints/#{ConsultaEndpoints.nombre_de_origen(endpoint)}"
+                }
                 class="text-blue-600 hover:text-blue-800 font-semibold mr-3">
                 Configurar
               </.link>
-              <button :if={@bpb_habilitado} type="button" phx-click="eliminar_endpoint" phx-value-nombre={endpoint.consulta.header.schema_context_name}
+              <button :if={@bpb_habilitado} type="button" phx-click="eliminar_endpoint" phx-value-nombre={ConsultaEndpoints.nombre_de_origen(endpoint)}
                 data-confirm={"Se borra el endpoint '#{endpoint.nombre}' y todas sus credenciales, para siempre. ¿Eliminar?"}
                 class="text-red-600 hover:text-red-800 font-semibold">
                 Eliminar

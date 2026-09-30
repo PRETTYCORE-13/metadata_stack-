@@ -4,6 +4,7 @@ defmodule MetadataApp.MetaSchema.ConsultaEndpoint do
 
   alias MetadataApp.ParametrosCatalogo
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
+  alias MetadataApp.MetaSchema.ConsultaSql
 
   # Un registro = la configuración del endpoint API público de UNA
   # Consulta (SPEC-SYS-1009202602) -- como máximo uno por Consulta
@@ -45,7 +46,13 @@ defmodule MetadataApp.MetaSchema.ConsultaEndpoint do
     field :update_guid, :string
     field :delete_guid, :string
 
+    # Origen: una Consulta Ecto O un Servicio (Consulta SQL de uso
+    # "servicio", SPEC-SYS-2509202601 §11.6), exactamente uno de los dos
+    # (constraint `origen_unico` en la base). Con Servicio, `parametros`
+    # guarda la MISMA forma que los parámetros del Servicio
+    # (`%{"nombre", "tipo", "obligatorio", "default"}`), copiados de él.
     belongs_to :consulta, MetadataApp.MetaSchema.Consulta, foreign_key: :meta_schema_consulta_id
+    belongs_to :consulta_sql, ConsultaSql, foreign_key: :meta_schema_consulta_sql_id
     has_many :credenciales, MetadataApp.MetaSchema.ConsultaEndpointCredencial, foreign_key: :meta_schema_consulta_endpoint_id
 
     timestamps(type: :utc_datetime)
@@ -53,24 +60,87 @@ defmodule MetadataApp.MetaSchema.ConsultaEndpoint do
 
   @metodos ["get", "post"]
   @estados ["borrador", "publicado"]
-  @requeridos [:meta_schema_consulta_id, :nombre, :metodo, :ruta, :empresa_id]
+  @requeridos [:nombre, :metodo, :ruta, :empresa_id]
 
-  def changeset(endpoint, attrs, consulta \\ nil) do
+  @doc """
+  `origen` es la `%Consulta{}` o el `%ConsultaSql{}` (Servicio) del que
+  cuelga el endpoint, para validar contra él. Con un Servicio, los
+  parámetros se copian del Servicio (lo que venga en `attrs` se ignora,
+  R49) y el alta de registros queda apagada: un Servicio solo lee.
+  """
+  def changeset(endpoint, attrs, origen \\ nil) do
     endpoint
-    |> cast(attrs, @requeridos ++ [:descripcion, :parametros, :estado, :permite_alta, :campos_alta, :renglones_alta])
+    |> cast(
+      attrs,
+      @requeridos ++
+        [
+          :meta_schema_consulta_id,
+          :meta_schema_consulta_sql_id,
+          :descripcion,
+          :parametros,
+          :estado,
+          :permite_alta,
+          :campos_alta,
+          :renglones_alta
+        ]
+    )
+    |> derivar_de_servicio(origen)
     |> validate_required(@requeridos)
+    |> validar_origen_unico()
     |> validate_inclusion(:metodo, @metodos)
     |> validate_inclusion(:estado, @estados)
     |> validate_format(:ruta, ~r/^[a-z0-9-]+$/,
       message: "solo minúsculas, números y guiones, sin barras"
     )
-    |> validar_parametros_vigentes(consulta)
-    |> validar_campos_alta_vigentes(consulta)
-    |> validar_renglones_alta_vigentes(consulta)
+    |> validar_parametros_vigentes(origen)
+    |> validar_campos_alta_vigentes(origen)
+    |> validar_renglones_alta_vigentes(origen)
     |> unique_constraint(:meta_schema_consulta_id)
+    |> unique_constraint(:meta_schema_consulta_sql_id)
     |> unique_constraint([:metodo, :ruta], name: :meta_schema_consulta_endpoint_metodo_ruta_index)
     |> foreign_key_constraint(:meta_schema_consulta_id)
+    |> foreign_key_constraint(:meta_schema_consulta_sql_id)
     |> foreign_key_constraint(:empresa_id)
+    |> check_constraint(:meta_schema_consulta_id,
+      name: :origen_unico,
+      message: "el endpoint tiene que colgar de una Consulta o de un Servicio, no de los dos"
+    )
+  end
+
+  defp derivar_de_servicio(changeset, %ConsultaSql{} = servicio) do
+    changeset
+    |> put_change(:meta_schema_consulta_sql_id, servicio.id)
+    |> put_change(:parametros, servicio.parametros)
+    |> put_change(:permite_alta, false)
+    |> put_change(:campos_alta, [])
+    |> put_change(:renglones_alta, [])
+  end
+
+  defp derivar_de_servicio(changeset, _origen), do: changeset
+
+  defp validar_origen_unico(changeset) do
+    case {get_field(changeset, :meta_schema_consulta_id),
+          get_field(changeset, :meta_schema_consulta_sql_id)} do
+      {nil, nil} ->
+        add_error(
+          changeset,
+          :meta_schema_consulta_id,
+          "el endpoint tiene que colgar de una Consulta o de un Servicio"
+        )
+
+      {_consulta, nil} ->
+        changeset
+
+      {nil, _servicio} ->
+        changeset
+
+      _ ->
+        add_error(
+          changeset,
+          :meta_schema_consulta_id,
+          "el endpoint tiene que colgar de una Consulta o de un Servicio, no de los dos"
+        )
+    end
   end
 
   # R8.1 -- cada "campo" de `parametros` debe seguir siendo un Parámetro
@@ -79,6 +149,7 @@ defmodule MetadataApp.MetaSchema.ConsultaEndpoint do
   # aislado en un test unitario que no lo necesita) esta validación se
   # omite -- quien llama desde el contexto siempre la pasa.
   defp validar_parametros_vigentes(changeset, nil), do: changeset
+  defp validar_parametros_vigentes(changeset, %ConsultaSql{}), do: changeset
 
   defp validar_parametros_vigentes(changeset, consulta) do
     claves_vigentes =
@@ -114,6 +185,7 @@ defmodule MetadataApp.MetaSchema.ConsultaEndpoint do
   # meta_schema_detail -- no contra los de la Consulta, que son un
   # subconjunto/namespace distinto).
   defp validar_campos_alta_vigentes(changeset, nil), do: changeset
+  defp validar_campos_alta_vigentes(changeset, %ConsultaSql{}), do: changeset
 
   defp validar_campos_alta_vigentes(changeset, consulta) do
     claves_reales =
@@ -143,6 +215,7 @@ defmodule MetadataApp.MetaSchema.ConsultaEndpoint do
   # campos reales de ESE catálogo detalle -- mismo espíritu que
   # validar_campos_alta_vigentes/2, un nivel más abajo.
   defp validar_renglones_alta_vigentes(changeset, nil), do: changeset
+  defp validar_renglones_alta_vigentes(changeset, %ConsultaSql{}), do: changeset
 
   defp validar_renglones_alta_vigentes(changeset, consulta) do
     with %{id: header_maestro_id} <- MetaSchemaContext.obtener_header_por_nombre(consulta.catalogo_base) do

@@ -208,6 +208,40 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLiveTest do
     refute MetaSchemaContext.obtener_header_por_nombre(header.schema_context_name)
   end
 
+  # SPEC-SYS-2509202601 O2: un Endpoint de Servicio no tiene Consulta
+  # interna; la lista no debe tronar con él.
+  test ":index -- un Endpoint de Servicio se lista, enlaza al editor del Servicio y se elimina sin tocar el Servicio", %{
+    conn: conn,
+    empresa: empresa
+  } do
+    {:ok, {svc_header, _}} =
+      MetadataApp.ConsultasSql.crear(%{"etiqueta" => "Svc lista", "nav" => "/svc_lista_#{unique()}", "uso" => "servicio"})
+
+    nombre = svc_header.schema_context_name
+
+    {:ok, servicio} =
+      MetadataApp.ConsultasSql.guardar_sql(nombre, "SELECT :x AS x", %{
+        "parametros" => [%{"nombre" => "x", "tipo" => "entero", "obligatorio" => true}]
+      })
+
+    {:ok, _endpoint} =
+      ConsultaEndpoints.crear_o_actualizar(servicio, %{
+        "nombre" => "Endpoint de servicio",
+        "metodo" => "post",
+        "ruta" => "svc-lista-#{unique()}",
+        "empresa_id" => empresa.id
+      })
+
+    {:ok, view, html} = live(conn, ~p"/sysadmin/endpoints")
+    assert html =~ "Endpoint de servicio"
+    assert html =~ "SERVICIO"
+    assert has_element?(view, ~s|a[href="/sysadmin/bc-list/#{nombre}/consulta-sql"]|)
+
+    html_borrado = render_click(view, "eliminar_endpoint", %{"nombre" => nombre})
+    refute html_borrado =~ "Endpoint de servicio"
+    assert MetadataApp.ConsultasSql.obtener_por_catalogo(nombre)
+  end
+
   test ":editar -- alta habilita campos reales del catálogo, y la sección Renglones no aparece sin catálogos detalle (R54-R58, R59)", %{
     conn: conn,
     empresa: empresa

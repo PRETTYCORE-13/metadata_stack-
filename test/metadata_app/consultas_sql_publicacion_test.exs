@@ -23,17 +23,92 @@ defmodule MetadataApp.ConsultasSqlPublicacionTest do
   end
 
   test "el .meta.json de una SQL View lleva su definición; el de un catálogo no" do
-    header = sql_view("SELECT id, meta_fixture_equipo_nombre_equipo AS nombre FROM meta_fixture_equipo")
+    header =
+      sql_view("SELECT id, meta_fixture_equipo_nombre_equipo AS nombre FROM meta_fixture_equipo")
+
     dir = tmp_dir()
 
     MetaSchemaContext.exportar_header(header, dir)
     json = Jason.decode!(File.read!(Path.join(dir, "#{header.schema_context_name}.meta.json")))
 
-    assert %{"uso" => "diccionario", "sql" => sql, "columnas" => [_, _], "bcs_autorizados" => ["meta_fixture_cliente"]} = json["consulta_sql"]
+    assert %{
+             "uso" => "diccionario",
+             "sql" => sql,
+             "columnas" => [_, _],
+             "bcs_autorizados" => ["meta_fixture_cliente"]
+           } = json["consulta_sql"]
+
     assert sql =~ "meta_fixture_equipo"
 
-    MetaSchemaContext.exportar_header(Repo.get_by!(Header, schema_context_name: "meta_fixture_cliente"), dir)
-    refute Map.has_key?(Jason.decode!(File.read!(Path.join(dir, "meta_fixture_cliente.meta.json"))), "consulta_sql")
+    MetaSchemaContext.exportar_header(
+      Repo.get_by!(Header, schema_context_name: "meta_fixture_cliente"),
+      dir
+    )
+
+    refute Map.has_key?(
+             Jason.decode!(File.read!(Path.join(dir, "meta_fixture_cliente.meta.json"))),
+             "consulta_sql"
+           )
+  end
+
+  # SPEC-SYS-2509202601 Q1 (R56)
+  test "un Servicio exporta e importa sus parámetros y su tope; un bundle viejo toma los defaults" do
+    {:ok, {origen, _}} =
+      ConsultasSql.crear(%{
+        "etiqueta" => "Svc pub",
+        "nav" => "/svc_pub_#{unique()}",
+        "uso" => "servicio"
+      })
+
+    parametros = [%{"nombre" => "ids", "tipo" => "lista_enteros", "obligatorio" => true}]
+
+    {:ok, _} =
+      ConsultasSql.guardar_sql(origen.schema_context_name, "SELECT 1 AS x WHERE 1 = ANY(:ids)", %{
+        "parametros" => parametros,
+        "tope_renglones" => 20
+      })
+
+    dir = tmp_dir()
+
+    MetaSchemaContext.exportar_header(
+      MetaSchemaContext.obtener_header_por_nombre(origen.schema_context_name),
+      dir
+    )
+
+    json = Jason.decode!(File.read!(Path.join(dir, "#{origen.schema_context_name}.meta.json")))
+
+    assert %{
+             "uso" => "servicio",
+             "tope_renglones" => 20,
+             "parametros" => [%{"nombre" => "ids", "tipo" => "lista_enteros"}]
+           } =
+             json["consulta_sql"]
+
+    # Importar el mismo bloque bajo otro nombre, como llegaría a otro ambiente.
+    destino = "pty_sql_svc_importado_#{unique()}"
+
+    contexto =
+      json
+      |> Map.merge(%{"schema_context_name" => destino, "schema_context_nav" => "/#{destino}"})
+
+    File.rm!(Path.join(dir, "#{origen.schema_context_name}.meta.json"))
+    File.write!(Path.join(dir, "#{destino}.meta.json"), Jason.encode!(contexto))
+    MetaImportExport.importar_meta(dir)
+
+    importado = ConsultasSql.obtener_por_catalogo(destino)
+    assert importado.uso == "servicio"
+    assert importado.tope_renglones == 20
+
+    assert [%{"nombre" => "ids", "tipo" => "lista_enteros", "obligatorio" => true}] =
+             importado.parametros
+
+    # Un bundle anterior al uso Servicio no trae parámetros ni tope.
+    assert ConsultasSql.importar_definicion(destino, %{
+             "uso" => "servicio",
+             "sql" => "SELECT 1 AS x"
+           }) == :actualizada
+
+    assert %{parametros: [], tope_renglones: 1000} = ConsultasSql.obtener_por_catalogo(destino)
   end
 
   test "importar crea la definición y su permiso; reimportar sincroniza lo que cambió" do
@@ -48,17 +123,30 @@ defmodule MetadataApp.ConsultasSqlPublicacionTest do
         "schema_visible" => false,
         "schema_context_type" => 4,
         "detalles" => [],
-        "consulta_sql" => %{"uso" => "diccionario", "sql" => sql, "columnas" => [%{"nombre" => "id"}], "bcs_autorizados" => ["meta_fixture_cliente"]}
+        "consulta_sql" => %{
+          "uso" => "diccionario",
+          "sql" => sql,
+          "columnas" => [%{"nombre" => "id"}],
+          "bcs_autorizados" => ["meta_fixture_cliente"]
+        }
       }
     end
 
-    File.write!(Path.join(dir, "#{nombre}.meta.json"), Jason.encode!(contexto.("SELECT 1 AS id, 'a' AS d")))
+    File.write!(
+      Path.join(dir, "#{nombre}.meta.json"),
+      Jason.encode!(contexto.("SELECT 1 AS id, 'a' AS d"))
+    )
+
     mensajes = MetaImportExport.importar_meta(dir)
     assert Enum.any?(mensajes, &(&1 =~ "definición SQL creada"))
     assert ConsultasSql.obtener_por_catalogo(nombre).sql == "SELECT 1 AS id, 'a' AS d"
     assert MetadataApp.Permissions.permiso_existe?(nombre, "leer")
 
-    File.write!(Path.join(dir, "#{nombre}.meta.json"), Jason.encode!(contexto.("SELECT 2 AS id, 'b' AS d")))
+    File.write!(
+      Path.join(dir, "#{nombre}.meta.json"),
+      Jason.encode!(contexto.("SELECT 2 AS id, 'b' AS d"))
+    )
+
     assert Enum.any?(MetaImportExport.importar_meta(dir), &(&1 =~ "definición SQL actualizada"))
     assert ConsultasSql.obtener_por_catalogo(nombre).sql == "SELECT 2 AS id, 'b' AS d"
 
@@ -66,7 +154,11 @@ defmodule MetadataApp.ConsultasSqlPublicacionTest do
   end
 
   test "el paquete de una SQL View incluye los catálogos que usa su SQL" do
-    header = sql_view("SELECT e.id, e.meta_fixture_equipo_nombre_equipo AS nombre FROM meta_fixture_equipo e")
+    header =
+      sql_view(
+        "SELECT e.id, e.meta_fixture_equipo_nombre_equipo AS nombre FROM meta_fixture_equipo e"
+      )
+
     paquete = MetaSchemaContext.calcular_paquete_publicacion([header.schema_context_name])
 
     assert header.schema_context_name in paquete
@@ -74,17 +166,30 @@ defmodule MetadataApp.ConsultasSqlPublicacionTest do
   end
 
   test "el paquete de un catálogo con un campo que usa un Diccionario incluye ese Diccionario" do
-    header = sql_view("SELECT id, meta_fixture_equipo_nombre_equipo AS nombre FROM meta_fixture_equipo")
+    header =
+      sql_view("SELECT id, meta_fixture_equipo_nombre_equipo AS nombre FROM meta_fixture_equipo")
+
     cliente = Repo.get_by!(Header, schema_context_name: "meta_fixture_cliente")
-    detalle = Repo.get_by!(Detail, meta_schema_header_id: cliente.id, schema_context_field: "meta_fixture_cliente_edad")
+
+    detalle =
+      Repo.get_by!(Detail,
+        meta_schema_header_id: cliente.id,
+        schema_context_field: "meta_fixture_cliente_edad"
+      )
 
     props =
       detalle.schema_context_properties
-      |> Map.merge(%{"tipo" => "referencia", "catalogo" => "meta_fixture_equipo", "diccionario" => %{"consulta" => header.schema_context_name, "descripcion" => ["nombre"]}})
+      |> Map.merge(%{
+        "tipo" => "referencia",
+        "catalogo" => "meta_fixture_equipo",
+        "diccionario" => %{"consulta" => header.schema_context_name, "descripcion" => ["nombre"]}
+      })
 
     detalle |> Ecto.Changeset.change(%{schema_context_properties: props}) |> Repo.update!()
 
-    assert header.schema_context_name in MetaSchemaContext.calcular_paquete_publicacion(["meta_fixture_cliente"])
+    assert header.schema_context_name in MetaSchemaContext.calcular_paquete_publicacion([
+             "meta_fixture_cliente"
+           ])
   end
 
   test "MetaPublicador valida una SQL View por su SQL, no por un autómata" do
@@ -92,7 +197,9 @@ defmodule MetadataApp.ConsultasSqlPublicacionTest do
     assert {:ok, %{catalogos: catalogos}} = MetaPublicador.validar([header.schema_context_name])
     assert header.schema_context_name in catalogos
 
-    {:ok, {sin_sql, _}} = ConsultasSql.crear(%{"etiqueta" => "Sin SQL", "nav" => "/sin_sql_#{unique()}"})
+    {:ok, {sin_sql, _}} =
+      ConsultasSql.crear(%{"etiqueta" => "Sin SQL", "nav" => "/sin_sql_#{unique()}"})
+
     assert {:error, mensaje} = MetaPublicador.validar([sin_sql.schema_context_name])
     assert mensaje =~ "SQL"
   end

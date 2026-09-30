@@ -86,7 +86,7 @@ defmodule MetadataApp.ConsultasSql do
         {:error, "Completa la etiqueta y la navegación antes de guardar."}
 
       uso not in ConsultaSql.usos() ->
-        {:error, "El uso tiene que ser Diccionario o Consulta."}
+        {:error, "El uso tiene que ser Diccionario, Consulta o Servicio."}
 
       MetaSchemaContext.obtener_header_por_nav(nav) ->
         {:error, "Esa ruta ya la usa otro catálogo o carpeta."}
@@ -320,7 +320,7 @@ defmodule MetadataApp.ConsultasSql do
     with :ok <- sql_no_vacio(sql),
          {:ok, parametros} <- Parametros.validar(parametros_nuevos),
          {:ok, %{validacion: validacion, funcion: cuerpo}} <- Parametros.traducir(sql, parametros),
-         {:ok, columnas} <- columnas_de_sql(validacion),
+         {:ok, columnas} <- columnas_de_sql(validacion) |> con_ayuda_de_tipos(parametros),
          :ok <- validar_nombres(columnas),
          :ok <- validar_uso(columnas, "servicio"),
          changeset =
@@ -330,11 +330,42 @@ defmodule MetadataApp.ConsultasSql do
          :ok <- changeset_valido(changeset),
          :ok <- escribir_y_correr_funcion(nombre, definicion_funcion(nombre, parametros, columnas, cuerpo)) do
       case Repo.update(changeset) do
-        {:ok, actualizada} -> {:ok, actualizada}
-        {:error, changeset} -> {:error, resumen_errores(changeset)}
+        {:ok, actualizada} ->
+          sincronizar_parametros_del_endpoint(actualizada)
+          {:ok, actualizada}
+
+        {:error, changeset} ->
+          {:error, resumen_errores(changeset)}
       end
     end
   end
+
+  # El endpoint guarda una copia de los parámetros (la muestra su
+  # documentación); si el Servicio los cambia, la copia se actualiza aquí.
+  defp sincronizar_parametros_del_endpoint(%ConsultaSql{} = servicio) do
+    case endpoint_del_servicio(servicio) do
+      nil -> :ok
+      endpoint -> endpoint |> Ecto.Changeset.change(parametros: servicio.parametros) |> Repo.update!()
+    end
+  end
+
+  # El error de Postgres al usar `= ANY(:x)` con un parámetro que no es
+  # lista ("op ANY/ALL (array) requires array on right side") no dice qué
+  # cambiar; se le agrega la ayuda con los parámetros que no son lista.
+  defp con_ayuda_de_tipos({:error, mensaje} = error, parametros) when is_binary(mensaje) do
+    if String.contains?(mensaje, "ANY/ALL (array) requires array") do
+      no_listas = for %{"nombre" => n, "tipo" => t} <- parametros, t != "lista_enteros", do: ":#{n}"
+
+      {:error,
+       mensaje <>
+         "\n\nAyuda: = ANY(...) necesita una lista. Si alguno de estos parámetros es una lista, cambia su tipo a \"Lista de enteros\": " <>
+         Enum.join(no_listas, ", ") <> "."}
+    else
+      error
+    end
+  end
+
+  defp con_ayuda_de_tipos(resultado, _parametros), do: resultado
 
   defp sql_no_vacio(""), do: {:error, "Escribe el SQL antes de guardar."}
   defp sql_no_vacio(_sql), do: :ok
@@ -814,12 +845,18 @@ defmodule MetadataApp.ConsultasSql do
     end
   end
 
-  # R30 (Diccionario usado por campos) y R55 (Servicio usado por reglas).
-  # El uso de un Servicio desde un Endpoint se suma con la FK de O1.
-  defp validar_sin_usos(%ConsultaSql{uso: "servicio"}, nombre) do
-    case reglas_que_usan(nombre) do
-      [] -> :ok
-      usos -> {:error, "No se puede eliminar: lo usan las reglas de #{describir_reglas(usos)}."}
+  # R30 (Diccionario usado por campos) y R55 (Servicio usado por un
+  # Endpoint o por reglas).
+  defp validar_sin_usos(%ConsultaSql{uso: "servicio"} = servicio, nombre) do
+    cond do
+      endpoint = endpoint_del_servicio(servicio) ->
+        {:error, "No se puede eliminar: lo usa el Endpoint «#{endpoint.nombre}» (/#{endpoint.ruta}). Elimina primero el Endpoint."}
+
+      (usos = reglas_que_usan(nombre)) != [] ->
+        {:error, "No se puede eliminar: lo usan las reglas de #{describir_reglas(usos)}."}
+
+      true ->
+        :ok
     end
   end
 
@@ -828,6 +865,15 @@ defmodule MetadataApp.ConsultasSql do
       [] -> :ok
       usos -> {:error, "No se puede eliminar: estos campos usan el Diccionario: #{describir_usos(usos)}."}
     end
+  end
+
+  @doc "Endpoint vivo que cuelga del Servicio (a lo más uno, índice único), o `nil`."
+  def endpoint_del_servicio(%ConsultaSql{id: id}) do
+    Repo.one(
+      from(e in MetadataApp.MetaSchema.ConsultaEndpoint,
+        where: e.meta_schema_consulta_sql_id == ^id and is_nil(e.delete_guid)
+      )
+    )
   end
 
   @doc """
@@ -914,7 +960,18 @@ defmodule MetadataApp.ConsultasSql do
         %{}
 
       c ->
-        %{consulta_sql: %{uso: c.uso, sql: c.sql, columnas: c.columnas, bcs_autorizados: c.bcs_autorizados}}
+        %{
+          consulta_sql: %{
+            uso: c.uso,
+            sql: c.sql,
+            columnas: c.columnas,
+            bcs_autorizados: c.bcs_autorizados,
+            # Uso Servicio (R56): sin estos, el destino no sabría validar
+            # ni convertir los valores de una llamada.
+            parametros: c.parametros,
+            tope_renglones: c.tope_renglones
+          }
+        }
     end
   end
 
@@ -932,7 +989,10 @@ defmodule MetadataApp.ConsultasSql do
       "uso" => datos["uso"] || "diccionario",
       "sql" => datos["sql"],
       "columnas" => datos["columnas"] || [],
-      "bcs_autorizados" => datos["bcs_autorizados"] || []
+      "bcs_autorizados" => datos["bcs_autorizados"] || [],
+      # Un bundle anterior al uso Servicio no los trae: se usan los defaults.
+      "parametros" => datos["parametros"] || [],
+      "tope_renglones" => datos["tope_renglones"] || 1000
     }
 
     case obtener_por_header_id(header.id) do
@@ -1171,6 +1231,8 @@ defmodule MetadataApp.ConsultasSql do
   """
   def filas(nombre, scope, pagina \\ 1, por_pagina \\ 25) do
     case obtener_por_catalogo(nombre) do
+      # Un Servicio es una función con parámetros, no una vista (§11.1).
+      %ConsultaSql{uso: "servicio"} -> {:error, "Un Servicio no se consulta por el GET genérico: se llama por su Endpoint o desde una regla de BC."}
       %ConsultaSql{sql: sql} = consulta_sql when is_binary(sql) -> filas_de(consulta_sql, nombre, scope, pagina, por_pagina)
       _ -> {:error, "Esta SQL View todavía no tiene SQL guardado."}
     end
