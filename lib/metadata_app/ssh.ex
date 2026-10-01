@@ -47,7 +47,8 @@ defmodule MetadataApp.Ssh do
   end
 
   def ejecutar(_ambiente, _comando) do
-    {:error, "Este ambiente no tiene contraseña ni llave privada configurada -- edítalo en /sysadmin/ambientes."}
+    {:error,
+     "Este ambiente no tiene contraseña ni llave privada configurada -- edítalo en /sysadmin/ambientes."}
   end
 
   defp destino(ambiente), do: "#{ambiente.ssh_usuario}@#{ambiente.host}"
@@ -76,8 +77,15 @@ defmodule MetadataApp.Ssh do
   defp restringir_permisos_secreto(path) do
     case :os.type() do
       {:win32, _} ->
-        usuario = System.get_env("USERNAME") || raise "No se pudo determinar el usuario actual (USERNAME) para restringir permisos del secreto"
-        {_salida, 0} = System.cmd("icacls", [path, "/inheritance:r", "/grant:r", "#{usuario}:R"], stderr_to_stdout: true)
+        usuario =
+          System.get_env("USERNAME") ||
+            raise "No se pudo determinar el usuario actual (USERNAME) para restringir permisos del secreto"
+
+        {_salida, 0} =
+          System.cmd("icacls", [path, "/inheritance:r", "/grant:r", "#{usuario}:R"],
+            stderr_to_stdout: true
+          )
+
         :ok
 
       _ ->
@@ -143,14 +151,33 @@ defmodule MetadataApp.Ssh do
   # corrompiendo el Caddyfile reescrito ("unrecognized directive:
   # Warning"). motor.desplegar no lo necesitaba (nadie mezcla el output
   # con nada), pero acá exige salida limpia.
+  #
+  # Los "\r" se quitan antes de mandar: en un checkout de Windows con
+  # core.autocrlf=true, los heredocs de los .ex quedan con CRLF y bash
+  # recibe "set -e\r" ("set: -: invalid option") o rutas con "\r" al
+  # final. Encontrado real 2026-09-30: mix motor.alta falló en el paso de
+  # Caddy por esto (SPEC-ARQ-3009202601, Grupo I).
   defp correr(opts_extra, env, destino, comando) do
+    comando = String.replace(comando, "\r", "")
+
     args =
-      ["-n", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR"] ++
+      [
+        "-n",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "LogLevel=ERROR"
+      ] ++
         opts_extra ++ [destino, comando]
+
     {salida, codigo} = System.cmd(binario_ssh(), args, env: env, stderr_to_stdout: true)
     {:ok, codigo, salida}
   rescue
-    e in ErlangError -> {:error, "No se pudo ejecutar ssh: #{Exception.message(e)} -- ¿está instalado y en el PATH?"}
+    e in ErlangError ->
+      {:error,
+       "No se pudo ejecutar ssh: #{Exception.message(e)} -- ¿está instalado y en el PATH?"}
   end
 
   # En Windows nativo, "ssh" por PATH resuelve al de Git for Windows
