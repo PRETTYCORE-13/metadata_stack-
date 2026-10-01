@@ -15,14 +15,14 @@ defmodule MetadataAppWeb.Layouts do
 
   @doc """
   Título de la pestaña del navegador: el nombre de la empresa activa, o
-  `nil` sin empresa (el `default` de `live_title` pone "Prettycore").
-  No usa el fallback de config de la top bar, que nombraría una empresa
-  ajena a la sesión (SPEC-SYS-0909202601 R23–R26).
+  "Prettycore" sin empresa. No usa el fallback de config de la top bar,
+  que nombraría una empresa ajena a la sesión (SPEC-SYS-0909202601
+  R23–R26).
   """
   def titulo_pestana(%MetadataApp.Autenticacion.Scope{empresa_activa: %{nombre: nombre}}),
     do: nombre
 
-  def titulo_pestana(_), do: nil
+  def titulo_pestana(_), do: "Prettycore"
 
   @doc """
   Renders your app layout.

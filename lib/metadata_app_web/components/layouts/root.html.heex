@@ -8,8 +8,11 @@
          sidebar (pc-sidebar-logo), reusado tal cual para no tener que
          alojar/mantener un archivo de ícono aparte. -->
     <link rel="icon" type="image/png" href="https://ennovacore.com.mx/IMAGENES/IMAGENES_pret/gota.png" />
-    <.live_title default="Prettycore">
-      {titulo_pestana(assigns[:current_scope])}
+    <!-- El nombre va en default y no en el contenido: al montar, el
+         cliente de LiveView reescribe el título con data-default si la
+         pantalla no asigna page_title. -->
+    <.live_title default={titulo_pestana(assigns[:current_scope])}>
+      {assigns[:page_title]}
     </.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
     <!-- Material Symbols (Google Icons) — íconos configurables por catálogo

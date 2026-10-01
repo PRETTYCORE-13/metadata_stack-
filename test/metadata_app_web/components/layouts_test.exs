@@ -11,12 +11,14 @@ defmodule MetadataAppWeb.LayoutsTest do
   alias MetadataApp.Autenticacion.Scope
   alias MetadataAppWeb.Layouts
 
+  # Texto del <title> (HTML inicial) y su data-default, que es lo que el
+  # cliente de LiveView pone al montar si la pantalla no asigna
+  # page_title. Los dos deben ser el mismo título.
   defp titulo(html) do
-    html
-    |> LazyHTML.from_document()
-    |> LazyHTML.query("title")
-    |> LazyHTML.text()
-    |> String.trim()
+    title = html |> LazyHTML.from_document() |> LazyHTML.query("title")
+    texto = title |> LazyHTML.text() |> String.trim()
+    assert LazyHTML.attribute(title, "data-default") == [texto]
+    texto
   end
 
   describe "titulo_pestana/1" do
@@ -25,9 +27,9 @@ defmodule MetadataAppWeb.LayoutsTest do
       assert Layouts.titulo_pestana(scope) == "TABATA - Unstable System"
     end
 
-    test "sin scope o sin empresa activa devuelve nil" do
-      assert Layouts.titulo_pestana(nil) == nil
-      assert Layouts.titulo_pestana(%Scope{empresa_activa: nil}) == nil
+    test "sin scope o sin empresa activa devuelve Prettycore" do
+      assert Layouts.titulo_pestana(nil) == "Prettycore"
+      assert Layouts.titulo_pestana(%Scope{empresa_activa: nil}) == "Prettycore"
     end
   end
 
