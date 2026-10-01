@@ -678,6 +678,10 @@ defmodule MetadataAppWeb.MenuLayout do
             <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">rocket_launch</span></span>
             <span class="pc-admin-menu-label">Propagación</span>
           </.link>
+          <.link :if={"sysadmin_purgar" in @opciones_plataforma} navigate="/sysadmin/purgar" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">delete_sweep</span></span>
+            <span class="pc-admin-menu-label">Purgar</span>
+          </.link>
         </nav>
       </div>
     </div>
@@ -1009,7 +1013,9 @@ defmodule MetadataAppWeb.MenuLayout do
   # depende del compilador, así que su link no puede seguir escondido
   # en un ambiente sin bpb_habilitado (ver router.ex, mismo motivo).
   @recursos_plataforma ~w(sysadmin_credenciales sysadmin_ambientes sysadmin_panel_control sysadmin_acciones_externas sysadmin_endpoints sysadmin_propagacion)
-  @recursos_plataforma_bpb ~w(sysadmin_bc sysadmin_tepache)
+  # sysadmin_purgar depende de bpb_habilitado igual que BC List: la purga
+  # se orquesta desde el BPB local de cada dev, nunca desde un release.
+  @recursos_plataforma_bpb ~w(sysadmin_bc sysadmin_tepache sysadmin_purgar)
 
   defp opciones_administrativas_visibles(%MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa} = scope)
        when not is_nil(usuario) and not is_nil(empresa) do

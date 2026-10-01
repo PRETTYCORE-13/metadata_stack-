@@ -250,6 +250,8 @@ defmodule MetadataAppWeb.Router do
         live "/sysadmin/bc-list/:nombre/plantilla", Sysadmin.PlantillaConstructorLive
         live "/sysadmin/bc-list/:nombre/importacion", Sysadmin.ImportacionConstructorLive
         live "/sysadmin/tepache", Sysadmin.TepacheLive
+        # SPEC-ARQ-3009202601: se orquesta desde el BPB local (gh + SSH).
+        live "/sysadmin/purgar", Sysadmin.PurgarLive
 
         # SPEC-SYS-1009202602 (design.md §16, R76, agregado 2026-09-18):
         # "nuevo" SÍ vuelve a depender de bpb_habilitado -- crear un

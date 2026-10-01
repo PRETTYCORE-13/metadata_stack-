@@ -401,7 +401,7 @@ defmodule MetadataApp.Permissions do
   (empresa_id nil). `incluir_sysadmin?` (default true, o sea sin cambio de
   comportamiento para quien ya llamaba esto con 1 argumento — RolController
   y CatalogoPermisosLive siguen viendo todo) — en false filtra los roles
-  tipo :sysadmin (los 10 "acceso_sysadmin_*"): RolesLive pasa explícito
+  tipo :sysadmin (los "acceso_sysadmin_*"): RolesLive pasa explícito
   `false` por default y solo `true` cuando quien mira es super_admin.
   """
   def listar_roles(empresa_id, incluir_sysadmin? \\ true) do
@@ -902,10 +902,12 @@ defmodule MetadataApp.Permissions do
     {"sysadmin_credenciales", "acceso_sysadmin_credenciales", "Credenciales"},
     {"sysadmin_acciones_externas", "acceso_sysadmin_acciones_externas", "Acciones externas"},
     {"sysadmin_ambientes", "acceso_sysadmin_ambientes", "Ambientes de Deploy"},
-    {"sysadmin_panel_control", "acceso_sysadmin_panel_control", "Panel Control"}
+    {"sysadmin_panel_control", "acceso_sysadmin_panel_control", "Panel Control"},
+    {"sysadmin_propagacion", "acceso_sysadmin_propagacion", "Propagación"},
+    {"sysadmin_purgar", "acceso_sysadmin_purgar", "Purgar artefactos"}
   ]
 
-  @doc "Las 12 capacidades de Sysadmin, `{recurso, rol_nombre, etiqueta}` -- fuente única para la migración de seed y para la pestaña Sysadmin de UsuariosEmpresaLive."
+  @doc "Las capacidades de Sysadmin, `{recurso, rol_nombre, etiqueta}` -- fuente única para la migración de seed y para la pestaña Sysadmin de UsuariosEmpresaLive."
   def capacidades_sysadmin, do: @capacidades_sysadmin
 
   @doc """

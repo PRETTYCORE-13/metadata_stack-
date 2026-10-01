@@ -384,7 +384,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     roles =
       case socket.assigns.modo do
         :todos ->
-          # Mismo motivo que en RolesLive: los 10 roles "acceso_sysadmin_*"
+          # Mismo motivo que en RolesLive: los roles "acceso_sysadmin_*"
           # son ruido para cualquiera que esté configurando permisos de UN
           # catálogo de negocio -- ocultos por default, solo super_admin
           # los puede traer con el checkbox. Modo :por_usuario abajo NO se
