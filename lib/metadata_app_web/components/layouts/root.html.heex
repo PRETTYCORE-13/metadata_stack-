@@ -8,8 +8,8 @@
          sidebar (pc-sidebar-logo), reusado tal cual para no tener que
          alojar/mantener un archivo de ícono aparte. -->
     <link rel="icon" type="image/png" href="https://ennovacore.com.mx/IMAGENES/IMAGENES_pret/gota.png" />
-    <.live_title default="Prettycore" suffix=" · BPB v1.0">
-      {assigns[:page_title]}
+    <.live_title default="Prettycore">
+      {titulo_pestana(assigns[:current_scope])}
     </.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
     <!-- Material Symbols (Google Icons) — íconos configurables por catálogo
