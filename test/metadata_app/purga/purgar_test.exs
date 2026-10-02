@@ -62,7 +62,12 @@ defmodule MetadataApp.Purga.PurgarTest do
 
     ssh = fn _ambiente, comando ->
       send(yo, {:ssh, comando})
-      Process.get(:ssh, {:ok, 0, "4096\n"})
+
+      Process.get(
+        :ssh,
+        {:ok, 0, "4096 /home/elixir/metadata-purgas/ennova/pty_a_20261002000000.dump
+"}
+      )
     end
 
     opts = [
@@ -135,7 +140,7 @@ defmodule MetadataApp.Purga.PurgarTest do
       assert {:ok, %{"respaldo" => ruta}} =
                Purga.purgar("pty_a", "ennova", %{}, "dev@x.mx", confirmacion(), opts)
 
-      assert ruta =~ ~r|^/var/backups/metadata-purgas/ennova/pty_a_\d{14}\.dump$|
+      assert ruta == "/home/elixir/metadata-purgas/ennova/pty_a_20261002000000.dump"
       assert_received {:ssh, comando}
       assert comando =~ "-t pty_a_det -t pty_a"
       assert_received {:remoto, "ennova", %{"op" => "ejecutar", "respaldo" => ^ruta}}
@@ -150,7 +155,8 @@ defmodule MetadataApp.Purga.PurgarTest do
     end
 
     test "un respaldo vacío también detiene la purga", %{opts: opts} do
-      Process.put(:ssh, {:ok, 0, "0\n"})
+      Process.put(:ssh, {:ok, 0, "0 /home/elixir/metadata-purgas/ennova/x.dump
+"})
       assert {:error, _} = Purga.purgar("pty_a", "ennova", %{}, "dev@x.mx", confirmacion(), opts)
       refute_received {:remoto, _, %{"op" => "ejecutar"}}
     end
@@ -208,12 +214,17 @@ defmodule MetadataApp.Purga.PurgarTest do
         Respaldo.comando(
           "ennova",
           ["pty_a_det", "pty_a"],
-          "/var/backups/metadata-purgas/ennova/x.dump"
+          "pty_a_20261002000000.dump"
         )
 
+      assert c =~ ~r/^bash -c '/
       assert c =~ "set -o pipefail"
       assert c =~ "-mtime +30 -delete"
       assert c =~ "pg_dump -U appuser -d db_ennova -Fc -t pty_a_det -t pty_a"
+      assert c =~ ~s|"$HOME/metadata-purgas/ennova"/pty_a_20261002000000.dump|
+      # Solo kubectl lleva sudo: el usuario SSH no tiene sudo sin contraseña
+      # para nada más.
+      assert length(String.split(c, "sudo")) == 2
     end
 
     test "rechaza nombres que podrían inyectar shell" do

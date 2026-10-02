@@ -4,15 +4,20 @@ defmodule MetadataApp.Purga.Respaldo do
   (SPEC-ARQ-3009202601, R10-R11, design §6). `pg_dump` dentro del pod de
   Postgres; el archivo queda en el disco del servidor, nunca sale de ahí.
 
+  Vive en el home del usuario SSH (`$HOME/metadata-purgas/<sistema>/`):
+  ese usuario solo tiene sudo sin contraseña para `k3s`, así que nada más
+  `kubectl` va con `sudo` (encontrado real, 2026-10-02: con `sudo mkdir`
+  en `/var/backups` el respaldo fallaba pidiendo contraseña).
+
   La retención de 30 días se aplica en cada respaldo: no hay cron.
   """
 
-  @dir "/var/backups/metadata-purgas"
+  @dir "metadata-purgas"
   @dias_retencion 30
 
   @doc """
-  `{:ok, ruta}` | `{:error, mensaje}`. `ejecutor`: mismo contrato que
-  `MetadataApp.Ssh.ejecutar/2`.
+  `{:ok, ruta_absoluta}` | `{:error, mensaje}`. `ejecutor`: mismo contrato
+  que `MetadataApp.Ssh.ejecutar/2`.
   """
   def crear(
         ambiente,
@@ -22,19 +27,22 @@ defmodule MetadataApp.Purga.Respaldo do
         ejecutor \\ &MetadataApp.Ssh.ejecutar/2,
         ahora \\ DateTime.utc_now()
       ) do
-    ruta = ruta(sistema, artefacto, ahora)
-
-    case ejecutor.(ambiente, comando(sistema, tablas, ruta)) do
+    case ejecutor.(ambiente, comando(sistema, tablas, archivo(artefacto, ahora))) do
       {:ok, 0, salida} ->
-        case Integer.parse(
-               salida
-               |> String.split(~r/\r?\n/, trim: true)
-               |> List.last()
-               |> to_string()
-               |> String.trim()
-             ) do
-          {bytes, ""} when bytes > 0 -> {:ok, ruta}
-          _ -> {:error, "El respaldo quedó vacío o no se pudo medir (#{ruta}). No se purgó nada."}
+        # Última línea: "<bytes> <ruta absoluta>" (stat -c '%s %n').
+        case salida
+             |> String.split(~r/\r?\n/, trim: true)
+             |> List.last()
+             |> to_string()
+             |> String.split(" ", parts: 2) do
+          [bytes, ruta] ->
+            case Integer.parse(bytes) do
+              {n, ""} when n > 0 -> {:ok, String.trim(ruta)}
+              _ -> {:error, "El respaldo quedó vacío (#{String.trim(ruta)}). No se purgó nada."}
+            end
+
+          _ ->
+            {:error, "No se pudo medir el respaldo. No se purgó nada."}
         end
 
       {:ok, status, salida} ->
@@ -47,26 +55,29 @@ defmodule MetadataApp.Purga.Respaldo do
   end
 
   @doc false
-  def ruta(sistema, artefacto, ahora) do
-    sello = Calendar.strftime(ahora, "%Y%m%d%H%M%S")
-    "#{@dir}/#{sistema}/#{artefacto}_#{sello}.dump"
-  end
+  def archivo(artefacto, ahora),
+    do: "#{artefacto}_#{Calendar.strftime(ahora, "%Y%m%d%H%M%S")}.dump"
 
   @doc false
-  def comando(sistema, tablas, ruta) do
+  def comando(sistema, tablas, archivo) do
     validar!(sistema, tablas)
     banderas = Enum.map_join(tablas, " ", &"-t #{&1}")
+    dir = ~s|"$HOME/#{@dir}/#{sistema}"|
 
-    # pipefail: si pg_dump falla, el status no queda tapado por tee.
+    # pipefail: si pg_dump falla, el status no queda tapado por la
+    # redirección. bash -c explícito: no depende del shell de login.
+    script = """
+    set -o pipefail
+    mkdir -p #{dir}
+    find "$HOME/#{@dir}" -name '*.dump' -mtime +#{@dias_retencion} -delete
+    sudo k3s kubectl exec -n metadata-stack aws-postgres-0 -- pg_dump -U appuser -d db_#{sistema} -Fc #{banderas} > #{dir}/#{archivo}
+    stat -c '%s %n' #{dir}/#{archivo}
     """
-    set -o pipefail && \
-    sudo mkdir -p #{@dir}/#{sistema} && \
-    sudo find #{@dir} -name '*.dump' -mtime +#{@dias_retencion} -delete && \
-    sudo k3s kubectl exec -n metadata-stack aws-postgres-0 -- pg_dump -U appuser -d db_#{sistema} -Fc #{banderas} | sudo tee #{ruta} > /dev/null && \
-    sudo stat -c %s #{ruta}
-    """
-    |> String.trim()
+
+    "bash -c " <> comilla_simple(script)
   end
+
+  defp comilla_simple(texto), do: "'" <> String.replace(texto, "'", "'\\''") <> "'"
 
   # Todo lo que entra al comando viene de nombres ya validados; esto es la
   # última barrera contra inyección de shell.
