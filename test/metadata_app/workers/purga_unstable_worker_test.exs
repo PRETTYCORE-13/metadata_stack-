@@ -31,6 +31,11 @@ defmodule MetadataApp.Workers.PurgaUnstableWorkerTest do
   defp imagen_vieja,
     do: {:ok, prep(%{impacto: %{"imagen_incluye" => true}, bloqueo: "todavía incluye"})}
 
+  test "primer_intento?/1 se basa en meta[\"snoozed\"], no en attempt (snooze le resta 1)" do
+    assert W.primer_intento?(%Oban.Job{attempt: 1, meta: %{}})
+    refute W.primer_intento?(%Oban.Job{attempt: 1, meta: %{"snoozed" => 1}})
+  end
+
   test "primer intento con la imagen vieja: retira, dispara CI y espera" do
     assert {:snooze, 120} = W.paso(@args, deps(preparar: imagen_vieja()))
 

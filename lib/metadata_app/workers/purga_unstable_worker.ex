@@ -43,13 +43,13 @@ defmodule MetadataApp.Workers.PurgaUnstableWorker do
   end
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args, attempt: intento, inserted_at: inicio}) do
+  def perform(%Oban.Job{args: args, inserted_at: inicio} = job) do
     ambiente = MetadataApp.Ambientes.obtener_ambiente!(args["ambiente_id"])
     segundos = DateTime.diff(DateTime.utc_now(), inicio)
 
     paso(args, %{
       ambiente: ambiente,
-      primer_intento: intento == 1,
+      primer_intento: primer_intento?(job),
       segundos: segundos,
       retirar: &Purga.retirar(&1, ambiente, &2),
       disparar_ci: &disparar_ci/0,
@@ -58,6 +58,13 @@ defmodule MetadataApp.Workers.PurgaUnstableWorker do
       avisar: &avisar/3
     })
   end
+
+  @doc """
+  ¿Es la primera ejecución? `snooze` no cuenta como intento: Oban le resta 1
+  a `attempt` y lleva la cuenta en `meta["snoozed"]` (Oban 2.24). Con
+  `attempt == 1` el retiro y el disparo de CI se repetían en cada revisión.
+  """
+  def primer_intento?(%Oban.Job{meta: meta}), do: Map.get(meta || %{}, "snoozed", 0) == 0
 
   @doc """
   Un paso del trabajo. `d`: dependencias (las reales salen de `perform/1`).
