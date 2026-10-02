@@ -13,8 +13,78 @@ defmodule MetadataApp.MetaPublicador do
   MetaSchemaContext.calcular_paquete_publicacion/1).
   """
 
-  alias MetadataApp.MetaEstadosAdmin
-  alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
+  alias MetadataApp.{ConsultaEndpoints, MetaEstadosAdmin, MetaPlantillas}
+  alias MetadataApp.BusinessProcessBuilder.{CatalogoGenerador, MetaSchemaContext}
+
+  @doc """
+  Prepara en disco los archivos de `catalogos` (el paquete ya calculado,
+  ver `validar/1`) antes de `armar_bundle/1` -- SPEC-SYS-0210202601, el
+  único camino para la terminal (`mix motor.publicar`) y la pantalla (BC
+  List → Publicar paquete):
+
+  1. Regenera el `.ex` de cada catálogo del paquete contra la metadata
+     actual (las carpetas no tienen `.ex`).
+  2. Exporta solo esos catálogos: `.meta.json`, `.motor.json`,
+     `.plantillas.json` y el `.endpoint.json` de sus Endpoints, sin pisar
+     una marca de baja de `mix endpoint.despublicar`.
+
+  Nunca borra nada ni toca archivos de otros catálogos: la carpeta es
+  compartida, y lo que no está en la base local de quien publica puede
+  ser de otra persona (caso real, 2026-10-01: exportar todo con limpieza
+  de huérfanos borró 10 archivos ajenos).
+
+  Corre dentro del Repo de quien llama. `:ok` | `{:error, mensaje}`.
+  `opts[:regenerar]` (default `CatalogoGenerador.generar/1`) solo se
+  cambia en pruebas: generar escribe en las carpetas reales del repo.
+  """
+  def preparar_paquete(catalogos, dir \\ "priv/repo/catalogos", opts \\ []) do
+    generar = Keyword.get(opts, :regenerar, &CatalogoGenerador.generar/1)
+
+    with :ok <- regenerar(catalogos, generar) do
+      exportar(catalogos, dir)
+    end
+  end
+
+  # Una carpeta (schema_context_type 2) no tiene campos ni tabla:
+  # CatalogoGenerador.generar/1 fallaría con "No hay metadata en
+  # meta_schema_detail" y abortaría todo el paquete.
+  defp regenerar(catalogos, generar) do
+    Enum.reduce_while(catalogos, :ok, fn nombre, :ok ->
+      case MetaSchemaContext.obtener_header_por_nombre(nombre) do
+        %{schema_context_type: 2} ->
+          {:cont, :ok}
+
+        _ ->
+          case generar.(nombre) do
+            {:ok, _} -> {:cont, :ok}
+            {:error, motivo} -> {:halt, {:error, "#{nombre}: #{motivo}"}}
+          end
+      end
+    end)
+  end
+
+  defp exportar(catalogos, dir) do
+    File.mkdir_p!(dir)
+
+    for nombre <- catalogos,
+        header = MetaSchemaContext.obtener_header_por_nombre(nombre),
+        header != nil do
+      MetaSchemaContext.exportar_header(header, dir)
+      MetaEstadosAdmin.exportar_header(header, dir)
+      MetaPlantillas.exportar_header(header, dir)
+    end
+
+    paquete = MapSet.new(catalogos)
+
+    for endpoint <- ConsultaEndpoints.listar_todos(),
+        nombre = ConsultaEndpoints.nombre_de_origen(endpoint),
+        MapSet.member?(paquete, nombre),
+        not ConsultaEndpoints.marca_de_baja?(dir, "#{nombre}.endpoint.json") do
+      ConsultaEndpoints.exportar_endpoint(endpoint, dir)
+    end
+
+    :ok
+  end
 
   @doc """
   Valida uno o más catálogos raíz y calcula el paquete completo a publicar.
@@ -32,7 +102,11 @@ defmodule MetadataApp.MetaPublicador do
         valido? = Enum.all?(resultados, fn {:ok, r} -> r.valido? end)
 
         if valido? do
-          {:ok, %{catalogos: MetaSchemaContext.calcular_paquete_publicacion(nombres_raiz), problemas: problemas}}
+          {:ok,
+           %{
+             catalogos: MetaSchemaContext.calcular_paquete_publicacion(nombres_raiz),
+             problemas: problemas
+           }}
         else
           {:error, "hay errores estructurales, corregilos antes de publicar"}
         end
@@ -54,8 +128,11 @@ defmodule MetadataApp.MetaPublicador do
 
       _header ->
         case MetaEstadosAdmin.validar_motor(nombre) do
-          {:error, motivo} -> {:error, "#{nombre}: #{motivo}"}
-          {:ok, %{problemas: problemas, valido?: valido?}} -> {:ok, %{problemas: problemas, valido?: valido?}}
+          {:error, motivo} ->
+            {:error, "#{nombre}: #{motivo}"}
+
+          {:ok, %{problemas: problemas, valido?: valido?}} ->
+            {:ok, %{problemas: problemas, valido?: valido?}}
         end
     end
   end
@@ -66,7 +143,8 @@ defmodule MetadataApp.MetaPublicador do
     rutas = Enum.flat_map(catalogos, &rutas_de/1)
 
     if rutas == [] do
-      {:error, "Ningún archivo encontrado para #{inspect(catalogos)} — ¿ya corriste \"mix gen.catalogos\"?"}
+      {:error,
+       "Ningún archivo encontrado para #{inspect(catalogos)} — ¿ya corriste \"mix gen.catalogos\"?"}
     else
       # El archivo de salida se escribe con un nombre relativo, en el cwd
       # actual (la raíz del proyecto) -- nunca con una ruta absoluta tipo
@@ -106,7 +184,9 @@ defmodule MetadataApp.MetaPublicador do
   end
 
   defp rutas_de(catalogo) do
-    schema = Path.join(["lib", "metadata_app", "meta_business_process", "catalogos", "#{catalogo}.ex"])
+    schema =
+      Path.join(["lib", "metadata_app", "meta_business_process", "catalogos", "#{catalogo}.ex"])
+
     migraciones = Path.wildcard("priv/repo/migrations/*#{catalogo}*.exs")
     meta = "priv/repo/catalogos/#{catalogo}.meta.json"
     motor = "priv/repo/catalogos/#{catalogo}.motor.json"
@@ -160,16 +240,21 @@ defmodule MetadataApp.MetaPublicador do
           tag = "bc-#{nombre}"
 
           with :ok <- asegurar_release(tag, nombre),
-               {:ok, {_salida, 0}} <- ejecutar("gh", ["release", "upload", tag, bundle_nombre_fijo, "--clobber"]) do
+               {:ok, {_salida, 0}} <-
+                 ejecutar("gh", ["release", "upload", tag, bundle_nombre_fijo, "--clobber"]) do
             {:cont, {:ok, [tag | acc]}}
           else
-            {:ok, {salida, status}} -> {:halt, {:error, "gh release upload #{tag} falló (status #{status}):\n#{salida}"}}
-            {:error, mensaje} -> {:halt, {:error, mensaje}}
+            {:ok, {salida, status}} ->
+              {:halt, {:error, "gh release upload #{tag} falló (status #{status}):\n#{salida}"}}
+
+            {:error, mensaje} ->
+              {:halt, {:error, mensaje}}
           end
         end)
 
       {:error, razon} ->
-        {:error, "No se pudo preparar \"#{bundle_nombre_fijo}\" a partir de \"#{bundle_path}\": #{:file.format_error(razon)}"}
+        {:error,
+         "No se pudo preparar \"#{bundle_nombre_fijo}\" a partir de \"#{bundle_path}\": #{:file.format_error(razon)}"}
     end
     |> case do
       {:ok, tags} -> {:ok, Enum.reverse(tags)}
@@ -196,7 +281,8 @@ defmodule MetadataApp.MetaPublicador do
         if salida =~ "release not found" do
           crear_release(tag, nombre)
         else
-          {:error, "No se pudo confirmar si el release \"#{tag}\" ya existe (gh release view falló):\n#{salida}"}
+          {:error,
+           "No se pudo confirmar si el release \"#{tag}\" ya existe (gh release view falló):\n#{salida}"}
         end
 
       {:error, mensaje} ->
@@ -207,11 +293,24 @@ defmodule MetadataApp.MetaPublicador do
   defp crear_release(tag, nombre) do
     case ejecutar(
            "gh",
-           ["release", "create", tag, "--title", nombre, "--notes", "Bundle de #{nombre}, publicado por motor.publicar / el wizard de BC List."]
+           [
+             "release",
+             "create",
+             tag,
+             "--title",
+             nombre,
+             "--notes",
+             "Bundle de #{nombre}, publicado por motor.publicar / el wizard de BC List."
+           ]
          ) do
-      {:ok, {_salida, 0}} -> :ok
-      {:ok, {salida, status}} -> {:error, "gh release create #{tag} falló (status #{status}):\n#{salida}"}
-      {:error, mensaje} -> {:error, mensaje}
+      {:ok, {_salida, 0}} ->
+        :ok
+
+      {:ok, {salida, status}} ->
+        {:error, "gh release create #{tag} falló (status #{status}):\n#{salida}"}
+
+      {:error, mensaje} ->
+        {:error, mensaje}
     end
   end
 
@@ -275,6 +374,7 @@ defmodule MetadataApp.MetaPublicador do
     {:ok, System.cmd(programa, args, stderr_to_stdout: true)}
   rescue
     e in ErlangError ->
-      {:error, "No se pudo ejecutar \"#{programa}\" -- ¿está instalado y en el PATH de este proceso? (#{Exception.message(e)})"}
+      {:error,
+       "No se pudo ejecutar \"#{programa}\" -- ¿está instalado y en el PATH de este proceso? (#{Exception.message(e)})"}
   end
 end

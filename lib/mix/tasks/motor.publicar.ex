@@ -41,19 +41,17 @@ defmodule Mix.Tasks.Motor.Publicar do
        todavía no existe (encontrado real: la primera prueba de este
        mecanismo). El paquete final queda en orden topológico
        (`MetaSchemaContext.calcular_paquete_publicacion/1`).
-    2. `mix gen.catalogos` — re-sincroniza cada schema `.ex` ya generado
-       contra la metadata actual antes de empaquetar nada (encontrado real:
-       un catálogo detalle cuyo `.ex` se había generado ANTES de quedar
-       enlazado a su maestro se publicó sin `encabezado_id`/`renglon_id` en
-       el schema Ecto — la tabla física sí los tenía, pero el módulo
-       compilado no). Sin este paso, `motor.publicar` empaqueta ciegamente
-       lo que haya en disco, esté o no al día.
-    3. `mix meta.export` + `mix motor.export` + `mix plantillas.export` +
-       `mix endpoint.export` (de TODOS los catálogos, como siempre — solo
-       cambia en disco el archivo del que de verdad se tocó).
-       `endpoint.export` es nuevo (SPEC-SYS-1009202602, design.md §13,
-       2026-09-17): si la Consulta publicada tiene un Endpoint API, su
-       config (nunca sus credenciales, R69) viaja en el mismo bundle.
+    2-3. `MetaPublicador.preparar_paquete/3` — el mismo camino que "Publicar
+       paquete" en BC List (SPEC-SYS-0210202601): re-sincroniza el `.ex` de
+       cada catálogo del paquete contra la metadata actual (encontrado
+       real: un detalle cuyo `.ex` se generó ANTES de quedar enlazado a su
+       maestro se publicó sin `encabezado_id`/`renglon_id`) y exporta solo
+       esos catálogos: `.meta.json`, `.motor.json`, `.plantillas.json` y el
+       `.endpoint.json` de sus Endpoints (SPEC-SYS-1009202602 R69: nunca
+       sus credenciales). Antes corría `gen.catalogos` y los cuatro
+       `*.export` completos, cuya limpieza de huérfanos borraba archivos
+       ajenos de `priv/repo/catalogos/`; ahora no toca nada fuera del
+       paquete ni borra nada.
     4. `MetaPublicador.armar_bundle/1` — un `.tar.gz` con, por cada catálogo
        en alcance: su schema, sus migraciones, su `.meta.json`
        (+ `.motor.json` si tiene autómata propio, `.plantillas.json` si
@@ -125,14 +123,15 @@ defmodule Mix.Tasks.Motor.Publicar do
           Mix.shell().info("  incluye automáticamente: #{Enum.join(automaticos, ", ")}")
         end
 
-        Mix.shell().info("\n== re-sincronizando schemas contra la metadata actual ==")
-        Mix.Task.rerun("gen.catalogos")
+        Mix.shell().info("\n== re-sincronizando y exportando solo el paquete ==")
 
-        Mix.shell().info("\n== exportando catálogos + autómata + plantillas + endpoints ==")
-        Mix.Task.rerun("meta.export")
-        Mix.Task.rerun("motor.export")
-        Mix.Task.rerun("plantillas.export")
-        Mix.Task.rerun("endpoint.export")
+        {:ok, preparado, _apps} =
+          Ecto.Migrator.with_repo(MetadataApp.Repo, fn _repo -> MetaPublicador.preparar_paquete(catalogos) end)
+
+        case preparado do
+          :ok -> Mix.shell().info("  #{Enum.join(catalogos, ", ")}")
+          {:error, motivo} -> Mix.raise("No se pudo preparar el paquete: #{motivo}")
+        end
 
         Mix.shell().info("\n== armando bundle ==")
         armar_y_desplegar(sistema, nombres, catalogos, mensaje)

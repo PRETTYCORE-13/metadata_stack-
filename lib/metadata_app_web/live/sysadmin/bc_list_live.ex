@@ -415,8 +415,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   # El botón "Despliegue" individual (exportaba .meta.json/.motor.json a
   # disco, sin publicar nada) se sacó el 2026-07-24 al llegar el wizard de
-  # publicación: regenerar_paquete/1 + exportar_paquete/1, más abajo, ya
-  # hacen exactamente esto para el paquete completo como parte de publicar
+  # publicación: MetaPublicador.preparar_paquete/3 ya hace exactamente
+  # esto para el paquete completo como parte de publicar
   # de verdad — mantener las dos acciones por separado solo generaba
   # confusión (un botón que decía "Despliegue" pero nunca desplegaba nada).
 
@@ -1328,61 +1328,16 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     end
   end
 
-  # Orquesta el paquete completo desde la UI, sin pasar por ningún
-  # Mix.Task (a diferencia de "mix motor.publicar", que sí puede) — esto
-  # corre dentro de la app ya viva bajo supervisión, así que llama
-  # MetaSchemaContext.exportar_header/1 directo en vez de "mix meta.export".
+  # Orquesta el paquete completo desde la UI. Prepara los archivos con el
+  # mismo camino que "mix motor.publicar" (SPEC-SYS-0210202601): regenera
+  # y exporta solo el paquete, sin borrar nada.
   defp publicar_paquete(sistema, seleccionados, catalogos) do
-    with :ok <- regenerar_paquete(catalogos),
-         :ok <- exportar_paquete(catalogos),
+    with :ok <- MetaPublicador.preparar_paquete(catalogos),
          {:ok, bundle_path} <- MetaPublicador.armar_bundle(catalogos),
          {:ok, _tags} <- MetaPublicador.persistir_bundle(seleccionados, bundle_path),
          {:ok, salida} <- MetaPublicador.disparar_deploy(sistema, seleccionados, bundle_path) do
       {:ok, salida}
     end
-  end
-
-  # Equivalente de "mix gen.catalogos" para el paquete calculado — self-heal
-  # de cada schema .ex contra la metadata actual antes de empaquetar nada
-  # (mismo motivo que motor.publicar.ex: un .ex generado antes de que el
-  # catálogo quedara enlazado a un maestro, o antes de un campo nuevo,
-  # queda desactualizado en disco si nadie vuelve a correr esto). Una
-  # carpeta (schema_context_type: 2, ahora seleccionable para publicar,
-  # ver filas_arbol/1) no tiene campos propios ni tabla física — sin este
-  # salto, CatalogoGenerador.generar/1 le pega "No hay metadata en
-  # meta_schema_detail" y el reduce_while aborta TODO el paquete, aunque
-  # el resto de lo seleccionado esté perfecto.
-  defp regenerar_paquete(catalogos) do
-    Enum.reduce_while(catalogos, :ok, fn nombre, :ok ->
-      if es_carpeta?(nombre) do
-        {:cont, :ok}
-      else
-        case CatalogoGenerador.generar(nombre) do
-          {:ok, _} -> {:cont, :ok}
-          {:error, motivo} -> {:halt, {:error, "#{nombre}: #{motivo}"}}
-        end
-      end
-    end)
-  end
-
-  defp es_carpeta?(nombre) do
-    case MetaSchemaContext.obtener_header_por_nombre(nombre) do
-      %{schema_context_type: 2} -> true
-      _ -> false
-    end
-  end
-
-  defp exportar_paquete(catalogos) do
-    Enum.each(catalogos, fn nombre ->
-      case MetaSchemaContext.obtener_header_por_nombre(nombre) do
-        nil ->
-          :ok
-
-        header ->
-          MetaSchemaContext.exportar_header(header)
-          MetaEstadosAdmin.exportar_header(header)
-      end
-    end)
   end
 
   defp coincide_busqueda?(_item, ""), do: true

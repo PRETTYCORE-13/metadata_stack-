@@ -264,6 +264,19 @@ defmodule MetadataApp.ConsultaEndpoints do
   end
 
   @doc """
+  ¿`archivo` (en `dir`) es la marca de baja `{"eliminado": true}` que deja
+  `mix endpoint.despublicar`? Ninguna exportación debe pisarla ni borrarla:
+  es el registro de una baja ya publicada, y quitarla la desharía en el
+  siguiente deploy.
+  """
+  def marca_de_baja?(dir, archivo) do
+    case dir |> Path.join(archivo) |> File.read() do
+      {:ok, contenido} -> match?({:ok, %{"eliminado" => true}}, Jason.decode(contenido))
+      {:error, _} -> false
+    end
+  end
+
+  @doc """
   Publica este Endpoint a `sistema` SIN pasar por la terminal
   (SPEC-SYS-1009202602, design.md §15, R73) -- llama `MetaPublicador`
   directo, nunca `Mix.Task.rerun` (ese asume una terminal real,
