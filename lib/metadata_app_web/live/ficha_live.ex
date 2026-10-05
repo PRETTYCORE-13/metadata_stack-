@@ -880,11 +880,14 @@ defmodule MetadataAppWeb.FichaLive do
   defp guardar_cambios(socket, registro_actual, attrs, renglones_nuevos, renglones_editados, renglones_eliminados, transicion_edicion, current_scope) do
     contexto_auditoria = socket.assigns.contexto_auditoria
     catalogo_maestro = registro_actual.__struct__.__schema__(:source)
+    # SPEC-SYS-0510202601 R8: los nuevos y quitados se escriben DESPUÉS del
+    # encabezado, pero su regla PRE ya tiene que verlos.
+    renglones_por_escribir = [renglones_nuevos: renglones_nuevos, renglones_quitados: renglones_eliminados]
 
     resultado =
       Repo.transaction(fn ->
         with {:ok, actualizado} <-
-               aplicar_encabezado(registro_actual, attrs, renglones_editados, transicion_edicion, contexto_auditoria, current_scope),
+               aplicar_encabezado(registro_actual, attrs, renglones_editados, renglones_por_escribir, transicion_edicion, contexto_auditoria, current_scope),
              {:ok, _creados} <- crear_renglones_nuevos(registro_actual.id, current_scope, renglones_nuevos, contexto_auditoria),
              {:ok, _eliminados} <- Renglones.eliminar_todos(catalogo_maestro, registro_actual.id, renglones_eliminados) do
           actualizado
@@ -921,25 +924,37 @@ defmodule MetadataAppWeb.FichaLive do
     end
   end
 
-  # Sin renglones editados: comportamiento de siempre (actualizar/2, que
-  # además valida el "editable" del contrato — ver conversación previa).
-  # Con renglones editados: tiene que pasar por la transición "guardar"
-  # (R4) sí o sí, aunque @form_values venga vacío — es la única forma que
-  # el motor conoce de tocar un campo de un renglón ya persistido.
-  defp aplicar_encabezado(registro, attrs, renglones_editados, _transicion, contexto_auditoria, current_scope)
+  # Sin renglones editados: CatalogoGenerico.actualizar/5, que además valida
+  # el "editable" del contrato. Con renglones editados: tiene que pasar por
+  # la transición "guardar" (R4) sí o sí, aunque @form_values venga vacío
+  # — es la única forma que el motor conoce de tocar un campo de un
+  # renglón ya persistido. En los dos casos, `renglones_por_escribir`
+  # (nuevos y quitados) llega a la regla PRE del encabezado.
+  defp aplicar_encabezado(registro, attrs, renglones_editados, renglones_por_escribir, transicion, contexto_auditoria, current_scope)
        when map_size(renglones_editados) == 0 do
-    actualizar_si_hay_cambios(registro, current_scope, attrs, contexto_auditoria)
+    actualizar_si_hay_cambios(registro, current_scope, attrs, renglones_por_escribir, transicion, contexto_auditoria)
   end
 
-  defp aplicar_encabezado(registro, attrs, renglones_editados, transicion, _contexto_auditoria, current_scope) do
+  defp aplicar_encabezado(registro, attrs, renglones_editados, renglones_por_escribir, transicion, _contexto_auditoria, current_scope) do
     contexto = Map.merge(attrs, Permissions.contexto_confiable(current_scope))
-    MetaStateEngine.ejecutar_transicion(registro, transicion.accion, contexto, renglones: renglones_editados)
+    MetaStateEngine.ejecutar_transicion(registro, transicion.accion, contexto, [renglones: renglones_editados] ++ renglones_por_escribir)
   end
 
-  defp actualizar_si_hay_cambios(registro, _scope, attrs, _contexto_auditoria) when map_size(attrs) == 0, do: {:ok, registro}
+  # D5 de SPEC-SYS-0510202601: si solo cambian renglones (nuevos o
+  # quitados) y el catálogo tiene "guardar", se ejecuta igual con `attrs`
+  # vacío, para que corra la regla del encabezado. Sin cambios, o sin
+  # "guardar", no se toca el encabezado.
+  defp actualizar_si_hay_cambios(registro, scope, attrs, renglones_por_escribir, transicion, contexto_auditoria) do
+    if map_size(attrs) > 0 or (transicion != nil and renglones_por_escribir?(renglones_por_escribir)) do
+      CatalogoGenerico.actualizar(registro, scope, attrs, contexto_auditoria, renglones_por_escribir)
+    else
+      {:ok, registro}
+    end
+  end
 
-  defp actualizar_si_hay_cambios(registro, scope, attrs, contexto_auditoria),
-    do: CatalogoGenerico.actualizar(registro, scope, attrs, contexto_auditoria)
+  defp renglones_por_escribir?(renglones_por_escribir) do
+    Enum.any?(renglones_por_escribir, fn {_opcion, por_catalogo} -> Enum.any?(por_catalogo, fn {_catalogo, items} -> items != [] end) end)
+  end
 
   defp crear_renglones_nuevos(encabezado_id, scope, renglones, contexto_auditoria) do
     Enum.reduce_while(renglones, {:ok, []}, fn {catalogo, items}, {:ok, acc} ->

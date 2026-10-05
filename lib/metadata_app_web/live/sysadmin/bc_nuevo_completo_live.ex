@@ -182,9 +182,10 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     {:noreply, assign(socket, :campo_form, campo_form)}
   end
 
-  # Referencia (correcciones de compliance): nombre/etiqueta/opcional NUNCA
-  # vienen del form — se derivan del catálogo destino (@catalogos_referenciables,
-  # ya en memoria), siempre obligatoria. Mismo criterio que BcMotorLive.
+  # Referencia: opcional siempre false. Nombre y etiqueta son opcionales:
+  # vacíos, se derivan del catálogo destino (@catalogos_referenciables, ya
+  # en memoria) -- mismo criterio que BcMotorLive, vía
+  # FieldDesignerComponents.nombre_y_etiqueta_referencia/4.
   def handle_event("guardar_campo", %{"tipo" => "referencia"} = params, socket) do
     catalogo = params["catalogo"] || ""
     nombre_actual = nombre_sistema_desde(socket.assigns.contexto["nombre"])
@@ -199,40 +200,23 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
             {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Ese catálogo destino ya no existe."))}
 
           destino ->
-            sufijo = catalogo |> String.replace_prefix("pty_", "") |> String.replace_prefix("meta_schema_", "")
-            nombre = "#{nombre_actual}_#{sufijo}"
+            # "destino" sale de @catalogos_referenciables, cuya etiqueta
+            # trae el sufijo " (sistema)" pensado solo para distinguirlas
+            # en el <select> -- acá se usa la etiqueta LIMPIA de
+            # catalogo_sistema/1 para el campo en sí (mismo criterio que
+            # FieldDesignerComponents.construir_propiedades/3).
+            etiqueta_destino =
+              case MetaSchemaContext.catalogo_sistema(catalogo) do
+                %{etiqueta: etiqueta_limpia} -> etiqueta_limpia
+                nil -> destino.etiqueta
+              end
 
-            if Enum.any?(socket.assigns.campos, &(&1["nombre"] == nombre)) do
-              {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Ya hay un campo con ese nombre."))}
-            else
-              # "destino" sale de @catalogos_referenciables, cuya etiqueta
-              # trae el sufijo " (sistema)" pensado solo para distinguirlas
-              # en el <select> -- acá se usa la etiqueta LIMPIA de
-              # catalogo_sistema/1 para el campo en sí (mismo criterio que
-              # FieldDesignerComponents.construir_propiedades/3).
-              etiqueta =
-                case MetaSchemaContext.catalogo_sistema(catalogo) do
-                  %{etiqueta: etiqueta_limpia} -> etiqueta_limpia
-                  nil -> destino.etiqueta
-                end
+            case FieldDesignerComponents.nombre_y_etiqueta_referencia(params, catalogo, nombre_actual, etiqueta_destino) do
+              {:error, motivo} ->
+                {:noreply, update(socket, :campo_form, &Map.put(&1, "error", motivo))}
 
-              campo =
-                %{
-                  "nombre" => nombre,
-                  "etiqueta" => etiqueta,
-                  "tipo" => "referencia",
-                  "longitud" => "",
-                  "precision" => "",
-                  "escala" => "",
-                  "catalogo" => catalogo,
-                  "opcional" => false
-                }
-                |> FieldDesignerComponents.agregar_visualizacion_por_defecto(catalogo)
-
-              {:noreply,
-               socket
-               |> update(:campos, &(&1 ++ [campo]))
-               |> assign(:campo_form, nil)}
+              {:ok, nombre, etiqueta} ->
+                agregar_campo_referencia(socket, nombre, etiqueta, catalogo)
             end
         end
     end
@@ -258,6 +242,9 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
 
       Enum.any?(socket.assigns.campos, &(&1["nombre"] == nombre)) ->
         {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Ya hay un campo con ese nombre."))}
+
+      FieldDesignerComponents.etiqueta_repetida?(etiqueta, Enum.map(socket.assigns.campos, & &1["etiqueta"])) ->
+        {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Ya hay un campo con esa etiqueta."))}
 
       true ->
         campo = %{
@@ -624,6 +611,50 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
     case socket.assigns.contexto["carpeta_padre"] do
       carpeta when carpeta in [nil, ""] -> ""
       carpeta -> MetaSchemaContext.modulo_de_nav(socket.assigns.modulos, "/" <> carpeta <> "/_")
+    end
+  end
+
+  # Misma etiqueta que guarda guardar_campo de referencia: la limpia de
+  # catalogo_sistema/1, sin el sufijo " (sistema)" del <select>.
+  defp etiqueta_destino_sugerida(_catalogos, ""), do: ""
+
+  defp etiqueta_destino_sugerida(catalogos, catalogo) do
+    case MetaSchemaContext.catalogo_sistema(catalogo) do
+      %{etiqueta: etiqueta} -> etiqueta
+      nil -> Enum.find_value(catalogos, "", &(&1.nombre == catalogo && &1.etiqueta))
+    end
+  end
+
+  defp nombre_mostrado(nombre, _sufijo_sugerido) when nombre not in [nil, ""], do: nombre
+  defp nombre_mostrado(_nombre, ""), do: "…"
+  defp nombre_mostrado(_nombre, sufijo_sugerido), do: sufijo_sugerido
+
+  defp agregar_campo_referencia(socket, nombre, etiqueta, catalogo) do
+    cond do
+      Enum.any?(socket.assigns.campos, &(&1["nombre"] == nombre)) ->
+        {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Ya hay un campo con ese nombre."))}
+
+      FieldDesignerComponents.etiqueta_repetida?(etiqueta, Enum.map(socket.assigns.campos, & &1["etiqueta"])) ->
+        {:noreply, update(socket, :campo_form, &Map.put(&1, "error", "Ya hay un campo con esa etiqueta."))}
+
+      true ->
+        campo =
+          %{
+            "nombre" => nombre,
+            "etiqueta" => etiqueta,
+            "tipo" => "referencia",
+            "longitud" => "",
+            "precision" => "",
+            "escala" => "",
+            "catalogo" => catalogo,
+            "opcional" => false
+          }
+          |> FieldDesignerComponents.agregar_visualizacion_por_defecto(catalogo)
+
+        {:noreply,
+         socket
+         |> update(:campos, &(&1 ++ [campo]))
+         |> assign(:campo_form, nil)}
     end
   end
 
@@ -1206,8 +1237,13 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
   attr :nombre_base, :string, required: true
 
   defp modal_campo(assigns) do
+    catalogo = assigns.form["catalogo"] || ""
+
     assigns =
-      assign(assigns, :catalogos_visibles, MetaSchemaContext.catalogos_del_modulo(assigns.catalogos, assigns.form["modulo"] || "", assigns.modulos))
+      assigns
+      |> assign(:catalogos_visibles, MetaSchemaContext.catalogos_del_modulo(assigns.catalogos, assigns.form["modulo"] || "", assigns.modulos))
+      |> assign(:sufijo_sugerido, if(catalogo == "", do: "", else: FieldDesignerComponents.sufijo_referencia(catalogo)))
+      |> assign(:etiqueta_sugerida, etiqueta_destino_sugerida(assigns.catalogos, catalogo))
 
     ~H"""
     <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
@@ -1222,9 +1258,10 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
             </select>
           </div>
 
-          <%!-- Referencia: nombre/etiqueta/longitud/precisión/escala/opcional
-               NO se capturan — se derivan del catálogo destino, siempre
-               obligatoria. Mismo criterio que BcMotorLive. --%>
+          <%!-- Referencia: longitud/precisión/escala/opcional NO se
+               capturan, siempre obligatoria. Nombre y etiqueta son
+               opcionales: vacíos, se derivan del catálogo destino. Mismo
+               criterio que BcMotorLive. --%>
           <%= if @form["tipo"] == "referencia" do %>
             <FieldDesignerComponents.selector_modulo id="campo-modulo" modulos={@modulos} valor={@form["modulo"]} />
             <div>
@@ -1235,8 +1272,23 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoCompletoLive do
                   <option value={c.nombre} selected={@form["catalogo"] == c.nombre}>{c.etiqueta}</option>
                 <% end %>
               </select>
+            </div>
+            <div>
+              <label class="block text-gray-700 mb-0.5">Nombre <span class="text-gray-400">(opcional)</span></label>
+              <input type="text" id="campo-referencia-nombre" name="nombre" value={@form["nombre"]} placeholder={@sufijo_sugerido}
+                pattern="[a-z][a-z0-9_]*" maxlength="50"
+                class="w-full border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
               <p class="mt-0.5 text-gray-500">
-                El nombre, la etiqueta y el resto de las propiedades del campo se toman del catálogo elegido — siempre obligatorio.
+                Se va a crear como <strong class="font-mono">{@nombre_base}_{nombre_mostrado(@form["nombre"], @sufijo_sugerido)}</strong>
+              </p>
+            </div>
+            <div>
+              <label class="block text-gray-700 mb-0.5">Etiqueta <span class="text-gray-400">(opcional)</span></label>
+              <input type="text" id="campo-referencia-etiqueta" name="etiqueta" value={@form["etiqueta"]} placeholder={@etiqueta_sugerida}
+                maxlength="100"
+                class="w-full border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500" />
+              <p class="mt-0.5 text-gray-500">
+                Si los dejas vacíos se usan el nombre y la etiqueta del catálogo elegido.
               </p>
             </div>
           <% else %>

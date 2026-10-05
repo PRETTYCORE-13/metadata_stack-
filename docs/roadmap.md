@@ -167,3 +167,52 @@ para que este tipo de drift se detecte ANTES de un deploy real en vez
 de tumbarlo a mitad de camino — este incidente puntual ya se resolvió,
 pero el mecanismo que lo permitió (catálogos `pty_*` que pueden quedar
 con dependencias rotas en un ambiente específico) sigue igual.
+
+## 18 — Valor inexistente en un campo referencia truena en vez de dar error de validación
+
+Encontrado el 2026-10-05, durante la verificación real de
+SPEC-SYS-0510202601 (A5). Al guardar en un campo referencia un id que
+no existe en el catálogo destino, el alta lanza `Ecto.ConstraintError`
+en lugar de regresar el error de changeset "no existe un registro con
+este valor". Afecta a **cualquier** referencia, con nombre propio o no.
+
+Causa: `MetaCatalogoGenerico.aplicar_referencia/3` declara
+`foreign_key_constraint(cs, campo, ...)` sin `name:`, así que Ecto
+espera el nombre por omisión (`<tabla>_<campo>_fkey`, con el nombre de
+la tabla repetido porque el campo ya lo trae como prefijo). La llave
+real en Postgres se llama distinto (ej. `pty_zz_refnom_clave_alterna_fkey`),
+no coincide, y la violación se convierte en excepción.
+
+Impacto: por pantalla, el combo solo ofrece valores válidos, así que
+casi no se ve. Por API, importación de datos o reglas, una referencia
+mal capturada regresa un error 500 en vez de un 422 con el campo
+señalado.
+
+Por decidir antes de empezar: pasar `name:` con el nombre real que crea
+`CatalogoGenerador` (y confirmar que es el mismo en catálogos viejos y
+nuevos), o leerlo de Postgres. Va en una spec SYS propia, con prueba de
+regresión por API.
+
+## 19 — Los textos se guardan con los espacios que se teclean al inicio y al final
+
+Encontrado el 2026-10-05 por el usuario, en la verificación por pantalla
+de SPEC-SYS-0510202601 (E3): una partida capturada como `"PROHIBIDO "`
+(con un espacio al final) se guardó tal cual y no la detectó una regla
+que comparaba contra `"PROHIBIDO"`.
+
+Hoy ningún campo de texto recorta espacios al guardar, salvo que tenga
+configurada una transformación. La mayoría de los ERP los quitan solos
+al capturar. Sin eso aparecen, con el tiempo: registros "iguales" que no
+se empatan, búsquedas que no encuentran, índices únicos que no detectan
+duplicados (`"ABC"` y `"ABC "`) e importaciones que no cruzan con lo que
+ya existe.
+
+Mientras tanto, la guía de uso de SPEC-SYS-0510202601 pide que toda
+regla que compare texto lo normalice antes (`String.trim/1`, y
+mayúsculas si aplica).
+
+Por decidir antes de empezar: recortar en todos los campos de texto por
+omisión (con una opción por campo para no hacerlo) o solo en los que lo
+pidan; si se corrigen los datos que ya existen; y el efecto en índices
+únicos que hoy conviven con variantes con espacio. Va en una spec SYS
+propia, porque toca a todos los catálogos.

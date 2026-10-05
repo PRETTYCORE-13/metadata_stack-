@@ -599,7 +599,7 @@ defmodule MetadataApp.MetaImportacionDatos do
   end
 
   defp aplicar_actualizacion(existente, scope, attrs, catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo) do
-    with {:ok, actualizado} <- aplicar_encabezado(existente, scope, attrs, catalogo_maestro, editar_por_catalogo),
+    with {:ok, actualizado} <- aplicar_encabezado(existente, scope, attrs, catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo),
          {:ok, _nuevos} <- Renglones.crear_todos(catalogo_maestro, existente.id, nuevo_por_catalogo) do
       {:ok, actualizado}
     end
@@ -612,17 +612,21 @@ defmodule MetadataApp.MetaImportacionDatos do
   # manual de un renglón existente, CompliancePty C6) -- sin ella, la
   # fila entera se rechaza (R11), nunca se editan los renglones "por la
   # ventana" saltándose el motor de estados.
-  defp aplicar_encabezado(existente, scope, attrs, _catalogo_maestro, editar_por_catalogo) when map_size(editar_por_catalogo) == 0,
-    do: CatalogoGenerico.actualizar(existente, scope, attrs)
+  #
+  # `nuevo_por_catalogo` se crea después (Renglones.crear_todos/3), pero la
+  # regla PRE del encabezado ya lo ve (SPEC-SYS-0510202601 R8).
+  defp aplicar_encabezado(existente, scope, attrs, _catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo)
+       when map_size(editar_por_catalogo) == 0,
+       do: CatalogoGenerico.actualizar(existente, scope, attrs, %{}, renglones_nuevos: nuevo_por_catalogo)
 
-  defp aplicar_encabezado(existente, _scope, attrs, catalogo_maestro, editar_por_catalogo) do
+  defp aplicar_encabezado(existente, _scope, attrs, catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo) do
     case MetaStateEngine.transicion_guardar(catalogo_maestro, existente.estado_id) do
       nil ->
         {catalogo, _items} = Enum.at(editar_por_catalogo, 0)
         {:error, {:renglon_sin_guardar, catalogo}}
 
       transicion ->
-        MetaStateEngine.ejecutar_transicion(existente, transicion.accion, attrs, renglones: editar_por_catalogo)
+        MetaStateEngine.ejecutar_transicion(existente, transicion.accion, attrs, renglones: editar_por_catalogo, renglones_nuevos: nuevo_por_catalogo)
     end
   end
 

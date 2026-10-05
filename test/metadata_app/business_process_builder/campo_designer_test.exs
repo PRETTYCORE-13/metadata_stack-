@@ -214,4 +214,63 @@ defmodule MetadataApp.BusinessProcessBuilder.CampoDesignerTest do
       assert {:error, "Elige a qué catálogo apunta la referencia."} = FieldDesignerComponents.construir_propiedades(form, [], "cat")
     end
   end
+
+  # SPEC-SYS-0510202601 R1-R4. Destino de sistema (meta_schema_empresa):
+  # resolver_destino_referencia/1 lo arma sin tocar la base.
+  describe "FieldDesignerComponents.construir_propiedades/3 — referencia con nombre propio" do
+    defp form_referencia(nombre, etiqueta) do
+      FieldDesignerComponents.estado_inicial()
+      |> Map.put("tipo", "referencia")
+      |> Map.put("catalogo", "meta_schema_empresa")
+      |> Map.put("nombre", nombre)
+      |> Map.put("etiqueta", etiqueta)
+    end
+
+    test "sin nombre ni etiqueta usa los de siempre (R2, R3)" do
+      assert {:ok, "cat_empresa", props} = FieldDesignerComponents.construir_propiedades(form_referencia("", ""), [], "cat")
+      assert props["etiqueta"] == "Empresa"
+      assert props["catalogo"] == "meta_schema_empresa"
+    end
+
+    test "nombre y etiqueta escritos se respetan (R1, R3)" do
+      assert {:ok, "cat_empresa_entrega", props} =
+               FieldDesignerComponents.construir_propiedades(form_referencia("empresa_entrega", "Empresa que entrega"), [], "cat")
+
+      assert props["etiqueta"] == "Empresa que entrega"
+      assert props["catalogo"] == "meta_schema_empresa"
+    end
+
+    test "segunda referencia al mismo destino con otro nombre se acepta (R4)" do
+      existente = %{schema_context_field: "cat_empresa", schema_context_properties: %{"etiqueta" => "Empresa"}}
+
+      assert {:ok, "cat_empresa_entrega", _props} =
+               FieldDesignerComponents.construir_propiedades(form_referencia("empresa_entrega", "Empresa que entrega"), [existente], "cat")
+    end
+
+    test "segunda referencia con la etiqueta vacía repite la del destino y se rechaza (R4.1)" do
+      existente = %{schema_context_field: "cat_empresa", schema_context_properties: %{"etiqueta" => "Empresa"}}
+
+      assert {:error, "Ya hay un campo con esa etiqueta."} =
+               FieldDesignerComponents.construir_propiedades(form_referencia("empresa_entrega", ""), [existente], "cat")
+    end
+
+    test "etiqueta repetida en un campo que no es referencia se rechaza, sin importar mayúsculas ni espacios (R4.1)" do
+      existente = %{schema_context_field: "cat_color", schema_context_properties: %{"etiqueta" => "Color"}}
+      form = form_referencia("tono", " color ") |> Map.put("tipo", "string")
+
+      assert {:error, "Ya hay un campo con esa etiqueta."} = FieldDesignerComponents.construir_propiedades(form, [existente], "cat")
+    end
+
+    test "nombre repetido se rechaza, sea del tipo que sea (R4)" do
+      existente = %{schema_context_field: "cat_empresa"}
+
+      assert {:error, "Ya hay un campo con ese nombre."} =
+               FieldDesignerComponents.construir_propiedades(form_referencia("", ""), [existente], "cat")
+    end
+
+    test "nombre inválido se rechaza (R1)" do
+      assert {:error, motivo} = FieldDesignerComponents.construir_propiedades(form_referencia("Empresa Entrega", ""), [], "cat")
+      assert motivo =~ "Nombre inválido"
+    end
+  end
 end

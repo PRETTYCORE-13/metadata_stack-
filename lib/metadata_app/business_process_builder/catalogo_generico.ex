@@ -548,7 +548,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # exista, sin importar el alcance_tipo configurado -- es dato de
   # auditoría útil aunque el catálogo hoy no filtre por él, y evita tener
   # que re-crear el rol_alcance si más adelante alguien lo cambia a
-  # :propio. Nunca editable después -- ver la nota en actualizar_directo/5,
+  # :propio. Nunca editable después -- ver la nota en actualizar_directo/6,
   # el changeset generado ni siquiera lo castea (mismo mecanismo que ya
   # protege estado_id).
   defp estampar_creado_por_en_attrs(schema_mod, %Scope{usuario: usuario}, attrs) when not is_nil(usuario) do
@@ -640,7 +640,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # no existe (con_columna-style) o si `attrs` no trae ese campo.
   # `campos_permitidos` es explícito por call site a propósito:
   # creado_por_id SOLO se estampa al crear (crear_simple/3) -- si
-  # actualizar_directo/5 lo incluyera acá, un PUT/PATCH que por descuido
+  # actualizar_directo/6 lo incluyera acá, un PUT/PATCH que por descuido
   # (o a propósito) traiga "creado_por_id" en el body podría pisar el
   # autor real, exactamente el tampering que cast(attrs, @campos) ya
   # bloqueaba antes de este fix. branch_id/sales_unit_id/inventory_id SÍ
@@ -794,10 +794,15 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # bloquear el DELETE de un renglón (R12).
   # `scope` (Fase 4b) posicional, sin default -- mismo criterio que
   # crear/4. Acá SÍ hay changeset antes de bifurcar (ver
-  # actualizar_directo/5), así que la validación de alcance corre sobre
+  # actualizar_directo/6), así que la validación de alcance corre sobre
   # el changeset real, no sobre `attrs` crudo como en crear/4.
-  @spec actualizar(struct(), Scope.t_ou_sistema(), map(), map()) :: {:ok, struct()} | {:error, %Ecto.Changeset{} | String.t()}
-  def actualizar(registro, scope, attrs, contexto \\ %{}) do
+  #
+  # `opciones[:renglones_nuevos]` / `opciones[:renglones_quitados]`
+  # (SPEC-SYS-0510202601 R8): renglones que el caller crea o quita después,
+  # en la misma transacción; solo los ve la regla PRE del encabezado (ver
+  # MetaStateEngine.editar_con_transicion/4).
+  @spec actualizar(struct(), Scope.t_ou_sistema(), map(), map(), keyword()) :: {:ok, struct()} | {:error, %Ecto.Changeset{} | String.t()}
+  def actualizar(registro, scope, attrs, contexto \\ %{}, opciones \\ []) do
     schema_mod = registro.__struct__
     catalogo = schema_mod.__schema__(:source)
     header = MetadataApp.BusinessProcessBuilder.MetaSchemaContext.obtener_header_por_nombre(catalogo)
@@ -808,7 +813,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     else
       antes = serializar(registro)
 
-      # Mismo lookup que actualizar_directo/5 hace por su cuenta para
+      # Mismo lookup que actualizar_directo/6 hace por su cuenta para
       # decidir el ciclo de reglas — repetirlo acá (barato, un SELECT) es
       # más simple que cambiar el contrato de retorno de esa función solo
       # para poder etiquetar la auditoría con el nombre de la transición.
@@ -819,7 +824,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
         end
 
       registro
-      |> actualizar_directo(scope, attrs, schema_mod, catalogo)
+      |> actualizar_directo(scope, attrs, schema_mod, catalogo, opciones)
       |> auditar_edicion(catalogo, operacion, antes, contexto)
     end
   end
@@ -839,7 +844,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
 
   defp auditar_edicion(error, _catalogo, _operacion, _antes, _contexto), do: error
 
-  defp actualizar_directo(registro, scope, attrs, schema_mod, catalogo) do
+  defp actualizar_directo(registro, scope, attrs, schema_mod, catalogo, opciones) do
     transicion = MetadataApp.MetaStateEngine.transicion_guardar(catalogo, registro.estado_id)
 
     detalles = MetadataApp.BusinessProcessBuilder.MetaSchemaContext.listar_detalles(catalogo)
@@ -869,7 +874,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     if changeset.valid? do
       case transicion do
         nil -> Repo.update(changeset)
-        transicion -> MetadataApp.MetaStateEngine.editar_con_transicion(changeset, transicion, attrs)
+        transicion -> MetadataApp.MetaStateEngine.editar_con_transicion(changeset, transicion, attrs, opciones)
       end
     else
       {:error, changeset}
@@ -903,7 +908,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
 
   # Alcance de Datos en escritura, lado UPDATE (Fase 4b) — a diferencia
   # del lado CREATE (preparar_attrs_con_alcance/3, sobre `attrs` crudo),
-  # acá ya hay un changeset real armado (actualizar_directo/5), así que se
+  # acá ya hay un changeset real armado (actualizar_directo/6), así que se
   # valida contra Ecto.Changeset.get_change/2 (NO get_field/2, ver la nota
   # en validar_campo_en_changeset/4 más abajo) -- si el campo no viene en
   # ESTA edición puntual, no hay nada que validar, nunca rechaza una

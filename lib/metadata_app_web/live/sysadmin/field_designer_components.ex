@@ -219,16 +219,15 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
         dependencias_check
 
       true ->
-        sufijo = catalogo |> String.replace_prefix("pty_", "") |> String.replace_prefix("meta_schema_", "")
-        nombre = "#{catalogo_nombre}_#{sufijo}"
         cap = form["capacidades"] || %{}
 
-        if Enum.any?(campos_existentes, &(&1.schema_context_field == nombre)) do
-          {:error, "Ya existe un campo que referencia a #{destino.etiqueta} en este catálogo."}
-        else
+        with {:ok, nombre, etiqueta} <- nombre_y_etiqueta_referencia(form, catalogo, catalogo_nombre, destino.etiqueta),
+             false <- Enum.any?(campos_existentes, &(&1.schema_context_field == nombre)),
+             {:etiqueta, false} <-
+               {:etiqueta, etiqueta_repetida?(etiqueta, Enum.map(campos_existentes, & &1.schema_context_properties["etiqueta"]))} do
           propiedades =
             %{
-              "etiqueta" => destino.etiqueta,
+              "etiqueta" => etiqueta,
               "tipo" => "referencia",
               "orden" => length(campos_existentes) + 1,
               "visible" => cap["oculto"] != true,
@@ -240,8 +239,49 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
             |> agregar_relaciones(form, cap)
 
           {:ok, nombre, propiedades}
+        else
+          true -> {:error, "Ya hay un campo con ese nombre."}
+          {:etiqueta, true} -> {:error, "Ya hay un campo con esa etiqueta."}
+          {:error, _motivo} = error -> error
         end
     end
+  end
+
+  @doc """
+  ¿`etiqueta` ya la usa otro campo del catálogo? Sin distinguir mayúsculas
+  ni espacios al inicio o al final (SPEC-SYS-0510202601 R4.1): la
+  importación de datos empata columnas por etiqueta, y dos iguales hacen
+  que una se pierda. Lo usan el Motor y el wizard `nuevo-completo`.
+  """
+  def etiqueta_repetida?(etiqueta, etiquetas_existentes) do
+    normalizada = normalizar_etiqueta(etiqueta)
+    Enum.any?(etiquetas_existentes, &(normalizar_etiqueta(&1) == normalizada))
+  end
+
+  defp normalizar_etiqueta(etiqueta), do: (etiqueta || "") |> String.trim() |> String.downcase()
+
+  @doc """
+  Nombre y etiqueta de un campo referencia (SPEC-SYS-0510202601 R1-R3):
+  lo que se escribió en el formulario o, si quedó vacío, lo de siempre
+  (`<catálogo>_<destino sin prefijo>` y la etiqueta del destino). Lo usan
+  el Motor y el wizard `nuevo-completo`.
+  """
+  def nombre_y_etiqueta_referencia(form, catalogo, catalogo_nombre, etiqueta_destino) do
+    sufijo = String.trim(form["nombre"] || "")
+    etiqueta = String.trim(form["etiqueta"] || "")
+
+    if sufijo != "" and not Regex.match?(~r/^[a-z][a-z0-9_]{0,49}$/, sufijo) do
+      {:error, "Nombre inválido — minúsculas, sin acentos ni espacios, debe empezar con una letra."}
+    else
+      sufijo = if sufijo == "", do: sufijo_referencia(catalogo), else: sufijo
+      etiqueta = if etiqueta == "", do: etiqueta_destino, else: etiqueta
+      {:ok, "#{catalogo_nombre}_#{sufijo}", etiqueta}
+    end
+  end
+
+  @doc "Sufijo del nombre de siempre de un campo referencia: el catálogo destino sin su prefijo."
+  def sufijo_referencia(catalogo) do
+    catalogo |> String.replace_prefix("pty_", "") |> String.replace_prefix("meta_schema_", "")
   end
 
   # Empresa/Branch/InventoryLocation/SalesUnit (tablas de sistema, ver
@@ -303,6 +343,9 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
 
       Enum.any?(campos_existentes, &(&1.schema_context_field == nombre)) ->
         {:error, "Ya existe un campo \"#{sufijo}\" en este catálogo."}
+
+      etiqueta_repetida?(etiqueta, Enum.map(campos_existentes, & &1.schema_context_properties["etiqueta"])) ->
+        {:error, "Ya hay un campo con esa etiqueta."}
 
       true ->
         propiedades =
@@ -737,6 +780,25 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
     """
   end
 
+  # Nombre y etiqueta que se usan si el campo referencia los deja vacíos
+  # (ver nombre_y_etiqueta_referencia/4) -- solo como placeholder.
+  defp assign_sugerencias_referencia(%{form: %{"tipo" => "referencia", "catalogo" => catalogo}} = assigns)
+       when catalogo not in [nil, ""] do
+    etiqueta = Enum.find_value(assigns.catalogos_visibles, "", &(&1.nombre == catalogo && &1.etiqueta))
+
+    assigns
+    |> assign(:sufijo_sugerido, sufijo_referencia(catalogo))
+    |> assign(:etiqueta_sugerida, etiqueta)
+  end
+
+  defp assign_sugerencias_referencia(assigns) do
+    assigns |> assign(:sufijo_sugerido, "") |> assign(:etiqueta_sugerida, "")
+  end
+
+  defp nombre_mostrado(nombre, _sufijo_sugerido) when nombre not in [nil, ""], do: nombre
+  defp nombre_mostrado(_nombre, ""), do: "…"
+  defp nombre_mostrado(_nombre, sufijo_sugerido), do: sufijo_sugerido
+
   defp paso2_capacidades(assigns) do
     assigns =
       assigns
@@ -745,6 +807,7 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
       |> assign(:campos_destino, campos_destino_referencia(assigns.form["catalogo"]))
       |> assign(:otros_referencia, Enum.filter(assigns.campos, &(&1.schema_context_properties["tipo"] == "referencia")))
       |> assign(:catalogos_visibles, MetaSchemaContext.catalogos_del_modulo(assigns.catalogos, assigns.form["modulo"] || "", assigns.modulos))
+      |> assign_sugerencias_referencia()
 
     ~H"""
     <div class="grid grid-cols-[1fr_260px]">
@@ -763,8 +826,21 @@ defmodule MetadataAppWeb.Sysadmin.FieldDesignerComponents do
               <option value="">— Elegir —</option>
               <option :for={c <- @catalogos_visibles} value={c.nombre} selected={@form["catalogo"] == c.nombre}>{c.etiqueta}</option>
             </select>
-            <p class="mt-0.5 text-gray-500">El nombre y la etiqueta del campo se toman del catálogo elegido — siempre obligatorio.</p>
           </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-gray-700 mb-0.5 font-semibold">Nombre técnico <span class="font-normal text-gray-400">(opcional)</span></label>
+              <input type="text" id="asistente-referencia-nombre" name="nombre" value={@form["nombre"]} placeholder={@sufijo_sugerido}
+                pattern="[a-z][a-z0-9_]*" maxlength="50" class="w-full border border-gray-300 rounded-lg px-2 py-1.5" />
+              <p class="mt-0.5 text-gray-500 font-mono text-[10.5px]">{@nombre_base}_{nombre_mostrado(@form["nombre"], @sufijo_sugerido)}</p>
+            </div>
+            <div>
+              <label class="block text-gray-700 mb-0.5 font-semibold">Etiqueta <span class="font-normal text-gray-400">(opcional)</span></label>
+              <input type="text" id="asistente-referencia-etiqueta" name="etiqueta" value={@form["etiqueta"]} placeholder={@etiqueta_sugerida}
+                maxlength="100" class="w-full border border-gray-300 rounded-lg px-2 py-1.5" />
+            </div>
+          </div>
+          <p class="text-gray-500">Si los dejas vacíos se usan el nombre y la etiqueta del catálogo elegido. Escríbelos cuando el catálogo apunte más de una vez al mismo destino (por ejemplo, "unidad_base" y "unidad_venta").</p>
         <% else %>
           <div class="grid grid-cols-2 gap-2">
             <div>

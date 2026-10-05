@@ -61,6 +61,8 @@ This is a web application written using the Phoenix web framework.
   cliente final, alta capacidad de respuesta (performance),
   escalabilidad, y volumen transaccional masivo — no solo "que
   funcione".
+- **Si la información no es certera, no darla.** Nunca exagerar; es
+  mejor informar que se carece de la información.
 - **Al revisar una SPEC** (`docs/specs/SPEC-*`), si aplica, proponer
   mejoras — pero nunca escribirlas directo en el documento: pedir
   confirmación/autorización primero para modificar la SPEC.

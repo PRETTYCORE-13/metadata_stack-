@@ -62,6 +62,13 @@ defmodule MetadataApp.MetaStateEngine do
   `MetaStateEngine.Reglas.Pre.evaluar("campos_requeridos", registro,
   contexto, %{"campos" => [...]})` — mismo mecanismo que cualquier
   catálogo, sin diferencia por ser detalle.
+
+  `opciones[:renglones_nuevos]` (`%{"catalogo_detalle" => [attrs, ...]}`)
+  y `opciones[:renglones_quitados]` (`%{"catalogo_detalle" => [renglon_id,
+  ...]}`) — SPEC-SYS-0510202601 R7/R8: los renglones que el caller (la
+  Ficha) va a crear o quitar DESPUÉS, en la misma transacción. Acá no se
+  escriben; solo los ve la regla PRE del encabezado en
+  `contexto["renglones_propuestos"]` (ver `Renglones.propuestos/3`).
   """
   @spec ejecutar_transicion(struct(), String.t(), map(), keyword()) :: {:ok, struct()} | {:error, term()}
   def ejecutar_transicion(registro, accion, contexto, opciones \\ []) when is_map(contexto) do
@@ -81,7 +88,13 @@ defmodule MetadataApp.MetaStateEngine do
     with {:ok, transicion} <- resolver_transicion(header, registro_actual.estado_id, accion),
          {:ok, changeset} <- construir_changeset_transicion(registro_actual, transicion, contexto),
          {:ok, renglones} <- resolver_renglones(registro_actual, transicion, renglones_spec),
-         :ok <- evaluar_precondiciones_todos(transicion, Ecto.Changeset.apply_changes(changeset), renglones, contexto) do
+         contexto_header =
+           con_renglones_propuestos(contexto, header.id, registro_actual.id, %{
+             editados: Enum.map(renglones, & &1.changeset),
+             nuevos: Keyword.get(opciones, :renglones_nuevos, %{}),
+             quitados: Keyword.get(opciones, :renglones_quitados, %{})
+           }),
+         :ok <- evaluar_precondiciones_todos(transicion, Ecto.Changeset.apply_changes(changeset), renglones, contexto, contexto_header) do
       ejecutar_nucleo(changeset, header, transicion, contexto, renglones)
     end
   end
@@ -141,8 +154,10 @@ defmodule MetadataApp.MetaStateEngine do
   """
   @spec dar_de_alta(module(), map(), Transicion.t(), map(), map()) :: {:ok, struct()} | {:error, term()}
   def dar_de_alta(schema_mod, attrs, %Transicion{} = transicion, contexto, renglones_spec \\ %{}) when is_map(contexto) do
+    contexto_pre = con_renglones_propuestos(contexto, transicion.meta_schema_header_id, nil, %{nuevos: renglones_spec})
+
     with {:ok, changeset} <- construir_changeset_valido(schema_mod, attrs),
-         :ok <- evaluar_precondiciones(transicion, Ecto.Changeset.apply_changes(changeset), contexto) do
+         :ok <- evaluar_precondiciones(transicion, Ecto.Changeset.apply_changes(changeset), contexto_pre) do
       ejecutar_nucleo_alta(changeset, transicion, contexto, renglones_spec)
     end
   end
@@ -198,11 +213,20 @@ defmodule MetadataApp.MetaStateEngine do
   "no puede llamarse X" bloquea la edición ahí mismo, no un guardar
   posterior. `changeset` ya viene validado (campos editables, tipos, etc.)
   por `BusinessProcessBuilder.CatalogoGenerico.actualizar/2` — acá solo se agrega el ciclo.
+
+  `opciones[:renglones_nuevos]` / `opciones[:renglones_quitados]`: mismo
+  significado que en `ejecutar_transicion/4` (SPEC-SYS-0510202601 R8).
   """
-  @spec editar_con_transicion(Ecto.Changeset.t(), Transicion.t(), map()) ::
+  @spec editar_con_transicion(Ecto.Changeset.t(), Transicion.t(), map(), keyword()) ::
           {:ok, struct()} | {:error, term()}
-  def editar_con_transicion(changeset, %Transicion{} = transicion, contexto) when is_map(contexto) do
-    with :ok <- evaluar_precondiciones(transicion, Ecto.Changeset.apply_changes(changeset), contexto) do
+  def editar_con_transicion(changeset, %Transicion{} = transicion, contexto, opciones \\ []) when is_map(contexto) do
+    contexto_pre =
+      con_renglones_propuestos(contexto, transicion.meta_schema_header_id, changeset.data.id, %{
+        nuevos: Keyword.get(opciones, :renglones_nuevos, %{}),
+        quitados: Keyword.get(opciones, :renglones_quitados, %{})
+      })
+
+    with :ok <- evaluar_precondiciones(transicion, Ecto.Changeset.apply_changes(changeset), contexto_pre) do
       ejecutar_nucleo_editar(changeset, transicion, contexto)
     end
   end
@@ -226,6 +250,9 @@ defmodule MetadataApp.MetaStateEngine do
     header = obtener_header!(modulo)
 
     recurso = registro_actual.__struct__.__schema__(:source)
+    # D6 de SPEC-SYS-0510202601: los botones se evalúan con los mismos
+    # renglones (todos existentes) que verá la regla al ejecutar.
+    contexto = con_renglones_propuestos(contexto, header.id, registro_actual.id, %{})
 
     header.id
     |> transiciones_desde(registro_actual.estado_id)
@@ -493,7 +520,10 @@ defmodule MetadataApp.MetaStateEngine do
   # para que el 422 le diga al cliente CUÁL ítem rechazó, no solo que algo
   # falló. Cada catálogo (header y cada detalle) resuelve sus PROPIAS
   # reglas (Reglas.evaluar_pre/3 despacha por el struct del registro).
-  defp evaluar_precondiciones_todos(transicion, registro_header, renglones, contexto) do
+  # `contexto_header`: el mismo `contexto` más `"renglones_propuestos"`
+  # (SPEC-SYS-0510202601 R7) — solo para la regla del encabezado; cada
+  # renglón sigue recibiendo `contexto` tal cual (R11).
+  defp evaluar_precondiciones_todos(transicion, registro_header, renglones, contexto, contexto_header) do
     # `recurso` SIEMPRE es el catálogo MAESTRO, incluso para las
     # precondiciones de un renglón -- hallazgo real 2026-08-25: un
     # renglón no tiene permisos RBAC propios ("un detalle nunca tiene
@@ -507,7 +537,7 @@ defmodule MetadataApp.MetaStateEngine do
     # incluido (no existe esa fila en meta_schema_permiso, no es un tema
     # de qué rol la tenga otorgada).
     recurso = registro_header.__struct__.__schema__(:source)
-    fallas_header = evaluar_precondiciones_lista(transicion, registro_header, recurso, contexto)
+    fallas_header = evaluar_precondiciones_lista(transicion, registro_header, recurso, contexto_header)
 
     # apply_changes (no el struct crudo): mismo criterio que el header —
     # las PRE de un renglón ven los valores YA PROPUESTOS (Fase 3, si esa
@@ -529,6 +559,17 @@ defmodule MetadataApp.MetaStateEngine do
     case fallas_header ++ fallas_renglones do
       [] -> :ok
       fallas -> {:error, {:precondiciones, fallas}}
+    end
+  end
+
+  # SPEC-SYS-0510202601 R7/R10: agrega `"renglones_propuestos"` solo si el
+  # catálogo es maestro de algún detalle; si no, `contexto` sin cambios.
+  # Nunca se agrega al contexto que sigue a las reglas POST ni al evento:
+  # trae structs que no se serializan.
+  defp con_renglones_propuestos(contexto, header_id, encabezado_id, cambios) do
+    case MetadataApp.Renglones.propuestos(header_id, encabezado_id, cambios) do
+      nil -> contexto
+      propuestos -> Map.put(contexto, "renglones_propuestos", propuestos)
     end
   end
 

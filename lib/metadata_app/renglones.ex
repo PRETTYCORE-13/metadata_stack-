@@ -262,4 +262,110 @@ defmodule MetadataApp.Renglones do
   defp generar_guid do
     Ecto.UUID.generate() |> String.replace("-", "")
   end
+
+  @doc """
+  Renglones de un maestro tal como quedarán si la operación se acepta
+  (SPEC-SYS-0510202601 R7) — lo que la regla PRE del encabezado recibe en
+  `contexto["renglones_propuestos"]`.
+
+  `cambios` (todas las llaves opcionales):
+    - `:nuevos` — `%{"catalogo_detalle" => [attrs, ...]}`
+    - `:editados` — `[%Ecto.Changeset{}, ...]` de renglones ya persistidos
+    - `:quitados` — `%{"catalogo_detalle" => [renglon_id, ...]}`
+
+  Regresa `nil` si el maestro no tiene catálogos detalle (R10). Si no,
+  `%{"catalogo_detalle" => [%{"tipo" => t, "registro" => struct}, ...]}`
+  con una entrada por CADA detalle del maestro, aunque la operación no lo
+  toque. `t` es `"existente"`, `"editado"` (valores propuestos), `"nuevo"`
+  (sin `id` ni `renglon_id`, todavía sin validar) o `"quitado"`.
+
+  `encabezado_id` `nil` = alta: no hay existentes que leer. Si no, una
+  sola consulta por catálogo detalle (R12).
+
+  `maestro` es el nombre del catálogo o el id de su header; el motor pasa
+  el id, que ya tiene a mano, para no volver a leer el header.
+  """
+  def propuestos(maestro, encabezado_id, cambios \\ %{})
+
+  def propuestos(catalogo_maestro, encabezado_id, cambios) when is_binary(catalogo_maestro) do
+    case MetaSchemaContext.obtener_header_por_nombre(catalogo_maestro) do
+      %{id: header_id} -> propuestos(header_id, encabezado_id, cambios)
+      nil -> nil
+    end
+  end
+
+  def propuestos(header_id, encabezado_id, cambios) when is_integer(header_id) do
+    with [_ | _] = detalles <- MetaSchemaContext.listar_catalogos_detalle(header_id) do
+      editados = Map.get(cambios, :editados, [])
+      nuevos = Map.get(cambios, :nuevos, %{})
+      quitados = Map.get(cambios, :quitados, %{})
+
+      Map.new(detalles, fn %{schema_context_name: catalogo} ->
+        # Mismo módulo que modulo_por_nombre/1, sin volver a leer el header
+        # que listar_catalogos_detalle/1 ya trajo (R12).
+        modulo = Module.concat(MetadataApp.MetaBusinessProcess.Catalogos, Macro.camelize(catalogo))
+
+        editados_por_renglon =
+          for %Ecto.Changeset{data: %{__struct__: ^modulo}} = cs <- editados,
+              into: %{},
+              do: {cs.data.renglon_id, Ecto.Changeset.apply_changes(cs)}
+
+        quitados_set = quitados |> Map.get(catalogo, []) |> MapSet.new()
+
+        actuales =
+          modulo
+          |> existentes(encabezado_id)
+          |> Enum.map(&clasificar_existente(&1, editados_por_renglon, quitados_set))
+
+        agregados =
+          nuevos
+          |> Map.get(catalogo, [])
+          |> Enum.map(&%{"tipo" => "nuevo", "registro" => armar_nuevo(modulo, encabezado_id, &1)})
+
+        {catalogo, actuales ++ agregados}
+      end)
+    else
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Registros de `catalogo_detalle` en `contexto["renglones_propuestos"]`
+  que NO se van a quitar — es decir, cómo quedará ese detalle. `[]` si el
+  contexto no trae renglones de ese catálogo.
+  """
+  def vigentes(contexto, catalogo_detalle) do
+    (contexto["renglones_propuestos"] || %{})
+    |> Map.get(catalogo_detalle, [])
+    |> Enum.reject(&(&1["tipo"] == "quitado"))
+    |> Enum.map(& &1["registro"])
+  end
+
+  defp existentes(_modulo, nil), do: []
+
+  defp existentes(modulo, encabezado_id) do
+    import Ecto.Query
+
+    # Seguro sin alcance acá: `encabezado_id` es el del maestro, que ya
+    # pasó por su propio choke point con alcance aguas arriba -- mismo
+    # criterio que buscar_renglones/5 en MetaStateEngine.
+    # credo:disable-for-next-line MetadataApp.CredoChecks.RepoDirectoConVariable
+    Repo.all(from(r in modulo, where: r.encabezado_id == ^encabezado_id and is_nil(r.delete_guid), order_by: r.renglon_id))
+  end
+
+  defp clasificar_existente(registro, editados_por_renglon, quitados_set) do
+    cond do
+      MapSet.member?(quitados_set, registro.renglon_id) -> %{"tipo" => "quitado", "registro" => registro}
+      editado = editados_por_renglon[registro.renglon_id] -> %{"tipo" => "editado", "registro" => editado}
+      true -> %{"tipo" => "existente", "registro" => registro}
+    end
+  end
+
+  defp armar_nuevo(modulo, encabezado_id, attrs) do
+    modulo
+    |> struct()
+    |> modulo.changeset(attrs)
+    |> Ecto.Changeset.apply_changes()
+    |> Map.put(:encabezado_id, encabezado_id)
+  end
 end
