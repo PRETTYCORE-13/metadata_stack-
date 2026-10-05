@@ -290,7 +290,23 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   favor del Servicio de SPEC-ADN-2909202602; incluye los detalles de precios y
   sucursales de la lista, y las listas vacías "SIN LISTA ESPECIAL" y "SIN
   LISTA DE CADENA" (las referencias son obligatorias en la plataforma).
-  Grupos A-D verificados en dev; pendiente la publicación.
+  Grupos A-D verificados en dev; pendiente la publicación. La vista se
+  retira cuando exista el servicio de SPEC-ADN-2909202602.
+- [`SPEC-ARQ-3009202602-propagacion-produccion-clientes/`](SPEC-ARQ-3009202602-propagacion-produccion-clientes/) —
+  extiende `SPEC-ARQ-1809202603` (y la pantalla `PropagacionLive` que
+  ya existe) para propagar `stable` a VARIOS clientes reales a la vez,
+  por oleadas (piloto primero, resto después). La aprobación de un
+  segundo administrador se resuelve con "environment protection rules"
+  nativas de GitHub Actions (ambiente `clientes`, revisores
+  obligatorios) — sin tabla ni comando de aprobación propios; el
+  registro es un archivo `.jsonl` de solo-agregar, sin ninguna
+  migración de Ecto. Transforma un documento externo pegado por el
+  usuario (30-09-2026), afinado con un prototipo clicable del mismo
+  equipo — `01.requirements.md` §1.1 documenta qué se adoptó (selección
+  múltiple, oleadas, aprobación vía GitHub, confirmación por cliente) y
+  qué se rechazó (Oban, tabla de auditoría, correo/WhatsApp, acceso
+  directo a la API de Kubernetes). `01.requirements.md`/`02.design.md`/
+  `03.tasks.md` escritos, pendiente de ejecución (Grupos A-I).
 - [`SPEC-ADN-2909202602-servicio-precio/`](SPEC-ADN-2909202602-servicio-precio/) —
   servicio de precio de venta: recibe dirección de entrega, productos y
   fecha, y deduce cliente, canal y sucursal. Regresa por producto el
