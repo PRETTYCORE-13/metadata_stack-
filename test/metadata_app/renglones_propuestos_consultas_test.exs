@@ -2,7 +2,10 @@ defmodule MetadataApp.RenglonesPropuestosConsultasTest do
   # SPEC-SYS-0510202601 R12: armar los renglones propuestos no hace una
   # consulta por renglón. Cuenta las consultas reales con la telemetría de
   # Ecto, solo las de este proceso (las pruebas corren en paralelo).
-  use MetadataApp.DataCase, async: true
+  # async: false -- registra la metadata de pedido_prueba_multinivel, y
+  # schema_context_name es único: en paralelo, una prueba espera a que
+  # termine la transacción de otra y se agotan los tiempos del sandbox.
+  use MetadataApp.DataCase, async: false
 
   import MetadataApp.PedidoMultinivelFixtures
 

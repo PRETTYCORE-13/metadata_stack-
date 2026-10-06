@@ -216,3 +216,50 @@ omisión (con una opción por campo para no hacerlo) o solo en los que lo
 pidan; si se corrigen los datos que ya existen; y el efecto en índices
 únicos que hoy conviven con variantes con espacio. Va en una spec SYS
 propia, porque toca a todos los catálogos.
+
+## 20 — Eliminar un campo no lo quita de la "llave de identificación" de la Ficha
+
+Encontrado el 2026-10-06 en la verificación de SPEC-ADN-0510202601 (H1):
+después de quitar `pty_mat_materiales_piezaxcaja` con
+`CatalogoGenerador.eliminar_campo/4` (el mismo que usa el Motor), abrir
+cualquier material en la Ficha daba **error 500**
+(`String.to_existing_atom("pty_mat_materiales_piezaxcaja")` en
+`FichaLive.llave_negocio/2`). El campo seguía en
+`Header.campos_llave_ficha`. `eliminar_campo/4` tampoco lo quita de los
+`campos_editables` de las transiciones (en esa spec se hizo a mano).
+
+En dev se corrigió quitándolo de la llave con
+`MetaSchemaContext.actualizar_header/2`, igual que lo hace el Motor. Le
+puede pasar a cualquier catálogo al que se le quite un campo que esté en
+su llave de la Ficha.
+
+Por decidir: que `eliminar_campo/4` limpie el campo de todo lo que lo
+nombra en el encabezado y las transiciones (`campos_llave_ficha`,
+`campos_editables`, y revisar `orden_columnas_tabla` y
+`orden_resultados`), y que `llave_negocio/2` ignore un campo que ya no
+existe en lugar de tronar. Va en una spec SYS propia.
+
+## 21 — Combo dependiente por renglón en el Grid Editable
+
+Pedido por el usuario el 2026-10-06, en SPEC-ADN-0510202601 (H1): que
+el combo de unidad de un precio solo ofrezca las unidades **con venta
+del material elegido en ese mismo renglón**, con una SQL View tipo
+Diccionario.
+
+Hoy no se puede: `GridEditableComponents.opciones_columna/1` usa
+opciones precalculadas una sola vez por columna
+(`FichaLive.cargar_catalogos_detalle/1`), no por renglón. Las
+dependencias de un campo referencia funcionan contra campos del
+encabezado o del formulario, pero no contra otra columna del mismo
+renglón del Grid.
+
+Mientras tanto, la regla R18.1 de la lista de precios rechaza un precio
+en una unidad que el material no vende.
+
+Por decidir: cómo pide el Grid las opciones de una celda cuando cambia
+el valor del que depende (evento al servidor con el renglón, o las
+opciones de todos los valores posibles precargadas), el límite de 500
+opciones por renglón, y la validación del lado del servidor. Va en una
+spec SYS propia; después, el Diccionario
+`pty_sql_mat_unidades_venta` (unidades con venta por material) se
+conecta al campo `pty_mat_precios_det_unidad`.

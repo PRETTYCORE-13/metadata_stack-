@@ -419,23 +419,7 @@ defmodule MetadataApp.ConsultasSql do
       :ok
     else
       timestamp = CatalogoGenerador.timestamp_migracion()
-      modulo = "FuncionPtySql" <> Macro.camelize(String.replace_prefix(nombre, @prefijo, "")) <> timestamp
-
-      contenido = """
-      defmodule MetadataApp.Repo.Migrations.#{modulo} do
-        use Ecto.Migration
-
-        # Generada por MetadataApp.ConsultasSql.guardar_sql/3, uso Servicio
-        # (SPEC-SYS-2509202601 §11.3).
-        def up do
-          execute "DROP FUNCTION IF EXISTS #{nombre}"
-          execute #{inspect(crear)}
-        end
-
-        def down, do: execute("DROP FUNCTION IF EXISTS #{nombre}")
-      end
-      """
-
+      contenido = contenido_migracion_funcion(nombre, crear, timestamp)
       escribir_y_correr(ruta_migracion("funcion", nombre, timestamp), contenido, "No se pudo crear la función")
     end
   end
@@ -502,7 +486,8 @@ defmodule MetadataApp.ConsultasSql do
   # `inspect/1` deja el SQL como un literal de string de Elixir válido
   # (escapa comillas, barras y `\#{`), así el texto del admin nunca se
   # interpreta como código dentro del archivo generado.
-  defp contenido_migracion(nombre, sql, timestamp) do
+  @doc false
+  def contenido_migracion(nombre, sql, timestamp) do
     modulo = "VistaPtySql" <> Macro.camelize(String.replace_prefix(nombre, @prefijo, "")) <> timestamp
 
     """
@@ -514,13 +499,38 @@ defmodule MetadataApp.ConsultasSql do
       # renombrar columnas.
       def up do
         execute "DROP VIEW IF EXISTS #{nombre}"
-        execute #{inspect("CREATE VIEW #{nombre} AS " <> sql)}
+        execute #{literal_sql("CREATE VIEW #{nombre} AS " <> sql)}
       end
 
       def down, do: execute("DROP VIEW IF EXISTS #{nombre}")
     end
     """
   end
+
+  @doc false
+  def contenido_migracion_funcion(nombre, crear, timestamp) do
+    modulo = "FuncionPtySql" <> Macro.camelize(String.replace_prefix(nombre, @prefijo, "")) <> timestamp
+
+    """
+    defmodule MetadataApp.Repo.Migrations.#{modulo} do
+      use Ecto.Migration
+
+      # Generada por MetadataApp.ConsultasSql.guardar_sql/3, uso Servicio
+      # (SPEC-SYS-2509202601 §11.3).
+      def up do
+        execute "DROP FUNCTION IF EXISTS #{nombre}"
+        execute #{literal_sql(crear)}
+      end
+
+      def down, do: execute("DROP FUNCTION IF EXISTS #{nombre}")
+    end
+    """
+  end
+
+  # El SQL va completo como literal de Elixir. `inspect/1` solo no alcanza:
+  # trunca a 4096 caracteres (`printable_limit`) y deja "..." al final, y
+  # la migración ya no compila.
+  defp literal_sql(sql), do: inspect(sql, printable_limit: :infinity)
 
   # --- Ejecución segura (R13, R33) ------------------------------------------
 

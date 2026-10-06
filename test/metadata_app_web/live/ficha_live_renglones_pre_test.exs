@@ -7,7 +7,10 @@ defmodule MetadataAppWeb.FichaLiveRenglonesPreTest do
   corre en el proceso del LiveView, así que aquí se verifica el mensaje en
   pantalla y lo que quedó en la base).
   """
-  use MetadataAppWeb.ConnCase, async: true
+  # async: false -- registra la metadata de pedido_prueba_multinivel, y
+  # schema_context_name es único: en paralelo, una prueba espera a que
+  # termine la transacción de otra y se agotan los tiempos del sandbox.
+  use MetadataAppWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
   import MetadataApp.AutenticacionFixtures

@@ -4,7 +4,10 @@ defmodule MetadataApp.RenglonesPropuestosTest do
   # _prueba_multinivel); su metadata se registra dentro de cada prueba,
   # porque la base de test no la trae. Lotes se registra como segundo
   # detalle directo del pedido solo para probar varios detalles.
-  use MetadataApp.DataCase, async: true
+  # async: false -- registra la metadata de pedido_prueba_multinivel, y
+  # schema_context_name es único: en paralelo, una prueba espera a que
+  # termine la transacción de otra y se agotan los tiempos del sandbox.
+  use MetadataApp.DataCase, async: false
 
   alias MetadataApp.{Renglones, Repo}
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext

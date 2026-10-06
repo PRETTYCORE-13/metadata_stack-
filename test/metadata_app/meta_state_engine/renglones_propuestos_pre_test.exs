@@ -3,7 +3,10 @@ defmodule MetadataApp.MetaStateEngine.RenglonesPropuestosPreTest do
   # contexto["renglones_propuestos"] en alta, transición, guardar y
   # descubrimiento de botones. Escenario: MetadataApp.PedidoMultinivelFixtures
   # y la regla de prueba test/support/reglas_pedido_prueba_multinivel.ex.
-  use MetadataApp.DataCase, async: true
+  # async: false -- registra la metadata de pedido_prueba_multinivel, y
+  # schema_context_name es único: en paralelo, una prueba espera a que
+  # termine la transacción de otra y se agotan los tiempos del sandbox.
+  use MetadataApp.DataCase, async: false
 
   import MetadataApp.PedidoMultinivelFixtures
 
