@@ -880,18 +880,31 @@ defmodule MetadataAppWeb.FichaLive do
   defp guardar_cambios(socket, registro_actual, attrs, renglones_nuevos, renglones_editados, renglones_eliminados, transicion_edicion, current_scope) do
     contexto_auditoria = socket.assigns.contexto_auditoria
     catalogo_maestro = registro_actual.__struct__.__schema__(:source)
-    # SPEC-SYS-0510202601 R8: los nuevos y quitados se escriben DESPUÉS del
-    # encabezado, pero su regla PRE ya tiene que verlos.
+    # SPEC-SYS-0510202601 R8: la regla PRE del encabezado ve los nuevos y
+    # quitados. SPEC-SYS-0710202602: se escriben dentro de la transición, antes
+    # de la regla POST del encabezado (`escribir_renglones`).
     renglones_por_escribir = [renglones_nuevos: renglones_nuevos, renglones_quitados: renglones_eliminados]
+
+    escribir_renglones = fn _registro ->
+      with {:ok, creados} <- crear_renglones_nuevos(registro_actual.id, current_scope, renglones_nuevos, contexto_auditoria),
+           {:ok, eliminados} <- Renglones.eliminar_todos(catalogo_maestro, registro_actual.id, renglones_eliminados) do
+        {:ok, {creados, eliminados}}
+      end
+    end
 
     resultado =
       Repo.transaction(fn ->
-        with {:ok, actualizado} <-
-               aplicar_encabezado(registro_actual, attrs, renglones_editados, renglones_por_escribir, transicion_edicion, contexto_auditoria, current_scope),
-             {:ok, _creados} <- crear_renglones_nuevos(registro_actual.id, current_scope, renglones_nuevos, contexto_auditoria),
-             {:ok, _eliminados} <- Renglones.eliminar_todos(catalogo_maestro, registro_actual.id, renglones_eliminados) do
-          actualizado
-        else
+        case aplicar_encabezado(
+               registro_actual,
+               attrs,
+               renglones_editados,
+               renglones_por_escribir,
+               escribir_renglones,
+               transicion_edicion,
+               contexto_auditoria,
+               current_scope
+             ) do
+          {:ok, actualizado} -> actualizado
           {:error, motivo} -> Repo.rollback(motivo)
         end
       end)
@@ -930,25 +943,31 @@ defmodule MetadataAppWeb.FichaLive do
   # — es la única forma que el motor conoce de tocar un campo de un
   # renglón ya persistido. En los dos casos, `renglones_por_escribir`
   # (nuevos y quitados) llega a la regla PRE del encabezado.
-  defp aplicar_encabezado(registro, attrs, renglones_editados, renglones_por_escribir, transicion, contexto_auditoria, current_scope)
+  defp aplicar_encabezado(registro, attrs, renglones_editados, renglones_por_escribir, escribir, transicion, contexto_auditoria, current_scope)
        when map_size(renglones_editados) == 0 do
-    actualizar_si_hay_cambios(registro, current_scope, attrs, renglones_por_escribir, transicion, contexto_auditoria)
+    actualizar_si_hay_cambios(registro, current_scope, attrs, renglones_por_escribir, escribir, transicion, contexto_auditoria)
   end
 
-  defp aplicar_encabezado(registro, attrs, renglones_editados, renglones_por_escribir, transicion, _contexto_auditoria, current_scope) do
+  defp aplicar_encabezado(registro, attrs, renglones_editados, renglones_por_escribir, escribir, transicion, _contexto_auditoria, current_scope) do
     contexto = Map.merge(attrs, Permissions.contexto_confiable(current_scope))
-    MetaStateEngine.ejecutar_transicion(registro, transicion.accion, contexto, [renglones: renglones_editados] ++ renglones_por_escribir)
+
+    MetaStateEngine.ejecutar_transicion(
+      registro,
+      transicion.accion,
+      contexto,
+      [renglones: renglones_editados, escribir_renglones: escribir] ++ renglones_por_escribir
+    )
   end
 
   # D5 de SPEC-SYS-0510202601: si solo cambian renglones (nuevos o
   # quitados) y el catálogo tiene "guardar", se ejecuta igual con `attrs`
   # vacío, para que corra la regla del encabezado. Sin cambios, o sin
-  # "guardar", no se toca el encabezado.
-  defp actualizar_si_hay_cambios(registro, scope, attrs, renglones_por_escribir, transicion, contexto_auditoria) do
+  # "guardar", no se toca el encabezado y los renglones se escriben aquí.
+  defp actualizar_si_hay_cambios(registro, scope, attrs, renglones_por_escribir, escribir, transicion, contexto_auditoria) do
     if map_size(attrs) > 0 or (transicion != nil and renglones_por_escribir?(renglones_por_escribir)) do
-      CatalogoGenerico.actualizar(registro, scope, attrs, contexto_auditoria, renglones_por_escribir)
+      CatalogoGenerico.actualizar(registro, scope, attrs, contexto_auditoria, [escribir_renglones: escribir] ++ renglones_por_escribir)
     else
-      {:ok, registro}
+      with {:ok, _escritos} <- escribir.(registro), do: {:ok, registro}
     end
   end
 

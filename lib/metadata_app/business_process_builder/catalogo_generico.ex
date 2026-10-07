@@ -798,9 +798,10 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
   # el changeset real, no sobre `attrs` crudo como en crear/4.
   #
   # `opciones[:renglones_nuevos]` / `opciones[:renglones_quitados]`
-  # (SPEC-SYS-0510202601 R8): renglones que el caller crea o quita después,
-  # en la misma transacción; solo los ve la regla PRE del encabezado (ver
-  # MetaStateEngine.editar_con_transicion/4).
+  # (SPEC-SYS-0510202601 R8): renglones que el caller crea o quita en la
+  # misma transacción; solo los ve la regla PRE del encabezado (ver
+  # MetaStateEngine.editar_con_transicion/4). `opciones[:escribir_renglones]`
+  # (SPEC-SYS-0710202602) los escribe antes del POST del encabezado.
   @spec actualizar(struct(), Scope.t_ou_sistema(), map(), map(), keyword()) :: {:ok, struct()} | {:error, %Ecto.Changeset{} | String.t()}
   def actualizar(registro, scope, attrs, contexto \\ %{}, opciones \\ []) do
     schema_mod = registro.__struct__
@@ -873,11 +874,30 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
 
     if changeset.valid? do
       case transicion do
-        nil -> Repo.update(changeset)
+        nil -> actualizar_sin_transicion(changeset, opciones)
         transicion -> MetadataApp.MetaStateEngine.editar_con_transicion(changeset, transicion, attrs, opciones)
       end
     else
       {:error, changeset}
+    end
+  end
+
+  # Sin "guardar" no hay reglas: los renglones de `escribir_renglones`
+  # (SPEC-SYS-0710202602) se escriben después del update, como antes.
+  defp actualizar_sin_transicion(changeset, opciones) do
+    case Keyword.get(opciones, :escribir_renglones) do
+      nil ->
+        Repo.update(changeset)
+
+      escribir ->
+        Repo.transaction(fn ->
+          with {:ok, registro} <- Repo.update(changeset),
+               {:ok, _escritos} <- escribir.(registro) do
+            registro
+          else
+            {:error, razon} -> Repo.rollback(razon)
+          end
+        end)
     end
   end
 

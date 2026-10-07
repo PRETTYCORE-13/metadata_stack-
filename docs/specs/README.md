@@ -329,6 +329,14 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   para SPEC-SYS-2509202601. Grupos A-G cerrados y verificados en dev el
   2026-10-07 (95,748 CP cargados con script SQL, servicio 23/23 casos,
   Endpoint probado por curl); falta publicar, ver G2.
+- [`SPEC-SYS-0710202602-post-con-renglones-guardados/`](SPEC-SYS-0710202602-post-con-renglones-guardados/) —
+  la regla POST del encabezado de un maestro-detalle corre al final,
+  cuando sus renglones nuevos, editados y quitados ya están guardados,
+  por cualquier camino (pantalla, API, Endpoints, importación). Opción
+  `escribir_renglones` del motor para que cada llamador escriba igual que
+  hoy. Prerrequisito del cálculo de precios del pedido
+  (SPEC-ADN-0710202601). Grupos A-F cerrados el 2026-10-07 (12 pruebas
+  nuevas, suite 1151/1155 con las 4 fallas conocidas de Windows).
 - [`SPEC-SYS-3009202602-endpoints-externos/`](SPEC-SYS-3009202602-endpoints-externos/) —
   Endpoints Externos (antes "Acciones externas"): llamadas configuradas a
   APIs de otros sistemas, con credencial cifrada, botón en la ficha,

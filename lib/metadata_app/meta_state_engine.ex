@@ -66,9 +66,16 @@ defmodule MetadataApp.MetaStateEngine do
   `opciones[:renglones_nuevos]` (`%{"catalogo_detalle" => [attrs, ...]}`)
   y `opciones[:renglones_quitados]` (`%{"catalogo_detalle" => [renglon_id,
   ...]}`) — SPEC-SYS-0510202601 R7/R8: los renglones que el caller (la
-  Ficha) va a crear o quitar DESPUÉS, en la misma transacción. Acá no se
+  Ficha) va a crear o quitar en la misma transacción. Acá no se
   escriben; solo los ve la regla PRE del encabezado en
   `contexto["renglones_propuestos"]` (ver `Renglones.propuestos/3`).
+
+  `opciones[:escribir_renglones]` (SPEC-SYS-0710202602): función de aridad
+  1 (recibe el registro del encabezado) que escribe esos renglones nuevos
+  y quitados y regresa `{:ok, _}` o `{:error, razon}`. Corre dentro de la
+  transacción, después de los renglones editados y antes de la regla POST
+  del encabezado, para que el POST vea los renglones definitivos. Un error
+  ahí se regresa tal cual (`{:error, razon}`) y no se guarda nada.
   """
   @spec ejecutar_transicion(struct(), String.t(), map(), keyword()) :: {:ok, struct()} | {:error, term()}
   def ejecutar_transicion(registro, accion, contexto, opciones \\ []) when is_map(contexto) do
@@ -95,7 +102,7 @@ defmodule MetadataApp.MetaStateEngine do
              quitados: Keyword.get(opciones, :renglones_quitados, %{})
            }),
          :ok <- evaluar_precondiciones_todos(transicion, Ecto.Changeset.apply_changes(changeset), renglones, contexto, contexto_header) do
-      ejecutar_nucleo(changeset, header, transicion, contexto, renglones)
+      ejecutar_nucleo(changeset, header, transicion, contexto, renglones, opciones)
     end
   end
 
@@ -214,8 +221,9 @@ defmodule MetadataApp.MetaStateEngine do
   posterior. `changeset` ya viene validado (campos editables, tipos, etc.)
   por `BusinessProcessBuilder.CatalogoGenerico.actualizar/2` — acá solo se agrega el ciclo.
 
-  `opciones[:renglones_nuevos]` / `opciones[:renglones_quitados]`: mismo
-  significado que en `ejecutar_transicion/4` (SPEC-SYS-0510202601 R8).
+  `opciones[:renglones_nuevos]` / `opciones[:renglones_quitados]` /
+  `opciones[:escribir_renglones]`: mismo significado que en
+  `ejecutar_transicion/4` (SPEC-SYS-0510202601 R8, SPEC-SYS-0710202602).
   """
   @spec editar_con_transicion(Ecto.Changeset.t(), Transicion.t(), map(), keyword()) ::
           {:ok, struct()} | {:error, term()}
@@ -227,7 +235,7 @@ defmodule MetadataApp.MetaStateEngine do
       })
 
     with :ok <- evaluar_precondiciones(transicion, Ecto.Changeset.apply_changes(changeset), contexto_pre) do
-      ejecutar_nucleo_editar(changeset, transicion, contexto)
+      ejecutar_nucleo_editar(changeset, transicion, contexto, opciones)
     end
   end
 
@@ -638,6 +646,9 @@ defmodule MetadataApp.MetaStateEngine do
   # nombre) para pasárselo a `IdentificadoresTransaccionales.asignar/4` —
   # TRN+Folio quedan DENTRO de este `Multi`, no como paso separado después
   # de que `dar_de_alta/5` devuelve (R7: revierten junto con el registro).
+  #
+  # SPEC-SYS-0710202602 (R1, D3): el POST va al final, cuando los renglones
+  # ya existen y el registro ya tiene TRN y folio — por eso lo relee.
   defp ejecutar_nucleo_alta(changeset, transicion, contexto, renglones_spec) do
     schema_mod = changeset.data.__struct__
     catalogo = schema_mod.__schema__(:source)
@@ -650,12 +661,14 @@ defmodule MetadataApp.MetaStateEngine do
       |> Multi.insert(:evento, fn %{registro: registro} ->
         evento_changeset(transicion.meta_schema_header_id, registro.id, nil, transicion, contexto)
       end)
-      |> agregar_postcondicion_multi(transicion, contexto)
       |> Multi.run(:renglones, fn _repo, %{registro: registro} ->
         MetadataApp.Renglones.crear_todos(catalogo, registro.id, renglones_spec)
       end)
       |> Multi.run(:identificadores, fn repo, %{registro: registro} ->
         MetadataApp.IdentificadoresTransaccionales.asignar(repo, registro, header)
+      end)
+      |> Multi.run(:post, fn repo, %{registro: registro} ->
+        Reglas.ejecutar_post(transicion.accion, repo.get!(schema_mod, registro.id), contexto, repo)
       end)
 
     case Repo.transaction(multi) do
@@ -689,7 +702,7 @@ defmodule MetadataApp.MetaStateEngine do
     end)
   end
 
-  defp ejecutar_nucleo_editar(changeset, transicion, contexto) do
+  defp ejecutar_nucleo_editar(changeset, transicion, contexto, opciones) do
     schema_mod = changeset.data.__struct__
 
     multi =
@@ -698,6 +711,7 @@ defmodule MetadataApp.MetaStateEngine do
       |> Multi.insert(:evento, fn %{registro: registro} ->
         evento_changeset(transicion.meta_schema_header_id, registro.id, transicion.estado_origen_id, transicion, contexto)
       end)
+      |> agregar_escribir_renglones(opciones, fn %{registro: registro} -> registro end)
       |> agregar_postcondicion_multi(transicion, contexto)
 
     case Repo.transaction(multi) do
@@ -709,8 +723,31 @@ defmodule MetadataApp.MetaStateEngine do
       {:error, :registro, changeset, _cambios} ->
         {:error, changeset}
 
+      {:error, :escribir_renglones, razon, _cambios} ->
+        {:error, razon}
+
       {:error, _paso, razon, _cambios} ->
         {:error, {:postcondicion_fallida, razon}}
+    end
+  end
+
+  # SPEC-SYS-0710202602 (D2): los renglones nuevos y quitados que el caller
+  # escribe a su manera (la Ficha con el alcance y la auditoría del usuario,
+  # la importación con Renglones.crear_todos/3) se escriben acá, dentro de la
+  # misma transacción y antes del POST del encabezado. Sin la opción, no
+  # agrega ningún paso.
+  defp agregar_escribir_renglones(multi, opciones, registro_de) do
+    case Keyword.get(opciones, :escribir_renglones) do
+      nil ->
+        multi
+
+      escribir when is_function(escribir, 1) ->
+        Multi.run(multi, :escribir_renglones, fn _repo, cambios ->
+          case escribir.(registro_de.(cambios)) do
+            {:ok, escritos} -> {:ok, escritos}
+            {:error, _razon} = error -> error
+          end
+        end)
     end
   end
 
@@ -721,7 +758,10 @@ defmodule MetadataApp.MetaStateEngine do
   # construir_changeset_transicion/3 lo arma antes de llegar acá.
   # `renglones` (Catálogo Maestro-Detalle, Fase 2, default []): cada uno se
   # mueve en el MISMO Multi que el header — todo o nada, un solo commit.
-  defp ejecutar_nucleo(changeset, header, transicion, contexto, renglones) do
+  #
+  # SPEC-SYS-0710202602 (R1, R5): el POST del encabezado va al final, después
+  # de los renglones editados (con su propio POST) y de `escribir_renglones`.
+  defp ejecutar_nucleo(changeset, header, transicion, contexto, renglones, opciones) do
     registro = changeset.data
     modulo = registro.__struct__
     estado_leido = registro.estado_id
@@ -742,8 +782,9 @@ defmodule MetadataApp.MetaStateEngine do
       |> Multi.insert(:evento, fn _changes ->
         evento_changeset(header.id, registro.id, estado_leido, transicion, contexto)
       end)
-      |> agregar_postcondicion(transicion, modulo, registro.id, contexto)
       |> agregar_renglones_multi(transicion, contexto, renglones)
+      |> agregar_escribir_renglones(opciones, fn _cambios -> registro end)
+      |> agregar_postcondicion(transicion, modulo, registro.id, contexto)
 
     case Repo.transaction(multi) do
       {:ok, _cambios} ->
@@ -757,6 +798,9 @@ defmodule MetadataApp.MetaStateEngine do
 
       {:error, {:cambio_estado_renglon, _idx}, :conflicto_concurrencia, _cambios} ->
         {:error, :conflicto_concurrencia}
+
+      {:error, :escribir_renglones, razon, _cambios} ->
+        {:error, razon}
 
       {:error, _paso, razon, _cambios} ->
         {:error, {:postcondicion_fallida, razon}}

@@ -598,11 +598,11 @@ defmodule MetadataApp.MetaImportacionDatos do
     end
   end
 
+  # SPEC-SYS-0710202602: los renglones nuevos se crean dentro de la
+  # transición del encabezado (`escribir_renglones`), antes de su regla POST.
   defp aplicar_actualizacion(existente, scope, attrs, catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo) do
-    with {:ok, actualizado} <- aplicar_encabezado(existente, scope, attrs, catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo),
-         {:ok, _nuevos} <- Renglones.crear_todos(catalogo_maestro, existente.id, nuevo_por_catalogo) do
-      {:ok, actualizado}
-    end
+    escribir = fn _registro -> Renglones.crear_todos(catalogo_maestro, existente.id, nuevo_por_catalogo) end
+    aplicar_encabezado(existente, scope, attrs, catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo, escribir)
   end
 
   # Bucket "editar" vacío en TODOS los detalles -> mismo camino de la
@@ -613,20 +613,25 @@ defmodule MetadataApp.MetaImportacionDatos do
   # fila entera se rechaza (R11), nunca se editan los renglones "por la
   # ventana" saltándose el motor de estados.
   #
-  # `nuevo_por_catalogo` se crea después (Renglones.crear_todos/3), pero la
-  # regla PRE del encabezado ya lo ve (SPEC-SYS-0510202601 R8).
-  defp aplicar_encabezado(existente, scope, attrs, _catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo)
+  # `nuevo_por_catalogo` lo escribe `escribir` (Renglones.crear_todos/3)
+  # dentro de la transición; la regla PRE del encabezado ya lo ve
+  # (SPEC-SYS-0510202601 R8).
+  defp aplicar_encabezado(existente, scope, attrs, _catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo, escribir)
        when map_size(editar_por_catalogo) == 0,
-       do: CatalogoGenerico.actualizar(existente, scope, attrs, %{}, renglones_nuevos: nuevo_por_catalogo)
+       do: CatalogoGenerico.actualizar(existente, scope, attrs, %{}, renglones_nuevos: nuevo_por_catalogo, escribir_renglones: escribir)
 
-  defp aplicar_encabezado(existente, _scope, attrs, catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo) do
+  defp aplicar_encabezado(existente, _scope, attrs, catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo, escribir) do
     case MetaStateEngine.transicion_guardar(catalogo_maestro, existente.estado_id) do
       nil ->
         {catalogo, _items} = Enum.at(editar_por_catalogo, 0)
         {:error, {:renglon_sin_guardar, catalogo}}
 
       transicion ->
-        MetaStateEngine.ejecutar_transicion(existente, transicion.accion, attrs, renglones: editar_por_catalogo, renglones_nuevos: nuevo_por_catalogo)
+        MetaStateEngine.ejecutar_transicion(existente, transicion.accion, attrs,
+          renglones: editar_por_catalogo,
+          renglones_nuevos: nuevo_por_catalogo,
+          escribir_renglones: escribir
+        )
     end
   end
 
