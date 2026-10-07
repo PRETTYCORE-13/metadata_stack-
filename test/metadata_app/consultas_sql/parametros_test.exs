@@ -54,7 +54,8 @@ defmodule MetadataApp.ConsultasSql.ParametrosTest do
                  p("c", "fecha", %{"default" => "2026-10-01"}),
                  p("d", "booleano", %{"default" => "false"}),
                  p("e", "lista_enteros", %{"default" => "1, 2,3"}),
-                 p("f", "texto", %{"default" => "hola"})
+                 p("f", "texto", %{"default" => "hola"}),
+                 p("g", "lista_decimales", %{"default" => "1.5, 2"})
                ])
 
       assert Enum.map(parametros, & &1["default"]) == [
@@ -63,7 +64,8 @@ defmodule MetadataApp.ConsultasSql.ParametrosTest do
                "2026-10-01",
                false,
                [1, 2, 3],
-               "hola"
+               "hola",
+               ["1.5", "2"]
              ]
     end
 
@@ -114,6 +116,7 @@ defmodule MetadataApp.ConsultasSql.ParametrosTest do
         {"fecha", "01/10/2026"},
         {"booleano", "si"},
         {"lista_enteros", "1,a,3"},
+        {"lista_decimales", "1.5,x"},
         {"texto", 5}
       ]
 
@@ -142,6 +145,19 @@ defmodule MetadataApp.ConsultasSql.ParametrosTest do
       assert Parametros.convertir("booleano", true) == {:ok, true}
       assert Parametros.convertir("lista_enteros", [1, "2"]) == {:ok, [1, 2]}
       assert Parametros.convertir("lista_enteros", "") == {:ok, []}
+    end
+
+    test "lista_decimales: números, textos y texto separado por comas" do
+      assert Parametros.convertir("lista_decimales", [1, 1.5, " 2.25 "]) ==
+               {:ok, [Decimal.new(1), Decimal.from_float(1.5), Decimal.new("2.25")]}
+
+      assert Parametros.convertir("lista_decimales", "3.0818, 1.50") ==
+               {:ok, [Decimal.new("3.0818"), Decimal.new("1.50")]}
+
+      assert Parametros.convertir("lista_decimales", "") == {:ok, []}
+      assert Parametros.convertir("lista_decimales", "1,a") == :error
+      assert Parametros.convertir("lista_decimales", [1, nil]) == :error
+      assert Parametros.convertir("lista_decimales", 5) == :error
     end
 
     test "nil siempre es válido: la obligatoriedad se revisa aparte" do
@@ -303,7 +319,10 @@ defmodule MetadataApp.ConsultasSql.ParametrosTest do
   end
 
   test "tipo_pg/1 sigue la tabla del diseño §11.2" do
-    assert Enum.map(~w(entero decimal texto fecha booleano lista_enteros), &Parametros.tipo_pg/1) ==
-             ~w(bigint numeric text date boolean bigint[])
+    assert Enum.map(
+             ~w(entero decimal texto fecha booleano lista_enteros lista_decimales),
+             &Parametros.tipo_pg/1
+           ) ==
+             ~w(bigint numeric text date boolean bigint[] numeric[])
   end
 end

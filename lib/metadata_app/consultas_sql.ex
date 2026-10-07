@@ -377,11 +377,14 @@ defmodule MetadataApp.ConsultasSql do
   # cambiar; se le agrega la ayuda con los parámetros que no son lista.
   defp con_ayuda_de_tipos({:error, mensaje} = error, parametros) when is_binary(mensaje) do
     if String.contains?(mensaje, "ANY/ALL (array) requires array") do
-      no_listas = for %{"nombre" => n, "tipo" => t} <- parametros, t != "lista_enteros", do: ":#{n}"
+      no_listas =
+        for %{"nombre" => n, "tipo" => t} <- parametros,
+            t not in ["lista_enteros", "lista_decimales"],
+            do: ":#{n}"
 
       {:error,
        mensaje <>
-         "\n\nAyuda: = ANY(...) necesita una lista. Si alguno de estos parámetros es una lista, cambia su tipo a \"Lista de enteros\": " <>
+         "\n\nAyuda: = ANY(...) necesita una lista. Si alguno de estos parámetros es una lista, cambia su tipo a \"Lista de enteros\" o \"Lista de decimales\": " <>
          Enum.join(no_listas, ", ") <> "."}
     else
       error

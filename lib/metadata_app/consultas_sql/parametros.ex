@@ -16,7 +16,8 @@ defmodule MetadataApp.ConsultasSql.Parametros do
     "texto" => "text",
     "fecha" => "date",
     "booleano" => "boolean",
-    "lista_enteros" => "bigint[]"
+    "lista_enteros" => "bigint[]",
+    "lista_decimales" => "numeric[]"
   }
 
   @formato_nombre ~r/^[a-z][a-z0-9_]{0,40}$/
@@ -217,6 +218,15 @@ defmodule MetadataApp.ConsultasSql.Parametros do
     end
   end
 
+  def convertir("lista_decimales", valor) when is_list(valor), do: lista_de_decimales(valor)
+
+  def convertir("lista_decimales", valor) when is_binary(valor) do
+    case String.trim(valor) do
+      "" -> {:ok, []}
+      texto -> texto |> String.split(",") |> lista_de_decimales()
+    end
+  end
+
   def convertir(_tipo, _valor), do: :error
 
   defp entero_de_texto(texto) do
@@ -235,6 +245,19 @@ defmodule MetadataApp.ConsultasSql.Parametros do
     end)
     |> case do
       {:ok, enteros} -> {:ok, Enum.reverse(enteros)}
+      :error -> :error
+    end
+  end
+
+  defp lista_de_decimales(elementos) do
+    Enum.reduce_while(elementos, {:ok, []}, fn elemento, {:ok, acumulados} ->
+      case convertir("decimal", elemento) do
+        {:ok, %Decimal{} = decimal} -> {:cont, {:ok, [decimal | acumulados]}}
+        _ -> {:halt, :error}
+      end
+    end)
+    |> case do
+      {:ok, decimales} -> {:ok, Enum.reverse(decimales)}
       :error -> :error
     end
   end
@@ -393,10 +416,14 @@ defmodule MetadataApp.ConsultasSql.Parametros do
 
   @doc """
   Forma en que un valor ya convertido se guarda en JSON (el `default`
-  declarado): el decimal como texto para no perder precisión y la fecha
-  en ISO 8601. Los demás tipos quedan igual.
+  declarado): el decimal (también dentro de una lista de decimales) como texto para
+  no perder precisión y la fecha en ISO 8601. Los demás tipos quedan igual.
   """
   def forma_json("decimal", %Decimal{} = valor), do: Decimal.to_string(valor, :normal)
   def forma_json("fecha", %Date{} = valor), do: Date.to_iso8601(valor)
+
+  def forma_json("lista_decimales", valor) when is_list(valor),
+    do: Enum.map(valor, &forma_json("decimal", &1))
+
   def forma_json(_tipo, valor), do: valor
 end

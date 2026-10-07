@@ -601,6 +601,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaSqlEditorLive do
 
   defp tipos_parametro, do: ServicioEndpoint.tipos()
   defp ayuda_tipo("lista_enteros"), do: "1,2,3"
+  defp ayuda_tipo("lista_decimales"), do: "1.5,2"
   defp ayuda_tipo("fecha"), do: "AAAA-MM-DD"
   defp ayuda_tipo("decimal"), do: "12.50"
   defp ayuda_tipo(_tipo), do: ""

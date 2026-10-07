@@ -314,6 +314,21 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   `sin_precio` o `direccion_invalida`). Punto único para el pedido, la
   app y las integraciones; crecerá con descuentos e impuestos. En curso
   desde 2026-09-30 (el uso Servicio de SPEC-SYS-2509202601 ya existe).
+- [`SPEC-ADN-0710202601-pedido-renglones-precio/`](SPEC-ADN-0710202601-pedido-renglones-precio/) —
+  renglones del pedido de venta (`pty_dsd_pedidos`) y procedimiento de
+  precios configurable con tipos de paso cerrados (precio, descuentos,
+  IEPS, IVA, total), recalculado sobre todo el pedido con cada renglón
+  y congelado al guardar. Solo `00.doc_human.md`; **en pausa** hasta
+  cerrar la spec de descuentos y la SYS de recálculo en vivo
+  (SPEC-ADN-0710202602 ya está construida).
+- [`SPEC-ADN-0710202602-datos-fiscales-impuestos/`](SPEC-ADN-0710202602-datos-fiscales-impuestos/) —
+  tipos y tasas de impuesto con vigencia, datos fiscales de material,
+  cliente, dirección y sucursal, catálogo de códigos postales del SAT,
+  regla completa del 8 % de frontera y Servicio de impuestos de venta
+  (`impuestos-venta`). Incluye el tipo de parámetro `lista_decimales`
+  para SPEC-SYS-2509202601. Grupos A-G cerrados y verificados en dev el
+  2026-10-07 (95,748 CP cargados con script SQL, servicio 23/23 casos,
+  Endpoint probado por curl); falta publicar, ver G2.
 - [`SPEC-SYS-3009202602-endpoints-externos/`](SPEC-SYS-3009202602-endpoints-externos/) —
   Endpoints Externos (antes "Acciones externas"): llamadas configuradas a
   APIs de otros sistemas, con credencial cifrada, botón en la ficha,

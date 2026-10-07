@@ -616,7 +616,7 @@ defmodule MetadataApp.ConsultasSqlTest do
                })
 
       assert mensaje =~ "ANY/ALL (array) requires array"
-      assert mensaje =~ ~s|cambia su tipo a "Lista de enteros": :ids.|
+      assert mensaje =~ ~s|cambia su tipo a "Lista de enteros" o "Lista de decimales": :ids.|
     end
 
     test "eliminar un Servicio quita la función", %{nombre: nombre, parametros: parametros} do
@@ -717,6 +717,28 @@ defmodule MetadataApp.ConsultasSqlTest do
       assert Repo.query!("SELECT to_regclass('meta_fixture_equipo') IS NOT NULL", []).rows == [
                [true]
              ]
+    end
+
+    test "R35: una lista de decimales llega como numeric[] y conserva la posición" do
+      nombre =
+        servicio(
+          "SELECT t.posicion, t.monto * 2 AS doble FROM unnest(:montos) WITH ORDINALITY AS t(monto, posicion)",
+          [%{"nombre" => "montos", "tipo" => "lista_decimales", "obligatorio" => true}]
+        )
+
+      assert {:ok, %{filas: filas}} =
+               ConsultasSql.ejecutar_servicio(nombre, %{"montos" => [1.5, "2.25", 3]}, :sistema)
+
+      assert filas
+             |> Enum.sort_by(& &1["posicion"])
+             |> Enum.map(&Decimal.to_string(&1["doble"], :normal)) == ["3.0", "4.50", "6"]
+
+      assert {:ok, %{filas: [_, _]}} =
+               ConsultasSql.ejecutar_servicio(nombre, %{"montos" => "0.000001, 10"}, :sistema)
+
+      assert ConsultasSql.ejecutar_servicio(nombre, %{"montos" => "1.5,abc"}, :sistema) ==
+               {:error,
+                "El parámetro «montos» no es un valor válido de tipo lista_decimales: \"1.5,abc\"."}
     end
 
     test "M1 (R40): un valor inválido se rechaza sin ejecutar", %{nombre: nombre} do

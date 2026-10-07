@@ -28,7 +28,8 @@ defmodule MetadataAppWeb.Sysadmin.ServicioEndpoint do
     {"texto", "Texto"},
     {"fecha", "Fecha"},
     {"booleano", "Sí/No"},
-    {"lista_enteros", "Lista de enteros"}
+    {"lista_enteros", "Lista de enteros"},
+    {"lista_decimales", "Lista de decimales"}
   ]
 
   def eventos, do: @eventos
@@ -483,6 +484,7 @@ defmodule MetadataAppWeb.Sysadmin.ServicioEndpoint do
   end
 
   defp ejemplo_valor("lista_enteros"), do: "[101, 102]"
+  defp ejemplo_valor("lista_decimales"), do: "[Decimal.new(\"1.5\"), Decimal.new(\"2\")]"
   defp ejemplo_valor("fecha"), do: "~D[2026-10-01]"
   defp ejemplo_valor("texto"), do: "\"texto\""
   defp ejemplo_valor("decimal"), do: "Decimal.new(\"1.5\")"
@@ -490,6 +492,7 @@ defmodule MetadataAppWeb.Sysadmin.ServicioEndpoint do
   defp ejemplo_valor(_tipo), do: "1"
 
   defp ejemplo_json("lista_enteros"), do: "[101, 102]"
+  defp ejemplo_json("lista_decimales"), do: "[1.5, 2]"
   defp ejemplo_json("fecha"), do: "\"2026-10-01\""
   defp ejemplo_json("texto"), do: "\"texto\""
   defp ejemplo_json("decimal"), do: "1.5"
