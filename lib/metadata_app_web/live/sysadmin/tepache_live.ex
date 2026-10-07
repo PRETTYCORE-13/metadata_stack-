@@ -50,6 +50,10 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
      |> assign(:resultados_catalogo, [])
      |> assign(:seleccionados, [])
      |> assign(:resultado_export, nil)
+     |> assign(:exportando, false)
+     |> assign(:etapa_export, 0)
+     |> assign(:importando, false)
+     |> assign(:etapa_import, 0)
      |> assign(:tag_importar, "")
      |> assign(:resultado_import, nil)
      |> assign(:pendiente_confirmacion, nil)}
@@ -72,16 +76,40 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
     {:noreply, assign(socket, :seleccionados, List.delete(socket.assigns.seleccionados, recurso))}
   end
 
-  def handle_event("exportar_tepache", params, socket) do
-    descripcion = Map.get(params, "descripcion", "")
-    resultado = MetaTepache.exportar(socket.assigns.seleccionados, descripcion)
-    {:noreply, assign(socket, :resultado_export, resultado)}
+  # El export corre fuera del proceso del LiveView para que la pantalla
+  # siga respondiendo y pueda pintar la barra de progreso: cada etapa
+  # llega como {:tepache_etapa, n} y el resultado por handle_async/3
+  # (SPEC-SYS-0710202601 R20).
+  def handle_event("exportar_tepache", _params, %{assigns: %{exportando: true}} = socket) do
+    {:noreply, socket}
   end
 
-  # Paso 1: preparar_import/1 nunca toca nada (ni migra ni extrae) — solo
-  # baja el bundle y detecta si haría falta confirmar una eliminación de
-  # campos. Si no hace falta, se aplica de una — si hace falta, se le
-  # pregunta al usuario antes de tocar cualquier dato.
+  def handle_event("exportar_tepache", params, socket) do
+    descripcion = Map.get(params, "descripcion", "")
+    seleccionados = socket.assigns.seleccionados
+    pid = self()
+
+    {:noreply,
+     socket
+     |> assign(:exportando, true)
+     |> assign(:etapa_export, 0)
+     |> assign(:resultado_export, nil)
+     |> start_async(:exportar, fn ->
+       MetaTepache.exportar(seleccionados, descripcion, progreso: &send(pid, {:tepache_etapa, &1}))
+     end)}
+  end
+
+  # El import corre en dos tareas fuera del proceso del LiveView
+  # (SPEC-SYS-0710202601 R22): :preparar_import nunca toca nada (ni migra
+  # ni extrae) — solo baja el bundle y detecta si haría falta confirmar
+  # una eliminación de campos. Si no hace falta, encadena :aplicar_import
+  # de una; si hace falta, se pausa y se pregunta antes de tocar
+  # cualquier dato. Una excepción en cualquiera de las dos llega por
+  # handle_async como {:exit, _} — la pantalla no se cae.
+  def handle_event("importar_tepache", _params, %{assigns: %{importando: true}} = socket) do
+    {:noreply, socket}
+  end
+
   def handle_event("importar_tepache", %{"tag" => tag}, socket) do
     tag = String.trim(tag)
 
@@ -91,44 +119,88 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
        |> assign(:tag_importar, tag)
        |> assign(:resultado_import, {:error, "Ingresa un tag (ej. TEPACHE-000002)."})}
     else
-      importar(socket, tag)
+      pid = self()
+
+      {:noreply,
+       socket
+       |> assign(:tag_importar, tag)
+       |> assign(:importando, true)
+       |> assign(:etapa_import, 0)
+       |> assign(:resultado_import, nil)
+       |> assign(:pendiente_confirmacion, nil)
+       |> start_async(:preparar_import, fn ->
+         MetaTepache.preparar_import(tag, progreso: &send(pid, {:tepache_etapa_import, &1}))
+       end)}
     end
   end
 
+  def handle_event("confirmar_import", _params, %{assigns: %{importando: true}} = socket) do
+    {:noreply, socket}
+  end
+
   def handle_event("confirmar_import", _params, socket) do
-    aplicar_import(socket, socket.assigns.tag_importar, socket.assigns.pendiente_confirmacion)
+    info = socket.assigns.pendiente_confirmacion
+
+    {:noreply,
+     socket
+     |> assign(:pendiente_confirmacion, nil)
+     |> iniciar_aplicar_import(info)}
   end
 
   def handle_event("cancelar_import", _params, socket) do
     {:noreply, assign(socket, :pendiente_confirmacion, nil)}
   end
 
-  defp importar(socket, tag) do
-    case MetaTepache.preparar_import(tag) do
-      {:error, mensaje} ->
-        {:noreply, socket |> assign(:tag_importar, tag) |> assign(:resultado_import, {:error, mensaje})}
+  def handle_info({:tepache_etapa, etapa}, socket) do
+    {:noreply, assign(socket, :etapa_export, etapa)}
+  end
 
-      {:ok, %{campos_removidos: campos_removidos} = info} ->
-        if campos_removidos == %{} do
-          aplicar_import(socket, tag, info)
-        else
-          {:noreply,
-           socket
-           |> assign(:tag_importar, tag)
-           |> assign(:resultado_import, nil)
-           |> assign(:pendiente_confirmacion, info)}
-        end
+  def handle_info({:tepache_etapa_import, etapa}, socket) do
+    {:noreply, assign(socket, :etapa_import, etapa)}
+  end
+
+  def handle_async(:exportar, {:ok, resultado}, socket) do
+    {:noreply, socket |> assign(:exportando, false) |> assign(:resultado_export, resultado)}
+  end
+
+  def handle_async(:exportar, {:exit, motivo}, socket) do
+    {:noreply,
+     socket
+     |> assign(:exportando, false)
+     |> assign(:resultado_export, {:error, "El export se interrumpió: #{inspect(motivo)}"})}
+  end
+
+  def handle_async(:preparar_import, {:ok, {:ok, %{campos_removidos: campos_removidos} = info}}, socket) do
+    if campos_removidos == %{} do
+      {:noreply, iniciar_aplicar_import(socket, info)}
+    else
+      {:noreply, socket |> assign(:importando, false) |> assign(:pendiente_confirmacion, info)}
     end
   end
 
-  defp aplicar_import(socket, tag, info) do
-    resultado = MetaTepache.aplicar_import(info)
+  def handle_async(:aplicar_import, {:ok, resultado}, socket) do
+    {:noreply, socket |> assign(:importando, false) |> assign(:resultado_import, resultado)}
+  end
 
+  def handle_async(_tarea, {:ok, {:error, _} = error}, socket) do
+    {:noreply, socket |> assign(:importando, false) |> assign(:resultado_import, error)}
+  end
+
+  def handle_async(_tarea, {:exit, motivo}, socket) do
     {:noreply,
      socket
-     |> assign(:tag_importar, tag)
-     |> assign(:pendiente_confirmacion, nil)
-     |> assign(:resultado_import, resultado)}
+     |> assign(:importando, false)
+     |> assign(:resultado_import, {:error, "El import se interrumpió: #{inspect(motivo)}"})}
+  end
+
+  defp iniciar_aplicar_import(socket, info) do
+    pid = self()
+
+    socket
+    |> assign(:importando, true)
+    |> start_async(:aplicar_import, fn ->
+      MetaTepache.aplicar_import(info, progreso: &send(pid, {:tepache_etapa_import, &1}))
+    end)
   end
 
   def render(assigns) do
@@ -181,7 +253,7 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
           </span>
         </div>
 
-        <form phx-submit="exportar_tepache">
+        <form id="tepache-exportar-form" phx-submit="exportar_tepache">
           <label class="text-xs font-semibold text-gray-500">Motivo / impacto / notas (opcional)</label>
           <textarea
             name="descripcion"
@@ -191,15 +263,21 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
           ></textarea>
 
           <button
+            id="tepache-exportar-btn"
             type="submit"
-            phx-disable-with="Armando y subiendo..."
-            disabled={@seleccionados == []}
+            disabled={@seleccionados == [] or @exportando}
             class="bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold px-4 py-2 rounded text-sm"
           >
             Exportar tepache ({length(@seleccionados)})
           </button>
         </form>
 
+        <.barra_progreso
+          :if={@exportando}
+          id="tepache-progreso"
+          etapa={@etapa_export}
+          etapas={etapas_export()}
+        />
         <.resultado_export resultado={@resultado_export} />
       </div>
 
@@ -210,7 +288,7 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
           Pega el tag de un tepache que te compartió otro desarrollador (ej. <span class="font-mono">TEPACHE-000001</span>) para traerlo a tu Postgres local.
         </p>
 
-        <form phx-submit="importar_tepache" class="flex items-center gap-2">
+        <form id="tepache-importar-form" phx-submit="importar_tepache" class="flex items-center gap-2">
           <input
             type="text"
             name="tag"
@@ -219,14 +297,21 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
             class="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm text-gray-900 font-mono"
           />
           <button
+            id="tepache-importar-btn"
             type="submit"
-            phx-disable-with="Revisando..."
-            class="bg-purple-600 hover:bg-purple-700 text-white font-bold px-4 py-2 rounded text-sm whitespace-nowrap"
+            disabled={@importando}
+            class="bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold px-4 py-2 rounded text-sm whitespace-nowrap"
           >
             Importar
           </button>
         </form>
 
+        <.barra_progreso
+          :if={@importando}
+          id="tepache-progreso-import"
+          etapa={@etapa_import}
+          etapas={etapas_import()}
+        />
         <.confirmacion_remocion pendiente={@pendiente_confirmacion} />
         <.resultado_import resultado={@resultado_import} />
       </div>
@@ -269,6 +354,59 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
     """
   end
 
+  # Textos de cada etapa: MetaTepache solo emite el número (R20, R22).
+  defp etapas_export do
+    %{
+      1 => "Validando catálogos y dependencias",
+      2 => "Regenerando schemas",
+      3 => "Exportando metadata y autómata",
+      4 => "Armando el paquete",
+      5 => "Publicando en GitHub"
+    }
+  end
+
+  defp etapas_import do
+    %{
+      1 => "Descargando el tepache",
+      2 => "Revisando qué catálogos trae",
+      3 => "Extrayendo archivos",
+      4 => "Migrando tu base",
+      5 => "Importando metadata, autómata y plantillas",
+      6 => "Registrando permisos"
+    }
+  end
+
+  # Avance por etapa iniciada (N de total), nunca una estimación de tiempo.
+  attr :id, :string, required: true
+  attr :etapa, :integer, required: true
+  attr :etapas, :map, required: true
+
+  defp barra_progreso(assigns) do
+    assigns =
+      assigns
+      |> assign(:total, map_size(assigns.etapas))
+      |> assign(:texto, Map.get(assigns.etapas, assigns.etapa, "Iniciando…"))
+
+    ~H"""
+    <div id={@id} class="mt-4 rounded-lg border border-purple-100 bg-purple-50 p-3 text-sm">
+      <p class="mb-2 font-semibold text-purple-800">
+        <%= if @etapa == 0 do %>
+          {@texto}
+        <% else %>
+          Paso {@etapa} de {@total} — {@texto}
+        <% end %>
+      </p>
+      <div class="h-2 w-full overflow-hidden rounded-full bg-purple-100">
+        <div
+          class="h-full rounded-full bg-purple-600 transition-all duration-500 ease-out"
+          style={"width: #{div(@etapa * 100, @total)}%"}
+        >
+        </div>
+      </div>
+    </div>
+    """
+  end
+
   attr :resultado, :any, required: true
 
   defp resultado_export(%{resultado: nil} = assigns), do: ~H""
@@ -277,20 +415,19 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
     assigns = assign(assigns, :mensaje, mensaje)
 
     ~H"""
-    <div class="mt-4 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2">
+    <div id="tepache-export-error" class="mt-4 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2">
       {@mensaje}
     </div>
     """
   end
 
   defp resultado_export(%{resultado: {:ok, _}} = assigns) do
-    %{tag: tag, catalogos: catalogos, automaticos: automaticos, problemas: problemas} = elem(assigns.resultado, 1)
+    %{tag: tag, catalogos: catalogos, problemas: problemas} = elem(assigns.resultado, 1)
 
     assigns =
       assigns
       |> assign(:tag, tag)
       |> assign(:catalogos, catalogos)
-      |> assign(:automaticos, automaticos)
       |> assign(:problemas, problemas)
 
     ~H"""
@@ -299,7 +436,6 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
         Listo — <span class="font-mono">{@tag}</span>
       </p>
       <p>Paquete completo: <span class="font-mono">{Enum.join(@catalogos, ", ")}</span></p>
-      <p :if={@automaticos != []}>Incluidos automáticamente: <span class="font-mono">{Enum.join(@automaticos, ", ")}</span></p>
       <p :if={@problemas != []} class="text-amber-800">
         <span :for={p <- @problemas}>[{p.severidad}] {p.mensaje}<br /></span>
       </p>
@@ -318,7 +454,7 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
     assigns = assign(assigns, :mensaje, mensaje)
 
     ~H"""
-    <div class="mt-4 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2">
+    <div id="tepache-import-error" class="mt-4 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2">
       {@mensaje}
     </div>
     """

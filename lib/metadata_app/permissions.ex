@@ -235,7 +235,19 @@ defmodule MetadataApp.Permissions do
              Enum.map(MetaEstadosAdmin.listar_transiciones(header.id), & &1.accion))
           |> Enum.uniq()
 
-        Enum.each(acciones, &crear_permiso(%{recurso: nombre_catalogo, accion: &1}))
+        # Solo las que faltan: un INSERT rechazado por el índice único
+        # aborta la transacción que lo envuelva (el import de un tepache
+        # corre esto dentro de una -- SPEC-SYS-0710202601 R21.3), así que
+        # no se puede depender de que el duplicado "choque y se ignore".
+        existentes =
+          from(p in Permiso, where: p.recurso == ^nombre_catalogo, select: p.accion)
+          |> Repo.all()
+          |> MapSet.new()
+
+        acciones
+        |> Enum.reject(&MapSet.member?(existentes, &1))
+        |> Enum.each(&crear_permiso(%{recurso: nombre_catalogo, accion: &1}))
+
         :ok
     end
   end

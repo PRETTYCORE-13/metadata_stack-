@@ -51,14 +51,13 @@ defmodule Mix.Tasks.Motor.Tepache do
       {:error, mensaje} ->
         Mix.raise(mensaje)
 
-      {:ok, %{tag: tag, catalogos: catalogos, automaticos: automaticos, problemas: problemas}} ->
+      {:ok, %{tag: tag, catalogos: catalogos, problemas: problemas}} ->
         Enum.each(problemas, fn p ->
           etiqueta = if p.severidad == :error, do: "ERROR", else: "advertencia"
           Mix.shell().info("  [#{etiqueta}] #{p.mensaje}")
         end)
 
         if problemas == [], do: Mix.shell().info("  sin problemas")
-        if automaticos != [], do: Mix.shell().info("  incluye automáticamente: #{Enum.join(automaticos, ", ")}")
 
         Mix.shell().info("  paquete completo: #{Enum.join(catalogos, ", ")}")
 

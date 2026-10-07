@@ -338,3 +338,15 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   respuesta en la bitácora (30 días) y ejecución en segundo plano con
   reintentos. Documentada, sin programar. La sincronización masiva de
   catálogos queda para otra SPEC.
+- [`SPEC-SYS-0710202601-tepache/`](SPEC-SYS-0710202601-tepache/) —
+  Tepache (`/sysadmin/tepache`, `mix motor.tepache`/
+  `motor.tepache.importar`): bundles de previsualización entre
+  desarrolladores vía GitHub Releases (`TEPACHE-NNNNNN`), importados al
+  Postgres local sin deploy y sin conceder permisos a ningún rol.
+  Documentación retroactiva más requisitos nuevos: el export se
+  rechaza si falta seleccionar alguna dependencia (R9); el import solo
+  aplica los catálogos del bundle (R14.1); barras de progreso por
+  etapas al exportar e importar, en segundo plano (R20, R22); y un
+  import que falla deshace lo que hizo ese intento — migraciones,
+  archivos, metadata y permisos —, sin revertir nada si no es seguro
+  (R21). Implementado y verificado (Grupos A-E completos).

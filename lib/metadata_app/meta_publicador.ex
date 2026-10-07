@@ -108,7 +108,7 @@ defmodule MetadataApp.MetaPublicador do
              problemas: problemas
            }}
         else
-          {:error, "hay errores estructurales, corregilos antes de publicar"}
+          {:error, "hay errores estructurales, corrígelos antes de publicar"}
         end
     end
   end
