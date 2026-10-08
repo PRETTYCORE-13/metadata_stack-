@@ -96,6 +96,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       |> assign(:compilar_disponible, MetaReglasCodigo.compilar_disponible?())
       |> assign(:selector_orden_resultados_abierto, false)
       |> assign(:selector_llave_ficha_abierto, false)
+      |> assign(:visibles_pendientes, %{})
       |> assign(:modos_fecha_rango, FiltrosDefault.modos_fecha_rango())
       |> assign(:modos_fecha_simple, FiltrosDefault.modos_fecha_simple())
 
@@ -1089,6 +1090,26 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   # --- Get View: qué campos ve el usuario final en la tabla del catálogo ------
 
+  # Casillas "Vis." (R20 de SPEC-SYS-1109202606): lo marcado sin guardar
+  # vive en @visibles_pendientes (clave => boolean) y no solo en el DOM,
+  # porque mover_a y los controles de Parámetro/Totales de la misma fila
+  # guardan al instante y vuelven a pintar la tabla -- sin esto cada
+  # casilla regresaría a lo guardado en la base. Se guarda el valor REAL
+  # de la casilla, nunca se invierte el del server: LiveView solo manda
+  # "value" en un phx-click de checkbox si quedó marcada, y con clics
+  # rápidos invertir desfasaba navegador y server (la casilla con foco no
+  # se repinta hasta perderlo). guardar_get_view/2 lo persiste y lo limpia.
+  def handle_event("marcar_visible_get_view", %{"clave" => clave} = params, socket) do
+    %{visibles_pendientes: pendientes} = socket.assigns
+    {:noreply, assign(socket, :visibles_pendientes, Map.put(pendientes, clave, Map.has_key?(params, "value")))}
+  end
+
+  def handle_event("marcar_todos_visibles_get_view", %{"valor" => valor}, socket) do
+    pendientes = Map.new(filas_get_view(socket.assigns.campos, socket.assigns.header), &{&1.clave, valor == "true"})
+
+    {:noreply, assign(socket, :visibles_pendientes, pendientes)}
+  end
+
   # Tabla unificada (2026-08-18): un solo submit guarda la visibilidad de
   # campos de negocio (schema_context_properties.visible, como siempre) Y
   # de campos de control (Header.mostrar_*_en_tabla, antes cada uno se
@@ -1117,6 +1138,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       {:noreply,
        socket
        |> assign(:header, header_actualizado)
+       |> assign(:visibles_pendientes, %{})
        |> put_flash(:info, "Get View actualizado.")
        |> cargar_motor()}
     else
@@ -2245,6 +2267,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       <div id="motor-panel-getview" class="hidden">
         <.panel_get_view campos={@campos} header={@header} selector_orden_resultados_abierto={@selector_orden_resultados_abierto}
           selector_llave_ficha_abierto={@selector_llave_ficha_abierto}
+          visibles_pendientes={@visibles_pendientes}
           modos_fecha_rango={@modos_fecha_rango} modos_fecha_simple={@modos_fecha_simple}
           catalogos_referenciables={@catalogos_referenciables} detalles_por_catalogo={@detalles_por_catalogo} />
         <.panel_campos_default header={@header} />
@@ -2737,25 +2760,25 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   attr :header, :any, required: true
 
   # "Get View": qué columnas ve el usuario final en la tabla de
-  # CatalogoLive — tabla ÚNICA (2026-08-18, a pedido explícito: antes
-  # Campos de Control eran 7 botones sueltos sin orden, en una secuencia
-  # fija en CatalogoLive, separados de la tabla de Campos de negocio; "no
-  # tiene caso tenerlo separado") con Campos de Control + Campos de
+  # CatalogoLive — tabla ÚNICA con Campos de Control + Campos de
   # negocio mezclados, columna "Tipo" para distinguirlos, mismo
   # mostrar/ocultar y mismo drag-and-drop para cualquiera de los dos. El
   # orden combinado vive en Header.orden_columnas_tabla (ver
   # filas_get_view/2) — aparte del "orden" propio de cada campo de
   # negocio (schema_context_properties), que sigue intacto para la
-  # pestaña Campos/Ficha/contrato de API.
+  # pestaña Campos/Ficha/contrato de API. Las casillas "Vis." se pintan
+  # con @visibles_pendientes encima de lo guardado (ver
+  # marcar_visible_get_view).
   attr :selector_orden_resultados_abierto, :boolean, required: true
   attr :selector_llave_ficha_abierto, :boolean, required: true
+  attr :visibles_pendientes, :map, required: true
   attr :modos_fecha_rango, :list, required: true
   attr :modos_fecha_simple, :list, required: true
   attr :catalogos_referenciables, :list, required: true
   attr :detalles_por_catalogo, :map, required: true
 
   defp panel_get_view(assigns) do
-    assigns = assign(assigns, :filas, filas_get_view(assigns.campos, assigns.header))
+    assigns = assign(assigns, :filas, filas_get_view(assigns.campos, assigns.header, assigns.visibles_pendientes))
 
     ~H"""
     <div class="flex flex-col gap-4">
@@ -2777,14 +2800,14 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           <form id="get-view-form" phx-submit="guardar_get_view">
             <div class="flex items-center justify-between gap-2 px-4 mt-2 mb-2">
               <div class="flex gap-2">
-                <button type="button"
-                  onclick="this.closest('form').querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true)"
+                <button type="button" id="get-view-seleccionar-todos"
+                  phx-click="marcar_todos_visibles_get_view" phx-value-valor="true"
                   class="text-purple-700 hover:text-purple-900 text-[11px] font-semibold">
                   Seleccionar todos
                 </button>
                 <span class="text-gray-300">|</span>
-                <button type="button"
-                  onclick="this.closest('form').querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false)"
+                <button type="button" id="get-view-deseleccionar-todos"
+                  phx-click="marcar_todos_visibles_get_view" phx-value-valor="false"
                   class="text-purple-700 hover:text-purple-900 text-[11px] font-semibold">
                   Deseleccionar todos
                 </button>
@@ -2828,7 +2851,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                         <input type="checkbox"
                           name={if fila.flag_header?, do: "visibles_control[]", else: "visibles[]"}
                           value={fila.clave}
-                          checked={fila.visible?} class="accent-purple-600" />
+                          id={"getview-visible-#{fila.clave}"}
+                          checked={fila.visible?} class="accent-purple-600"
+                          phx-click="marcar_visible_get_view" phx-value-clave={fila.clave} />
                       </td>
                       <%= if fila.campo_param do %>
                         <td class="px-1.5 py-1"><.celda_totales campo={fila.campo_param} id={fila.clave} form_id="get-view-form" tipo_efectivo={fila.campo_param["tipo"]} /></td>
@@ -2995,6 +3020,12 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # versión vieja separada (compatibilidad con todo lo ya publicado).
   # Enum.sort_by/2 es estable: los empates (todo lo no listado) no
   # cambian de posición relativa entre sí.
+  defp filas_get_view(campos, header, visibles_pendientes) do
+    campos
+    |> filas_get_view(header)
+    |> Enum.map(fn fila -> %{fila | visible?: Map.get(visibles_pendientes, fila.clave, fila.visible?)} end)
+  end
+
   defp filas_get_view(campos, header) do
     control =
       @campos_control
