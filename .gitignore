@@ -134,3 +134,6 @@ config/dev.exs
 
 # Guardarrail SDD: SPEC activa por desarrollador (ver AGENTS.md)
 .claude/spec-activa
+
+# Permisos de un tepache mientras se arma el paquete (MetaTepache); se borra solo.
+/tepache.permisos.json

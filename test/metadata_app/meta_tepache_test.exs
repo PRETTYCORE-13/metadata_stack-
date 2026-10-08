@@ -3,7 +3,10 @@ defmodule MetadataApp.MetaTepacheTest do
 
   alias MetadataApp.MetaTepache
   alias MetadataApp.MetaPublicador
+  alias MetadataApp.Permissions
+  alias MetadataApp.Autenticacion.{Empresa, Rol, UsuarioEmpresa}
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
+  alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
 
   describe "armar_notas/3" do
     test "sin descripcion ni problemas" do
@@ -28,6 +31,106 @@ defmodule MetadataApp.MetaTepacheTest do
       assert notas =~ "- [advertencia] algo raro"
       assert notas =~ "- [error] algo peor"
       refute notas =~ "Sin advertencias."
+    end
+  end
+
+  describe "armar_notas/4 — R23, carpetas" do
+    test "lista las carpetas solo si hay alguna" do
+      assert MetaTepache.armar_notas("", ["pty_x"], [], ["pty_carpeta_a", "pty_carpeta_b"]) =~
+               "**Carpetas incluidas:** pty_carpeta_a, pty_carpeta_b"
+
+      refute MetaTepache.armar_notas("", ["pty_x"], [], []) =~ "Carpetas incluidas"
+    end
+
+    test "R24.8: cuenta roles y empresas sin listarlos" do
+      roles = [
+        %{"empresa" => "A", "rol" => "vendedor", "permisos" => %{}},
+        %{"empresa" => "A", "rol" => "cajero", "permisos" => %{}},
+        %{"empresa" => nil, "rol" => "auditor", "permisos" => %{}}
+      ]
+
+      notas = MetaTepache.armar_notas("", ["pty_x"], [], [], roles)
+
+      assert notas =~ "**Permisos incluidos:** 3 rol(es) de 1 empresa(s)"
+      refute notas =~ "vendedor"
+      refute MetaTepache.armar_notas("", ["pty_x"], [], [], []) =~ "Permisos incluidos"
+    end
+  end
+
+  # SPEC-SYS-0710202601 R24: roles de las empresas de quien exporta y de
+  # sistema, sin el "administrador", solo recursos del paquete.
+  describe "permisos_de_roles/2 — R24" do
+    test "trae mis empresas y los de sistema; excluye otra empresa, el administrador y otros recursos" do
+      s = System.unique_integer([:positive])
+      usuario = MetadataApp.AutenticacionFixtures.usuario_fixture()
+      catalogo = "pty_tepp_#{s}"
+
+      [mia, ajena] =
+        for nombre <- ["Empresa tepp mia #{s}", "Empresa tepp ajena #{s}"] do
+          {:ok, e} = %Empresa{} |> Empresa.changeset(%{nombre: nombre}) |> Repo.insert()
+          e
+        end
+
+      {:ok, _} = %UsuarioEmpresa{} |> UsuarioEmpresa.changeset(%{usuario_id: usuario.id, empresa_id: mia.id}) |> Repo.insert()
+
+      {:ok, vendedor} = Permissions.crear_rol(%{empresa_id: mia.id, nombre: "vendedor_#{s}"})
+      {:ok, otro} = Permissions.crear_rol(%{empresa_id: ajena.id, nombre: "otro_#{s}"})
+      sistema = Repo.insert!(%Rol{nombre: "auditor_#{s}", es_sistema: true, insert_guid: "g#{s}"})
+      admin = Repo.get_by!(Rol, nombre: "administrador", es_sistema: true)
+
+      for {rol, recurso, accion} <- [
+            {vendedor, catalogo, "leer"},
+            {vendedor, catalogo, "crear"},
+            {vendedor, "pty_otro_#{s}", "leer"},
+            {otro, catalogo, "leer"},
+            {sistema, catalogo, "leer"},
+            {admin, catalogo, "leer"}
+          ] do
+        {:ok, _} = Permissions.conceder_permiso_catalogo(rol.id, recurso, accion)
+      end
+
+      assert MetaTepache.permisos_de_roles(usuario.id, [catalogo]) == [
+               %{"empresa" => nil, "rol" => "auditor_#{s}", "permisos" => %{catalogo => ["leer"]}},
+               %{"empresa" => mia.nombre, "rol" => "vendedor_#{s}", "permisos" => %{catalogo => ["crear", "leer"]}}
+             ]
+    end
+  end
+
+  # SPEC-SYS-0710202601 R23: las carpetas reales en la ruta de menú viajan
+  # con el catálogo; las implícitas (sin header) y las borradas no.
+  describe "carpetas_de/1 — R23" do
+    defp header!(nombre, nav, tipo) do
+      {:ok, {h, _}} =
+        MetaSchemaContext.crear_header_con_detalles(%{
+          "schema_context_name" => nombre,
+          "schema_context_label" => nombre,
+          "schema_context_nav" => nav,
+          "schema_visible" => true,
+          "schema_context_type" => tipo,
+          "detalles" => []
+        })
+
+      h
+    end
+
+    test "trae las carpetas reales de arriba, anidadas, y omite implícitas y borradas" do
+      s = System.unique_integer([:positive])
+      header!("pty_tepf_a#{s}", "/tepf#{s}", 2)
+      header!("pty_tepf_b#{s}", "/tepf#{s}/sub", 2)
+      borrada = header!("pty_tepf_c#{s}", "/tepf#{s}/sub/otra", 2)
+      header!("pty_tepf_cat#{s}", "/tepf#{s}/sub/implicita/cat", 1)
+
+      Repo.update_all(from(h in Header, where: h.id == ^borrada.id), set: [delete_guid: "borrada"])
+
+      assert MetaTepache.carpetas_de(["pty_tepf_cat#{s}"]) == ["pty_tepf_a#{s}", "pty_tepf_b#{s}"]
+    end
+
+    test "un catálogo en la raíz o solo con carpetas implícitas no trae nada" do
+      s = System.unique_integer([:positive])
+      header!("pty_tepf_raiz#{s}", "/tepf_raiz#{s}", 1)
+      header!("pty_tepf_imp#{s}", "/tepf_imp#{s}/cat", 1)
+
+      assert MetaTepache.carpetas_de(["pty_tepf_raiz#{s}", "pty_tepf_imp#{s}"]) == []
     end
   end
 

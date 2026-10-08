@@ -56,7 +56,8 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
      |> assign(:etapa_import, 0)
      |> assign(:tag_importar, "")
      |> assign(:resultado_import, nil)
-     |> assign(:pendiente_confirmacion, nil)}
+     |> assign(:pendiente_confirmacion, nil)
+     |> assign(:aplicar_permisos?, false)}
   end
 
   def handle_event("change_page", %{"id" => id}, socket) do
@@ -87,6 +88,7 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
   def handle_event("exportar_tepache", params, socket) do
     descripcion = Map.get(params, "descripcion", "")
     seleccionados = socket.assigns.seleccionados
+    usuario_id = socket.assigns.current_scope.usuario.id
     pid = self()
 
     {:noreply,
@@ -95,7 +97,10 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
      |> assign(:etapa_export, 0)
      |> assign(:resultado_export, nil)
      |> start_async(:exportar, fn ->
-       MetaTepache.exportar(seleccionados, descripcion, progreso: &send(pid, {:tepache_etapa, &1}))
+       MetaTepache.exportar(seleccionados, descripcion,
+         progreso: &send(pid, {:tepache_etapa, &1}),
+         usuario_id: usuario_id
+       )
      end)}
   end
 
@@ -110,28 +115,22 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
     {:noreply, socket}
   end
 
-  def handle_event("importar_tepache", %{"tag" => tag}, socket) do
+  def handle_event("importar_tepache", %{"tag" => tag} = params, socket) do
     tag = String.trim(tag)
+    socket = socket |> assign(:tag_importar, tag) |> assign(:aplicar_permisos?, params["aplicar_permisos"] == "true")
 
     if tag == "" do
-      {:noreply,
-       socket
-       |> assign(:tag_importar, tag)
-       |> assign(:resultado_import, {:error, "Ingresa un tag (ej. TEPACHE-000002)."})}
+      {:noreply, assign(socket, :resultado_import, {:error, "Ingresa un tag (ej. TEPACHE-000002)."})}
     else
-      pid = self()
-
-      {:noreply,
-       socket
-       |> assign(:tag_importar, tag)
-       |> assign(:importando, true)
-       |> assign(:etapa_import, 0)
-       |> assign(:resultado_import, nil)
-       |> assign(:pendiente_confirmacion, nil)
-       |> start_async(:preparar_import, fn ->
-         MetaTepache.preparar_import(tag, progreso: &send(pid, {:tepache_etapa_import, &1}))
-       end)}
+      {:noreply, iniciar_preparar_import(socket, tag)}
     end
+  end
+
+  def handle_event("cambiar_importar", params, socket) do
+    {:noreply,
+     socket
+     |> assign(:tag_importar, Map.get(params, "tag", ""))
+     |> assign(:aplicar_permisos?, params["aplicar_permisos"] == "true")}
   end
 
   def handle_event("confirmar_import", _params, %{assigns: %{importando: true}} = socket) do
@@ -149,6 +148,19 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
 
   def handle_event("cancelar_import", _params, socket) do
     {:noreply, assign(socket, :pendiente_confirmacion, nil)}
+  end
+
+  defp iniciar_preparar_import(socket, tag) do
+    pid = self()
+
+    socket
+    |> assign(:importando, true)
+    |> assign(:etapa_import, 0)
+    |> assign(:resultado_import, nil)
+    |> assign(:pendiente_confirmacion, nil)
+    |> start_async(:preparar_import, fn ->
+      MetaTepache.preparar_import(tag, progreso: &send(pid, {:tepache_etapa_import, &1}))
+    end)
   end
 
   def handle_info({:tepache_etapa, etapa}, socket) do
@@ -193,13 +205,19 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
      |> assign(:resultado_import, {:error, "El import se interrumpió: #{inspect(motivo)}"})}
   end
 
+  # La casilla se toma de los assigns: sigue vigente si el import se pausó
+  # para confirmar campos a eliminar (R24.5).
   defp iniciar_aplicar_import(socket, info) do
     pid = self()
+    aplicar_permisos? = socket.assigns.aplicar_permisos?
 
     socket
     |> assign(:importando, true)
     |> start_async(:aplicar_import, fn ->
-      MetaTepache.aplicar_import(info, progreso: &send(pid, {:tepache_etapa_import, &1}))
+      MetaTepache.aplicar_import(info,
+        progreso: &send(pid, {:tepache_etapa_import, &1}),
+        aplicar_permisos: aplicar_permisos?
+      )
     end)
   end
 
@@ -288,22 +306,37 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
           Pega el tag de un tepache que te compartió otro desarrollador (ej. <span class="font-mono">TEPACHE-000001</span>) para traerlo a tu Postgres local.
         </p>
 
-        <form id="tepache-importar-form" phx-submit="importar_tepache" class="flex items-center gap-2">
-          <input
-            type="text"
-            name="tag"
-            value={@tag_importar}
-            placeholder="TEPACHE-000001"
-            class="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm text-gray-900 font-mono"
-          />
-          <button
-            id="tepache-importar-btn"
-            type="submit"
-            disabled={@importando}
-            class="bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold px-4 py-2 rounded text-sm whitespace-nowrap"
-          >
-            Importar
-          </button>
+        <form id="tepache-importar-form" phx-submit="importar_tepache" phx-change="cambiar_importar" class="space-y-3">
+          <div class="flex items-center gap-2">
+            <input
+              type="text"
+              name="tag"
+              value={@tag_importar}
+              placeholder="TEPACHE-000001"
+              class="flex-1 border border-gray-300 rounded-lg px-4 py-2 text-sm text-gray-900 font-mono"
+            />
+            <button
+              id="tepache-importar-btn"
+              type="submit"
+              disabled={@importando}
+              class="bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold px-4 py-2 rounded text-sm whitespace-nowrap"
+            >
+              Importar
+            </button>
+          </div>
+
+          <label class="inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+            <input type="hidden" name="aplicar_permisos" value="false" />
+            <input
+              id="aplicar-permisos"
+              type="checkbox"
+              name="aplicar_permisos"
+              value="true"
+              checked={@aplicar_permisos?}
+              disabled={@importando}
+              class="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+            /> Aplicar los permisos que trae el tepache
+          </label>
         </form>
 
         <.barra_progreso
@@ -422,12 +455,13 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
   end
 
   defp resultado_export(%{resultado: {:ok, _}} = assigns) do
-    %{tag: tag, catalogos: catalogos, problemas: problemas} = elem(assigns.resultado, 1)
+    %{tag: tag, catalogos: catalogos, problemas: problemas} = resultado = elem(assigns.resultado, 1)
 
     assigns =
       assigns
       |> assign(:tag, tag)
       |> assign(:catalogos, catalogos)
+      |> assign(:carpetas, Map.get(resultado, :carpetas, []))
       |> assign(:problemas, problemas)
 
     ~H"""
@@ -436,6 +470,9 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
         Listo — <span class="font-mono">{@tag}</span>
       </p>
       <p>Paquete completo: <span class="font-mono">{Enum.join(@catalogos, ", ")}</span></p>
+      <p :if={@carpetas != []} id="tepache-export-carpetas">
+        Carpetas incluidas: <span class="font-mono">{Enum.join(@carpetas, ", ")}</span>
+      </p>
       <p :if={@problemas != []} class="text-amber-800">
         <span :for={p <- @problemas}>[{p.severidad}] {p.mensaje}<br /></span>
       </p>
@@ -468,7 +505,7 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLive do
     <div class="mt-4 rounded-lg border border-green-200 bg-green-50 text-green-800 text-sm px-3 py-2 space-y-1">
       <p class="font-bold">Listo — <span class="font-mono">{Enum.join(@catalogos, ", ")}</span> ya está en tu Postgres local.</p>
       <p :for={m <- @mensajes} class="text-xs text-green-700">{m}</p>
-      <p class="text-xs text-green-700">
+      <p :if={not Enum.any?(@mensajes, &String.starts_with?(&1, "Permisos aplicados a "))} class="text-xs text-green-700">
         Para probarlo con un rol puntual, concédeselo desde Bisness Context.
       </p>
     </div>

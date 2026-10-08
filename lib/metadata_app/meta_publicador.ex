@@ -147,11 +147,15 @@ defmodule MetadataApp.MetaPublicador do
   artefacto (encontrado real, 2026-10-05: copias locales que quedaban en
   la máquina viajaban junto a la migración de borrado, y el import de
   cada arranque recreaba lo que la migración acababa de borrar).
+
+  `:extras` (opcional) -- rutas relativas a la raíz del proyecto que se
+  agregan tal cual si existen (ej. los permisos de un tepache).
   """
   def armar_bundle(catalogos, opts \\ []) do
     nombre_archivo = "bc-bundle-#{System.unique_integer([:positive])}.tar.gz"
     incluir = Keyword.get(opts, :incluir, fn _ruta -> true end)
-    rutas = catalogos |> Enum.flat_map(&rutas_de/1) |> Enum.filter(incluir)
+    extras = opts |> Keyword.get(:extras, []) |> Enum.filter(&File.exists?/1)
+    rutas = (catalogos |> Enum.flat_map(&rutas_de/1) |> Enum.filter(incluir)) ++ extras
 
     if rutas == [] do
       {:error,

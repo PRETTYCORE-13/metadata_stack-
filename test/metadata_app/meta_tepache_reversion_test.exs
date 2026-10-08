@@ -238,6 +238,140 @@ defmodule MetadataApp.MetaTepacheReversionTest do
     assert permisos == 4
   end
 
+  # SPEC-SYS-0710202601 R24: el bundle trae los permisos de los roles del
+  # origen; solo se aplican con aplicar_permisos: true, al rol con el mismo
+  # nombre dentro de la empresa con el mismo nombre (o de sistema).
+  describe "aplicar_import/2 con aplicar_permisos (R24)" do
+    setup c do
+      empresa = "Empresa tep rev #{c.s}"
+      duplicada = "Empresa tep rev dup #{c.s}"
+
+      empresas =
+        for nombre <- [empresa, duplicada, duplicada] do
+          {:ok, e} =
+            %MetadataApp.Autenticacion.Empresa{}
+            |> MetadataApp.Autenticacion.Empresa.changeset(%{nombre: nombre})
+            |> Repo.insert()
+
+          e
+        end
+
+      {:ok, rol} = MetadataApp.Permissions.crear_rol(%{empresa_id: hd(empresas).id, nombre: "rol_tep_rev_#{c.s}"})
+
+      on_exit(fn ->
+        Sandbox.mode(Repo, :auto)
+        Repo.query!("delete from meta_schema_rol_permiso where rol_id = $1", [rol.id])
+        Repo.query!("delete from meta_schema_rol where id = $1", [rol.id])
+        Repo.query!("delete from meta_schema_empresa where id = any($1)", [Enum.map(empresas, & &1.id)])
+        Sandbox.mode(Repo, :manual)
+      end)
+
+      %{rol: rol, empresa: empresa, duplicada: duplicada, nombre: "pty_tep_rev_meta_#{c.s}"}
+    end
+
+    defp concedidas(rol_id, nombre) do
+      %{rows: rows} =
+        Repo.query!(
+          """
+          select p.accion from meta_schema_rol_permiso rp
+          join meta_schema_permiso p on p.id = rp.permiso_id
+          where rp.rol_id = $1 and p.recurso = $2 and rp.delete_guid is null
+          order by p.accion
+          """,
+          [rol_id, nombre]
+        )
+
+      List.flatten(rows)
+    end
+
+    defp bundle_con_permisos(c, roles) do
+      armar_bundle(c, [
+        {"priv/repo/catalogos/#{c.nombre}.meta.json", meta_json(c.nombre)},
+        {"tepache.permisos.json", Jason.encode!(%{"roles" => roles})}
+      ])
+    end
+
+    defp importar_con_permisos(c, bundle, opts) do
+      {:ok, permisos} = MetaTepache.permisos_del_bundle(bundle)
+
+      MetaTepache.aplicar_import(
+        %{bundle_path: bundle, nombres: [c.nombre], campos_removidos: %{}, permisos: permisos},
+        Keyword.merge([raiz: c.raiz, dir_migraciones: c.dir_migraciones], opts)
+      )
+    end
+
+    test "con la casilla aplica al rol de la misma empresa, solo recursos del bundle, y no deja el archivo", c do
+      bundle =
+        bundle_con_permisos(c, [
+          %{
+            "empresa" => c.empresa,
+            "rol" => c.rol.nombre,
+            "permisos" => %{c.nombre => ["crear", "leer"], "pty_fuera_del_bundle" => ["leer"]}
+          }
+        ])
+
+      assert {:ok, %{mensajes: mensajes}} = importar_con_permisos(c, bundle, aplicar_permisos: true)
+
+      assert concedidas(c.rol.id, c.nombre) == ~w(crear leer)
+      assert concedidas(c.rol.id, "pty_fuera_del_bundle") == []
+      assert "Permisos aplicados a 1 rol(es)." in mensajes
+      refute File.exists?(Path.join(c.raiz, "tepache.permisos.json"))
+    end
+
+    test "sin la casilla no concede nada", c do
+      bundle = bundle_con_permisos(c, [%{"empresa" => c.empresa, "rol" => c.rol.nombre, "permisos" => %{c.nombre => ["leer"]}}])
+
+      assert {:ok, %{mensajes: mensajes}} = importar_con_permisos(c, bundle, [])
+
+      assert concedidas(c.rol.id, c.nombre) == []
+      refute Enum.any?(mensajes, &String.starts_with?(&1, "Permisos aplicados"))
+    end
+
+    test "omite con su motivo: empresa inexistente, rol inexistente y empresa duplicada", c do
+      bundle =
+        bundle_con_permisos(c, [
+          %{"empresa" => "No existe #{c.s}", "rol" => "x", "permisos" => %{c.nombre => ["leer"]}},
+          %{"empresa" => c.empresa, "rol" => "no_existe_#{c.s}", "permisos" => %{c.nombre => ["leer"]}},
+          %{"empresa" => c.duplicada, "rol" => c.rol.nombre, "permisos" => %{c.nombre => ["leer"]}}
+        ])
+
+      assert {:ok, %{mensajes: mensajes}} = importar_con_permisos(c, bundle, aplicar_permisos: true)
+
+      assert "Permisos aplicados a 0 rol(es)." in mensajes
+      assert Enum.any?(mensajes, &(&1 =~ "la empresa no existe"))
+      assert Enum.any?(mensajes, &(&1 =~ "el rol no existe en esa empresa"))
+      assert Enum.any?(mensajes, &(&1 =~ "hay más de una empresa con ese nombre"))
+      assert concedidas(c.rol.id, c.nombre) == []
+    end
+
+    test "solo suma: no quita un permiso que el rol ya tenía", c do
+      {:ok, _} = MetadataApp.Permissions.conceder_permiso_catalogo(c.rol.id, c.nombre, "eliminar")
+      bundle = bundle_con_permisos(c, [%{"empresa" => c.empresa, "rol" => c.rol.nombre, "permisos" => %{c.nombre => ["leer"]}}])
+
+      assert {:ok, _} = importar_con_permisos(c, bundle, aplicar_permisos: true)
+
+      assert concedidas(c.rol.id, c.nombre) == ~w(eliminar leer)
+    end
+
+    test "un tepache sin permisos lo dice y no concede nada", c do
+      bundle = armar_bundle(c, [{"priv/repo/catalogos/#{c.nombre}.meta.json", meta_json(c.nombre)}])
+
+      assert {:ok, %{mensajes: mensajes}} = importar_con_permisos(c, bundle, aplicar_permisos: true)
+
+      assert "Este tepache no trae permisos." in mensajes
+    end
+
+    test "si aplicar los permisos falla, no queda nada de la transacción", c do
+      bundle = bundle_con_permisos(c, [%{"empresa" => c.empresa, "rol" => c.rol.nombre, "permisos" => nil}])
+
+      assert {:error, mensaje} = importar_con_permisos(c, bundle, aplicar_permisos: true)
+
+      assert mensaje =~ "importar metadata y permisos"
+      assert MetaSchemaContext.obtener_header_por_nombre(c.nombre) == nil
+      assert concedidas(c.rol.id, c.nombre) == []
+    end
+  end
+
   describe "en_transaccion/1 (R21.3)" do
     test "una excepción adentro es falla y no deja cambios", c do
       nombre = "pty_tep_rev_meta_#{c.s}"
