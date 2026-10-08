@@ -137,10 +137,21 @@ defmodule MetadataApp.MetaPublicador do
     end
   end
 
-  @doc "Arma el .tar.gz de un paquete ya calculado (lista de nombres, ya en orden). {:ok, path} | {:error, mensaje}"
-  def armar_bundle(catalogos) do
+  @doc """
+  Arma el .tar.gz de un paquete ya calculado (lista de nombres, ya en
+  orden). {:ok, path} | {:error, mensaje}
+
+  `:incluir` (opcional) -- `fn ruta -> boolean end` para quedarse solo
+  con parte de los archivos. Lo usan los despublicar: un paquete de
+  borrado no debe llevar el `.meta.json` ni nada que vuelva a crear el
+  artefacto (encontrado real, 2026-10-05: copias locales que quedaban en
+  la máquina viajaban junto a la migración de borrado, y el import de
+  cada arranque recreaba lo que la migración acababa de borrar).
+  """
+  def armar_bundle(catalogos, opts \\ []) do
     nombre_archivo = "bc-bundle-#{System.unique_integer([:positive])}.tar.gz"
-    rutas = Enum.flat_map(catalogos, &rutas_de/1)
+    incluir = Keyword.get(opts, :incluir, fn _ruta -> true end)
+    rutas = catalogos |> Enum.flat_map(&rutas_de/1) |> Enum.filter(incluir)
 
     if rutas == [] do
       {:error,

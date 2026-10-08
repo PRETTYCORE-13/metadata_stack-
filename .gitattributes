@@ -1,0 +1,8 @@
+# Finales de línea LF en toda copia del repo, también en Windows (sin
+# depender de core.autocrlf de cada máquina). Con CRLF, los heredocs de
+# Elixir arrastraban "\r" a comandos remotos por SSH (bash: "set -e\r") y
+# a textos que las pruebas comparan contra "\n".
+* text=auto eol=lf
+
+# Scripts de Windows del release: CRLF.
+*.bat text eol=crlf
