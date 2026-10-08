@@ -85,6 +85,85 @@ defmodule MetadataApp.PropagacionProduccionTest do
     end
   end
 
+  describe "B1 -- identidad_actual/1" do
+    test "devuelve el login sin espacios ni saltos de línea" do
+      fun_gh = fn ["api", "user", "--jq", ".login"] -> {"X4GUSS\n", 0} end
+
+      assert {:ok, "X4GUSS"} = PropagacionProduccion.identidad_actual(fun_gh)
+    end
+
+    test "gh sin sesión o sin instalar -- error con la salida de gh" do
+      fun_gh = fn _args -> {"To get started with GitHub CLI, please run:  gh auth login\n", 4} end
+
+      assert {:error, mensaje} = PropagacionProduccion.identidad_actual(fun_gh)
+      assert mensaje =~ "gh auth login"
+    end
+  end
+
+  describe "C1 -- registrar_intento/3" do
+    test "agrega (>>) en el archivo del registro, con la línea en base64 (R11, R11a)" do
+      motivo = ~s|REL-1 "urgente" $(rm -rf ~) `id` año|
+      linea = %{tipo: "lote", motivo: motivo, clientes: %{piloto: ["a"], resto: ["b"]}}
+      test_pid = self()
+
+      fun_ssh = fn :ambiente_fake, comando ->
+        send(test_pid, {:comando, comando})
+        {:ok, 0, ""}
+      end
+
+      assert :ok = PropagacionProduccion.registrar_intento(:ambiente_fake, linea, fun_ssh)
+      assert_received {:comando, comando}
+
+      assert comando =~ ">> /home/elixir/metadata-propagaciones/propagaciones.jsonl"
+      refute comando =~ ~r/[^>]> /
+      refute comando =~ "rm -rf"
+      refute comando =~ "urgente"
+
+      [_, b64] = Regex.run(~r/echo (\S+) \| base64 -d/, comando)
+      decodificada = Base.decode64!(b64)
+      assert String.ends_with?(decodificada, "\n")
+      assert Jason.decode!(decodificada)["motivo"] == motivo
+    end
+
+    test "si el servidor responde con error, lo devuelve" do
+      fun_ssh = fn _ambiente, _comando -> {:ok, 1, "Permission denied\n"} end
+
+      assert {:error, mensaje} = PropagacionProduccion.registrar_intento(:ambiente_fake, %{}, fun_ssh)
+      assert mensaje =~ "Permission denied"
+    end
+  end
+
+  describe "C2 -- listar_intentos/2" do
+    test "más reciente primero, saltando una línea dañada" do
+      contenido = """
+      {"ts":"2026-10-01T10:00:00Z","motivo":"uno"}
+      {"ts":"2026-10-02T10:00:00Z","motivo":"dos"}
+      esto no es json
+      {"ts":"2026-10-03T10:00:00Z","motivo":"tres"}
+      """
+
+      fun_ssh = fn _ambiente, comando ->
+        assert comando =~ "cat /home/elixir/metadata-propagaciones/propagaciones.jsonl"
+        {:ok, 0, contenido}
+      end
+
+      assert {:ok, intentos} = PropagacionProduccion.listar_intentos(:ambiente_fake, fun_ssh)
+      assert Enum.map(intentos, & &1["motivo"]) == ["tres", "dos", "uno"]
+    end
+
+    test "si el archivo no existe todavía, lista vacía" do
+      fun_ssh = fn _ambiente, _comando -> {:ok, 0, ""} end
+
+      assert {:ok, []} = PropagacionProduccion.listar_intentos(:ambiente_fake, fun_ssh)
+    end
+
+    test "si no hay conexión, error" do
+      fun_ssh = fn _ambiente, _comando -> {:error, "ssh: connect to host: timeout"} end
+
+      assert {:error, "ssh: connect to host: timeout"} = PropagacionProduccion.listar_intentos(:ambiente_fake, fun_ssh)
+    end
+  end
+
   describe "A3 -- imagen_stable/2 (R3a)" do
     test "con :latest en stable se rechaza y no se consulta a ningún cliente" do
       fun = fn

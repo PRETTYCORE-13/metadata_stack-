@@ -12,6 +12,93 @@ defmodule MetadataApp.PropagacionProduccion do
 
   @dependencias_default {&MotorAlta.leer_sistemas/0, &MotorAlta.imagen_actual/2}
 
+  # R11: junto a /home/elixir/backups y /home/elixir/metadata-purgas (el
+  # usuario elixir no puede escribir en /var/lib ni tiene sudo sin
+  # contraseña).
+  @registro "/home/elixir/metadata-propagaciones/propagaciones.jsonl"
+
+  ## Identidad (design §1)
+
+  @doc """
+  Usuario de GitHub con el que `gh` está autenticado en esta máquina (el
+  mismo que GitHub registra como quien dispara el run, y contra el que
+  aplica R10). Solo para mostrarlo y anotarlo en el registro.
+
+  `{:ok, login}` | `{:error, mensaje}`. `fun_gh` solo cambia en tests.
+  """
+  def identidad_actual(fun_gh \\ &gh/1) do
+    case fun_gh.(["api", "user", "--jq", ".login"]) do
+      {salida, 0} ->
+        case String.trim(salida) do
+          "" -> {:error, "gh no devolvió ningún usuario"}
+          login -> {:ok, login}
+        end
+
+      {salida, _status} ->
+        {:error, "no se pudo resolver la identidad de gh: #{String.trim(salida)}"}
+    end
+  end
+
+  defp gh(args) do
+    System.cmd("gh", args, stderr_to_stdout: true)
+  rescue
+    e in ErlangError -> {"no se pudo ejecutar gh (#{Exception.message(e)})", 1}
+  end
+
+  ## Registro (design §4, R11-R12)
+
+  @doc """
+  Agrega una línea JSON a `#{@registro}` en el servidor de `ambiente`.
+  Solo agrega (`>>`), nunca reescribe (R11). La línea viaja en base64
+  (R11a): el motivo lo escribe el usuario y nunca debe interpretarse
+  como shell.
+
+  `:ok` | `{:error, mensaje}`. `fun_ssh` solo cambia en tests.
+  """
+  def registrar_intento(ambiente, linea_map, fun_ssh \\ &MetadataApp.Ssh.ejecutar/2) do
+    b64 = Base.encode64(Jason.encode!(linea_map) <> "\n")
+    comando = "mkdir -p #{Path.dirname(@registro)} && echo #{b64} | base64 -d >> #{@registro}"
+
+    case fun_ssh.(ambiente, comando) do
+      {:ok, 0, _salida} -> :ok
+      {:ok, codigo, salida} -> {:error, "no se pudo escribir el registro (código #{codigo}): #{String.trim(salida)}"}
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc """
+  Historial de `#{@registro}`, el más reciente primero. Un archivo que
+  todavía no existe es una lista vacía; una línea dañada se salta sin
+  romper las demás.
+
+  `{:ok, [mapa]}` | `{:error, mensaje}`. `fun_ssh` solo cambia en tests.
+  """
+  def listar_intentos(ambiente, fun_ssh \\ &MetadataApp.Ssh.ejecutar/2) do
+    case fun_ssh.(ambiente, "cat #{@registro} 2>/dev/null || true") do
+      {:ok, 0, salida} ->
+        intentos =
+          salida
+          |> String.split("\n", trim: true)
+          |> Enum.flat_map(fn linea ->
+            case Jason.decode(linea) do
+              {:ok, mapa} when is_map(mapa) -> [mapa]
+              _ -> []
+            end
+          end)
+          |> Enum.reverse()
+
+        {:ok, intentos}
+
+      {:ok, codigo, salida} ->
+        {:error, "no se pudo leer el registro (código #{codigo}): #{String.trim(salida)}"}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  ## Elegibilidad (design §6, R2-R4b)
+
   @doc """
   Imagen que corre en `stable`, solo si tiene etiqueta fija (R3a): con
   `:latest`, "misma etiqueta" no significa "misma imagen", así que no se
