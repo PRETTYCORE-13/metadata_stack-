@@ -202,6 +202,11 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   perder el filtro al elegir un catálogo/asignar un permiso (el texto
   buscado viaja como query param `?q=` en vez de perderse en el
   remount) + comodín `*` para listar sin substring — ver `tasks.md`.
+  - Sub-spec [`SPEC-SYS-0910202601-lista-artefactos-permisos/`](SPEC-SYS-1709202602-sysadmin-catalogos-permisos/SPEC-SYS-0910202601-lista-artefactos-permisos/)
+    (2026-10-09): el picker de "Permisos ADN" muestra de entrada la
+    lista completa de catálogos y Consultas, como el Administrador de
+    usuarios, para elegir sin saber su nombre; el buscador la filtra.
+    Reemplaza R2 de esta spec. Implementado y testeado.
 - [`SPEC-SYS-1809202601-despublicar-catalogo-huerfano/`](SPEC-SYS-1809202601-despublicar-catalogo-huerfano/) —
   mecanismo general para borrar un catálogo "huérfano" (vivo en algún
   ambiente desplegado, ausente en TODOS lados local — típico de un

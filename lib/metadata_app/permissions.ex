@@ -571,19 +571,42 @@ defmodule MetadataApp.Permissions do
   # interpolated at the top level of where...").
   defp query_catalogos(condicion_texto, limite) do
     Repo.all(
-      from h in Header,
-        as: :header,
-        where: is_nil(h.delete_guid) and h.schema_context_type != 2 and is_nil(h.schema_encabezado_id),
+      from h in base_permisible(),
         where: ^condicion_texto,
-        where:
-          h.schema_context_type in [3, 4] or
-            exists(
-              from t in "meta_schema_transiciones",
-                where: t.meta_schema_header_id == parent_as(:header).id and is_nil(t.delete_guid),
-                select: 1
-            ),
         order_by: h.schema_context_label,
         limit: ^limite,
+        select: %{recurso: h.schema_context_name, label: h.schema_context_label, es_consulta: h.schema_context_type in [3, 4]}
+    )
+  end
+
+  # Qué artefactos aceptan permisos propios: catálogos raíz (ni carpeta,
+  # tipo 2, ni detalle) con al menos una transición viva, o Consultas
+  # (Ecto, tipo 3; SQL View, tipo 4 -- nunca tienen motor de estados).
+  defp base_permisible do
+    from h in Header,
+      as: :header,
+      where: is_nil(h.delete_guid) and h.schema_context_type != 2 and is_nil(h.schema_encabezado_id),
+      where:
+        h.schema_context_type in [3, 4] or
+          exists(
+            from t in "meta_schema_transiciones",
+              where: t.meta_schema_header_id == parent_as(:header).id and is_nil(t.delete_guid),
+              select: 1
+          )
+  end
+
+  @doc """
+  Todos los catálogos y Consultas vivos (sin carpetas), ordenados por
+  etiqueta — la lista del picker de Permission Sets (SPEC-SYS-0910202601).
+  A diferencia de `buscar_catalogos/2`, incluye detalles y catálogos sin
+  transiciones: el usuario pidió verlos todos para elegir sin conocer el
+  nombre.
+  """
+  def listar_catalogos_para_permisos do
+    Repo.all(
+      from h in Header,
+        where: is_nil(h.delete_guid) and h.schema_context_type != 2,
+        order_by: h.schema_context_label,
         select: %{recurso: h.schema_context_name, label: h.schema_context_label, es_consulta: h.schema_context_type in [3, 4]}
     )
   end
