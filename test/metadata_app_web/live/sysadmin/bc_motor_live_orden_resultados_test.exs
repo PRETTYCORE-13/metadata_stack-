@@ -1,6 +1,6 @@
 defmodule MetadataAppWeb.Sysadmin.BcMotorLiveOrdenResultadosTest do
   @moduledoc """
-  Cubre la sección "Orden de resultados" del Get Config del BC Motor
+  Cubre la sección "Orden de resultados" de la Lista del BC Motor
   (2026-09-02, a pedido explícito -- mismo patrón que
   consulta_editor_live.ex, ver panel_orden_resultados/1 en
   bc_motor_live.ex): agregar/cambiar dirección/mover/quitar columnas de

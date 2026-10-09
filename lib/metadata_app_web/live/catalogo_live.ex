@@ -25,7 +25,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   @por_pagina 25
 
 
-  # Get View unificado (ver panel_get_view/1 en BcMotorLive) — mismas 8
+  # Lista unificada (ver panel_get_view/1 en BcMotorLive) — mismas 8
   # claves de control que allá, en el mismo orden de siempre (para
   # catálogos que nunca configuraron Header.orden_columnas_tabla, ver
   # construir_columnas_render/3).
@@ -197,7 +197,7 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> cargar_filas()}
   end
 
-  # "Creado por" (Get View) se resuelve contra meta_schema_auditoria, nunca
+  # "Creado por" (Lista) se resuelve contra meta_schema_auditoria, nunca
   # una columna física — para un catálogo detalle usa el `bc`/id del
   # MAESTRO (quién creó el registro completo), no los del renglón mismo
   # (quién cargó esa línea puntual), a pedido explícito.
@@ -231,7 +231,7 @@ defmodule MetadataAppWeb.CatalogoLive do
       end)
 
     # ID va antes de negocio, el resto de control después — mismo orden
-    # visual que la tabla ya mostraba antes de este Get View unificado
+    # visual que la tabla ya mostraba antes de esta Lista unificada
     # (id | campos de negocio | estado/trn/empresa/... ), para no romper
     # ningún catálogo ya publicado que nunca configuró orden_columnas_tabla.
     {id_control, resto_control} = Enum.split_with(control, &(&1.clave == "id"))
@@ -370,7 +370,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   # ya usa consulta.campos) armado desde meta_schema_detail -- "catalogo"
   # es siempre el propio catálogo (un BC no tiene N tablas unidas como
   # una Consulta). "fecha_registro" queda afuera -- es de control (ver
-  # mismo criterio en bc_motor_live.ex/filas_get_view, Get Config no le
+  # mismo criterio en bc_motor_live.ex/filas_get_view, Lista no le
   # ofrece "Parámetro" tampoco).
   defp campos_param_de_catalogo(header, detalles) do
     detalles
@@ -952,7 +952,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   # --- Barra de Parámetros (Consulta Ecto, rediseño 2026-08-27) ---------
   # Todo guardado inmediato y SOLO en el socket de esta sesión (@overrides_parametro,
   # ver moduledoc de MetaSchema.Consulta) -- nunca pisa el default que
-  # configuró el admin en Get Config (Consulta.campos), eso es de lectura
+  # configuró el admin en Lista (Consulta.campos), eso es de lectura
   # acá. `name="clave[<clave_campo>]"` + `form="form-parametros-reporte"`
   # en vez de phx-value-campo en los <select>/<input> con phx-change
   # propio -- mismo motivo que en ConsultaEditorLive (phx-value-* nunca
@@ -1087,7 +1087,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   # Mismo criterio que recalcular_agregaciones/1 pero para "Filtros Min."
   # (ver celdas_resumen/1) — a diferencia de @agregaciones, que el usuario
   # final elige por columna, acá no hay elección: cada columna NUMÉRICA
-  # con "minmax_recomendado" en el Get View (ver panel_get_view/1 en
+  # con "minmax_recomendado" en la Lista (ver panel_get_view/1 en
   # bc_motor_live.ex) SIEMPRE muestra su {mínimo, máximo}, calculado de
   # una. Restringido a integer/decimal a propósito (igual que "Total
   # 25"/"Totalizado") — el botón para prenderlo ni se muestra para otros
@@ -1234,7 +1234,7 @@ defmodule MetadataAppWeb.CatalogoLive do
 
     # Clic en un encabezado (R2, usuario final) pisa el "Orden de
     # resultados" del admin SOLO para esta sesión -- nunca se persiste en
-    # `consulta` (eso sigue siendo Get Config). Una sola columna a la vez,
+    # `consulta` (eso sigue siendo Lista). Una sola columna a la vez,
     # a diferencia de la lista con prioridad del admin -- el patrón típico
     # de "clic para ordenar" de cualquier tabla, no una combinación.
     consulta_ordenada = if orden_usuario, do: %{consulta | orden_por: [orden_usuario]}, else: consulta
@@ -1258,7 +1258,7 @@ defmodule MetadataAppWeb.CatalogoLive do
     |> assign(:fin, min(offset + @por_pagina, total_filas))
   end
 
-  # "Orden de resultados" (Get Config, BC Motor, 2026-09-02) --
+  # "Orden de resultados" (Lista, BC Motor, 2026-09-02) --
   # header.orden_resultados es [%{"campo" =>, "direccion" =>}, ...]
   # (jsonb, strings) -- acá se convierte a lo que
   # CatalogoGenerico.aplicar_orden/2 espera: [{campo_atom, :asc|:desc}].
@@ -1384,7 +1384,7 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   defp ids_unicos(filas, campo), do: filas |> Enum.map(&Map.get(&1, campo)) |> Enum.reject(&is_nil/1) |> Enum.uniq()
 
-  # "Creado por" (Get View) — mismo criterio batch-por-página que
+  # "Creado por" (Lista) — mismo criterio batch-por-página que
   # agregar_alcance_a_filas/2 de arriba (una sola consulta a
   # meta_schema_auditoria, nunca una por fila). `bc_creado_por`/
   # `campo_id_creado_por` ya vienen resueltos desde montar_catalogo/2
@@ -2044,7 +2044,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   end
 
   # Las 3 piezas de abajo (celda_encabezado/celda_body/celda_resumen_col)
-  # son el dispatch por tipo de columna del Get View unificado (ver
+  # son el dispatch por tipo de columna de la Lista unificada (ver
   # construir_columnas_render/3) — una por cada fila de la tabla (título,
   # dato, resumen), SIEMPRE en el mismo orden (@columnas_render), para que
   # las 3 sigan alineadas verticalmente sin importar qué tan mezclados
@@ -2056,7 +2056,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   # filtra desde panel_parametros/1 (arriba de la tabla) en vez de por
   # columna, mismo widget que ya tenía una Consulta Ecto. Los campos de
   # control (estado/sucursal/almacén/unidad de venta) no tienen equivalente
-  # en panel_parametros todavía -- mismo criterio que Get Config
+  # en panel_parametros todavía -- mismo criterio que Lista
   # (bc_motor_live.ex, filas_get_view/2 no les ofrece "Parámetro" tampoco,
   # campo_param: nil) -- pierden su filtro sin reemplazo por ahora.
   attr :col, :map, required: true
@@ -2266,7 +2266,7 @@ defmodule MetadataAppWeb.CatalogoLive do
     Enum.map(columnas, &%{clave: col_key(&1), etiqueta: &1.schema_context_properties["etiqueta"]})
   end
 
-  # Get View unificado (CatalogoLive) — @columnas_render ya viene en el
+  # Lista unificada (CatalogoLive) — @columnas_render ya viene en el
   # orden final (control + negocio mezclados, ver construir_columnas_render/3),
   # así que el popover de "Campos" lista todo en el mismo orden que las
   # columnas reales de la tabla.
@@ -2274,7 +2274,7 @@ defmodule MetadataAppWeb.CatalogoLive do
     Enum.map(columnas_render, &%{clave: &1.clave, etiqueta: &1.etiqueta})
   end
 
-  # "Total 25" (Get View → Filtros → "Total 25", bc_motor_live.ex) — a
+  # "Total 25" (Lista → Filtros → "Total 25", bc_motor_live.ex) — a
   # diferencia de "Totalizado" (recalcular_totales_generales/1, una query
   # de SUM sobre TODAS las filas que matchean), esto suma directo sobre
   # @filas (las ~25 que ya están cargadas para la página actual), sin
@@ -2303,7 +2303,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   defp sumar_valor(valor, acc), do: valor + acc
 
   # `props` (schema_context_properties del campo) trae la máscara elegida
-  # en Get View → Filtros → "Máscara" (solo para tipo "decimal", ver
+  # en Lista → Filtros → "Máscara" (solo para tipo "decimal", ver
   # panel_filtros_resumen/1 en bc_motor_live.ex): "mascara_separador" —
   # "," (default, formato 1,234.56) o "." (formato 1.234,56) — y
   # "mascara_simbolo" — "" (default) o "$" antepuesto. Un campo sin esas
@@ -2615,7 +2615,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   end
 
   # Extraído de celdas_resumen/1 de arriba — el cuerpo por columna, para
-  # poder reusarlo desde celda_resumen_col/1 (Get View unificado de
+  # poder reusarlo desde celda_resumen_col/1 (Lista unificada de
   # CatalogoLive) sin duplicar todo este bloque. celdas_resumen/1 lo sigue
   # llamando en loop tal cual, así que la tabla de Consultas (que la usa
   # directo) no cambió en nada.

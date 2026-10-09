@@ -19,7 +19,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :schema_set_permissions, :map
     field :schema_profiles, :map
 
-    # Get View → Filtros (bc_motor_live.ex): si está en true, la tabla del
+    # Lista → Filtros (bc_motor_live.ex): si está en true, la tabla del
     # catálogo (CatalogoLive) trae TODOS los registros y columnas apenas
     # se abre, sin esperar que el usuario final aplique un filtro/búsqueda
     # primero — ver datos_solicitados?/1 en catalogo_live.ex. El usuario
@@ -27,7 +27,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # esto solo cambia el estado inicial.
     field :cargar_todos_por_default, :boolean, default: false
 
-    # "Filtros por default" (Get Config → filtraba directo sobre la
+    # "Filtros por default" (Lista → filtraba directo sobre la
     # columna real "fecha_registro" del catálogo) existió acá hasta
     # 2026-09-11 (SPEC-SYS-1109202606 §5) y se eliminó a pedido
     # explícito del usuario: ningún catálogo real lo tenía configurado,
@@ -52,7 +52,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # transaccional no necesariamente necesita folio.
     field :requiere_folio, :boolean, default: false
 
-    # Get View → columnas ESTRUCTURALES (bc_motor_live.ex, 2026-08-06) — a
+    # Lista → columnas ESTRUCTURALES (bc_motor_live.ex, 2026-08-06) — a
     # diferencia de cargar_todos_por_default (qué filas trae), esto es
     # qué COLUMNAS de sistema muestra CatalogoLive:
     # ID siempre existía sin ningún gate, Estado/TRN ya se ocultaban solos
@@ -79,7 +79,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # MetadataApp.Permissions.alcance_tipo_efectivo/2.
     field :alcance_habilitado, :boolean, default: false
 
-    # Get View → columnas de Alcance de Datos (2026-08-12) -- mismo
+    # Lista → columnas de Alcance de Datos (2026-08-12) -- mismo
     # criterio que mostrar_id_en_tabla/mostrar_estado_en_tabla arriba,
     # pero estas 4 SOLO tienen sentido (y CatalogoLive las hace AND con
     # alcance_habilitado antes de mostrarlas) cuando el catálogo activó
@@ -92,13 +92,13 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :mostrar_inventory_location_en_tabla, :boolean, default: true
     field :mostrar_sales_unit_en_tabla, :boolean, default: true
 
-    # "Creado por" (Get View → Campos de Control) — no es columna física
+    # "Creado por" (Lista → Campos de Control) — no es columna física
     # propia, se resuelve contra meta_schema_auditoria (bc + entidad_id,
     # operacion "alta"; el maestro cuando el catálogo es detalle), mismo
     # criterio que "Empresa" arriba (tampoco es columna propia).
     field :mostrar_creado_por_en_tabla, :boolean, default: false
 
-    # Get View unificado (Campos de Control + Campos de negocio en una
+    # Lista unificada (Campos de Control + Campos de negocio en una
     # sola tabla arrastrable) — orden combinado de claves: nombres de
     # campo real (schema_context_field) y claves fijas de control ("id",
     # "estado", "trn", "empresa", "branch", "inventory_location",
@@ -108,7 +108,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # contrato de API) — es aparte, específico de esta tabla.
     field :orden_columnas_tabla, {:array, :string}, default: []
 
-    # "Orden de resultados" del Get Config (BC Motor, 2026-09-02) -- mismo
+    # "Orden de resultados" de la Lista (BC Motor, 2026-09-02) -- mismo
     # concepto que Consulta.orden_por (ver meta_schema/consulta.ex), pero
     # sin "catalogo": un BC normal es una sola tabla, no hace falta
     # desambiguar. [%{"campo" =>, "direccion" => "asc"|"desc"}, ...],

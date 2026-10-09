@@ -1,7 +1,7 @@
 defmodule MetadataAppWeb.Sysadmin.BcMotorLiveLlaveFichaTest do
   @moduledoc """
   SPEC-SYS-1109202607 §6c (R17-R20): la llave de identificación de la Ficha
-  se configura en el tab Formulario, ya no en Get Config, y se sigue
+  se configura en el tab Formulario, ya no en Lista, y se sigue
   guardando en el encabezado del catálogo.
   """
   use MetadataAppWeb.ConnCase, async: true

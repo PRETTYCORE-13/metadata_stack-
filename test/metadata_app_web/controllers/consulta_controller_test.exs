@@ -67,7 +67,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.ConsultaControllerTest do
       assert paginacion["total_filas"] == 1
     end
 
-    test "una columna oculta (visible=false) en Get Config no viene en meta_campos ni en data", %{conn: conn} do
+    test "una columna oculta (visible=false) en Lista no viene en meta_campos ni en data", %{conn: conn} do
       {header, consulta} = criar_consulta()
       fixture_cliente(%{})
 

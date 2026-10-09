@@ -73,7 +73,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     |> Repo.all()
   end
 
-  # "Orden de resultados" (Get Config, BC Motor, 2026-09-02) -- `orden` es
+  # "Orden de resultados" (Lista, BC Motor, 2026-09-02) -- `orden` es
   # `[{campo_atom, :asc | :desc}, ...]`, ya resuelto por el caller (hoy
   # solo CatalogoLive, desde Header.orden_resultados -- ver
   # orden_desde_header/1 ahí) contra columnas REALES del schema, en

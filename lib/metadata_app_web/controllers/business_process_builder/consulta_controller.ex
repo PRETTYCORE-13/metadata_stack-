@@ -41,7 +41,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.ConsultaController do
     )
   end
 
-  # Solo las columnas visibles (Get Config), en el mismo orden que la
+  # Solo las columnas visibles (Lista), en el mismo orden que la
   # tabla admin/report -- "clave" es la llave namespaced que también
   # trae cada fila de "data" (MetaConsultas.clave_campo/1), necesaria
   # para leer el JSON sin ambigüedad cuando dos tablas unidas comparten

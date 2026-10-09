@@ -351,7 +351,7 @@ defmodule MetadataApp.ConsultaEndpoints do
 
   @doc """
   Ejecuta la Consulta con el `scope` REAL de quien está probando (el
-  admin logueado en Get Config/editor de Consulta) -- nunca con una
+  admin logueado en Lista/editor de Consulta) -- nunca con una
   credencial ni acotado por `campos_permitidos` (eso solo aplica a una
   llamada externa real, R43). No exige que el endpoint esté publicado
   (R28) ni siquiera que exista todavía guardado -- por eso no recibe

@@ -194,7 +194,7 @@ defmodule MetadataApp.MetaImportExport do
               if(sincronizar_icono(existente, contexto["schema_context_icono"]), do: "ícono actualizado"),
               if(sincronizar_orden(existente, contexto["orden"]), do: "orden de menú actualizado"),
               if(sincronizar_orden_columnas_tabla(existente, contexto["orden_columnas_tabla"]),
-                do: "orden de columnas (Get Config) actualizado"
+                do: "orden de columnas (Lista) actualizado"
               ),
               if(sincronizar_orden_resultados(existente, contexto["orden_resultados"]),
                 do: "orden de resultados actualizado"
@@ -384,7 +384,7 @@ defmodule MetadataApp.MetaImportExport do
   end
 
   # Encontrado real (2026-09-17, mismo barrido que "orden" arriba):
-  # orden_columnas_tabla (orden combinado de la tabla Get Config) y
+  # orden_columnas_tabla (orden combinado de la tabla Lista) y
   # orden_resultados (orden de filas por default) tampoco viajaban en el
   # .meta.json -- exportar_header/2 no los incluía. `nil` (bundle viejo,
   # sin la clave) se ignora; `[]` (el default real del campo, o vaciado a
@@ -437,10 +437,10 @@ defmodule MetadataApp.MetaImportExport do
     end
   end
 
-  # Get View → columnas estructurales (ID/Estado/TRN, 2026-08-06; Empresa/
+  # Lista → columnas estructurales (ID/Estado/TRN, 2026-08-06; Empresa/
   # Sucursal/Almacén/Unidad de venta sumadas 2026-08-13, bug operacional
   # encontrado en vivo: se agregaron esas 4 columnas de Alcance de Datos a
-  # Get View pero se olvidó sumarlas acá -- el bundle nunca las llevaba,
+  # Lista pero se olvidó sumarlas acá -- el bundle nunca las llevaba,
   # así que tras un deploy quedaban en su default `true` (todas visibles)
   # sin importar lo que el admin hubiera configurado) -- mismo criterio
   # que sincronizar_cargar_todos_por_default/2: es puro flag de
@@ -612,7 +612,7 @@ defmodule MetadataApp.MetaImportExport do
 
   # "visible" y "orden" de un campo YA existente (2026-09-17, mismo barrido
   # que orden_columnas_tabla/orden_resultados arriba) -- mismo criterio que
-  # sincronizar_etiquetas_campos/2: presentación pura del Get Config
+  # sincronizar_etiquetas_campos/2: presentación pura de la Lista
   # (columna oculta/visible, posición en la tabla de campos), nunca toca
   # la columna física. Antes de esto, ocultar o reordenar un campo YA
   # publicado y volver a publicar no se sincronizaba -- solo un campo

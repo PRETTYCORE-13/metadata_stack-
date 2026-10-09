@@ -2082,7 +2082,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   end
 
   @doc """
-  Orden combinado de columnas del Get View unificado (Campos de Control +
+  Orden combinado de columnas de la Lista unificada (Campos de Control +
   Campos de negocio, ver panel_get_view/1 en BcMotorLive) — a diferencia de
   reordenar_campos/2 de arriba, esto NO toca schema_context_properties de
   ningún campo (el orden de la pestaña Campos/Ficha/contrato de API sigue

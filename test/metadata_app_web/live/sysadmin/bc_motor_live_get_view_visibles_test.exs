@@ -1,6 +1,6 @@
 defmodule MetadataAppWeb.Sysadmin.BcMotorLiveGetViewVisiblesTest do
   @moduledoc """
-  Casillas "Vis." de "Columnas del GET" en el Get Config del BC Motor
+  Casillas "Vis." de "Columnas del GET" en la Lista del BC Motor
   (SPEC-SYS-1109202606, R4/R20): lo marcado sin guardar sobrevive a
   reordenar por arrastre y a los controles de la fila que guardan al
   instante, y solo "Guardar columnas" lo persiste.

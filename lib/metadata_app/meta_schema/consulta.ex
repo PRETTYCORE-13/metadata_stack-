@@ -13,7 +13,7 @@ defmodule MetadataApp.MetaSchema.Consulta do
   #       meta_schema_detail de ese catálogo, se usa el nombre lógico tal
   #       cual, sin inventar una etiqueta bonita),
   #     "orden" => entero,
-  #     "visible" => boolean (Get View — igual que la propiedad "visible"
+  #     "visible" => boolean (Lista — igual que la propiedad "visible"
   #       de un campo normal, pero acá vive en este jsonb, no en
   #       meta_schema_detail, porque un campo de consulta no es un campo
   #       real de ningún catálogo),
@@ -21,7 +21,7 @@ defmodule MetadataApp.MetaSchema.Consulta do
   #       solo aplica a columnas numéricas)}
   #
   # Rediseño de "Parámetros" (2026-08-27) -- un campo es parámetro del
-  # reporte solo si el admin lo marca a propósito en Get Config, NUNCA
+  # reporte solo si el admin lo marca a propósito en Lista, NUNCA
   # automático (corregido el mismo día: la primera versión lo hacía
   # automático para todo campo visible de tipo elegible, revertido a
   # pedido explícito -- "no todas las columnas llevan parámetro, solo
@@ -30,7 +30,7 @@ defmodule MetadataApp.MetaSchema.Consulta do
   #
   #   "es_parametro" => boolean -- SOLO para tipo "date"/"string"/
   #     "referencia"/"integer"/"decimal" (los únicos elegibles); el admin
-  #     lo prende explícito por columna en Get Config. false/ausente en
+  #     lo prende explícito por columna en Lista. false/ausente en
   #     cualquier otro caso -- MetaConsultas.campos_elegibles_fecha/1,
   #     campos_elegibles_string/1 y campos_elegibles_numerico/1 filtran
   #     por "visible" + tipo + este flag juntos.

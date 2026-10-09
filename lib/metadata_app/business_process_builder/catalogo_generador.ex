@@ -389,7 +389,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
   # fecha_registro es un campo de SISTEMA (fuera de @campos/meta_schema_detail
   # normal, ver MetaCatalogoGenerico) — pero para que el usuario final lo
-  # vea en Get View/tabla como cualquier otro campo real (a diferencia de
+  # vea en Lista/tabla como cualquier otro campo real (a diferencia de
   # estado_id/trn, que son puramente internos), necesita SU PROPIA fila en
   # meta_schema_detail igual. "editable" => false porque no hay ningún
   # camino para cambiarlo por PATCH (ver rechazar_no_editables/4 en

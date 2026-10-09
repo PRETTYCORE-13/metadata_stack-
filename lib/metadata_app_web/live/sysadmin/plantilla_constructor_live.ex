@@ -102,7 +102,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   # "folio" agregado 2026-09-11 (SPEC-SYS-1109202607, hallazgo real): la
   # feature de folio (SPEC-SYS-0109202601 R9) ya soportaba esta clave en
   # FichaLive (@claves_campos_control, valor_legible_control/4) y en
-  # BcMotorLive/Get View desde que se construyó -- solo faltaba acá, así
+  # BcMotorLive/Lista desde que se construyó -- solo faltaba acá, así
   # que un catálogo con folio no podía colocar un nodo "Folio" al armar
   # una plantilla custom (solo lo veía en la fila fija de la plantilla
   # automática).

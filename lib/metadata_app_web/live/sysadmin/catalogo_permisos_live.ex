@@ -337,7 +337,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
 
   def handle_event("cambiar_alcance_tipo", _params, socket), do: {:noreply, socket}
 
-  # Relocado acá desde BcMotorLive/Get View (2026-08-12, ajuste UI:
+  # Relocado acá desde BcMotorLive/Lista (2026-08-12, ajuste UI:
   # "revuelve mucho" tener el on/off en una pestaña y la config por rol en
   # otra — ahora activar/desactivar y `panel_alcance_de_rol` viven juntos).
   # Apagar solo pisa el flag (nunca borra columnas físicas ni filas de
@@ -691,7 +691,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   # NO otra columna de la matriz de arriba, a propósito: es un concepto
   # distinto (QUÉ FILAS, no QUÉ ACCIONES). Solo aparece si el catálogo ya
   # activó alcance_habilitado (toggle arriba, relocado 2026-08-12 desde
-  # BcMotorLive/Get View), la mayoría de los catálogos hoy no lo tiene prendido.
+  # BcMotorLive/Lista), la mayoría de los catálogos hoy no lo tiene prendido.
   # `roles` acá es @roles_con_permiso (cargar_matriz/1), no @roles -- un rol
   # sin ningún permiso/transición concedida en este catálogo no tiene nada
   # que configurar todavía, a pedido explícito para no saturar esta lista.

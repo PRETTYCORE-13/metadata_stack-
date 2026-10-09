@@ -2,7 +2,7 @@ defmodule MetadataAppWeb.SelectorMultipleComponents do
   @moduledoc """
   Lookup de selección múltiple (checkbox a la izquierda de cada opción,
   "Todos"/"Ninguno" arriba) — reemplaza el `<select multiple>` nativo
-  para los parámetros "multi" (Get Config admin y la barra de Parámetros
+  para los parámetros "multi" (Lista admin y la barra de Parámetros
   del reporte, ver moduledoc de `MetadataApp.MetaSchema.Consulta`): un
   `<select multiple>` exige ctrl/cmd+click para elegir más de un valor,
   nada discoverable — acá cada opción es un checkbox real, uno por

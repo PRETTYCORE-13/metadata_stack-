@@ -374,7 +374,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
   end
 
   # --- :editar -- Campos (Visible/Parámetro, sin salir de esta sección) ----
-  # Mismos handlers/eventos que ya usaba el Get Config de ConsultaEditorLive
+  # Mismos handlers/eventos que ya usaba la Lista de ConsultaEditorLive
   # (ver MetadataAppWeb.ParametrosCatalogoComponents, que fija esos nombres
   # de evento) -- acá SIN reordenamiento por drag-and-drop ni Campos de
   # control/Orden de resultados (esos siguen siendo exclusivos de Get
@@ -1376,7 +1376,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
   attr :modos_fecha_simple, :list, required: true
   attr :catalogos_referenciables, :list, required: true
 
-  # Equivalente reducido a la sección "Columnas del GET" de Get Config
+  # Equivalente reducido a la sección "Columnas del GET" de Lista
   # (ConsultaEditorLive) -- Visible/Parámetro y su configuración, SIN
   # reordenamiento por drag-and-drop ni Campos de control/Orden de
   # resultados (siguen siendo exclusivos de esa pantalla, un endpoint no

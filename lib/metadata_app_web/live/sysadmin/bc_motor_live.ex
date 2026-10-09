@@ -45,7 +45,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   %{tipo: :pagina, id: "propagacion", label: "Propagación", nav: "/sysadmin/propagacion"},
   ]
 
-  # Get View unificado (panel_get_view/1) — descriptores fijos de los
+  # Lista unificada (panel_get_view/1) — descriptores fijos de los
   # campos de control, mezclados con @campos (de negocio) en una sola
   # tabla arrastrable. `visible_key` es el campo booleano real en Header
   # (Header.mostrar_id_en_tabla, etc.) — "empresa"/"branch"/
@@ -909,7 +909,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     actualizar_campo_y_regenerar(socket, detalle, props, "el valor default")
   end
 
-  # Tabla unificada de Get View (panel_get_view/1) — mismo hook
+  # Tabla unificada de Lista (panel_get_view/1) — mismo hook
   # ListaOrdenable que el de la pestaña Campos, pero con un
   # `data-contenedor-id` propio ("columnas-get-view") para no confundirse
   # con esa: acá se mezclan claves de control ("id"/"estado"/...) con
@@ -966,7 +966,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # Get View → columnas estructurales (ID/Estado/TRN) — mismo criterio
+  # Lista → columnas estructurales (ID/Estado/TRN) — mismo criterio
   # inmediato que toggle_cargar_todos_por_default/2 de arriba. Estado/TRN
   # ya se ocultaban solos cuando el catálogo no calificaba (sin motor de
   # estados / no transaccional, ver CatalogoLive.mount/3); esto agrega el
@@ -1097,7 +1097,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # --- Get View: qué campos ve el usuario final en la tabla del catálogo ------
+  # --- Lista: qué campos ve el usuario final en la tabla del catálogo ------
 
   # Casillas "Vis." (R20 de SPEC-SYS-1109202606): lo marcado sin guardar
   # vive en @visibles_pendientes (clave => boolean) y no solo en el DOM,
@@ -1123,7 +1123,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # campos de negocio (schema_context_properties.visible, como siempre) Y
   # de campos de control (Header.mostrar_*_en_tabla, antes cada uno se
   # guardaba solo/inmediato con su propio botón toggle_mostrar_*_en_tabla
-  # — unificado en un solo "Guardar Get View" junto con los de negocio,
+  # — unificado en un solo "Guardar Lista" junto con los de negocio,
   # sin mecanismo nuevo de guardado). "visibles_control[]" (nombre de
   # campo aparte de "visibles[]") evita cualquier choque si alguna vez un
   # campo de negocio se llamara igual que una clave de control.
@@ -1148,7 +1148,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
        socket
        |> assign(:header, header_actualizado)
        |> assign(:visibles_pendientes, %{})
-       |> put_flash(:info, "Get View actualizado.")
+       |> put_flash(:info, "Lista actualizada.")
        |> cargar_motor()}
     else
       {:error, campo, changeset} when is_binary(campo) ->
@@ -1159,7 +1159,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # --- Get View: Parámetro estándar por columna (SPEC-SYS-0209202601) ----
+  # --- Lista: Parámetro estándar por columna (SPEC-SYS-0209202601) ----
   # Mismos nombres de evento y misma semántica que consulta_editor_live.ex
   # (ver moduledoc de MetaSchema.Consulta para el shape completo de
   # "acotado"/"tipo_filtro"/"origen"/"catalogo_referenciado"/"defaults")
@@ -1265,7 +1265,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     actualizar_props_por_id(socket, id, fn props -> Map.put(props, "defaults", Map.put(props["defaults"] || %{}, "valores", [])) end, "Default actualizado.")
   end
 
-  # --- Get View: Totales (unificados en la tabla, SPEC-SYS-0209202601) --
+  # --- Lista: Totales (unificados en la tabla, SPEC-SYS-0209202601) --
   # cambiar_minmax_recomendado/cambiar_total_pagina/cambiar_total_general/
   # cambiar_mascara YA existen más abajo (venían de panel_filtros_resumen,
   # retirado) y funcionan sin cambios -- celda_totales/1 les manda el
@@ -1292,7 +1292,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
-  # --- Get View: "Orden de resultados" -----------------------------------
+  # --- Lista: "Orden de resultados" -----------------------------------
   # Mismo mecanismo que Consultas (consulta_editor_live.ex,
   # Header.orden_resultados acá en vez de Consulta.orden_por) -- lista
   # ordenada por prioridad, guardada entera en cada cambio (agregar/
@@ -2253,7 +2253,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           ) ++
           [
             %{key: "get", label: "Relaciones"},
-            %{key: "getview", label: "Get Config"},
+            %{key: "getview", label: "Lista"},
             %{key: "postview", label: "Formulario"}
           ] ++
           if(@es_detalle?,
@@ -2435,7 +2435,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # Catálogo Maestro-Detalle (R3): sin pasos de autómata — un catálogo
   # detalle nunca tiene estados/transiciones propias, mostrarlos como
   # "pendientes" para siempre sería engañoso (nunca se van a completar,
-  # ni hace falta que lo hagan). Sí tiene Relaciones/Get Config/Formulario
+  # ni hace falta que lo hagan). Sí tiene Relaciones/Lista/Formulario
   # (campos propios, get view propio) — Permisos no, un detalle nunca
   # tiene permisos aparte (los de la fila los da su maestro), mismo
   # criterio que ya regía el viejo link "Permisos" de BcListLive.
@@ -2489,7 +2489,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
        do: [{"Permisos", true}],
        else: []) ++
       (if referencias_sin_configurar > 0, do: [{"Relaciones", false}], else: []) ++
-      (if tiene_algo_oculto?, do: [{"Get Config", true}], else: []) ++
+      (if tiene_algo_oculto?, do: [{"Lista", true}], else: []) ++
       (if tiene_plantilla?, do: [{"Formulario", true}], else: [])
   end
 
@@ -2552,7 +2552,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     # creado_por_id, branch_id...) — el server lo pisa solo en cada alta
     # (ver catalogo_generico.ex:605), nunca hay nada que editarle/
     # eliminarle acá. Tiene fila propia en meta_schema_detail solo para
-    # que Get View lo pueda mostrar/ordenar como columna (ver
+    # que Lista lo pueda mostrar/ordenar como columna (ver
     # asegurar_detalle_fecha_registro/1 en catalogo_generador.ex) — no
     # se toca @campos en sí (lo sigue necesitando filas_get_view/2 y el
     # resto de la pestaña), solo se lo saca de ESTA tabla de gestión.
@@ -2795,7 +2795,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   attr :campos, :list, required: true
   attr :header, :any, required: true
 
-  # "Get View": qué columnas ve el usuario final en la tabla de
+  # "Lista": qué columnas ve el usuario final en la tabla de
   # CatalogoLive — tabla ÚNICA con Campos de Control + Campos de
   # negocio mezclados, columna "Tipo" para distinguirlos, mismo
   # mostrar/ocultar y mismo drag-and-drop para cualquiera de los dos. El
@@ -2818,7 +2818,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
     ~H"""
     <div class="flex flex-col gap-4">
-      <%!-- Las secciones de Get Config son acordeones (mismo patrón que
+      <%!-- Las secciones de Lista son acordeones (mismo patrón que
       consulta_editor_live.ex/panel_get_config -- <details>/<summary>
       nativo + el hook RecordarSeccion, recuerda open/closed en
       localStorage por id, sin round-trip al servidor). Empiezan cerradas
@@ -3101,7 +3101,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       end)
 
     # ID va antes de negocio, el resto de control después — mismo orden
-    # visual que CatalogoLive ya mostraba antes de este Get View unificado
+    # visual que CatalogoLive ya mostraba antes de esta Lista unificada
     # (id | campos de negocio | estado/trn/empresa/... ), ver
     # construir_columnas_render/3 en catalogo_live.ex (misma lógica).
     {id_control, resto_control} = Enum.split_with(control, &(&1.clave == "id"))

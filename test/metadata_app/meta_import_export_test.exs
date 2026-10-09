@@ -95,7 +95,7 @@ defmodule MetadataApp.MetaImportExportTest do
     assert detalle.schema_context_properties["acotado"] == true
   end
 
-  # Encontrado real (2026-09-17): captura mostrando el orden de Get Config
+  # Encontrado real (2026-09-17): captura mostrando el orden de Lista
   # (tabla de columnas + orden de filas por default) sin efecto tras
   # publicar -- exportar_header/2 no incluía orden_columnas_tabla ni
   # orden_resultados en el .meta.json.
@@ -132,7 +132,7 @@ defmodule MetadataApp.MetaImportExportTest do
 
     mensajes = MetaImportExport.importar_meta(dir)
 
-    assert Enum.any?(mensajes, &(&1 =~ "orden de columnas (Get Config) actualizado"))
+    assert Enum.any?(mensajes, &(&1 =~ "orden de columnas (Lista) actualizado"))
     assert Enum.any?(mensajes, &(&1 =~ "orden de resultados actualizado"))
 
     actualizado = MetaSchemaContext.obtener_header_por_nombre(nombre)
@@ -141,7 +141,7 @@ defmodule MetadataApp.MetaImportExportTest do
   end
 
   # Encontrado real (2026-09-17): un campo YA publicado que se oculta o
-  # reordena en dev (Get Config → checkbox visible / drag-and-drop) y se
+  # reordena en dev (Lista → checkbox visible / drag-and-drop) y se
   # vuelve a publicar no se sincronizaba -- solo sincronizar_detalles_nuevos/2
   # cubría un campo recién creado, nunca uno existente.
   test "republicar un catálogo ya existente sincroniza visible/orden de un campo YA existente" do

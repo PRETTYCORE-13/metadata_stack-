@@ -97,7 +97,7 @@ export function detectarDuplicados(filas, columns) {
 // las filas están "visibles" ya de por sí, así que null equivale a "todas".
 // `overrides` es un mapa {campo: operacion} elegido en runtime por clic
 // derecho — nunca se persiste (mismo criterio que @agregaciones del lado
-// servidor, ver docs de Get View), tiene prioridad sobre la metadata.
+// servidor, ver docs de Lista), tiene prioridad sobre la metadata.
 const OPERACIONES_NUMERICAS = ["suma", "promedio", "minimo", "maximo"]
 const ETIQUETAS_OPERACION = {
   suma: "Total",
@@ -276,7 +276,7 @@ export default {
     this.resumenRow = this.el.querySelector('[data-resumen-pos="abajo"]')
     // Operación elegida en runtime por clic derecho — nunca persistida,
     // se pierde si se recarga la página (mismo criterio que @agregaciones
-    // de Get View).
+    // de Lista).
     this.resumenOverrides = {}
     this.menuResumenEl = null
     this.el.addEventListener("contextmenu", (e) => this.alContextMenuResumen(e))

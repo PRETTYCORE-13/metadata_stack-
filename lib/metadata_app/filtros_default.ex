@@ -7,7 +7,7 @@ defmodule MetadataApp.FiltrosDefault do
   módulo en vez de duplicar los `case modo do`.
 
   Hasta 2026-09-11 también cubría "Filtros por default" de
-  `Header.filtro_default_fecha_modo` (BC Motor → Get Config) — eliminado
+  `Header.filtro_default_fecha_modo` (BC Motor → Lista) — eliminado
   a pedido explícito del usuario (SPEC-SYS-1109202606 §5/§8): ningún
   catálogo real lo usaba, y este mismo mecanismo ya cubre la necesidad de
   forma más flexible.
