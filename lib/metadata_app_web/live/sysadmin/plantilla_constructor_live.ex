@@ -1137,24 +1137,37 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       <div :if={@plantilla} class="grid grid-cols-1 lg:grid-cols-[180px_1fr_280px] gap-4">
         <div class="bg-white border border-gray-200 rounded-xl p-3">
           <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">Componentes</div>
-          <div :for={{grupo, items} <- @grupos_paleta} class="mb-3">
-            <div class="text-[10px] font-semibold text-gray-400 mb-1">{grupo}</div>
-            <div class="flex flex-col gap-1.5">
+          <%!-- Acordeón nativo (R13-R15): abrir/cerrar no viaja al servidor, y
+               ignore_attributes evita que un patch de LiveView regrese
+               "open" al valor inicial (solo Campos abierto). --%>
+          <details :for={{{grupo, items}, i} <- Enum.with_index(@grupos_paleta)} id={"paleta-grupo-#{i}"}
+            phx-mounted={Phoenix.LiveView.JS.ignore_attributes(["open"])} class="group mb-2">
+            <summary class="flex items-center justify-between cursor-pointer select-none list-none py-1 text-[10px] font-semibold text-gray-400 hover:text-gray-600 [&::-webkit-details-marker]:hidden">
+              {grupo}
+              <.icon name="hero-chevron-right" class="w-3 h-3 transition-transform group-open:rotate-90" />
+            </summary>
+            <div class="flex flex-col gap-1.5 mt-1">
               <button :for={{tipo, etiqueta} <- items} type="button" draggable="true" data-origen="paleta" data-tipo={tipo}
                 phx-click="grid_colocar_tipo" phx-value-tipo={tipo}
                 class="gc-paleta-item flex items-center gap-2.5 text-left px-2 py-1.5 rounded-lg border border-transparent text-xs font-semibold text-gray-600 hover:border-gray-200 hover:bg-gray-50 cursor-grab">
                 <span class="gc-paleta-icono"><.icono tipo={tipo} /></span> {etiqueta}
               </button>
             </div>
-          </div>
-          <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">Campos</div>
-          <div class="flex flex-col gap-1.5">
-            <button :for={{filtro, etiqueta} <- @tipos_campo} type="button" draggable="true" data-origen="paleta" data-filtro={filtro}
-              phx-click="grid_colocar_campo" phx-value-filtro={filtro}
-              class="gc-paleta-item flex items-center gap-2.5 text-left px-2 py-1.5 rounded-lg border border-transparent text-xs font-semibold text-gray-600 hover:border-gray-200 hover:bg-gray-50 cursor-grab">
-              <span class="gc-paleta-icono"><.icono tipo={filtro} /></span> {etiqueta}
-            </button>
-          </div>
+          </details>
+          <details id={"paleta-grupo-#{length(@grupos_paleta)}"} open
+            phx-mounted={Phoenix.LiveView.JS.ignore_attributes(["open"])} class="group mb-2">
+            <summary class="flex items-center justify-between cursor-pointer select-none list-none py-1 text-[11px] font-bold uppercase tracking-wide text-gray-400 hover:text-gray-600 [&::-webkit-details-marker]:hidden">
+              Campos
+              <.icon name="hero-chevron-right" class="w-3 h-3 transition-transform group-open:rotate-90" />
+            </summary>
+            <div class="flex flex-col gap-1.5 mt-1">
+              <button :for={{filtro, etiqueta} <- @tipos_campo} type="button" draggable="true" data-origen="paleta" data-filtro={filtro}
+                phx-click="grid_colocar_campo" phx-value-filtro={filtro}
+                class="gc-paleta-item flex items-center gap-2.5 text-left px-2 py-1.5 rounded-lg border border-transparent text-xs font-semibold text-gray-600 hover:border-gray-200 hover:bg-gray-50 cursor-grab">
+                <span class="gc-paleta-icono"><.icono tipo={filtro} /></span> {etiqueta}
+              </button>
+            </div>
+          </details>
           <p class="text-[11px] text-gray-400 mt-3">
             Arrastra un componente a una celda, o haz clic en una celda vacía y después acá.
           </p>
@@ -1445,15 +1458,12 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         Enum.filter(assigns.campos, &(&1.schema_context_properties["tipo"] in tipos_permitidos))
       end
 
-    # Los campos de control solo tienen sentido en el selector "general"
-    # (sin tipo_filtro) -- no tienen un schema_context_properties["tipo"]
-    # real contra el que filtrar (ver moduledoc de @campos_control).
+    # Los campos de control no tienen un schema_context_properties["tipo"]
+    # contra el que filtrar, así que se ofrecen con cualquier tipo_filtro:
+    # todo nodo "campo" de la paleta trae uno, y filtrarlos los dejaría
+    # inalcanzables en una plantilla custom.
     campos_control_filtrados =
-      if tipos_permitidos == [] do
-        Enum.reject(@campos_control, &(&1.requiere_alcance? and not assigns.header.alcance_habilitado))
-      else
-        []
-      end
+      Enum.reject(@campos_control, &(&1.requiere_alcance? and not assigns.header.alcance_habilitado))
 
     assigns =
       assigns

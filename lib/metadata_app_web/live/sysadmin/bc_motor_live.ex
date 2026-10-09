@@ -2237,7 +2237,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
           [
             %{key: "get", label: "Relaciones"},
             %{key: "getview", label: "Get Config"},
-            %{key: "postview", label: "Post Config"}
+            %{key: "postview", label: "Formulario"}
           ] ++
           if(@es_detalle?,
             do: [],
@@ -2412,7 +2412,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # Catálogo Maestro-Detalle (R3): sin pasos de autómata — un catálogo
   # detalle nunca tiene estados/transiciones propias, mostrarlos como
   # "pendientes" para siempre sería engañoso (nunca se van a completar,
-  # ni hace falta que lo hagan). Sí tiene Relaciones/Get Config/Post Config
+  # ni hace falta que lo hagan). Sí tiene Relaciones/Get Config/Formulario
   # (campos propios, get view propio) — Permisos no, un detalle nunca
   # tiene permisos aparte (los de la fila los da su maestro), mismo
   # criterio que ya regía el viejo link "Permisos" de BcListLive.
@@ -2467,7 +2467,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
        else: []) ++
       (if referencias_sin_configurar > 0, do: [{"Relaciones", false}], else: []) ++
       (if tiene_algo_oculto?, do: [{"Get Config", true}], else: []) ++
-      (if tiene_plantilla?, do: [{"Post Config", true}], else: [])
+      (if tiene_plantilla?, do: [{"Formulario", true}], else: [])
   end
 
   defp campo_referencia?(campo), do: get_in(campo.schema_context_properties, ["tipo"]) == "referencia"

@@ -3,7 +3,7 @@ defmodule Mix.Tasks.Plantillas.Export do
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaPlantillas
 
-  @shortdoc "Exporta las plantillas del Constructor (Post Config: Vistas + Impresión) a un archivo JSON por catálogo"
+  @shortdoc "Exporta las plantillas del Constructor (Formulario: Vistas + Impresión) a un archivo JSON por catálogo"
 
   @moduledoc """
   Uso: mix plantillas.export [directorio_salida]

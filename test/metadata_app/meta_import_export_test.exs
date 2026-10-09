@@ -550,7 +550,7 @@ defmodule MetadataApp.MetaImportExportTest do
   end
 
   # Encontrado real (2026-09-17): las plantillas custom del Constructor
-  # (Post Config) nunca viajaban al publicar un catálogo -- solo la
+  # (Formulario) nunca viajaban al publicar un catálogo -- solo la
   # plantilla AUTOMÁTICA se autogeneraba en cada ambiente por separado, así
   # que un diseño a medida en dev jamás llegaba a unstable/producción.
   # Mismo criterio de tolerancia por catálogo que importar_motor/1.

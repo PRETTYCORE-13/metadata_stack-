@@ -956,14 +956,14 @@ defmodule MetadataApp.MetaImportExport do
 
   @doc """
   Importa cada `*.plantillas.json` de `dir` -- crea/sincroniza las
-  plantillas del Constructor (Post Config: Vistas + Impresión) de cada
+  plantillas del Constructor (Formulario: Vistas + Impresión) de cada
   catálogo, resolviendo el catálogo por NOMBRE (igual que `importar_motor/1`).
   Idempotente por (nombre, propósito) dentro de cada catálogo -- coincide
   con el criterio que ya usa la propia app (`regenerar_plantilla_automatica/1`
   matchea "Plantilla automática" por nombre).
 
   Encontrado real (2026-09-17): las plantillas custom armadas a mano en el
-  Constructor (Post Config) nunca viajaban al publicar un catálogo -- solo
+  Constructor (Formulario) nunca viajaban al publicar un catálogo -- solo
   la plantilla AUTOMÁTICA se autogeneraba en cada ambiente por separado
   (`CatalogoGenerador.generar/1`), así que un diseño a medida en dev jamás
   llegaba a unstable/producción.
