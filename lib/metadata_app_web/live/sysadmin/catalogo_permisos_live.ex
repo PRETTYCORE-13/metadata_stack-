@@ -84,6 +84,8 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
       |> assign(:show_clientes_children, false)
       |> assign(:show_prettycore_children, false)
       |> assign(:todos_los_catalogos, Permissions.listar_catalogos_para_permisos())
+      |> assign(:modulos, MetaSchemaContext.listar_modulos())
+      |> restaurar_modulo(params["modulo"])
       |> restaurar_busqueda_picker(params["q"])
       |> montar_catalogo(recurso)
 
@@ -123,7 +125,8 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
      |> assign(:show_prettycore_children, false)
      |> assign(:catalogo, nil)
      |> assign(:transiciones, [])
-     |> assign(:todos_los_catalogos, Permissions.listar_catalogos_para_permisos())}
+     |> assign(:todos_los_catalogos, Permissions.listar_catalogos_para_permisos())
+     |> assign(:modulos, MetaSchemaContext.listar_modulos())}
   end
 
   defp montar_base(socket) do
@@ -144,6 +147,8 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     |> assign(:alcance_error, nil)
     |> assign(:mostrar_sysadmin?, false)
     |> assign(:todos_los_catalogos, [])
+    |> assign(:modulos, [])
+    |> assign(:modulo_filtro, "")
   end
 
   # SPEC-SYS-1709202602 R4/R4a-b (2026-09-17, a pedido explícito):
@@ -159,6 +164,21 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   # (query param + push_navigate normal) no toca esa área en absoluto: el
   # picker vuelve a poblarse en mount/3, mismo camino que un F5 directo a
   # esa URL, sin ningún mecanismo de vida nueva.
+  # SPEC-SYS-0910202601 R9: el módulo elegido viaja en "?modulo=" igual
+  # que "q"; solo se acepta un prefijo que exista.
+  defp restaurar_modulo(socket, prefijo) do
+    if Enum.any?(socket.assigns.modulos, &(&1.prefijo == prefijo)),
+      do: assign(socket, :modulo_filtro, prefijo),
+      else: socket
+  end
+
+  # R7/R8: el módulo se aplica encima de la lista base (completa o ya
+  # filtrada por el buscador), con el mismo filtro de "Catálogo destino".
+  defp catalogos_visibles(busqueda, todos, resultados, modulo, modulos) do
+    base = if busqueda == "", do: todos, else: resultados
+    MetaSchemaContext.catalogos_del_modulo(base, modulo, modulos)
+  end
+
   defp restaurar_busqueda_picker(socket, texto) when texto in [nil, ""], do: socket
 
   defp restaurar_busqueda_picker(socket, texto) do
@@ -244,13 +264,23 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   # sessionStorage ni en ningún lado del cliente -- la URL es la única
   # fuente de verdad, mismo criterio que el resto de esta pantalla (R6).
   def handle_event("elegir_catalogo", %{"recurso" => recurso}, socket) do
+    params =
+      Enum.reject(
+        [q: socket.assigns.busqueda_catalogo_picker, modulo: socket.assigns.modulo_filtro],
+        fn {_clave, valor} -> valor == "" end
+      )
+
     destino =
-      case socket.assigns.busqueda_catalogo_picker do
-        "" -> ~p"/sysadmin/catalogos/#{recurso}/permisos"
-        texto -> ~p"/sysadmin/catalogos/#{recurso}/permisos?#{[q: texto]}"
+      case params do
+        [] -> ~p"/sysadmin/catalogos/#{recurso}/permisos"
+        params -> ~p"/sysadmin/catalogos/#{recurso}/permisos?#{params}"
       end
 
     {:noreply, push_navigate(socket, to: destino)}
+  end
+
+  def handle_event("filtrar_modulo", %{"modulo" => prefijo}, socket) do
+    {:noreply, socket |> assign(:modulo_filtro, "") |> restaurar_modulo(prefijo)}
   end
 
   def handle_event("ver_todos_los_roles", _params, socket) do
@@ -475,8 +505,9 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
         </span>
       </div>
 
-      <div :if={@catalogo} class="mb-4 flex items-center gap-3">
-        <div class="flex-1">
+      <div :if={@catalogo || !@embebido?} class="mb-4 flex items-center gap-3">
+        <div :if={!@catalogo} class="flex-1"></div>
+        <div :if={@catalogo} class="flex-1">
           <input
             type="text"
             value={@busqueda_usuario}
@@ -493,8 +524,9 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
             </li>
           </ul>
         </div>
-        <span class="text-xs text-gray-400">o</span>
+        <span :if={@catalogo} class="text-xs text-gray-400">o</span>
         <button
+          :if={@catalogo}
           type="button"
           phx-click="ver_todos_los_roles"
           class={[
@@ -504,8 +536,29 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
         >
           Todos los roles
         </button>
+        <%!-- SPEC-SYS-0910202601 R6: filtra la lista de catálogos por
+             módulo (carpeta con prefijo), mismo formato que BC Motor. --%>
+        <form :if={!@embebido?} id="filtro-modulo-form" phx-change="filtrar_modulo">
+          <select
+            id="filtro-modulo"
+            name="modulo"
+            title="Filtrar la lista de catálogos por módulo"
+            class={[
+              "rounded-lg border px-3 py-2 text-sm font-semibold transition-colors cursor-pointer",
+              if(@modulo_filtro == "",
+                do: "bg-white text-gray-600 border-gray-300 hover:bg-gray-50",
+                else: "bg-purple-50 text-purple-700 border-purple-300"
+              )
+            ]}
+          >
+            <option value="" selected={@modulo_filtro == ""}>Módulo: Todos</option>
+            <option :for={m <- @modulos} value={m.prefijo} selected={@modulo_filtro == m.prefijo}>
+              {m.prefijo} — {m.etiqueta}
+            </option>
+          </select>
+        </form>
         <label
-          :if={@current_scope.usuario.super_admin}
+          :if={@catalogo && @current_scope.usuario.super_admin}
           class="flex items-center gap-1.5 text-xs font-medium text-gray-600 cursor-pointer select-none whitespace-nowrap"
         >
           <input
@@ -539,7 +592,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
             class="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-[32rem] overflow-y-auto"
           >
             <li
-              :for={c <- if(@busqueda_catalogo_picker == "", do: @todos_los_catalogos, else: @resultados_catalogo_picker)}
+              :for={c <- catalogos_visibles(@busqueda_catalogo_picker, @todos_los_catalogos, @resultados_catalogo_picker, @modulo_filtro, @modulos)}
               id={"picker-" <> c.recurso}
             >
               <button
