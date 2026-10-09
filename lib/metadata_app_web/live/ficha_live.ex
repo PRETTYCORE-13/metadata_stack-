@@ -3326,7 +3326,7 @@ defmodule MetadataAppWeb.FichaLive do
     ~H"""
     <div :if={@celda["visible"] != false} style={@estilo_celda} class={@clases_celda}
       data-celda-colspan-movil={@responsive["colspan_movil"]} data-celda-orden-movil={@responsive["orden_movil"]}>
-      <.campo_row :if={@campo_col} col={@campo_col} registro={@registro} campos_editables={@campos_editables} edicion={@edicion} compacto={true} columnas={@columnas} />
+      <.campo_row :if={@campo_col} col={@campo_col} registro={@registro} campos_editables={@campos_editables} edicion={@edicion} compacto={true} alineacion={@celda["alineacion_h"]} columnas={@columnas} />
       <.nodo_plantilla :if={is_nil(@campo_col)} nodo={@hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
         relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />
     </div>
@@ -3925,6 +3925,9 @@ defmodule MetadataAppWeb.FichaLive do
   attr :campos_editables, :list, required: true
   attr :edicion, :map, required: true
   attr :compacto, :boolean, default: false
+  # Alineación horizontal de la celda que lo contiene (solo en compacto):
+  # `text-*` de la celda no mueve a los hijos de esta fila flex.
+  attr :alineacion, :string, default: nil
   attr :columnas, :list, default: []
 
   # Edición en el lugar, siempre: si el campo es editable, la columna de
@@ -3983,7 +3986,7 @@ defmodule MetadataAppWeb.FichaLive do
         props["tipo"] == "referencia" -> etiqueta_opcion(opciones_referencia, valor_actual)
         props["tipo"] in ["date", "hora"] and props["formato_fecha"] not in [nil, ""] -> formatear_fecha(valor_actual, props["formato_fecha"])
         props["tipo"] == "enum" -> etiqueta_enum(props["valores"], valor_actual)
-        true -> valor_actual
+        true -> numero_con_formato_captura(valor_actual, props)
       end
 
     assigns =
@@ -4001,6 +4004,8 @@ defmodule MetadataAppWeb.FichaLive do
     <div class={[
       "flex flex-col sm:flex-row sm:items-center text-sm",
       @compacto && "gap-2",
+      @compacto && @alineacion == "derecha" && "sm:justify-end",
+      @compacto && @alineacion == "centro" && "sm:justify-center",
       !@compacto && "gap-1.5 sm:gap-3 px-4 py-1 border-b border-gray-100 last:border-b-0"
     ]}>
       <div class={["flex items-center gap-2 sm:contents", !@compacto && "gap-3"]}>
@@ -4220,6 +4225,18 @@ defmodule MetadataAppWeb.FichaLive do
   defp formatear_valor_columna(false, _propiedades), do: "No"
   defp formatear_valor_columna(v, propiedades) when is_number(v), do: formatear_numero_columna(v, propiedades)
   defp formatear_valor_columna(v, _propiedades), do: v
+
+  @doc """
+  Valor de solo lectura de un campo del encabezado: un número con formato de
+  captura "número" o "moneda" se muestra igual que en los renglones
+  (SPEC-SYS-0810202602 R6); cualquier otro valor pasa tal cual (un número
+  sin formato no gana decimales que hoy no muestra).
+  """
+  def numero_con_formato_captura(valor, %{"formato_captura" => %{"habilitada" => true, "modo" => modo}} = propiedades)
+      when modo in ["numero", "moneda"] and (is_number(valor) or is_struct(valor, Decimal)),
+      do: formatear_valor_columna(valor, propiedades)
+
+  def numero_con_formato_captura(valor, _propiedades), do: valor
 
   defp formatear_numero_columna(numero, propiedades) do
     case propiedades["formato_captura"] do
