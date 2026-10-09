@@ -714,6 +714,15 @@ defmodule MetadataApp.MetaImportExport do
   # renglones de la Ficha, mismo criterio.
   @propiedades_parametros_totales ~w(acotado agregacion_activa defaults es_parametro total_general_activo total_pagina_activo total_renglones)
 
+  # Configuración de captura/presentación de un campo YA existente (Tab
+  # Configuración y Diseñador de campos), mismo criterio de sobreescribir si
+  # viene en el bundle. Las que el generador lleva al schema (formato,
+  # longitud_minima, maximo, minimo, transformacion, unico_en, valores) ya
+  # llegan en el .ex bundleado, regenerado antes de armar el bundle; acá
+  # solo se mantiene la metadata al día con ese código. `diccionario` no va
+  # acá: se borra al desconectarlo, va con @propiedades_referencia.
+  @propiedades_campo ~w(editable formato formato_captura formato_fecha formula longitud_minima maximo minimo mostrar_en_tabla placeholder transformacion unico_en valor_inicial valores)
+
   defp sincronizar_parametros_y_totales(header, detalles_json) do
     existentes =
       header.schema_context_name
@@ -727,7 +736,7 @@ defmodule MetadataApp.MetaImportExport do
       props_nuevas = detalle_json["schema_context_properties"] || %{}
 
       cambios =
-        @propiedades_parametros_totales
+        (@propiedades_parametros_totales ++ @propiedades_campo)
         |> Enum.filter(&Map.has_key?(props_nuevas, &1))
         |> Enum.filter(&(Map.get(props_nuevas, &1) != Map.get(detalle.schema_context_properties, &1)))
 
@@ -744,7 +753,7 @@ defmodule MetadataApp.MetaImportExport do
             [detalle.schema_context_field]
 
           {:error, changeset} ->
-            raise "Error sincronizando parámetros/totales de \"#{detalle.schema_context_field}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+            raise "Error sincronizando parámetros, totales y configuración de \"#{detalle.schema_context_field}\" de #{header.schema_context_name}: #{inspect(changeset.errors)}"
         end
       end
     end)
@@ -760,7 +769,7 @@ defmodule MetadataApp.MetaImportExport do
   # completas, así que ausente = se quitó en el origen (ej. borrar todos
   # los filtros fijos). Solo para campos que en el bundle siguen siendo
   # "referencia". Una propiedad nueva de un campo referencia se agrega acá.
-  @propiedades_referencia ~w(campo_visualizacion campos_acompanamiento campos_relacion dependencias filtros_fijos mensaje_sin_padre)
+  @propiedades_referencia ~w(campo_visualizacion campos_acompanamiento campos_relacion dependencias diccionario filtros_fijos mensaje_sin_padre)
 
   defp sincronizar_propiedades_referencia_campos(header, detalles_json) do
     existentes =

@@ -25,7 +25,7 @@ defmodule MetadataApp.MetaImportExportTest do
     %{"tipo" => "raiz", "propiedades" => %{"filas" => 1, "columnas" => 1, "gap" => "normal", "nota" => texto}, "hijos" => []}
   end
 
-  test "republicar un catálogo ya existente sincroniza es_parametro/defaults/totales de un campo YA existente" do
+  test "republicar un catálogo ya existente sincroniza es_parametro/defaults/totales/formato/en tabla de un campo YA existente" do
     nombre = "pty_test_import_#{unique()}"
 
     {:ok, {_header, _detalles}} =
@@ -81,7 +81,12 @@ defmodule MetadataApp.MetaImportExportTest do
             "agregacion_activa" => false,
             "total_general_activo" => false,
             "total_pagina_activo" => false,
-            "total_renglones" => "ninguno"
+            "total_renglones" => "ninguno",
+            "formato_captura" => %{"habilitada" => true, "modo" => "numero", "decimales" => 2},
+            "mostrar_en_tabla" => false,
+            "formato_fecha" => "dd/mm/aaaa",
+            "placeholder" => "Fecha de venta",
+            "editable" => false
           }
         }
       ]
@@ -95,6 +100,11 @@ defmodule MetadataApp.MetaImportExportTest do
     assert detalle.schema_context_properties["defaults"] == %{"modo" => "mes_actual"}
     assert detalle.schema_context_properties["acotado"] == true
     assert detalle.schema_context_properties["total_renglones"] == "ninguno"
+    assert detalle.schema_context_properties["formato_captura"] == %{"habilitada" => true, "modo" => "numero", "decimales" => 2}
+    assert detalle.schema_context_properties["mostrar_en_tabla"] == false
+    assert detalle.schema_context_properties["formato_fecha"] == "dd/mm/aaaa"
+    assert detalle.schema_context_properties["placeholder"] == "Fecha de venta"
+    assert detalle.schema_context_properties["editable"] == false
   end
 
   # Encontrado real (2026-09-17): captura mostrando el orden de Lista
@@ -877,7 +887,8 @@ defmodule MetadataApp.MetaImportExportTest do
             "modo" => "descripcion",
             "campo_descripcion" => "inventory_name"
           },
-          "filtros_fijos" => [%{"campo" => "inventory_type", "valores" => ["COMPROMETIDA"]}]
+          "filtros_fijos" => [%{"campo" => "inventory_type", "valores" => ["COMPROMETIDA"]}],
+          "diccionario" => %{"vista" => "pty_sql_almacenes_dic"}
         })
       )
     )
@@ -894,6 +905,7 @@ defmodule MetadataApp.MetaImportExportTest do
     assert props["campos_acompanamiento"] == ["inventory_name", "inventory_type"]
     assert props["campo_visualizacion"]["campo_descripcion"] == "inventory_name"
     refute Map.has_key?(props, "mensaje_sin_padre")
+    assert props["diccionario"] == %{"vista" => "pty_sql_almacenes_dic"}
     assert props["etiqueta"] == "Almacén"
 
     # Quitar los filtros en el origen y republicar los quita en el destino.
@@ -904,6 +916,7 @@ defmodule MetadataApp.MetaImportExportTest do
 
     MetaImportExport.importar_meta(dir)
     refute Map.has_key?(props_de.(), "filtros_fijos")
+    refute Map.has_key?(props_de.(), "diccionario")
 
     # Sin cambios: no reporta nada.
     mensajes = MetaImportExport.importar_meta(dir)
