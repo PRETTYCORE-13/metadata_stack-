@@ -522,7 +522,8 @@ defmodule MetadataApp.Permissions do
   defp normalizar_id(id) when is_binary(id), do: String.to_integer(id)
   defp normalizar_id(id) when is_integer(id), do: id
 
-  defp invalidar_cache_de_rol(rol_id) do
+  @doc "Limpia la caché de permisos de cada usuario con el rol `rol_id`."
+  def invalidar_cache_de_rol(rol_id) do
     from(ur in UsuarioRol, where: ur.rol_id == ^rol_id and is_nil(ur.delete_guid))
     |> Repo.all()
     |> Enum.each(&invalidar_cache(&1.usuario_id, &1.empresa_id))

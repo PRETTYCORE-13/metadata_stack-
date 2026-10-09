@@ -88,6 +88,22 @@ defmodule MetadataAppWeb.Sysadmin.TepacheLiveTest do
     assert render(view) =~ "Importar"
   end
 
+  # R24: una sola casilla, sin selector de rol; su valor vive en los
+  # assigns (así sigue vigente si el import se pausa a confirmar campos).
+  test "la casilla de aplicar permisos arranca apagada y conserva lo que se marca", c do
+    {:ok, view, _html} = live(c.conn, ~p"/sysadmin/tepache")
+
+    assert has_element?(view, "#aplicar-permisos")
+    refute has_element?(view, "#aplicar-permisos[checked]")
+
+    view |> form("#tepache-importar-form", %{"tag" => "", "aplicar_permisos" => "true"}) |> render_change()
+    assert has_element?(view, "#aplicar-permisos[checked]")
+
+    view |> form("#tepache-importar-form", %{"tag" => "  ", "aplicar_permisos" => "true"}) |> render_submit()
+    assert has_element?(view, "#tepache-import-error")
+    assert has_element?(view, "#aplicar-permisos[checked]")
+  end
+
   test "importar sin tag muestra el error sin lanzar nada en segundo plano", c do
     {:ok, view, _html} = live(c.conn, ~p"/sysadmin/tepache")
 

@@ -14,9 +14,10 @@ defmodule MetadataApp.MetaTepache do
 
   Del lado de quien importa: registra los permisos del/los catálogo(s)
   recién traídos (CRUD + cada transición real) SIN concedérselos a ningún
-  rol — RBAC (roles, concesiones) queda 100% fuera del bundle, es
-  decisión de cada empresa/entorno, nunca algo que se hereda en silencio
-  de la máquina de quien armó el tepache.
+  rol. El bundle puede traer los permisos que tenían los roles en el
+  origen (`tepache.permisos.json`), pero solo se aplican si quien importa
+  lo pide explícito (`opts[:aplicar_permisos]`, SPEC-SYS-0710202601 R24)
+  — nunca se heredan en silencio.
 
   ## Reconciliación al importar un catálogo que YA existe localmente
 
@@ -36,8 +37,15 @@ defmodule MetadataApp.MetaTepache do
   decisión tomada.
   """
 
+  import Ecto.Query
+
   alias MetadataApp.BusinessProcessBuilder.{CatalogoGenerador, MetaSchemaContext}
-  alias MetadataApp.{MetaEstadosAdmin, MetaImportExport, MetaPlantillas, MetaPublicador, Permissions}
+  alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
+  alias MetadataApp.{Autenticacion, MetaEstadosAdmin, MetaImportExport, MetaPlantillas, MetaPublicador, Permissions, Repo}
+  alias MetadataApp.Autenticacion.{Empresa, Permiso, Rol, RolPermiso}
+
+  # Viaja en la raíz del tar; nunca se extrae al proyecto (R24, design §13).
+  @archivo_permisos "tepache.permisos.json"
 
   @doc """
   Orquesta el export completo — valida, exige que no falte ninguna
@@ -61,10 +69,20 @@ defmodule MetadataApp.MetaTepache do
   GitHub (SPEC-SYS-0710202601 R20). Solo emite el número; el texto de
   cada etapa es de quien la muestra.
 
-  {:ok, %{tag:, catalogos:, problemas:}} | {:error, mensaje}
+  Las carpetas reales en la ruta de menú de cada catálogo del paquete
+  viajan solas (`carpetas_de/1`), después del chequeo de R9: no son
+  dependencias, solo presentación del menú (SPEC-SYS-0710202601 R23).
+
+  `opts[:usuario_id]` (opcional): con él, el bundle lleva los permisos
+  que tienen sobre los catálogos del paquete los roles de las empresas
+  de ese usuario y los de sistema (`permisos_de_roles/2`, R24). Sin él
+  (`mix motor.tepache`), no lleva permisos.
+
+  {:ok, %{tag:, catalogos:, carpetas:, problemas:}} | {:error, mensaje}
   """
   def exportar(nombres, descripcion \\ "", opts \\ []) do
     progreso = Keyword.get(opts, :progreso, fn _etapa -> :ok end)
+    usuario_id = Keyword.get(opts, :usuario_id)
     progreso.(1)
 
     case MetaPublicador.validar(nombres) do
@@ -78,7 +96,7 @@ defmodule MetadataApp.MetaTepache do
             regenerar_schemas()
             progreso.(3)
             exportar_metadata()
-            armar_y_publicar(nombres, catalogos, problemas, descripcion, progreso)
+            armar_y_publicar(nombres, catalogos, problemas, descripcion, usuario_id, progreso)
 
           faltantes ->
             {:error, mensaje_dependencias_faltantes(faltantes)}
@@ -104,25 +122,109 @@ defmodule MetadataApp.MetaTepache do
     Enum.each(headers, &MetaPlantillas.exportar_header(&1, "priv/repo/catalogos"))
   end
 
-  defp armar_y_publicar(nombres, catalogos, problemas, descripcion, progreso) do
+  defp armar_y_publicar(nombres, catalogos, problemas, descripcion, usuario_id, progreso) do
     progreso.(4)
+    carpetas = carpetas_de(catalogos)
+    roles = if usuario_id, do: permisos_de_roles(usuario_id, catalogos), else: []
 
-    case MetaPublicador.armar_bundle(catalogos) do
+    case armar_bundle_con_permisos(catalogos ++ carpetas, roles) do
       {:error, _} = error ->
         error
 
       {:ok, bundle_path} ->
-        notas = armar_notas(descripcion, nombres, problemas)
+        notas = armar_notas(descripcion, nombres, problemas, carpetas, roles)
         progreso.(5)
 
         case publicar(bundle_path, notas) do
           {:ok, tag} ->
             File.rm(bundle_path)
-            {:ok, %{tag: tag, catalogos: catalogos, problemas: problemas}}
+            {:ok, %{tag: tag, catalogos: catalogos, carpetas: carpetas, problemas: problemas}}
 
           {:error, _} = error ->
             error
         end
+    end
+  end
+
+  # El archivo de permisos se escribe en la raíz del proyecto (armar_bundle
+  # trabaja con rutas relativas al cwd) y se borra pase lo que pase.
+  defp armar_bundle_con_permisos(catalogos, []), do: MetaPublicador.armar_bundle(catalogos)
+
+  defp armar_bundle_con_permisos(catalogos, roles) do
+    File.write!(@archivo_permisos, Jason.encode!(%{"roles" => roles}, pretty: true))
+
+    try do
+      MetaPublicador.armar_bundle(catalogos, extras: [@archivo_permisos])
+    after
+      File.rm(@archivo_permisos)
+    end
+  end
+
+  @doc """
+  Permisos que tienen sobre `catalogos` los roles de las empresas de
+  `usuario_id` y los de sistema (`"empresa" => nil`), sin el
+  "administrador" de sistema (ya ve todo). Una entrada por rol,
+  identificado por nombre de empresa + nombre de rol (SPEC-SYS-0710202601
+  R24): `[%{"empresa" => _, "rol" => _, "permisos" => %{recurso => [acciones]}}]`.
+  """
+  def permisos_de_roles(usuario_id, catalogos) do
+    empresa_ids = usuario_id |> Autenticacion.empresas_de_usuario() |> Enum.map(& &1.id)
+
+    from(rp in RolPermiso,
+      join: p in Permiso,
+      on: p.id == rp.permiso_id,
+      join: r in Rol,
+      on: r.id == rp.rol_id,
+      left_join: e in Empresa,
+      on: e.id == r.empresa_id,
+      where:
+        is_nil(rp.delete_guid) and is_nil(p.delete_guid) and is_nil(r.delete_guid) and p.recurso in ^catalogos and
+          (is_nil(r.empresa_id) or r.empresa_id in ^empresa_ids) and
+          not (r.es_sistema and r.nombre == "administrador"),
+      select: {e.nombre, r.nombre, p.recurso, p.accion}
+    )
+    |> Repo.all()
+    |> Enum.group_by(fn {empresa, rol, _, _} -> {empresa, rol} end, fn {_, _, recurso, accion} -> {recurso, accion} end)
+    |> Enum.sort_by(fn {{empresa, rol}, _} -> {empresa || "", rol} end)
+    |> Enum.map(fn {{empresa, rol}, pares} ->
+      permisos =
+        pares
+        |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+        |> Map.new(fn {recurso, acciones} -> {recurso, Enum.sort(acciones)} end)
+
+      %{"empresa" => empresa, "rol" => rol, "permisos" => permisos}
+    end)
+  end
+
+  @doc """
+  Carpetas reales (`schema_context_type` 2, vivas) en la ruta de menú de
+  `catalogos`, incluidas las de arriba: `/a/b/c` busca `/a` y `/a/b`. Una
+  ruta sin header es carpeta implícita y no aparece (SPEC-SYS-0710202601
+  R23). Ordenadas por nombre, sin repetir.
+  """
+  def carpetas_de(catalogos) do
+    rutas =
+      from(h in Header, where: h.schema_context_name in ^catalogos and is_nil(h.delete_guid), select: h.schema_context_nav)
+      |> Repo.all()
+      |> Enum.flat_map(&rutas_de_arriba/1)
+      |> Enum.uniq()
+
+    from(h in Header,
+      where: h.schema_context_type == 2 and is_nil(h.delete_guid) and h.schema_context_nav in ^rutas,
+      order_by: h.schema_context_name,
+      select: h.schema_context_name
+    )
+    |> Repo.all()
+    |> Enum.reject(&(&1 in catalogos))
+  end
+
+  defp rutas_de_arriba(nil), do: []
+
+  defp rutas_de_arriba(nav) do
+    segmentos = String.split(nav, "/", trim: true)
+
+    for n <- 1..(length(segmentos) - 1)//1 do
+      "/" <> Enum.join(Enum.take(segmentos, n), "/")
     end
   end
 
@@ -139,7 +241,10 @@ defmodule MetadataApp.MetaTepache do
   emite `aplicar_import/2`, para que las dos fases formen una sola
   barra (SPEC-SYS-0710202601 R22).
 
-  {:ok, %{bundle_path:, nombres:, campos_removidos: %{catalogo => [campos]}}} | {:error, mensaje}
+  `permisos` son los roles que trae el bundle (`permisos_de_roles/2`), o
+  `nil` si no trae (R24.6).
+
+  {:ok, %{bundle_path:, nombres:, campos_removidos: %{catalogo => [campos]}, permisos:}} | {:error, mensaje}
   """
   def preparar_import(tag, opts \\ []) do
     progreso = Keyword.get(opts, :progreso, fn _etapa -> :ok end)
@@ -147,9 +252,26 @@ defmodule MetadataApp.MetaTepache do
 
     with {:ok, bundle_path} <- descargar(tag),
          _ = progreso.(2),
-         {:ok, nombres} <- catalogos_en_bundle(bundle_path) do
+         {:ok, nombres} <- catalogos_en_bundle(bundle_path),
+         {:ok, permisos} <- permisos_del_bundle(bundle_path) do
       campos_removidos = detectar_campos_removidos(bundle_path, nombres)
-      {:ok, %{bundle_path: bundle_path, nombres: nombres, campos_removidos: campos_removidos}}
+      {:ok, %{bundle_path: bundle_path, nombres: nombres, campos_removidos: campos_removidos, permisos: permisos}}
+    end
+  end
+
+  @doc "Roles con permisos que trae el bundle, sin extraerlo. {:ok, roles | nil} | {:error, mensaje}"
+  def permisos_del_bundle(bundle_path) do
+    with {:ok, entradas} <- entradas_del_bundle(bundle_path) do
+      if @archivo_permisos in entradas, do: leer_permisos(bundle_path), else: {:ok, nil}
+    end
+  end
+
+  defp leer_permisos(bundle_path) do
+    case leer_json_del_bundle(bundle_path, @archivo_permisos) do
+      {:ok, %{"roles" => roles}} when is_list(roles) -> {:ok, roles}
+      {:ok, _} -> {:error, "#{@archivo_permisos} del tepache no tiene el formato esperado"}
+      {:error, %Jason.DecodeError{} = e} -> {:error, "#{@archivo_permisos}: #{Exception.message(e)}"}
+      {:error, _} = error -> error
     end
   end
 
@@ -172,13 +294,18 @@ defmodule MetadataApp.MetaTepache do
   migración que truena (SPEC-SYS-0710202601 R21). Metadata, soft-delete
   de campos y permisos van en una sola transacción (todo o nada).
 
+  `opts[:aplicar_permisos]` (opcional, `false` por default): con `true`,
+  además de registrar los permisos, concede a cada rol del destino los
+  que trae el bundle (`info.permisos`), dentro de la misma transacción
+  (`aplicar_permisos_del_paquete/2`, SPEC-SYS-0710202601 R24).
+
   `opts[:raiz]` y `opts[:dir_migraciones]` existen para probarlo sin
-  tocar el proyecto real; `opts[:importar]` reemplaza los pasos 5-6
-  (solo para forzar una falla en tests).
+  tocar el proyecto real; `opts[:importar]` reemplaza los pasos 5-6 salvo
+  aplicar los permisos del bundle (solo para forzar una falla en tests).
 
   {:ok, %{catalogos:, mensajes:, campos_removidos:}} | {:error, mensaje}
   """
-  def aplicar_import(%{bundle_path: bundle_path, nombres: nombres, campos_removidos: campos_removidos}, opts \\ []) do
+  def aplicar_import(%{bundle_path: bundle_path, nombres: nombres, campos_removidos: campos_removidos} = info, opts \\ []) do
     progreso = Keyword.get(opts, :progreso, fn _etapa -> :ok end)
     raiz = Keyword.get(opts, :raiz, ".")
     # Path.expand/1 normaliza a "/": en Windows una ruta con "\" hace que
@@ -186,6 +313,19 @@ defmodule MetadataApp.MetaTepache do
     dir_migraciones =
       opts |> Keyword.get(:dir_migraciones, Application.app_dir(:metadata_app, "priv/repo/migrations")) |> Path.expand()
     importar = Keyword.get(opts, :importar, &importar_y_registrar(&1, &2, raiz, progreso))
+    aplicar_permisos? = Keyword.get(opts, :aplicar_permisos, false)
+
+    importar = fn nombres, campos_removidos ->
+      mensajes = importar.(nombres, campos_removidos)
+
+      if aplicar_permisos? do
+        {mensajes_permisos, rol_ids} = aplicar_permisos_del_paquete(Map.get(info, :permisos), nombres)
+        {mensajes ++ mensajes_permisos, rol_ids}
+      else
+        {mensajes, []}
+      end
+    end
+
     progreso.(3)
 
     case entradas_del_bundle(bundle_path) do
@@ -194,13 +334,17 @@ defmodule MetadataApp.MetaTepache do
         error
 
       {:ok, entradas} ->
-        respaldo = respaldar(entradas, raiz)
+        respaldo = entradas |> List.delete(@archivo_permisos) |> respaldar(raiz)
         resultado = extraer_migrar_e_importar(bundle_path, raiz, dir_migraciones, nombres, campos_removidos, importar, progreso)
         File.rm(bundle_path)
 
         case resultado do
-          {:ok, mensajes} ->
+          {:ok, {mensajes, rol_ids}} ->
             File.rm_rf(respaldo.dir)
+            # conceder_permisos_catalogo/2 ya limpió la caché, pero dentro de
+            # la transacción: una consulta en ese momento pudo volver a
+            # guardar los permisos viejos.
+            Enum.each(rol_ids, &Permissions.invalidar_cache_de_rol/1)
             {:ok, %{catalogos: nombres, mensajes: mensajes, campos_removidos: campos_removidos}}
 
           {:fallo, paso, causa, aplicadas} ->
@@ -248,6 +392,61 @@ defmodule MetadataApp.MetaTepache do
     progreso.(6)
     Enum.each(nombres, &Permissions.registrar_permisos_catalogo/1)
     mensajes
+  end
+
+  @doc """
+  Concede a cada rol del destino las acciones que trae el bundle para él,
+  solo sobre catálogos de `nombres` (R24.1). El rol se busca por nombre
+  dentro de la empresa con el mismo nombre (o entre los de sistema si
+  `"empresa"` es nil); si no se encuentra o la empresa es ambigua, se
+  omite con su motivo — nunca se crea nada (R24.2). Solo suma (R24.3).
+  Corre dentro de la transacción del import. {mensajes, rol_ids}
+  """
+  def aplicar_permisos_del_paquete(nil, _nombres), do: {["Este tepache no trae permisos."], []}
+
+  def aplicar_permisos_del_paquete(roles, nombres) do
+    resultados = Enum.map(roles, &aplicar_permisos_de_rol(&1, nombres))
+    aplicados = for {:ok, rol_id} <- resultados, do: rol_id
+    omitidos = for {:omitido, mensaje} <- resultados, do: mensaje
+
+    {["Permisos aplicados a #{length(aplicados)} rol(es)." | omitidos], aplicados}
+  end
+
+  defp aplicar_permisos_de_rol(%{"empresa" => empresa, "rol" => nombre_rol, "permisos" => permisos}, nombres) do
+    etiqueta = if empresa, do: "#{nombre_rol} (#{empresa})", else: "#{nombre_rol} (sistema)"
+
+    case buscar_rol(empresa, nombre_rol) do
+      {:ok, rol} ->
+        pares = for {recurso, acciones} <- permisos, recurso in nombres, accion <- acciones, do: {recurso, accion}
+        :ok = Permissions.conceder_permisos_catalogo(rol.id, pares)
+        {:ok, rol.id}
+
+      {:error, motivo} ->
+        {:omitido, "Rol omitido: #{etiqueta} — #{motivo}."}
+    end
+  end
+
+  defp buscar_rol(nil, nombre_rol) do
+    case Repo.one(from(r in Rol, where: is_nil(r.empresa_id) and r.nombre == ^nombre_rol and is_nil(r.delete_guid))) do
+      nil -> {:error, "el rol de sistema no existe"}
+      rol -> {:ok, rol}
+    end
+  end
+
+  defp buscar_rol(empresa, nombre_rol) do
+    case Repo.all(from(e in Empresa, where: e.nombre == ^empresa and is_nil(e.delete_guid), select: e.id)) do
+      [] ->
+        {:error, "la empresa no existe"}
+
+      [empresa_id] ->
+        case Repo.one(from(r in Rol, where: r.empresa_id == ^empresa_id and r.nombre == ^nombre_rol and is_nil(r.delete_guid))) do
+          nil -> {:error, "el rol no existe en esa empresa"}
+          rol -> {:ok, rol}
+        end
+
+      _ ->
+        {:error, "hay más de una empresa con ese nombre"}
+    end
   end
 
   ## Reversión de un import fallido (SPEC-SYS-0710202601 R21, design §11)
@@ -507,7 +706,7 @@ defmodule MetadataApp.MetaTepache do
       if MapSet.size(campos_locales) == 0 do
         acc
       else
-        case leer_meta_json_del_bundle(bundle_path, nombre) do
+        case leer_json_del_bundle(bundle_path, "priv/repo/catalogos/#{nombre}.meta.json") do
           {:ok, entrante} ->
             campos_entrantes =
               (entrante["detalles"] || [])
@@ -528,10 +727,9 @@ defmodule MetadataApp.MetaTepache do
 
   # Extrae UN archivo puntual del bundle a stdout (sin tocar disco) --
   # para leer el .meta.json entrante y compararlo contra la metadata
-  # local ANTES de decidir si hace falta confirmar algo.
-  defp leer_meta_json_del_bundle(bundle_path, nombre_catalogo) do
-    ruta_interna = "priv/repo/catalogos/#{nombre_catalogo}.meta.json"
-
+  # local ANTES de decidir si hace falta confirmar algo, o los permisos
+  # que trae (R24).
+  defp leer_json_del_bundle(bundle_path, ruta_interna) do
     con_ruta_relativa(bundle_path, fn ruta ->
       case ejecutar("tar", ["-xzOf", ruta, ruta_interna]) do
         {:ok, {salida, 0}} -> Jason.decode(salida)
@@ -581,13 +779,15 @@ defmodule MetadataApp.MetaTepache do
   Notas del release en Markdown: la descripción libre de quien publica
   primero (si la puso), después catálogos incluidos (ya es el paquete
   completo — R9 exige que coincida con lo seleccionado, nunca hay nada
-  "agregado automático" que aclarar acá) y las advertencias del
+  "agregado automático" que aclarar acá), las carpetas que viajan con
+  ellos si hay alguna (R23), de cuántos roles trae permisos (R24.8, sin
+  listarlos) y las advertencias del
   validador — mismos datos que ya muestra el wizard de BC List, para que
   quien reciba el tepache sepa qué trae y por qué sin tener que abrirlo.
   """
-  def armar_notas(descripcion, seleccionados, problemas) do
+  def armar_notas(descripcion, seleccionados, problemas, carpetas \\ [], roles \\ []) do
     """
-    #{seccion_descripcion(descripcion)}**Catálogos incluidos:** #{Enum.join(seleccionados, ", ")}
+    #{seccion_descripcion(descripcion)}**Catálogos incluidos:** #{Enum.join(seleccionados, ", ")}#{seccion_carpetas(carpetas)}#{seccion_permisos(roles)}
     #{seccion_problemas(problemas)}
     """
     |> String.trim_trailing()
@@ -596,6 +796,16 @@ defmodule MetadataApp.MetaTepache do
   defp seccion_descripcion(nil), do: ""
   defp seccion_descripcion(""), do: ""
   defp seccion_descripcion(texto), do: "#{String.trim(texto)}\n\n"
+
+  defp seccion_carpetas([]), do: ""
+  defp seccion_carpetas(carpetas), do: "\n**Carpetas incluidas:** #{Enum.join(carpetas, ", ")}"
+
+  defp seccion_permisos([]), do: ""
+
+  defp seccion_permisos(roles) do
+    empresas = roles |> Enum.map(& &1["empresa"]) |> Enum.reject(&is_nil/1) |> Enum.uniq() |> length()
+    "\n**Permisos incluidos:** #{length(roles)} rol(es) de #{empresas} empresa(s)"
+  end
 
   defp seccion_problemas([]), do: "\nSin advertencias."
 
@@ -711,12 +921,13 @@ defmodule MetadataApp.MetaTepache do
   Extrae el bundle DESDE LA RAÍZ del proyecto de quien importa — las
   rutas dentro del tar ya son relativas a `lib/`/`priv/` (mismo criterio
   que `MetaPublicador.rutas_de/1` al armarlo), así que los archivos caen
-  solos en su lugar. `raiz` cambia el destino (para tests).
+  solos en su lugar. `raiz` cambia el destino (para tests). Nunca extrae
+  `tepache.permisos.json`: se lee del tar, no se deja en el proyecto (R24).
   :ok | {:error, mensaje}
   """
   def extraer(bundle_path, raiz \\ ".") do
     con_ruta_relativa(bundle_path, fn ruta ->
-      case ejecutar("tar", ["-xzf", ruta, "-C", raiz]) do
+      case ejecutar("tar", ["-xz", "--exclude", @archivo_permisos, "-f", ruta, "-C", raiz]) do
         {:ok, {_salida, 0}} -> :ok
         {:ok, {salida, status}} -> {:error, "tar -xzf falló (status #{status}):\n#{salida}"}
         {:error, _} = error -> error

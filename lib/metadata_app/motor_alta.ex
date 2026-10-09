@@ -664,8 +664,21 @@ defmodule MetadataApp.MotorAlta do
   solo para tests (mismo criterio que `dependencias` en
   `MotorAlta.Estado.consultar_todo/2`) -- `imagen_actual/2` necesita SSH
   real, sin mock en este proyecto.
+
+  La guarda no aplica a `:latest`: es una etiqueta que cambia de
+  contenido con cada build, así que "mismo nombre" no significa "misma
+  imagen" (encontrado real, 2026-10-06: testing y crm se quedaban con un
+  `:latest` viejo y la propagación decía "ya está"). Con `:latest`
+  siempre se dispara; el `rollout restart` del workflow baja la nueva.
   """
-  def disparar_actualizacion(ambiente, sistema, imagen, fun_imagen_actual \\ &imagen_actual/2, origen \\ nil) do
+  def disparar_actualizacion(ambiente, sistema, imagen, fun_imagen_actual \\ &imagen_actual/2, origen \\ nil)
+
+  def disparar_actualizacion(_ambiente, sistema, imagen, _fun_imagen_actual, origen)
+      when binary_part(imagen, byte_size(imagen), -7) == ":latest" do
+    disparar_actualizacion_sin_guarda(sistema, imagen, origen)
+  end
+
+  def disparar_actualizacion(ambiente, sistema, imagen, fun_imagen_actual, origen) do
     case fun_imagen_actual.(ambiente, sistema) do
       {:ok, ^imagen} ->
         {:ok, :sin_cambios, "\"#{sistema}\" ya está en #{imagen} -- no se disparó ningún workflow."}

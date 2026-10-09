@@ -103,7 +103,13 @@ defmodule Mix.Tasks.Endpoint.Despublicar do
     File.write!(Path.join(dir, "#{consulta_nombre}.endpoint.json"), tombstone)
     Mix.shell().info("== tombstone escrito para \"#{consulta_nombre}\" ==")
 
-    case MetaPublicador.armar_bundle([consulta_nombre]) do
+    # Solo el tombstone y las migraciones de borrado: un .meta.json local
+    # volvería a crear la Consulta interna en cada arranque del destino.
+    solo_borrado =
+      &(String.ends_with?(&1, "/#{consulta_nombre}.endpoint.json") or
+          (String.starts_with?(&1, "priv/repo/migrations/") and &1 =~ "_eliminar_#{consulta_nombre}_"))
+
+    case MetaPublicador.armar_bundle([consulta_nombre], incluir: solo_borrado) do
       {:error, mensaje} ->
         Mix.raise(mensaje)
 

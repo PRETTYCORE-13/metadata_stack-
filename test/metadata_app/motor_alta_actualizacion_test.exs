@@ -82,6 +82,22 @@ defmodule MetadataApp.MotorAltaActualizacionTest do
       end
     end
 
+    test ":latest -- dispara aunque el destino ya diga :latest (la etiqueta no fija la imagen)" do
+      path_original = System.get_env("PATH")
+      System.put_env("PATH", "")
+
+      try do
+        fun = fn _ambiente, "ennova" -> flunk("con :latest no se consulta la imagen actual") end
+
+        assert {:error, mensaje} =
+                 MotorAlta.disparar_actualizacion(@ambiente_vacio, "ennova", "ghcr.io/x/metadata_stack:latest", fun)
+
+        assert mensaje =~ ~s(No se pudo ejecutar "gh")
+      after
+        System.put_env("PATH", path_original || "")
+      end
+    end
+
     test "la consulta de imagen actual falla -- sigue con el disparo normal, nunca bloquea" do
       path_original = System.get_env("PATH")
       System.put_env("PATH", "")
