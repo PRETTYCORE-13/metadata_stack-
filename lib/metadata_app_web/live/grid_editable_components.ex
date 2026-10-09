@@ -79,7 +79,7 @@ defmodule MetadataAppWeb.GridEditableComponents do
   defp columna_meta(col) do
     props = col.schema_context_properties
 
-    {decimales, moneda?} = formato_numero(props)
+    {decimales, moneda?, formato?} = formato_numero(props)
 
     %{
       campo: col.schema_context_field,
@@ -92,16 +92,19 @@ defmodule MetadataAppWeb.GridEditableComponents do
       resumen: resumen_estandar(props["tipo"]),
       solo_lectura: Map.get(col, :solo_lectura, false),
       decimales: decimales,
-      moneda: moneda?
+      moneda: moneda?,
+      formato: formato?
     }
   end
 
   # Mismo criterio que FichaLive.formatear_numero_columna/2: el formato de
-  # captura "numero"/"moneda" manda; si no, 2 decimales.
+  # captura "numero"/"moneda" manda; si no, 2 decimales. El tercer valor
+  # dice si hay formato de captura: una columna capturable solo se formatea
+  # con él (SPEC-SYS-0810202602 R11).
   defp formato_numero(%{"formato_captura" => %{"habilitada" => true, "modo" => modo} = fc}) when modo in ["numero", "moneda"],
-    do: {fc["decimales"] || 2, modo == "moneda"}
+    do: {fc["decimales"] || 2, modo == "moneda", true}
 
-  defp formato_numero(_props), do: {2, false}
+  defp formato_numero(_props), do: {2, false, false}
 
   @doc """
   Fila de resumen (pie fijo de la tabla, ver `grid/1` + hook `GridEditable`)

@@ -203,7 +203,7 @@ function validarCelda(valor, columna) {
 function textoCelda(col, valor) {
   if (celdaVacia(valor)) return ""
 
-  if (col.solo_lectura && TIPOS_NUMERICOS.includes(col.tipo)) {
+  if (numeroConFormato(col)) {
     const numero = Number(valor)
     if (Number.isFinite(numero)) return formatearNumero(numero, col)
   }
@@ -216,6 +216,13 @@ function textoCelda(col, valor) {
   if (col.tipo === "boolean") return valor === "true" ? "Sí" : "No"
 
   return valor
+}
+
+// Columna numérica que se muestra formateada y a la derecha: la de solo
+// lectura siempre (SPEC-SYS-0810202602 R6), la capturable solo si tiene
+// formato de captura (R11). La edición en celda usa el valor crudo.
+function numeroConFormato(col) {
+  return TIPOS_NUMERICOS.includes(col.tipo) && (col.solo_lectura || col.formato)
 }
 
 // Formato es-MX con los decimales del campo (y moneda si aplica), mismo
@@ -718,7 +725,7 @@ export default {
         const claseTexto = errores.length > 0 ? "text-red-600" : fila.marcadaEliminar ? "text-gray-400" : "text-gray-700"
         const texto = escaparHtml(textoCelda(col, valor))
 
-        const claseSoloLectura = col.solo_lectura ? "text-right bg-gray-50/60" : ""
+        const claseSoloLectura = col.solo_lectura ? "text-right bg-gray-50/60" : numeroConFormato(col) ? "text-right" : ""
         const preliminar = fila.preliminar && fila.preliminar.has(col.campo)
         const titulo = errores.length ? errores.join("; ") : preliminar ? "preliminar" : ""
 
