@@ -724,6 +724,8 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   # literal). La columna queda nullable, igual que "sin default" (rama de
   # abajo) -- el valor real siempre lo pone forzar_defaults/2, no la BD.
   defp formatear_default(tipo, valor) when tipo in [:date, :time] and valor in ["hoy", "ahora"], do: nil
+  # "hoy+N"/"hoy-N" (SPEC-SYS-1109202601 R42): también variable, nunca default de columna.
+  defp formatear_default(:date, "hoy" <> _desfase), do: nil
   defp formatear_default(tipo, valor) when tipo in [:string, :date, :time], do: inspect(valor)
   defp formatear_default(:boolean, valor) when valor in ["true", "false"], do: valor
   defp formatear_default(:boolean, _valor), do: nil

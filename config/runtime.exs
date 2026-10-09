@@ -20,6 +20,11 @@ if System.get_env("PHX_SERVER") do
   config :metadata_app, MetadataAppWeb.Endpoint, server: true
 end
 
+# Zona horaria de "hoy"/"ahora" de negocio (default en config.exs).
+if zona = System.get_env("ZONA_HORARIA") do
+  config :metadata_app, :zona_horaria, zona
+end
+
 # Nombre de la empresa/tenant mostrado en la barra superior — pensado para
 # blanqueo de marca a futuro: distinto deploy, distinta variable de entorno,
 # sin tocar código. Vale para todos los ambientes (no solo prod), así en dev

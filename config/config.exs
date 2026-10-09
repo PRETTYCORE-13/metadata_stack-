@@ -7,6 +7,11 @@
 # General application configuration
 import Config
 
+# SPEC-SYS-1109202601 R48: "hoy" y "ahora" de negocio en hora local, no UTC.
+# Se cambia por ambiente con ZONA_HORARIA (runtime.exs).
+config :elixir, :time_zone_database, Tz.TimeZoneDatabase
+config :metadata_app, :zona_horaria, "America/Mexico_City"
+
 config :metadata_app, :scopes,
   usuario: [
     default: true,

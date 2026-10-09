@@ -31,7 +31,7 @@ defmodule MetadataAppWeb.FichaLive do
   alias MetadataApp.Repo
   alias MetadataApp.Autenticacion
   alias MetadataApp.Autenticacion.{Scope, Empresa}
-  alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerico}
+  alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerico, MetaCatalogoGenerico}
   alias MetadataApp.MetaStateEngine
   alias MetadataApp.MetaAuditoria
   alias MetadataApp.Renglones
@@ -155,7 +155,9 @@ defmodule MetadataAppWeb.FichaLive do
         # "Duplicar" (icono rápido de la Ficha, modo :ver) llega acá con
         # ?duplicar_de=<id> — ver valores_duplicados/4 más abajo.
         form_values_iniciales =
-          valores_duplicados(Map.get(params, "duplicar_de"), schema_mod, socket.assigns[:current_scope], campos_editables)
+          columnas
+          |> valores_default_alta(campos_editables)
+          |> Map.merge(valores_duplicados(Map.get(params, "duplicar_de"), schema_mod, socket.assigns[:current_scope], campos_editables))
 
         # ?plantilla_id=N — mismo criterio que el modo :ver (ver plantilla_a_mostrar/2):
         # "Vista previa" del Constructor apunta acá con un registro en blanco
@@ -221,6 +223,7 @@ defmodule MetadataAppWeb.FichaLive do
          |> assign(:detalle_renglones_editados, %{})
          |> assign(:detalle_renglones_eliminados, %{})
          |> assign(:detalle_seleccion, %{})
+         |> assign(:detalle_aviso_calculo, %{})
          |> assign(:detalle_form_error, nil)}
     end
   end
@@ -241,6 +244,41 @@ defmodule MetadataAppWeb.FichaLive do
   # mano. to_string/1 es la misma conversión que campo_row/1 ya usa para
   # precargar un campo editable existente (ver "valor_mostrado" ahí) —
   # mismo formato de string que cada campo_input/1 ya sabe interpretar.
+  # SPEC-SYS-1109202601 R44: el alta abre con el valor default de cada campo
+  # editable ya capturado (variables resueltas ahora), como texto de la forma.
+  # Una referencia cuyo registro default ya no está entre las opciones no se
+  # propone (R47).
+  defp valores_default_alta(columnas, campos_editables) do
+    for col <- columnas,
+        col.schema_context_field in campos_editables,
+        valor = col.schema_context_properties["valor_default"],
+        valor not in [nil, ""],
+        texto = texto_default(col, valor),
+        texto != nil,
+        into: %{},
+        do: {col.schema_context_field, texto}
+  end
+
+  defp texto_default(%{schema_context_properties: %{"tipo" => "date"}}, valor) do
+    case MetaCatalogoGenerico.resolver_valor_default(:date, valor) do
+      %Date{} = fecha -> Date.to_iso8601(fecha)
+      texto -> texto
+    end
+  end
+
+  defp texto_default(%{schema_context_properties: %{"tipo" => "hora"}}, valor) do
+    case MetaCatalogoGenerico.resolver_valor_default(:time, valor) do
+      %Time{} = hora -> Calendar.strftime(hora, "%H:%M")
+      texto -> texto
+    end
+  end
+
+  defp texto_default(%{schema_context_properties: %{"tipo" => "referencia"}} = col, valor) do
+    if Enum.any?(col.opciones, fn {id, _etiqueta} -> to_string(id) == valor end), do: valor
+  end
+
+  defp texto_default(_col, valor), do: valor
+
   defp valores_duplicados(nil, _schema_mod, _scope, _campos_editables), do: %{}
 
   defp valores_duplicados(id, schema_mod, scope, campos_editables) do
@@ -306,6 +344,7 @@ defmodule MetadataAppWeb.FichaLive do
       |> assign(:detalle_renglones_editados, %{})
       |> assign(:detalle_renglones_eliminados, %{})
       |> assign(:detalle_seleccion, %{})
+      |> assign(:detalle_aviso_calculo, %{})
       |> assign(:detalle_form_error, nil)
 
     {:noreply, Enum.reduce(socket.assigns.catalogos_detalle, socket, &recargar_grid(&2, &1.nombre))}
@@ -594,7 +633,8 @@ defmodule MetadataAppWeb.FichaLive do
         {:noreply,
          socket
          |> assign(:detalle_seleccion, Map.put(socket.assigns.detalle_seleccion, catalogo, nueva_seleccion))
-         |> push_event("grid_actualizar_fila", %{catalogo: catalogo, client_id: seleccion.client_id, valores: valores_a_reflejar})}
+         |> push_event("grid_actualizar_fila", %{catalogo: catalogo, client_id: seleccion.client_id, valores: valores_a_reflejar})
+         |> programar_calculo_renglon(catalogo)}
     end
   end
 
@@ -731,6 +771,85 @@ defmodule MetadataAppWeb.FichaLive do
      socket
      |> assign(:accion_externa_en_curso, nil)
      |> assign(:resultado_accion_externa, %{nombre: nil, ok?: false, status: nil, body: nil, error: "Error inesperado: #{inspect(razon)}"})}
+  end
+
+  # Cálculo preliminar del renglón (SPEC-SYS-0810202603): cuando la espera
+  # se cumple, pregunta a las reglas del maestro con la selección vigente.
+  def handle_info({:calcular_renglon, catalogo}, socket) do
+    socket = assign(socket, :detalle_calculo_timers, Map.delete(socket.assigns[:detalle_calculo_timers] || %{}, catalogo))
+
+    case Map.get(socket.assigns.detalle_seleccion, catalogo) do
+      nil -> {:noreply, socket}
+      seleccion -> {:noreply, calcular_renglon(socket, catalogo, seleccion)}
+    end
+  end
+
+  # Cualquier otro mensaje (p. ej. el que una regla PRE/POST se manda a sí
+  # misma, que corre en este proceso) se ignora, como antes de tener
+  # handle_info/2.
+  def handle_info(_mensaje, socket), do: {:noreply, socket}
+
+  # Solo si el detalle tiene columnas de solo lectura donde mostrarlo. Cada
+  # cambio reinicia la espera, así no hay una consulta por tecla.
+  @espera_calculo_renglon_ms 300
+
+  defp programar_calculo_renglon(socket, catalogo) do
+    if campos_solo_lectura(socket.assigns.catalogos_detalle, catalogo) == [] do
+      socket
+    else
+      timers = socket.assigns[:detalle_calculo_timers] || %{}
+      if ref = timers[catalogo], do: Process.cancel_timer(ref)
+      ref = Process.send_after(self(), {:calcular_renglon, catalogo}, @espera_calculo_renglon_ms)
+      assign(socket, :detalle_calculo_timers, Map.put(timers, catalogo, ref))
+    end
+  end
+
+  defp calcular_renglon(socket, catalogo, seleccion) do
+    solo_lectura = campos_solo_lectura(socket.assigns.catalogos_detalle, catalogo)
+    renglon = if seleccion.renglon_id, do: Map.put(seleccion.valores, "renglon_id", seleccion.renglon_id), else: seleccion.valores
+    vacios = Map.new(solo_lectura, &{&1, ""})
+
+    {valores, aviso} =
+      case MetaStateEngine.Reglas.calcular_renglon(socket.assigns.tabla, catalogo, encabezado_para_calculo(socket), renglon) do
+        {:ok, calculados} -> {Map.merge(vacios, Map.take(texto_de_valores(calculados), solo_lectura)), nil}
+        :sin_calculo -> {vacios, nil}
+        {:aviso, texto} -> {vacios, texto}
+        :no_aplica -> {nil, nil}
+      end
+
+    socket = assign(socket, :detalle_aviso_calculo, Map.put(socket.assigns[:detalle_aviso_calculo] || %{}, catalogo, aviso))
+
+    if valores do
+      push_event(socket, "grid_calculado_fila", %{
+        catalogo: catalogo,
+        client_id: seleccion.client_id,
+        renglon_id: seleccion.renglon_id,
+        valores: valores
+      })
+    else
+      socket
+    end
+  end
+
+  # En alta, lo capturado; en un registro guardado, sus campos como texto con
+  # lo que se está editando encima.
+  defp encabezado_para_calculo(%{assigns: %{modo: :alta, form_values: form_values}}), do: form_values
+
+  defp encabezado_para_calculo(%{assigns: %{registro: %{__struct__: schema} = registro, form_values: form_values}}) do
+    schema.__schema__(:fields)
+    |> Map.new(&{Atom.to_string(&1), Map.get(registro, &1)})
+    |> texto_de_valores()
+    |> Map.merge(form_values)
+  end
+
+  defp texto_de_valores(valores) do
+    Map.new(valores, fn
+      {campo, nil} -> {to_string(campo), nil}
+      {campo, %Decimal{} = d} -> {to_string(campo), Decimal.to_string(d, :normal)}
+      {campo, valor} when is_binary(valor) or is_number(valor) or is_atom(valor) -> {to_string(campo), to_string(valor)}
+      {campo, %Date{} = f} -> {to_string(campo), Date.to_iso8601(f)}
+      {campo, valor} -> {to_string(campo), valor}
+    end)
   end
 
   defp formatear_error_accion_externa(:timeout), do: "La API externa no respondió a tiempo."
@@ -1383,6 +1502,7 @@ defmodule MetadataAppWeb.FichaLive do
     |> assign(:detalle_renglones_editados, %{})
     |> assign(:detalle_renglones_eliminados, %{})
     |> assign(:detalle_seleccion, %{})
+    |> assign(:detalle_aviso_calculo, %{})
     |> assign(:detalle_form_error, nil)
     |> assign(:acciones_externas, acciones_externas_permitidas(socket, header))
   end
@@ -2080,7 +2200,8 @@ defmodule MetadataAppWeb.FichaLive do
       <.tab_historial :if={@tab == "historial"} historial={@historial} estados_por_id={@estados_por_id} />
       <.tab_detalle :if={@catalogos_detalle != []} tab_activo={@tab} modo={@modo} catalogos_detalle={@catalogos_detalle} detalle_renglones={@detalle_renglones}
         otras_transiciones={@otras_transiciones} detalle_form_error={@detalle_form_error} estados_por_id={@estados_por_id}
-        detalle_seleccion={@detalle_seleccion} detalle_campos_editables={@detalle_campos_editables} detalle_catalogo_activo={@detalle_catalogo_activo} />
+        detalle_seleccion={@detalle_seleccion} detalle_campos_editables={@detalle_campos_editables} detalle_catalogo_activo={@detalle_catalogo_activo}
+        detalle_aviso_calculo={@detalle_aviso_calculo} />
       </div>
 
       <aside :if={@modo == :ver} class="pc-ficha-aside w-60 flex-none hidden lg:flex flex-col gap-3">
@@ -3525,14 +3646,14 @@ defmodule MetadataAppWeb.FichaLive do
   # elegir empresa) los dos últimos quedan vacíos en vez de romper nada.
   defp contexto_actual(%Scope{usuario: usuario, empresa_activa: empresa}) do
     %{
-      "hoy" => Date.utc_today(),
+      "hoy" => MetadataApp.Hoy.fecha(),
       "usuario_actual" => (usuario && (usuario.alias || usuario.email)) || "",
       "empresa_activa" => (empresa && empresa.nombre) || ""
     }
   end
 
   defp contexto_actual(_sin_scope) do
-    %{"hoy" => Date.utc_today(), "usuario_actual" => "", "empresa_activa" => ""}
+    %{"hoy" => MetadataApp.Hoy.fecha(), "usuario_actual" => "", "empresa_activa" => ""}
   end
 
   # Mapa campo => valor "de verdad" para un "campo_calculado": lo que el
@@ -4164,6 +4285,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :detalle_form_error, :string, default: nil
   attr :estados_por_id, :map, required: true
   attr :detalle_seleccion, :map, required: true
+  attr :detalle_aviso_calculo, :map, default: %{}
   attr :detalle_campos_editables, :list, default: []
   attr :detalle_catalogo_activo, :string, default: nil
 
@@ -4214,7 +4336,7 @@ defmodule MetadataAppWeb.FichaLive do
       <.panel_detalle_catalogo :for={cat <- @catalogos_detalle} cat={cat} activo={cat.nombre == @detalle_catalogo_activo}
         filas={Map.get(@detalle_renglones, cat.nombre, [])} otras_transiciones={@otras_transiciones}
         estados_por_id={@estados_por_id} seleccion={Map.get(@detalle_seleccion, cat.nombre)}
-        campos_editables={@detalle_campos_editables} />
+        campos_editables={@detalle_campos_editables} aviso_calculo={Map.get(@detalle_aviso_calculo, cat.nombre)} />
     </div>
     """
   end
@@ -4226,6 +4348,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :estados_por_id, :map, required: true
   attr :seleccion, :map, default: nil
   attr :campos_editables, :list, default: []
+  attr :aviso_calculo, :string, default: nil
 
   defp panel_detalle_catalogo(assigns) do
     # Id FÍSICO (no @seleccion.renglon_id, el contador por maestro) del
@@ -4252,7 +4375,8 @@ defmodule MetadataAppWeb.FichaLive do
       </div>
 
       <div class="border-b border-gray-100">
-        <.formulario_renglon cat={@cat} seleccion={@seleccion} total={length(@filas)} campos_editables={@campos_editables} id_fisico={@id_fisico} />
+        <.formulario_renglon cat={@cat} seleccion={@seleccion} total={length(@filas)} campos_editables={@campos_editables} id_fisico={@id_fisico}
+          aviso_calculo={@aviso_calculo} />
       </div>
 
       <div class="overflow-x-auto">
@@ -4268,6 +4392,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :total, :integer, required: true
   attr :campos_editables, :list, default: []
   attr :id_fisico, :integer, default: nil
+  attr :aviso_calculo, :string, default: nil
 
   defp formulario_renglon(assigns) do
     # Un renglón YA PERSISTIDO solo se puede tocar si al menos uno de sus
@@ -4347,6 +4472,10 @@ defmodule MetadataAppWeb.FichaLive do
             </div>
           </div>
         </form>
+        <%!-- Aviso del cálculo preliminar (SPEC-SYS-0810202603): informa, no bloquea. --%>
+        <div :if={@aviso_calculo} id={"aviso-calculo-#{@cat.nombre}"} class="mx-3 mb-2 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-700 text-[11px]">
+          {@aviso_calculo}
+        </div>
       <% end %>
 
       <div class="border-t border-gray-100 px-4 py-2.5 flex items-center justify-end gap-1">

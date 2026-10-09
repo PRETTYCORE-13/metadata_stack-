@@ -3019,14 +3019,14 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   # ambos es el evaluador (Formula).
   defp contexto_actual(%Scope{usuario: usuario, empresa_activa: empresa}) do
     %{
-      "hoy" => Date.utc_today(),
+      "hoy" => MetadataApp.Hoy.fecha(),
       "usuario_actual" => (usuario && (usuario.alias || usuario.email)) || "",
       "empresa_activa" => (empresa && empresa.nombre) || ""
     }
   end
 
   defp contexto_actual(_sin_scope) do
-    %{"hoy" => Date.utc_today(), "usuario_actual" => "", "empresa_activa" => ""}
+    %{"hoy" => MetadataApp.Hoy.fecha(), "usuario_actual" => "", "empresa_activa" => ""}
   end
 
   # Disponible para CUALQUIER tipo de nodo (no solo algunos, a diferencia de

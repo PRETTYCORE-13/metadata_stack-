@@ -61,6 +61,6 @@ defmodule MetadataApp.MetaStateEngine.Reglas.Post do
   # Pública (no privada) porque es pura y se testea directo, sin pasar por
   # una columna real — ningún catálogo hoy tiene un campo :date para probar
   # "ahora" de punta a punta contra la base.
-  def resolver_valor("ahora"), do: Date.utc_today()
+  def resolver_valor("ahora"), do: MetadataApp.Hoy.fecha()
   def resolver_valor(valor), do: valor
 end

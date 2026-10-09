@@ -353,6 +353,24 @@ export default {
       this.programarSync()
     })
 
+    // Cálculo preliminar del renglón (SPEC-SYS-0810202603): valores de las
+    // columnas de solo lectura, escritos directo (setCelda las ignora) y sin
+    // marcar la fila como cambiada. Se ven en cursiva hasta que se guarda y
+    // la tabla se recarga con lo definitivo.
+    this.handleEvent("grid_calculado_fila", ({catalogo, client_id, renglon_id, valores}) => {
+      if (catalogo !== this.catalogo) return
+      const fila =
+        this.rows.find((r) => client_id != null && r.clientId === client_id) ||
+        this.rows.find((r) => renglon_id != null && r.renglonId === renglon_id)
+      if (!fila) return
+      fila.preliminar = new Set()
+      Object.entries(valores).forEach(([campo, valor]) => {
+        fila.values[campo] = valor
+        if (!celdaVacia(valor)) fila.preliminar.add(campo)
+      })
+      this.render()
+    })
+
     // "+ Nueva línea" del formulario (hoy disparado por el hook
     // RenglonForm, al confirmar con Enter o al cancelar con Esc — ya no
     // hay botón): crea una fila real en blanco y la selecciona, trayéndola
@@ -701,9 +719,11 @@ export default {
         const texto = escaparHtml(textoCelda(col, valor))
 
         const claseSoloLectura = col.solo_lectura ? "text-right bg-gray-50/60" : ""
+        const preliminar = fila.preliminar && fila.preliminar.has(col.campo)
+        const titulo = errores.length ? errores.join("; ") : preliminar ? "preliminar" : ""
 
-        return `<td class="px-1.5 py-1 align-top text-xs ${claseTexto} ${claseTachado} ${claseSoloLectura} truncate max-w-[16rem]"
-          title="${errores.length ? escaparHtml(errores.join("; ")) : ""}">${texto === "" ? "&nbsp;" : texto}</td>`
+        return `<td class="px-1.5 py-1 align-top text-xs ${claseTexto} ${claseTachado} ${claseSoloLectura} ${preliminar ? "italic" : ""} truncate max-w-[16rem]"
+          title="${escaparHtml(titulo)}">${texto === "" ? "&nbsp;" : texto}</td>`
       })
       .join("")
 

@@ -11,7 +11,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   on_mount {MetadataAppWeb.UsuarioAuth, :mount_current_scope}
   on_mount {MetadataAppWeb.Hooks.Autorizacion, {"sysadmin_bc", "editar"}}
 
-  alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador, CatalogoGenerico}
+  alias MetadataApp.BusinessProcessBuilder.{MetaSchemaContext, CatalogoGenerador, CatalogoGenerico, MetaCatalogoGenerico}
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.Repo
   alias MetadataApp.MetaPlantillas
@@ -135,6 +135,9 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
     socket
     |> assign(:campos, campos)
+    # SPEC-SYS-1109202601 R42: registros elegibles como default de cada campo
+    # referencia (una consulta por referencia, solo al cargar el Motor).
+    |> assign(:opciones_default_referencia, opciones_default_referencia(campos))
     # SPEC-SYS-0209202601: ParametrosCatalogo.props_referenciado/2 busca acá
     # (por "catalogo" == dueño del campo referencia) para leer
     # "campos_acompanamiento" del campo real -- un BC solo tiene su propio
@@ -877,14 +880,20 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
     valor = String.trim(valor)
 
-    props =
-      if valor == "" do
-        Map.delete(detalle.schema_context_properties, "valor_default")
-      else
-        Map.put(detalle.schema_context_properties, "valor_default", valor)
-      end
+    case MetaCatalogoGenerico.validar_valor_default(detalle.schema_context_properties, valor) do
+      :ok ->
+        props =
+          if valor == "" do
+            Map.delete(detalle.schema_context_properties, "valor_default")
+          else
+            Map.put(detalle.schema_context_properties, "valor_default", valor)
+          end
 
-    actualizar_campo_y_regenerar(socket, detalle, props, "el valor default")
+        actualizar_campo_y_regenerar(socket, detalle, props, "el valor default")
+
+      {:error, motivo} ->
+        {:noreply, put_flash(socket, :error, "Valor default de \"#{detalle.schema_context_field}\" no válido: #{motivo}.")}
+    end
   end
 
   # Botón "Hoy"/"Ahora" junto al input de arriba, solo para date/hora — un
@@ -1898,6 +1907,14 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # hace que "se guardó pero no se pudo regenerar" ya no sea un estado
   # posible: si CatalogoGenerador.generar/1 falla, Repo.rollback/1 deshace
   # también el cambio de metadata.
+  defp opciones_default_referencia(campos) do
+    for c <- campos,
+        c.schema_context_properties["tipo"] == "referencia",
+        c.schema_context_properties["editable"] != false,
+        into: %{},
+        do: {c.schema_context_field, CatalogoGenerico.opciones_referencia(c.schema_context_properties)}
+  end
+
   defp actualizar_campo_y_regenerar(socket, detalle, props, etiqueta_error) do
     tabla = socket.assigns.header.schema_context_name
 
@@ -2247,7 +2264,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
       <div id="motor-panel-config" class="space-y-4">
         <.panel_encabezado header_form={@header_form} iconos_sugeridos={@iconos_sugeridos} carpetas={@carpetas} />
-        <.panel_campos campos={@campos} longitudes_columnas={@longitudes_columnas} />
+        <.panel_campos campos={@campos} longitudes_columnas={@longitudes_columnas} opciones_default_referencia={@opciones_default_referencia} />
         <%= if @es_detalle? do %>
           <div class="border border-gray-200 rounded-lg p-3 text-gray-500">
             Sin estados/transiciones propias — este catálogo se mueve junto con <strong>{@maestro.schema_context_label}</strong>.
@@ -2522,6 +2539,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
 
   attr :campos, :list, required: true
   attr :longitudes_columnas, :map, default: %{}
+  attr :opciones_default_referencia, :map, default: %{}
 
   defp panel_campos(assigns) do
     # "fecha_registro" es un campo de CONTROL del BC (como insert_guid,
@@ -2594,13 +2612,27 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                     </form>
                   </td>
                   <td class="px-1.5 py-1">
-                    <%= if Map.get(props, "opcional") != true and Map.get(props, "tipo") != "referencia" do %>
+                    <%= cond do %>
+                      <% Map.get(props, "editable") == false -> %>
+                        <span class="text-gray-300">—</span>
+                      <% Map.get(props, "tipo") == "referencia" -> %>
+                        <form phx-change="cambiar_valor_default_campo" id={"default-#{c.schema_context_field}"}>
+                          <input type="hidden" name="campo" value={c.schema_context_field} />
+                          <select name="valor_default" title="Valor default"
+                            class="border border-gray-300 rounded px-1 py-0.5 text-[11px] text-gray-700 max-w-[9rem]">
+                            <option value="">Sin default</option>
+                            <option :for={{id, etiqueta} <- Map.get(@opciones_default_referencia, c.schema_context_field, [])}
+                              value={id} selected={to_string(id) == Map.get(props, "valor_default")}>{etiqueta}</option>
+                          </select>
+                        </form>
+                      <% true -> %>
                       <div class="flex items-center gap-1">
-                        <form phx-change="cambiar_valor_default_campo">
+                        <form phx-change="cambiar_valor_default_campo" id={"default-#{c.schema_context_field}"}>
                           <input type="hidden" name="campo" value={c.schema_context_field} />
                           <input type="text" name="valor_default" value={Map.get(props, "valor_default")}
-                            title="Valor si es nulo"
-                            class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] text-gray-700 w-11" />
+                            phx-debounce="blur"
+                            title={if Map.get(props, "tipo") == "date", do: "Valor default: AAAA-MM-DD, hoy, hoy+N u hoy-N", else: "Valor default"}
+                            class="border border-gray-300 rounded px-1.5 py-0.5 text-[11px] text-gray-700 w-16" />
                         </form>
                         <button :if={Map.get(props, "tipo") in ["date", "hora"]} type="button"
                           phx-click="usar_valor_default_hoy" phx-value-campo={c.schema_context_field}
@@ -2609,8 +2641,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                           <%= if Map.get(props, "tipo") == "date", do: "Hoy", else: "Ahora" %>
                         </button>
                       </div>
-                    <% else %>
-                      <span class="text-gray-300">—</span>
                     <% end %>
                   </td>
                   <td class="px-1.5 py-1 text-center">

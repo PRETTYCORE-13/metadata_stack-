@@ -20,6 +20,8 @@ defmodule MetadataApp.MetaStateEngine.Reglas do
   `{:ok, :sin_cambios}` para POST.
   """
 
+  require Logger
+
   @doc "Precondición: (accion, registro, contexto) -> :ok | {:error, mensaje}. Solo lectura."
   def evaluar_pre(accion, registro, contexto) do
     modulo = modulo_pre(catalogo_de(registro))
@@ -40,6 +42,33 @@ defmodule MetadataApp.MetaStateEngine.Reglas do
     else
       {:ok, :sin_cambios}
     end
+  end
+
+  @doc """
+  Cálculo preliminar de un renglón (SPEC-SYS-0810202603): pregunta al POST
+  del `maestro` por `calcular_renglon/3`. `:no_aplica` si el catálogo no la
+  tiene, si truena (queda en el log) o si responde algo fuera del contrato.
+  """
+  def calcular_renglon(maestro, detalle, encabezado, renglon) do
+    modulo = modulo_post(maestro)
+
+    if Code.ensure_loaded?(modulo) and function_exported?(modulo, :calcular_renglon, 3) do
+      case modulo.calcular_renglon(detalle, encabezado, renglon) do
+        {:ok, valores} when is_map(valores) -> {:ok, valores}
+        :sin_calculo -> :sin_calculo
+        {:aviso, texto} when is_binary(texto) -> {:aviso, texto}
+        otra -> no_aplica(maestro, "respuesta fuera de contrato: #{inspect(otra)}")
+      end
+    else
+      :no_aplica
+    end
+  rescue
+    error -> no_aplica(maestro, Exception.format(:error, error, __STACKTRACE__))
+  end
+
+  defp no_aplica(maestro, detalle) do
+    Logger.error("calcular_renglon de #{maestro}: #{detalle}")
+    :no_aplica
   end
 
   @doc "Nombre del módulo Pre esperado para `catalogo` — pura construcción de nombre, no valida que exista."

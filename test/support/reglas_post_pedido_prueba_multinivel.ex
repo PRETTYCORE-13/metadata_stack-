@@ -65,4 +65,23 @@ defmodule MetadataApp.MetaBusinessProcess.Reglas.PedidoPruebaMultinivel.Post do
   end
 
   def ejecutar(_accion, _registro, _contexto, _repo), do: {:ok, :sin_cambios}
+
+  # SPEC-SYS-0810202603: cálculo preliminar según el producto capturado.
+  # "CALC..." también regresa el producto (capturable), que la plataforma
+  # debe ignorar; insert_guid hace de columna de solo lectura en las pruebas.
+  @impl true
+  def calcular_renglon("partidas_prueba_multinivel", encabezado, renglon) do
+    producto = renglon["partidas_prueba_multinivel_producto"] || ""
+
+    cond do
+      String.starts_with?(producto, "AVISO") -> {:aviso, "sin precio de prueba"}
+      String.starts_with?(producto, "BOOM") -> raise "falla de prueba del cálculo"
+      String.starts_with?(producto, "CALC") ->
+        {:ok, %{"insert_guid" => "#{producto}/#{encabezado["pedido_prueba_multinivel_folio"]}", "partidas_prueba_multinivel_producto" => "otro"}}
+
+      true -> :sin_calculo
+    end
+  end
+
+  def calcular_renglon(_detalle, _encabezado, _renglon), do: :sin_calculo
 end

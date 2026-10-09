@@ -352,6 +352,13 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   escriben, no son obligatorias ni viajan al guardar. Origen: el precio
   por renglón del pedido (SPEC-ADN-0710202601). Grupos A-D cerrados el
   2026-10-08 (3 pruebas nuevas; hook JS verificado en pantalla).
+- [`SPEC-SYS-0810202603-calculo-preliminar-renglones/`](SPEC-SYS-0810202603-calculo-preliminar-renglones/) —
+  cálculo preliminar del renglón mientras se captura en la Ficha: la
+  plataforma pregunta a `calcular_renglon/3` (opcional, en el `post.ex`
+  del maestro) y muestra los valores en cursiva en las columnas de solo
+  lectura; avisos sin bloquear. El pedido lo usa para el precio
+  preliminar (SPEC-ADN-0710202601 R26-R28). Grupos A-E cerrados el
+  2026-10-08 (5 pruebas nuevas).
 - [`SPEC-SYS-3009202602-endpoints-externos/`](SPEC-SYS-3009202602-endpoints-externos/) —
   Endpoints Externos (antes "Acciones externas"): llamadas configuradas a
   APIs de otros sistemas, con credencial cifrada, botón en la ficha,
