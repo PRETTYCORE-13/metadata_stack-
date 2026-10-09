@@ -328,4 +328,37 @@ defmodule MetadataApp.PermissionsTest do
       assert length(Permissions.buscar_catalogos("*", 2)) == 2
     end
   end
+
+  describe "listar_catalogos_para_permisos/0 (SPEC-SYS-0910202601)" do
+    defp header_lista_fixture(attrs) do
+      {:ok, header} =
+        %MetadataApp.BusinessProcessBuilder.MetaSchema.Header{}
+        |> MetadataApp.BusinessProcessBuilder.MetaSchema.Header.changeset(%{
+          schema_context_name: "pty_lista_#{System.unique_integer([:positive])}",
+          schema_context_label: "Lista test",
+          schema_context_type: Map.get(attrs, :tipo, 3),
+          schema_context_nav: "/lista-test-#{System.unique_integer([:positive])}",
+          schema_visible: true
+        })
+        |> Ecto.Changeset.put_change(:schema_encabezado_id, Map.get(attrs, :encabezado_id))
+        |> Ecto.Changeset.put_change(:insert_guid, Ecto.UUID.generate() |> String.replace("-", ""))
+        |> Repo.insert()
+
+      header
+    end
+
+    test "lista todos los catálogos sin tope, incluidos detalles y sin transiciones; nunca carpetas" do
+      consultas = for _ <- 1..25, do: header_lista_fixture(%{})
+      detalle = header_lista_fixture(%{encabezado_id: hd(consultas).id})
+      sin_transiciones = header_lista_fixture(%{tipo: 1})
+      carpeta = header_lista_fixture(%{tipo: 2})
+
+      recursos = Permissions.listar_catalogos_para_permisos() |> Enum.map(& &1.recurso)
+
+      assert Enum.all?(consultas, &(&1.schema_context_name in recursos))
+      assert detalle.schema_context_name in recursos
+      assert sin_transiciones.schema_context_name in recursos
+      refute carpeta.schema_context_name in recursos
+    end
+  end
 end

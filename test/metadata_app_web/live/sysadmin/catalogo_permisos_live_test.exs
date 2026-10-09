@@ -136,4 +136,44 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLiveTest do
     assert {:ok, _view, html} = live(conn, ~p"/sysadmin/catalogos/#{header.schema_context_name}/permisos")
     assert html =~ "no tiene su configuración armada"
   end
+
+  describe "lista completa con el buscador vacío (SPEC-SYS-0910202601)" do
+    test "sin escribir nada ya aparecen los catálogos permisibles", %{conn: conn} do
+      catalogo = catalogo_fixture("pty_lista_test")
+
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/catalogos/permisos")
+
+      assert has_element?(view, "#lista-catalogos-picker #picker-#{catalogo.schema_context_name}")
+    end
+
+    test "clic en uno de la lista navega a sus permisos y lo resalta", %{conn: conn} do
+      catalogo = catalogo_fixture("pty_lista_test")
+
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/catalogos/permisos")
+
+      {:ok, view2, html} =
+        view
+        |> element(~s(button[phx-click=elegir_catalogo][phx-value-recurso="#{catalogo.schema_context_name}"]))
+        |> render_click()
+        |> follow_redirect(conn)
+
+      assert html =~ catalogo.schema_context_label
+      assert has_element?(view2, "#picker-#{catalogo.schema_context_name} button.bg-yellow-100")
+    end
+
+    test "escribir filtra la lista y borrar el texto la regresa completa", %{conn: conn} do
+      buscado = catalogo_fixture("pty_lista_buscado")
+      otro = catalogo_fixture("pty_lista_otro")
+
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/catalogos/permisos")
+      input = element(view, "input[phx-keyup=buscar_catalogo_picker]")
+
+      render_keyup(input, %{"value" => buscado.schema_context_name})
+      assert has_element?(view, "#picker-#{buscado.schema_context_name}")
+      refute has_element?(view, "#picker-#{otro.schema_context_name}")
+
+      render_keyup(input, %{"value" => ""})
+      assert has_element?(view, "#picker-#{otro.schema_context_name}")
+    end
+  end
 end

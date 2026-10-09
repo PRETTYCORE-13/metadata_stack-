@@ -5,10 +5,9 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   roles de la empresa (o solo los de un usuario puntual) con sus toggles
   de leer/crear/editar/eliminar + transiciones reales de ESE catálogo.
 
-  Mismo criterio de escala que el resto de RBAC: el selector de catálogo
-  de la izquierda es un buscador con tope de resultados
-  (`Permissions.buscar_catalogos/2`), nunca una lista fija — a
-  +1000 catálogos posibles no se puede cargar el universo entero.
+  El selector de catálogo de la izquierda muestra la lista completa de
+  catálogos y Consultas (`Permissions.listar_catalogos_para_permisos/0`)
+  y el buscador la filtra en memoria (SPEC-SYS-0910202601).
 
   Edición todavía instantánea (cada toggle escribe al toque) — el modo
   "borrador + confirmar" (punto 4 del pedido) queda para la próxima
@@ -84,6 +83,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
       |> assign(:show_programacion_children, false)
       |> assign(:show_clientes_children, false)
       |> assign(:show_prettycore_children, false)
+      |> assign(:todos_los_catalogos, Permissions.listar_catalogos_para_permisos())
       |> restaurar_busqueda_picker(params["q"])
       |> montar_catalogo(recurso)
 
@@ -122,7 +122,8 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
      |> assign(:show_clientes_children, false)
      |> assign(:show_prettycore_children, false)
      |> assign(:catalogo, nil)
-     |> assign(:transiciones, [])}
+     |> assign(:transiciones, [])
+     |> assign(:todos_los_catalogos, Permissions.listar_catalogos_para_permisos())}
   end
 
   defp montar_base(socket) do
@@ -142,6 +143,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     |> assign(:tipos_alcance, @tipos_alcance)
     |> assign(:alcance_error, nil)
     |> assign(:mostrar_sysadmin?, false)
+    |> assign(:todos_los_catalogos, [])
   end
 
   # SPEC-SYS-1709202602 R4/R4a-b (2026-09-17, a pedido explícito):
@@ -160,7 +162,22 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   defp restaurar_busqueda_picker(socket, texto) when texto in [nil, ""], do: socket
 
   defp restaurar_busqueda_picker(socket, texto) do
-    assign(socket, busqueda_catalogo_picker: texto, resultados_catalogo_picker: Permissions.buscar_catalogos(texto))
+    assign(socket, busqueda_catalogo_picker: texto, resultados_catalogo_picker: filtrar_catalogos(socket.assigns.todos_los_catalogos, texto))
+  end
+
+  # SPEC-SYS-0910202601: el buscador filtra la lista completa ya cargada
+  # (por nombre técnico o visible, sin distinguir mayúsculas), así
+  # encuentra lo mismo que se ve sin texto. "*" deja la lista completa.
+  defp filtrar_catalogos(catalogos, texto) do
+    case String.downcase(String.trim(texto)) do
+      t when t in ["", "*"] ->
+        catalogos
+
+      t ->
+        Enum.filter(catalogos, fn c ->
+          String.contains?(String.downcase(c.recurso), t) or String.contains?(String.downcase(c.label || ""), t)
+        end)
+    end
   end
 
   defp montar_catalogo(socket, recurso) do
@@ -208,7 +225,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   end
 
   def handle_event("buscar_catalogo_picker", %{"value" => texto}, socket) do
-    resultados = Permissions.buscar_catalogos(texto)
+    resultados = filtrar_catalogos(socket.assigns.todos_los_catalogos, texto)
     {:noreply, socket |> assign(:busqueda_catalogo_picker, texto) |> assign(:resultados_catalogo_picker, resultados)}
   end
 
@@ -501,7 +518,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
         Mostrando solo los roles de <strong class="text-gray-800">{@usuario_seleccionado.email}</strong>.
       </p>
 
-      <div class={["grid grid-cols-1 gap-4", !@embebido? && "sm:grid-cols-[220px_1fr]"]}>
+      <div class={["grid grid-cols-1 gap-4", !@embebido? && "sm:grid-cols-[280px_1fr]"]}>
         <div :if={!@embebido?}>
           <input
             type="text"
@@ -511,28 +528,41 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
             placeholder="Buscar catálogo..."
             class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 mb-2"
           />
-          <ul class="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-96 overflow-y-auto">
-            <li :for={c <- @resultados_catalogo_picker}>
+          <%!-- Buscador vacío: todos los artefactos permisibles
+               (SPEC-SYS-0910202601); con texto: los resultados de búsqueda. --%>
+          <ul
+            id="lista-catalogos-picker"
+            class="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-[32rem] overflow-y-auto"
+          >
+            <li
+              :for={c <- if(@busqueda_catalogo_picker == "", do: @todos_los_catalogos, else: @resultados_catalogo_picker)}
+              id={"picker-" <> c.recurso}
+            >
               <button
                 type="button"
                 phx-click="elegir_catalogo"
                 phx-value-recurso={c.recurso}
+                title={c.recurso}
                 class={[
-                  "w-full text-left px-3 py-2 text-xs",
-                  if(@catalogo && c.recurso == @catalogo.recurso, do: "bg-yellow-100 font-semibold text-gray-900", else: "text-gray-700 hover:bg-gray-50")
+                  "w-full text-left px-3 py-2 transition-colors",
+                  if(@catalogo && c.recurso == @catalogo.recurso, do: "bg-yellow-100", else: "hover:bg-gray-50")
                 ]}
               >
-                {c.recurso}
+                <span class="flex items-center gap-1.5">
+                  <span class="truncate text-sm font-medium text-gray-900">{c.label || c.recurso}</span>
+                  <span :if={c.es_consulta} class="shrink-0 rounded bg-sky-100 px-1.5 text-[10px] font-semibold text-sky-700">Consulta</span>
+                </span>
+                <span class="block truncate text-xs text-gray-500">{c.recurso}</span>
               </button>
             </li>
-            <li :if={@resultados_catalogo_picker == []} class="px-3 py-2 text-xs text-gray-400">
-              Buscá un catálogo para empezar.
+            <li class="hidden only:block px-3 py-2 text-xs text-gray-400">
+              {if @busqueda_catalogo_picker == "", do: "No hay catálogos con permisos configurables.", else: "Sin resultados."}
             </li>
           </ul>
         </div>
 
         <div :if={!@catalogo and !@embebido?} class="flex items-center justify-center rounded-xl border border-dashed border-gray-300 text-sm text-gray-400 p-12">
-          Elegí un catálogo de la izquierda para ver y editar sus permisos.
+          Elige un catálogo de la izquierda para ver y editar sus permisos.
         </div>
 
         <div :if={@catalogo} class="overflow-x-auto rounded-xl border border-gray-200">

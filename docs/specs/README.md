@@ -206,3 +206,10 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   Unit) y Reparto (Almacén) — cada uno con sus Excepciones puntuales.
   `01.requirements.md`/`02.design.md`/`03.tasks.md` escritos, pendiente
   de ejecución (Grupos A-F).
+- [`SPEC-SYS-0910202601-lista-artefactos-permisos/`](SPEC-SYS-0910202601-lista-artefactos-permisos/) —
+  el picker de "RBAC Bisness Context" muestra de entrada la lista
+  completa de catálogos y Consultas que aceptan permisos (como el
+  Administrador de usuarios), para elegir sin saber su nombre; el
+  buscador la filtra. Reemplaza R2 de `SPEC-SYS-1709202602`.
+  Implementado y testeado (Grupos A-B); pendiente limpieza C1, verla
+  con datos de dev y `05.usage.md`.
