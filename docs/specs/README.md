@@ -346,6 +346,12 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   referencia inexistente se rechaza con el campo en lugar de un error
   interno. Encontrado por las pruebas adversas de SPEC-ADN-0710202601.
   Grupos A-F cerrados el 2026-10-08 (8 pruebas nuevas; pruebas adversas del pedido sin residuo).
+- [`SPEC-SYS-0810202602-renglones-columnas-solo-lectura/`](SPEC-SYS-0810202602-renglones-columnas-solo-lectura/) —
+  la tabla de renglones de la Ficha muestra los campos calculados por el
+  sistema (visibles, no editables) como columnas de solo lectura: no se
+  escriben, no son obligatorias ni viajan al guardar. Origen: el precio
+  por renglón del pedido (SPEC-ADN-0710202601). Grupos A-D cerrados el
+  2026-10-08 (3 pruebas nuevas; hook JS verificado en pantalla).
 - [`SPEC-SYS-3009202602-endpoints-externos/`](SPEC-SYS-3009202602-endpoints-externos/) —
   Endpoints Externos (antes "Acciones externas"): llamadas configuradas a
   APIs de otros sistemas, con credencial cifrada, botón en la ficha,

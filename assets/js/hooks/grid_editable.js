@@ -175,6 +175,8 @@ export function calcularResumen(filas, columnas, ventana, overrides = {}) {
 // reglas del changeset) viaja al servidor por separado (ver
 // programarValidacionServidor).
 function validarCelda(valor, columna) {
+  // Columna de solo lectura (SPEC-SYS-0810202602): la llena el sistema.
+  if (columna.solo_lectura) return []
   const vacio = celdaVacia(valor)
 
   if (!columna.opcional && vacio) return ["obligatorio"]
@@ -201,6 +203,11 @@ function validarCelda(valor, columna) {
 function textoCelda(col, valor) {
   if (celdaVacia(valor)) return ""
 
+  if (col.solo_lectura && TIPOS_NUMERICOS.includes(col.tipo)) {
+    const numero = Number(valor)
+    if (Number.isFinite(numero)) return formatearNumero(numero, col)
+  }
+
   if (col.tipo === "referencia" && Array.isArray(col.opciones)) {
     const opcion = col.opciones.find((o) => String(o.id) === valor)
     if (opcion) return opcion.etiqueta
@@ -209,6 +216,15 @@ function textoCelda(col, valor) {
   if (col.tipo === "boolean") return valor === "true" ? "Sí" : "No"
 
   return valor
+}
+
+// Formato es-MX con los decimales del campo (y moneda si aplica), mismo
+// criterio que FichaLive.formatear_numero_columna/2.
+function formatearNumero(numero, col) {
+  const decimales = Number.isInteger(col.decimales) ? col.decimales : 2
+  const opciones = {minimumFractionDigits: decimales, maximumFractionDigits: decimales}
+  if (col.moneda) Object.assign(opciones, {style: "currency", currency: "MXN"})
+  return new Intl.NumberFormat("es-MX", opciones).format(numero)
 }
 
 let contadorClientId = 0
@@ -232,6 +248,12 @@ function filaDesdeServidor(f) {
     errors: {},
     marcadaEliminar: false,
   }
+}
+
+// Las columnas de solo lectura nunca viajan al guardar.
+function sinSoloLectura(valores, columnas) {
+  const soloLectura = new Set(columnas.filter((c) => c.solo_lectura).map((c) => c.campo))
+  return Object.fromEntries(Object.entries(valores).filter(([campo]) => !soloLectura.has(campo)))
 }
 
 export default {
@@ -427,6 +449,8 @@ export default {
   },
 
   setCelda(rowIdx, campo, valor) {
+    const columna = this.columns.find((c) => c.campo === campo)
+    if (columna && columna.solo_lectura) return
     while (this.rows.length <= rowIdx) this.rows.push(filaNueva())
     const fila = this.rows[rowIdx]
     fila.values[campo] = valor
@@ -676,7 +700,9 @@ export default {
         const claseTexto = errores.length > 0 ? "text-red-600" : fila.marcadaEliminar ? "text-gray-400" : "text-gray-700"
         const texto = escaparHtml(textoCelda(col, valor))
 
-        return `<td class="px-1.5 py-1 align-top text-xs ${claseTexto} ${claseTachado} truncate max-w-[16rem]"
+        const claseSoloLectura = col.solo_lectura ? "text-right bg-gray-50/60" : ""
+
+        return `<td class="px-1.5 py-1 align-top text-xs ${claseTexto} ${claseTachado} ${claseSoloLectura} truncate max-w-[16rem]"
           title="${errores.length ? escaparHtml(errores.join("; ")) : ""}">${texto === "" ? "&nbsp;" : texto}</td>`
       })
       .join("")
@@ -734,9 +760,10 @@ export default {
         eliminadas.push(fila.renglonId)
         return
       }
-      if (filaVacia(fila.values)) return
-      if (fila.renglonId == null) nuevas.push(fila.values)
-      else if (fila.dirty.size > 0) editadas.push({renglon_id: fila.renglonId, campos: fila.values})
+      const valores = sinSoloLectura(fila.values, this.columns)
+      if (filaVacia(valores)) return
+      if (fila.renglonId == null) nuevas.push(valores)
+      else if (fila.dirty.size > 0) editadas.push({renglon_id: fila.renglonId, campos: valores})
     })
 
     this.pushEvent("grid_sync", {catalogo: this.catalogo, nuevas, editadas, eliminadas})

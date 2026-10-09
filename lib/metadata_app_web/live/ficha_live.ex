@@ -444,7 +444,16 @@ defmodule MetadataAppWeb.FichaLive do
   #   transición (ver Renglones.eliminar_todos/3), nunca se mezclan con
   #   "editadas" aunque también tuvieran campos tocados.
   def handle_event("grid_sync", %{"catalogo" => catalogo, "nuevas" => nuevas, "editadas" => editadas, "eliminadas" => eliminadas}, socket) do
-    items_editados = Enum.map(editadas, fn %{"renglon_id" => id, "campos" => campos} -> Map.put(campos, "renglon_id", id) end)
+    # Las columnas de solo lectura (SPEC-SYS-0810202602) nunca viajan al
+    # guardar, aunque un cliente las mande.
+    solo_lectura = campos_solo_lectura(socket.assigns.catalogos_detalle, catalogo)
+    nuevas = Enum.map(nuevas, &Map.drop(&1, solo_lectura))
+
+    items_editados =
+      for %{"renglon_id" => id, "campos" => campos} <- editadas,
+          campos = Map.drop(campos, solo_lectura),
+          campos != %{},
+          do: Map.put(campos, "renglon_id", id)
 
     {:noreply,
      socket
@@ -731,6 +740,14 @@ defmodule MetadataAppWeb.FichaLive do
 
   defp columnas_de_catalogo(catalogos_detalle, nombre) do
     catalogos_detalle |> Enum.find(%{columnas: []}, &(&1.nombre == nombre)) |> Map.get(:columnas)
+  end
+
+  defp campos_solo_lectura(catalogos_detalle, nombre) do
+    catalogos_detalle
+    |> Enum.find(%{columnas_tabla: []}, &(&1.nombre == nombre))
+    |> Map.get(:columnas_tabla)
+    |> Enum.filter(&Map.get(&1, :solo_lectura, false))
+    |> Enum.map(& &1.schema_context_field)
   end
 
   defp valores_como_texto(fila, columnas) do
@@ -1401,28 +1418,35 @@ defmodule MetadataAppWeb.FichaLive do
     header_id
     |> MetaSchemaContext.listar_catalogos_detalle()
     |> Enum.map(fn h ->
-      columnas_detalle =
+      {calculadas, capturables} =
         h.schema_context_name
         |> MetaSchemaContext.listar_detalles()
         |> Enum.map(&MetaSchemaContext.serializar_detalle/1)
         |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
-        # "editable" => false (ej. fecha_registro, ver asegurar_detalle_fecha_registro/1
-        # en catalogo_generador.ex) es un campo de SISTEMA: el server lo pisa
-        # solo en cada insert/transición, nunca hay un camino real para que el
-        # usuario lo cambie. Afuera del grid de renglones a propósito — dejarlo
-        # entrar significaba una celda editable y "obligatoria" (grid_editable.js
-        # exige valor si no viene marcada "opcional") para un dato que el
-        # usuario no puede completar de verdad, bloqueando "Guardar".
-        |> Enum.reject(&(get_in(&1, [:schema_context_properties, "editable"]) == false))
         |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
-        |> Enum.map(&Map.put(&1, :opciones, opciones_para_columna(&1, scope)))
+        |> Enum.split_with(&(get_in(&1, [:schema_context_properties, "editable"]) == false))
+
+      # "editable" => false es un campo que pone el sistema (la regla POST o
+      # el motor): fuera del formulario de captura, que solo lleva lo que el
+      # usuario escribe.
+      columnas_detalle = Enum.map(capturables, &Map.put(&1, :opciones, opciones_para_columna(&1, scope)))
+
+      # SPEC-SYS-0810202602: los calculados entran a la tabla como columnas de
+      # solo lectura (nunca obligatorias ni enviadas al guardar), salvo
+      # fecha_registro, que es interno.
+      solo_lectura =
+        calculadas
+        |> Enum.reject(&(&1.schema_context_field == "fecha_registro"))
+        |> Enum.map(&(&1 |> Map.put(:opciones, opciones_para_columna(&1, scope)) |> Map.put(:solo_lectura, true)))
 
       # :columnas_tabla — subconjunto curado (BcMotorLive → Campos → "En
       # tabla") para catálogos con muchos campos, donde mostrar TODOS como
-      # columna en la tabla ancha es inusable. :columnas (completo) sigue
-      # siendo lo que usa el formulario de al lado (formulario_renglon/1) —
-      # ahí sí entra cualquier campo visible, sin curar.
-      columnas_tabla = Enum.filter(columnas_detalle, &MetaSchemaContext.mostrar_en_tabla?(&1.schema_context_properties))
+      # columna en la tabla ancha es inusable. :columnas sigue siendo lo que
+      # usa el formulario de al lado (formulario_renglon/1), sin curar.
+      columnas_tabla =
+        (columnas_detalle ++ solo_lectura)
+        |> Enum.filter(&MetaSchemaContext.mostrar_en_tabla?(&1.schema_context_properties))
+        |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
 
       # tiene_detalle? (Fase 0 del módulo de Importación, multinivel,
       # 2026-08-27): un catálogo detalle puede a su vez tener sus propios
