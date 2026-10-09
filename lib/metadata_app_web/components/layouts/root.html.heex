@@ -55,5 +55,25 @@
   </head>
   <body>
     {@inner_content}
+    <%!-- Indicador de carga entre pantallas (SPEC-SYS-0909202601 R27–R31).
+         Vive fuera de @inner_content para que la navegación en vivo no lo
+         vuelva a pintar a la mitad de la transición; app.js lo muestra
+         y lo oculta con phx:page-loading-start/stop. --%>
+    <div id="pc-cargando" class="pc-cargando is-hidden" role="status" aria-live="polite">
+      <div class="pc-cargando-loader">
+        <svg viewBox="0 0 72 96" aria-hidden="true">
+          <ellipse class="pc-cargando-mancha" cx="36" cy="76" rx="14" ry="3.5" />
+          <line class="pc-cargando-tierra" x1="8" y1="76" x2="64" y2="76" />
+          <ellipse class="pc-cargando-onda" cx="36" cy="76" rx="10" ry="2.6" />
+          <ellipse class="pc-cargando-onda pc-cargando-onda-2" cx="36" cy="76" rx="6" ry="1.6" />
+          <path
+            class="pc-cargando-gota"
+            d="M36 54 C36 54 29 63 29 67.5 A7 7 0 0 0 43 67.5 C43 63 36 54 36 54 Z"
+          />
+        </svg>
+        <div class="pc-cargando-barra"><span></span></div>
+        <span class="pc-cargando-texto">CARGANDO…</span>
+      </div>
+    </div>
   </body>
 </html>

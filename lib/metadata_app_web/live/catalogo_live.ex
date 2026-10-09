@@ -1766,8 +1766,8 @@ defmodule MetadataAppWeb.CatalogoLive do
             <tbody class="divide-y divide-gray-100">
               <%= for fila <- @filas do %>
                 <tr class="hover:bg-purple-50/60 transition-colors cursor-pointer"
-                  ondblclick={"if (!event.target.closest('input')) { window.location='/registro/#{@current_page}/#{fila.id}' }"}
-                  onclick={"if (window.matchMedia('(pointer: coarse)').matches && !event.target.closest('a') && !event.target.closest('input')) { window.location='/registro/#{@current_page}/#{fila.id}' }"}>
+                  ondblclick={"if (!event.target.closest('input')) { liveSocket.js().navigate('/registro/#{@current_page}/#{fila.id}') }"}
+                  onclick={"if (window.matchMedia('(pointer: coarse)').matches && !event.target.closest('a') && !event.target.closest('input')) { liveSocket.js().navigate('/registro/#{@current_page}/#{fila.id}') }"}>
                   <td class="px-2 py-1.5 w-8">
                     <input type="checkbox" phx-click="toggle_seleccion_fila" phx-value-id={fila.id} checked={MapSet.member?(@seleccionados, fila.id)}
                       class="rounded border-gray-300 text-purple-600 focus:ring-purple-500" />

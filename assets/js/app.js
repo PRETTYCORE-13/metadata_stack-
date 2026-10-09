@@ -1028,8 +1028,63 @@ const liveSocket = new LiveSocket("/live", Socket, {
 
 // Show progress bar on live navigation and form submits
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
-window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
-window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
+
+// Indicador de carga entre pantallas (#pc-cargando, SPEC-SYS-0909202601
+// R27–R33): en navegación entre LiveViews (kind "redirect") y en recargas
+// completas (beforeunload), solo si tarda más de CARGANDO_ESPERA_MS; una
+// vez visible se queda al menos CARGANDO_MINIMO_MS para no parpadear.
+// Patch, element, error e initial siguen solo con topbar.
+const CARGANDO_ESPERA_MS = 400
+const CARGANDO_MINIMO_MS = 500
+const CARGANDO_TOPE_RECARGA_MS = 10000
+const cargando = {
+  timer: null,
+  tope: null,
+  visibleDesde: null,
+  el() { return document.getElementById("pc-cargando") },
+  // `procede` se evalúa al vencer la espera; `topeMs` oculta el velo si la
+  // página sigue viva ese tiempo después de mostrarse.
+  iniciar(procede = () => true, topeMs = null) {
+    clearTimeout(this.timer)
+    if (this.visibleDesde !== null) return
+    this.timer = setTimeout(() => {
+      if (!procede()) return
+      this.el()?.classList.remove("is-hidden")
+      this.visibleDesde = Date.now()
+      if (topeMs) this.tope = setTimeout(() => this.ocultar(), topeMs)
+    }, CARGANDO_ESPERA_MS)
+  },
+  ocultar() {
+    clearTimeout(this.timer)
+    clearTimeout(this.tope)
+    this.el()?.classList.add("is-hidden")
+    this.visibleDesde = null
+  },
+  terminar() {
+    clearTimeout(this.timer)
+    if (this.visibleDesde === null) return
+    const restante = Math.max(0, CARGANDO_MINIMO_MS - (Date.now() - this.visibleDesde))
+    this.timer = setTimeout(() => this.ocultar(), restante)
+  },
+}
+
+// Recarga completa (F5, enlace normal): la página actual sigue pintada
+// hasta que llega la nueva, así que el velo se ve encima. No se muestra
+// si otro listener canceló la salida (AvisoReglasSinGuardar), y el tope
+// lo quita si en realidad no hubo recarga (descarga de archivo, mailto:).
+window.addEventListener("beforeunload", (e) => {
+  cargando.iniciar(() => !e.defaultPrevented, CARGANDO_TOPE_RECARGA_MS)
+})
+window.addEventListener("pageshow", () => cargando.ocultar())
+
+window.addEventListener("phx:page-loading-start", ({detail}) => {
+  if (detail?.kind === "redirect") cargando.iniciar()
+  else topbar.show(300)
+})
+window.addEventListener("phx:page-loading-stop", _info => {
+  cargando.terminar()
+  topbar.hide()
+})
 
 // connect if there are any LiveViews on the page
 liveSocket.connect()

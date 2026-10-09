@@ -1,7 +1,8 @@
 defmodule MetadataAppWeb.LayoutsTest do
   @moduledoc """
-  Título de la pestaña del navegador (SPEC-SYS-0909202601 R23–R26): el
-  nombre de la empresa activa, o "Prettycore" sin sesión.
+  Layout raíz (SPEC-SYS-0909202601): título de la pestaña (R23–R26), el
+  nombre de la empresa activa o "Prettycore" sin sesión, e indicador de
+  carga entre pantallas (R27–R31).
   """
   use MetadataAppWeb.ConnCase, async: true
 
@@ -78,5 +79,14 @@ defmodule MetadataAppWeb.LayoutsTest do
     html = conn |> get(~p"/meta_schema_usuario/log-in") |> html_response(200)
 
     assert titulo(html) == "Prettycore"
+  end
+
+  # Indicador de carga entre pantallas (R27–R31): vive en el layout raíz y
+  # llega oculto en la carga completa (R29).
+  test "el layout raíz trae el indicador de carga oculto", %{conn: conn} do
+    html = conn |> get(~p"/meta_schema_usuario/log-in") |> html_response(200)
+
+    cargando = html |> LazyHTML.from_document() |> LazyHTML.query("#pc-cargando.is-hidden")
+    assert LazyHTML.attribute(cargando, "role") == ["status"]
   end
 end
