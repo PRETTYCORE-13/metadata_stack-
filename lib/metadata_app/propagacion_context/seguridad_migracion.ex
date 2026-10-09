@@ -1,6 +1,6 @@
 defmodule MetadataApp.PropagacionContext.SeguridadMigracion do
   @moduledoc """
-  Detector de seguridad de migraciones (SPEC-SYS-1809202603 R10a) --
+  Detector de seguridad de migraciones (SPEC-ARQ-1809202603 R10a) --
   decide si el `down` de Ecto de una migración puede correr AUTOMÁTICO
   contra un destino real, o si necesita confirmación manual.
 

@@ -94,16 +94,49 @@ Cada spec vive en su propia carpeta, identificada por un código único:
 SPEC-<ÁREA>-<DDMMAAAA><secuencia>-<slug-corto>
 ```
 
-`<ÁREA>` agrupa por dominio (`SYS` = plataforma/sistema; se suman más
-según haga falta). `<secuencia>` es el número de spec ABIERTA ese día
+`<ÁREA>` agrupa por dominio (`SYS` = plataforma/sistema; `ARQ` =
+Arquitectura; `ADN` = Administración de Negocio; `APP` = aplicación móvil; se suman más según
+haga falta). `<secuencia>` es el número de spec ABIERTA ese día
 en esa área (01, 02, ...) — permite más de una por día sin colisión.
+
+## Quién puede alterar cada área
+
+Crear, editar, renombrar o borrar cualquier archivo de una carpeta
+`SPEC-<ÁREA>-*` está restringido por área:
+
+| Área | Pueden alterarla |
+|------|------------------|
+| `SYS` | Uriel, Lizbeth |
+| `ADN` | Todos |
+| `ARQ` | Uriel, Agustín |
+| `APP` | Uriel, Jesús |
+
+- **Dónde vive la regla**: `.github/spec-permisos.txt`, con los
+  usuarios de GitHub (`Urixsg` = Uriel, `X4GUSS` = Agustín,
+  `Lizbeth123143` = Lizbeth, `PRETTYCORE-13` = Jesús). Solo Uriel
+  (`ADMIN`) puede cambiar ese archivo, su script y su workflow.
+- **Quién la hace cumplir**: el workflow `Permisos de SPEC`
+  (`.github/workflows/spec-permisos.yml`) revisa cada commit de cada PR
+  y de cada push a `main`, y compara el **autor** del commit contra el
+  área de cada archivo que toca. Un renombrado entre áreas necesita
+  permiso en las dos.
+- **Si no tienes permiso**: el check sale en rojo y el PR no se puede
+  integrar. Pide a alguien del área que haga el cambio.
+- **Tu correo de git debe estar ligado a tu cuenta de GitHub**: así se
+  identifica al autor. Un commit con un correo que GitHub no reconoce
+  se rechaza en cualquier área.
+- **Área nueva**: antes de abrir la primera spec de un área nueva, hay
+  que darla de alta en `.github/spec-permisos.txt` y en la lista de
+  áreas de arriba; si no, cualquier commit sobre ella se rechaza.
+- Este README y cualquier archivo fuera de una carpeta `SPEC-*` no
+  tienen restricción.
 
 ## Features documentadas acá
 
 - [`SPEC-SYS-0109202601-administrador-folios/`](SPEC-SYS-0109202601-administrador-folios/) —
   motor de folios de negocio para documentos transaccionales
   (implementado, Grupos A-G completos).
-- [`SPEC-API-0409202601-autenticacion-movil/`](SPEC-API-0409202601-autenticacion-movil/) —
+- [`SPEC-APP-0409202601-autenticacion-movil/`](SPEC-APP-0409202601-autenticacion-movil/) —
   autenticación por token (access+refresh) para que la app Flutter
   autentique contra los mismos usuarios de metadata_stack, sin cookie
   de sesión web (implementado, Grupos A-G completos; `design.md` §4 es
@@ -169,6 +202,11 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   perder el filtro al elegir un catálogo/asignar un permiso (el texto
   buscado viaja como query param `?q=` en vez de perderse en el
   remount) + comodín `*` para listar sin substring — ver `tasks.md`.
+  - Sub-spec [`SPEC-SYS-0910202601-lista-artefactos-permisos/`](SPEC-SYS-1709202602-sysadmin-catalogos-permisos/SPEC-SYS-0910202601-lista-artefactos-permisos/)
+    (2026-10-09): el picker de "Permisos ADN" muestra de entrada la
+    lista completa de catálogos y Consultas, como el Administrador de
+    usuarios, para elegir sin saber su nombre; el buscador la filtra.
+    Reemplaza R2 de esta spec. Implementado y testeado.
 - [`SPEC-SYS-1809202601-despublicar-catalogo-huerfano/`](SPEC-SYS-1809202601-despublicar-catalogo-huerfano/) —
   mecanismo general para borrar un catálogo "huérfano" (vivo en algún
   ambiente desplegado, ausente en TODOS lados local — típico de un
@@ -187,7 +225,7 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   nunca datos, plantillas custom del Constructor, ni permisos ya
   otorgados (implementado, Grupos A-E completos, verificado contra
   Postgres real).
-- [`SPEC-SYS-2209202602-propagacion-artefactos-negocio/`](SPEC-SYS-2209202602-propagacion-artefactos-negocio/) —
+- [`SPEC-ARQ-2209202602-propagacion-artefactos-negocio/`](SPEC-ARQ-2209202602-propagacion-artefactos-negocio/) —
   documentación retroactiva de cómo se respalda/propaga un artefacto de
   negocio (catálogo `pty_*`): `mix motor.publicar` deja una copia en un
   GitHub Release (`bc-<catalogo>`) antes de desplegar; ese release se
@@ -195,8 +233,32 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   catálogo viaja siempre empaquetado dentro de la actualización
   completa (`mix motor.propagar_extension`), nunca aislado — "todo o
   nada" es diseño, no un descuido. Cierra la nota pendiente de
-  `SPEC-SYS-1809202603` (§1). Sin `tasks.md` a propósito (nada que
+  `SPEC-ARQ-1809202603` (§1). Sin `tasks.md` a propósito (nada que
   construir, comportamiento ya existente).
+- [`SPEC-SYS-2509202601-consulta-sql/`](SPEC-SYS-2509202601-consulta-sql/) —
+  Consulta SQL / "SQL View" (BC tipo 4): un SQL de solo lectura que se
+  convierte en vista de Postgres vía migración generada (`pty_sql_*`).
+  Uso **Diccionario** (combos de campos referencia, con BC autorizados y
+  "Filtrar por diccionario" en SPEC-SYS-1109202601 §2.2) o **Consulta**
+  (listado de solo lectura). Validación por Postgres, ejecución de solo
+  lectura con tiempo máximo, alcance por columnas de control, GET de API,
+  dependencias vía `pg_depend` y publicación con `motor.publicar`.
+  Ampliación en curso (§11, grupos K-Q, desde 2026-09-29): tercer uso
+  **Servicio**, un SQL con parámetros tipados (incluida lista de
+  enteros) que se convierte en una función de Postgres y se ejecuta
+  desde las reglas de cualquier BC (`MetaBcApi.ejecutar_servicio/2`,
+  dentro de la transacción en curso) o por un Endpoint con credencial.
+  Base para "resolvedores" de negocio como el precio, el crédito o las
+  promociones. K1 hecho.
+- [`SPEC-SYS-2509202602-consulta-ecto/`](SPEC-SYS-2509202602-consulta-ecto/) —
+  documentación retroactiva de la Consulta Ecto (Consulta/Reporte, BC de
+  solo lectura sobre un catálogo principal + tablas relacionadas): alta
+  desde BC List con detección de uniones, editor de 5 pestañas, alcance
+  de datos solo sobre el catálogo principal, vista del usuario final y
+  `GET /api/:tabla`. `requirements.md` §4 registra sus límites actuales
+  sin propuesta (vista sin paginación/búsqueda, tablas fijas después del
+  alta, definición que no viaja al publicar). Sin `tasks.md` a propósito
+  (nada que construir).
 - [`SPEC-ADN-2209202601-config-sales-unit/`](SPEC-ADN-2209202601-config-sales-unit/) —
   primera spec de área ADN (Administración de Negocio, no plataforma):
   motor de configuración para la app móvil (~120 parámetros, hoy
@@ -206,10 +268,121 @@ en esa área (01, 02, ...) — permite más de una por día sin colisión.
   Unit) y Reparto (Almacén) — cada uno con sus Excepciones puntuales.
   `01.requirements.md`/`02.design.md`/`03.tasks.md` escritos, pendiente
   de ejecución (Grupos A-F).
-- [`SPEC-SYS-0910202601-lista-artefactos-permisos/`](SPEC-SYS-0910202601-lista-artefactos-permisos/) —
-  el picker de "RBAC Bisness Context" muestra de entrada la lista
-  completa de catálogos y Consultas que aceptan permisos (como el
-  Administrador de usuarios), para elegir sin saber su nombre; el
-  buscador la filtra. Reemplaza R2 de `SPEC-SYS-1709202602`.
-  Implementado y testeado (Grupos A-B); pendiente limpieza C1, verla
-  con datos de dev y `05.usage.md`.
+- [`SPEC-SYS-2509202603-jerarquia-organizacional/`](SPEC-SYS-2509202603-jerarquia-organizacional/) —
+  documentación retroactiva de `/sysadmin/jerarquia`: catálogo base
+  Empresa → Sucursal → (Unidad de venta / Ubicación de inventario),
+  hasta la pantalla del menú "Jerarquía organizacional" — no incluye
+  Alcance de Datos por usuario ni Configuración de Sales Unit, que la
+  consumen desde specs propias. Sin `tasks.md` a propósito (nada que
+  construir, comportamiento ya existente).
+- [`SPEC-SYS-2809202601-bc-lista/`](SPEC-SYS-2809202601-bc-lista/) —
+  BC Lista (`/sysadmin/bc-list`): documentación retroactiva de la
+  pantalla central de artefactos de negocio (árbol, búsqueda, crear,
+  ordenar, eliminar, Publicar paquete) + incremento de rapidez: la
+  revisión "¿listo para publicarse?" corre en segundo plano una vez por
+  visita, y ni buscar ni abrir carpetas consultan la base (R20–R26).
+- [`SPEC-SYS-2909202601-prefijo-directorio/`](SPEC-SYS-2909202601-prefijo-directorio/) —
+  prefijo de directorio: abreviatura obligatoria y única (1 a 5 letras o
+  números, ej. `CH`) de cada carpeta de BC List, con columna propia en la
+  tabla; y el directorio viaja completo al publicar (etiqueta,
+  visibilidad, ícono, orden y prefijo). No confundir con el prefijo del
+  BC (`CH-EMP`), que queda para otra spec. Implementado (Grupos A-F).
+- [`SPEC-ADN-2909202601-canal-precio/`](SPEC-ADN-2909202601-canal-precio/) —
+  lista de precios de cadena por canal y cascada de precio base por
+  producto: lista especial del cliente → lista de cadena del canal →
+  lista maestra de la sucursal → "sin precio". La cascada nació como la
+  SQL View `pty_sql_materiales_precio_base`, retirada el 2026-09-30 en
+  favor del Servicio de SPEC-ADN-2909202602; incluye los detalles de precios y
+  sucursales de la lista, y las listas vacías "SIN LISTA ESPECIAL" y "SIN
+  LISTA DE CADENA" (las referencias son obligatorias en la plataforma).
+  Grupos A-D verificados en dev; pendiente la publicación. La vista se
+  retira cuando exista el servicio de SPEC-ADN-2909202602.
+- [`SPEC-ARQ-3009202602-propagacion-produccion-clientes/`](SPEC-ARQ-3009202602-propagacion-produccion-clientes/) —
+  extiende `SPEC-ARQ-1809202603` (y la pantalla `PropagacionLive` que
+  ya existe) para propagar `stable` a VARIOS clientes reales a la vez,
+  por oleadas (piloto primero, resto después). La aprobación de un
+  segundo administrador se resuelve con "environment protection rules"
+  nativas de GitHub Actions (ambiente `clientes`, revisores
+  obligatorios) — sin tabla ni comando de aprobación propios; el
+  registro es un archivo `.jsonl` de solo-agregar, sin ninguna
+  migración de Ecto. Transforma un documento externo pegado por el
+  usuario (30-09-2026), afinado con un prototipo clicable del mismo
+  equipo — `01.requirements.md` §1.1 documenta qué se adoptó (selección
+  múltiple, oleadas, aprobación vía GitHub, confirmación por cliente) y
+  qué se rechazó (Oban, tabla de auditoría, correo/WhatsApp, acceso
+  directo a la API de Kubernetes). `01.requirements.md`/`02.design.md`/
+  `03.tasks.md` escritos, pendiente de ejecución (Grupos A-I).
+- [`SPEC-ADN-2909202602-servicio-precio/`](SPEC-ADN-2909202602-servicio-precio/) —
+  servicio de precio de venta: recibe dirección de entrega, productos y
+  fecha, y deduce cliente, canal y sucursal. Regresa por producto el
+  precio por caja sin impuestos, su nivel, su lista y un estado (`ok`,
+  `sin_precio` o `direccion_invalida`). Punto único para el pedido, la
+  app y las integraciones; crecerá con descuentos e impuestos. En curso
+  desde 2026-09-30 (el uso Servicio de SPEC-SYS-2509202601 ya existe).
+- [`SPEC-ADN-0710202601-pedido-renglones-precio/`](SPEC-ADN-0710202601-pedido-renglones-precio/) —
+  renglones del pedido de venta (`pty_dsd_pedidos`) y procedimiento de
+  precios configurable con tipos de paso cerrados (precio, descuentos
+  inactivos por ahora, IEPS, IVA, total), calculado al guardar en la regla
+  POST y congelado al confirmar. Estados Captura → Confirmado →
+  Remisionado / Cancelado; folio del administrador de folios. Aprobada el
+  2026-10-08; Grupos A-H cerrados en dev (precio preliminar al capturar
+  incluido), F1 parcial (faltan remisionar y cancelar en pantalla); falta
+  publicar (datos para quien publique en `03.tasks.md` G2). Depende de SPEC-ADN-0710202602 y
+  SPEC-SYS-0710202602 (las dos construidas).
+- [`SPEC-ADN-0710202602-datos-fiscales-impuestos/`](SPEC-ADN-0710202602-datos-fiscales-impuestos/) —
+  tipos y tasas de impuesto con vigencia, datos fiscales de material,
+  cliente, dirección y sucursal, catálogo de códigos postales del SAT,
+  regla completa del 8 % de frontera y Servicio de impuestos de venta
+  (`impuestos-venta`). Incluye el tipo de parámetro `lista_decimales`
+  para SPEC-SYS-2509202601. Grupos A-G cerrados y verificados en dev el
+  2026-10-07 (95,748 CP cargados con script SQL, servicio 23/23 casos,
+  Endpoint probado por curl); falta publicar, ver G2.
+- [`SPEC-SYS-0710202602-post-con-renglones-guardados/`](SPEC-SYS-0710202602-post-con-renglones-guardados/) —
+  la regla POST del encabezado de un maestro-detalle corre al final,
+  cuando sus renglones nuevos, editados y quitados ya están guardados,
+  por cualquier camino (pantalla, API, Endpoints, importación). Opción
+  `escribir_renglones` del motor para que cada llamador escriba igual que
+  hoy. Prerrequisito del cálculo de precios del pedido
+  (SPEC-ADN-0710202601). Grupos A-F cerrados el 2026-10-07 (12 pruebas
+  nuevas, suite 1151/1155 con las 4 fallas conocidas de Windows).
+- [`SPEC-SYS-0810202601-permisos-renglones-y-alta/`](SPEC-SYS-0810202601-permisos-renglones-y-alta/) —
+  los permisos de cambiar y quitar renglones se revisan con el estado
+  actual del documento (no con el guardado en cada renglón); el alta de un
+  usuario solo acepta campos editables (encabezado y renglones); una
+  referencia inexistente se rechaza con el campo en lugar de un error
+  interno. Encontrado por las pruebas adversas de SPEC-ADN-0710202601.
+  Grupos A-F cerrados el 2026-10-08 (8 pruebas nuevas; pruebas adversas del pedido sin residuo).
+- [`SPEC-SYS-0810202602-renglones-columnas-solo-lectura/`](SPEC-SYS-0810202602-renglones-columnas-solo-lectura/) —
+  la tabla de renglones de la Ficha muestra los campos calculados por el
+  sistema (visibles, no editables) como columnas de solo lectura: no se
+  escriben, no son obligatorias ni viajan al guardar. Origen: el precio
+  por renglón del pedido (SPEC-ADN-0710202601). Grupos A-D cerrados el
+  2026-10-08 (3 pruebas nuevas; hook JS verificado en pantalla).
+- [`SPEC-SYS-0810202603-calculo-preliminar-renglones/`](SPEC-SYS-0810202603-calculo-preliminar-renglones/) —
+  cálculo preliminar del renglón mientras se captura en la Ficha: la
+  plataforma pregunta a `calcular_renglon/3` (opcional, en el `post.ex`
+  del maestro) y muestra los valores en cursiva en las columnas de solo
+  lectura; avisos sin bloquear. El pedido lo usa para el precio
+  preliminar (SPEC-ADN-0710202601 R26-R28). Grupos A-E cerrados el
+  2026-10-08 (5 pruebas nuevas).
+- [`SPEC-SYS-3009202602-endpoints-externos/`](SPEC-SYS-3009202602-endpoints-externos/) —
+  Endpoints Externos (antes "Acciones externas"): llamadas configuradas a
+  APIs de otros sistemas, con credencial cifrada, botón en la ficha,
+  llamada desde reglas y bitácora. Documentación retroactiva de lo que
+  existe desde 2026-08-06, más lo nuevo: guardar datos de la respuesta en
+  el registro (mapeo), rechazo con el mensaje del sistema externo,
+  respuesta en la bitácora (30 días) y ejecución en segundo plano con
+  reintentos. Documentada, sin programar. La sincronización masiva de
+  catálogos queda para otra SPEC.
+- [`SPEC-SYS-0710202601-tepache/`](SPEC-SYS-0710202601-tepache/) —
+  Tepache (`/sysadmin/tepache`, `mix motor.tepache`/
+  `motor.tepache.importar`): bundles de previsualización entre
+  desarrolladores vía GitHub Releases (`TEPACHE-NNNNNN`), importados al
+  Postgres local sin deploy y sin conceder permisos a ningún rol.
+  Documentación retroactiva más requisitos nuevos: el export se
+  rechaza si falta seleccionar alguna dependencia (R9); el import solo
+  aplica los catálogos del bundle (R14.1); barras de progreso por
+  etapas al exportar e importar, en segundo plano (R20, R22); y un
+  import que falla deshace lo que hizo ese intento — migraciones,
+  archivos, metadata y permisos —, sin revertir nada si no es seguro
+  (R21). Implementado y verificado (Grupos A-E completos).

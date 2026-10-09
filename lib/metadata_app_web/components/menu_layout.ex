@@ -35,6 +35,7 @@ defmodule MetadataAppWeb.MenuLayout do
       assigns
       |> assign(:nodo_actual, buscar_nodo_actual(assigns.menu_items, assigns.current_page))
       |> assign(:nombre_empresa, nombre_empresa_activa(assigns[:current_scope]))
+      |> assign(:logo_empresa_url, logo_empresa_url(assigns[:current_scope]))
       |> assign(:jerarquia_opciones, opciones_jerarquia_activa(assigns[:current_scope]))
       |> assign(:firma_unidad_operativa, firma_unidad_operativa(assigns[:current_scope]))
       |> assign(:anio_actual, Date.utc_today().year)
@@ -187,6 +188,7 @@ defmodule MetadataAppWeb.MenuLayout do
                 in: {"ease-out duration-150", "opacity-0 scale-95", "opacity-100 scale-100"},
                 out: {"ease-in duration-100", "opacity-100 scale-100", "opacity-0 scale-95"}
               )
+              |> cerrar_submenu_developer("sidebar-config-dropdown")
             }
             title="Configuración"
             aria-label="Configuración"
@@ -273,6 +275,7 @@ defmodule MetadataAppWeb.MenuLayout do
           </svg>
         </button>
         <.link navigate="/" class="pc-topbar-brand">
+          <.logo_empresa id="topbar-logo-empresa" src={@logo_empresa_url} nombre={@nombre_empresa} />
           <span class="pc-topbar-empresa">{@nombre_empresa}</span>
         </.link>
         <div class="pc-topbar-derecha">
@@ -361,7 +364,7 @@ defmodule MetadataAppWeb.MenuLayout do
 
       <div class="pc-footer">
         <span class="pc-footer-copyright">Prettycore {@anio_actual}</span>
-        <!-- SPEC-SYS-1809202603 R11: versión visible para cualquier usuario
+        <!-- SPEC-ARQ-1809202603 R11: versión visible para cualquier usuario
              autenticado -- hash corto + fecha del commit que armó esta
              imagen (config/runtime.exs, GIT_SHA_CORTO/GIT_SHA_FECHA). En
              dev/test esas env no existen -- @version_footer[:hash] da nil
@@ -513,68 +516,63 @@ defmodule MetadataAppWeb.MenuLayout do
 
   def menu_administrativo(assigns) do
     ~H"""
-    <div id={@id} class="pc-admin-menu-panel" phx-click-away={JS.hide(to: "##{@id}")}>
+    <div id={@id} class="pc-admin-menu-panel" phx-click-away={JS.hide(to: "##{@id}") |> cerrar_submenu_developer(@id)}>
       <div class="pc-flyout-header">
         <span class="pc-flyout-header-nombre">Configuración</span>
-        <button type="button" class="pc-flyout-cerrar" phx-click={JS.hide(to: "##{@id}")} title="Cerrar" aria-label="Cerrar">
+        <button type="button" class="pc-flyout-cerrar" phx-click={JS.hide(to: "##{@id}") |> cerrar_submenu_developer(@id)} title="Cerrar" aria-label="Cerrar">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
           </svg>
         </button>
       </div>
-      <nav class="pc-flyout-nav">
-        <.link :if={"sysadmin_bc" in @opciones_plataforma} navigate="/sysadmin/bc-list" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">build</span></span>
-          <span class="pc-admin-menu-label">Business Process Builder</span>
-        </.link>
-        <.link :if={"sysadmin_endpoints" in @opciones_plataforma} navigate="/sysadmin/endpoints" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">api</span></span>
-          <span class="pc-admin-menu-label">Endpoints</span>
-        </.link>
-        <.link :if={"sysadmin_tepache" in @opciones_plataforma} navigate="/sysadmin/tepache" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">sync_alt</span></span>
-          <span class="pc-admin-menu-label">Tepache Exp/Imp</span>
-        </.link>
-        <.link :if={"sysadmin_roles" in @opciones_administrativas} navigate="/sysadmin/roles" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">badge</span></span>
-          <span class="pc-admin-menu-label">Roles Admin</span>
-        </.link>
-        <.link :if={"sysadmin_empresas" in @opciones_administrativas} navigate="/sysadmin/empresas" class="pc-admin-menu-item">
+      <.link :if={"sysadmin_empresas" in @opciones_administrativas} navigate="/sysadmin/empresas" class="pc-admin-menu-item">
           <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">apartment</span></span>
           <span class="pc-admin-menu-label">Empresas</span>
         </.link>
+      <.link :if={"sysadmin_jerarquia" in @opciones_administrativas} navigate="/sysadmin/jerarquia" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">account_tree</span></span>
+          <span class="pc-admin-menu-label">Jerarquía Org.</span>
+        </.link>
+        <.link :if={"sysadmin_roles" in @opciones_administrativas} navigate="/sysadmin/roles" class="pc-admin-menu-item">
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">badge</span></span>
+          <span class="pc-admin-menu-label">Roles</span>
+        </.link>
         <.link :if={"sysadmin_usuarios" in @opciones_administrativas} navigate="/sysadmin/usuarios" class="pc-admin-menu-item">
           <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">group</span></span>
-          <span class="pc-admin-menu-label">RBAC Usuarios</span>
+          <span class="pc-admin-menu-label">Permisos Usuarios</span>
         </.link>
         <.link :if={"sysadmin_catalogos_permisos" in @opciones_administrativas} navigate="/sysadmin/catalogos/permisos" class="pc-admin-menu-item">
           <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">security</span></span>
-          <span class="pc-admin-menu-label">RBAC Bisness Context</span>
+          <span class="pc-admin-menu-label">Permisos ADN </span>
         </.link>
-        <.link :if={"sysadmin_jerarquia" in @opciones_administrativas} navigate="/sysadmin/jerarquia" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">account_tree</span></span>
-          <span class="pc-admin-menu-label">Jerarquía organizacional</span>
-        </.link>
-        <.link :if={"sysadmin_credenciales" in @opciones_plataforma} navigate="/sysadmin/credenciales" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">key</span></span>
-          <span class="pc-admin-menu-label">Credenciales</span>
-        </.link>
-        <.link :if={"sysadmin_ambientes" in @opciones_plataforma} navigate="/sysadmin/ambientes" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">cloud</span></span>
-          <span class="pc-admin-menu-label">Ambientes de Deploy</span>
-        </.link>
-        <.link :if={"sysadmin_panel_control" in @opciones_plataforma} navigate="/sysadmin/panel-control" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">tune</span></span>
-          <span class="pc-admin-menu-label">Panel Control</span>
-        </.link>
-        <.link :if={"sysadmin_acciones_externas" in @opciones_plataforma} navigate="/sysadmin/acciones-externas" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">bolt</span></span>
-          <span class="pc-admin-menu-label">Acciones externas</span>
-        </.link>
-        <.link :if={"sysadmin_propagacion" in @opciones_plataforma} navigate="/sysadmin/propagacion" class="pc-admin-menu-item">
-          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">rocket_launch</span></span>
-          <span class="pc-admin-menu-label">Propagación</span>
-        </.link>
+        <div class="pc-flyout-header"></div>
+      <nav class="pc-flyout-nav">
+        <%!-- Opciones de plataforma agrupadas en el submenú "Developer"
+             (R13d): solo el botón vive en el menú; los links, en el panel
+             #{@id}-developer de abajo. --%>
+        <button
+          :if={@opciones_plataforma != []}
+          type="button"
+          id={"#{@id}-developer-btn"}
+          class="pc-admin-menu-item"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-controls={"#{@id}-developer"}
+          phx-click={
+            JS.toggle(
+              to: "##{@id}-developer",
+              display: "flex",
+              in: {"ease-out duration-150", "opacity-0 scale-95", "opacity-100 scale-100"},
+              out: {"ease-in duration-100", "opacity-100 scale-100", "opacity-0 scale-95"}
+            )
+            |> JS.toggle_class("pc-admin-menu-item-activo", to: "##{@id}-developer-btn")
+            |> JS.toggle_attribute({"aria-expanded", "true", "false"}, to: "##{@id}-developer-btn")
+          }
+        >
+          <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">code</span></span>
+          <span class="pc-admin-menu-label">Developer</span>
+          <span class="pc-admin-menu-chevron"><span class="material-symbols-outlined">chevron_right</span></span>
+        </button>
         <div :if={@opciones_administrativas != [] or @opciones_plataforma != []} class="pc-admin-menu-divisor"></div>
         <button
           :if={@current_scope && @current_scope.empresa_activa}
@@ -582,6 +580,7 @@ defmodule MetadataAppWeb.MenuLayout do
           class="pc-admin-menu-item"
           phx-click={
             JS.hide(to: "##{@id}")
+            |> cerrar_submenu_developer(@id)
             |> JS.push("abrir", target: "#cambiar-unidad-modal")
           }
         >
@@ -593,6 +592,7 @@ defmodule MetadataAppWeb.MenuLayout do
           class="pc-admin-menu-item"
           phx-click={
             JS.hide(to: "##{@id}")
+            |> cerrar_submenu_developer(@id)
             |> JS.push("abrir", target: "#config-cuenta-modal")
           }
         >
@@ -609,8 +609,95 @@ defmodule MetadataAppWeb.MenuLayout do
           <span class="pc-admin-menu-label">Cerrar sesión</span>
         </.link>
       </nav>
+      <%!-- Hijo del panel principal a propósito: así un clic adentro no
+           cuenta como phx-click-away del menú, y se oculta junto con él. --%>
+      <div
+        :if={@opciones_plataforma != []}
+        id={"#{@id}-developer"}
+        class="pc-admin-menu-panel pc-admin-submenu"
+        role="menu"
+        aria-label="Developer"
+      >
+        <div class="pc-flyout-header">
+          <button
+            type="button"
+            id={"#{@id}-developer-regresar"}
+            class="pc-admin-submenu-regresar"
+            phx-click={cerrar_submenu_developer(@id)}
+          >
+            <span class="material-symbols-outlined">arrow_back</span>
+            Regresar
+          </button>
+          <span class="pc-flyout-header-nombre">Developer</span>
+          <button
+            type="button"
+            class="pc-flyout-cerrar"
+            phx-click={cerrar_submenu_developer(@id)}
+            title="Cerrar"
+            aria-label="Cerrar Developer"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <nav class="pc-flyout-nav">
+          <.link :if={"sysadmin_bc" in @opciones_plataforma} navigate="/sysadmin/bc-list" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">build</span></span>
+            <span class="pc-admin-menu-label">Business Process Builder</span>
+          </.link>
+          <.link :if={"sysadmin_endpoints" in @opciones_plataforma} navigate="/sysadmin/endpoints" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">api</span></span>
+            <span class="pc-admin-menu-label">Endpoints</span>
+          </.link>
+          <.link :if={"sysadmin_endpoints" in @opciones_plataforma} navigate="/sysadmin/servicios" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">hub</span></span>
+            <span class="pc-admin-menu-label">Servicios</span>
+          </.link>
+          <.link :if={"sysadmin_tepache" in @opciones_plataforma} navigate="/sysadmin/tepache" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">sync_alt</span></span>
+            <span class="pc-admin-menu-label">Tepache Exp/Imp</span>
+          </.link>
+          <.link :if={"sysadmin_credenciales" in @opciones_plataforma} navigate="/sysadmin/credenciales" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">key</span></span>
+            <span class="pc-admin-menu-label">Credenciales</span>
+          </.link>
+          <.link :if={"sysadmin_ambientes" in @opciones_plataforma} navigate="/sysadmin/ambientes" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">cloud</span></span>
+            <span class="pc-admin-menu-label">Ambientes de Deploy</span>
+          </.link>
+          <.link :if={"sysadmin_panel_control" in @opciones_plataforma} navigate="/sysadmin/panel-control" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">tune</span></span>
+            <span class="pc-admin-menu-label">Panel Control</span>
+          </.link>
+          <.link :if={"sysadmin_acciones_externas" in @opciones_plataforma} navigate="/sysadmin/acciones-externas" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">bolt</span></span>
+            <span class="pc-admin-menu-label">Acciones externas</span>
+          </.link>
+          <.link :if={"sysadmin_propagacion" in @opciones_plataforma} navigate="/sysadmin/propagacion" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">rocket_launch</span></span>
+            <span class="pc-admin-menu-label">Propagación</span>
+          </.link>
+          <.link :if={"sysadmin_purgar" in @opciones_plataforma} navigate="/sysadmin/purgar" class="pc-admin-menu-item">
+            <span class="pc-admin-menu-icon"><span class="material-symbols-outlined">delete_sweep</span></span>
+            <span class="pc-admin-menu-label">Purgar</span>
+          </.link>
+        </nav>
+      </div>
     </div>
     """
+  end
+
+  # Cierra el submenú "Developer" y deja su botón como recién abierto el
+  # menú (sin resaltar, aria-expanded=false). Se encadena en todo lo que
+  # cierra el panel principal, para que el submenú siempre arranque cerrado.
+  def cerrar_submenu_developer(js \\ %JS{}, id) do
+    boton = "##{id}-developer-btn"
+
+    js
+    |> JS.hide(to: "##{id}-developer")
+    |> JS.remove_class("pc-admin-menu-item-activo", to: boton)
+    |> JS.set_attribute({"aria-expanded", "false"}, to: boton)
   end
 
   ## MENÚ EN ÁRBOL — estilo explorador de Windows: nav="/carpeta/pagina" se
@@ -806,6 +893,36 @@ defmodule MetadataAppWeb.MenuLayout do
   defp nombre_empresa_activa(%MetadataApp.Autenticacion.Scope{empresa_activa: %{nombre: nombre}}), do: nombre
   defp nombre_empresa_activa(_), do: Application.get_env(:metadata_app, :nombre_empresa, "Prettycore")
 
+  # Sale de logo_version, que ya viene en la empresa del scope: la top bar
+  # no hace ninguna consulta extra por el logo (SPEC-SYS-3009202601 D6).
+  defp logo_empresa_url(%MetadataApp.Autenticacion.Scope{empresa_activa: %{} = empresa}),
+    do: url_logo_empresa(empresa)
+
+  defp logo_empresa_url(_), do: nil
+
+  @doc "URL cacheable del logo de una empresa (cambia con cada versión), o nil si no tiene."
+  def url_logo_empresa(%{id: id, logo_version: version}) when is_binary(version),
+    do: "/empresas/#{id}/logo/#{version}"
+
+  def url_logo_empresa(_), do: nil
+
+  @doc """
+  Logo de empresa en su caja fija de la top bar (32 px de alto, hasta 160
+  de ancho, sin deformarse). Sin `src` no renderiza nada. Lo reusa la
+  vista previa de /sysadmin/empresas para que se vea idéntica.
+  """
+  attr :id, :string, required: true
+  attr :src, :string, default: nil
+  attr :nombre, :string, default: nil
+
+  def logo_empresa(assigns) do
+    ~H"""
+    <span :if={@src} id={@id} class="pc-topbar-logo-caja">
+      <img src={@src} alt={@nombre} class="pc-topbar-logo-empresa" />
+    </span>
+    """
+  end
+
   # Opciones del selector de jerarquía operativa de la banda de pie (Fase
   # 4, 2026-08-11) — un query directo por render (mismo criterio que
   # nombre_empresa_activa/1 arriba, esto es un layout compartido por
@@ -896,7 +1013,9 @@ defmodule MetadataAppWeb.MenuLayout do
   # depende del compilador, así que su link no puede seguir escondido
   # en un ambiente sin bpb_habilitado (ver router.ex, mismo motivo).
   @recursos_plataforma ~w(sysadmin_credenciales sysadmin_ambientes sysadmin_panel_control sysadmin_acciones_externas sysadmin_endpoints sysadmin_propagacion)
-  @recursos_plataforma_bpb ~w(sysadmin_bc sysadmin_tepache)
+  # sysadmin_purgar depende de bpb_habilitado igual que BC List: la purga
+  # se orquesta desde el BPB local de cada dev, nunca desde un release.
+  @recursos_plataforma_bpb ~w(sysadmin_bc sysadmin_tepache sysadmin_purgar)
 
   defp opciones_administrativas_visibles(%MetadataApp.Autenticacion.Scope{usuario: usuario, empresa_activa: empresa} = scope)
        when not is_nil(usuario) and not is_nil(empresa) do

@@ -119,7 +119,7 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
   def handle_event("generar_imagen", %{"repo" => repo, "ambiente_id" => ambiente_id, "k8s_deployment" => k8s_deployment}, socket) do
     cond do
       blank?(repo) or blank?(ambiente_id) or blank?(k8s_deployment) ->
-        {:noreply, assign(socket, :error_generador, "Completá el repositorio, el subdominio/deployment y elegí un ambiente.")}
+        {:noreply, assign(socket, :error_generador, "Completa el repositorio, el subdominio/deployment y elige un ambiente.")}
 
       true ->
         ambiente = Ambientes.obtener_ambiente!(String.to_integer(ambiente_id))
@@ -182,7 +182,7 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
       {:ok, _} ->
         {:noreply,
          socket
-         |> put_flash(:info, "App eliminada del panel (esto NO borra el deploy en k3s/Caddy/DNS -- hacelo a mano si hace falta).")
+         |> put_flash(:info, "App eliminada del panel (esto NO borra el deploy en k3s/Caddy/DNS -- hazlo a mano si hace falta).")
          |> assign(:app_seleccionada, nil)
          |> assign(:form, nil)
          |> cargar_apps()}
@@ -248,8 +248,8 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
 
     mensaje =
       case {puerto, variables} do
-        {nil, []} -> {:error, "La imagen no declara ningún puerto ni variable de entorno por defecto -- completalos a mano."}
-        {nil, _} -> {:info, "Se detectaron variables de entorno, pero la imagen no declara ningún puerto -- completalo a mano."}
+        {nil, []} -> {:error, "La imagen no declara ningún puerto ni variable de entorno por defecto -- complétalos a mano."}
+        {nil, _} -> {:info, "Se detectaron variables de entorno, pero la imagen no declara ningún puerto -- complétalo a mano."}
         {_, []} -> {:info, "Puerto detectado: #{puerto}. La imagen no declara variables de entorno por defecto."}
         {_, _} -> {:info, "Puerto y variables de entorno detectados."}
       end
@@ -446,7 +446,7 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
                     <option value="">Elegir ambiente...</option>
                     <option :for={ambiente <- @ambientes} value={ambiente.id}>{ambiente.nombre} ({ambiente.host})</option>
                   </select>
-                  <p :if={@ambientes == []} class="text-[11px] text-amber-600 mt-0.5">No hay ningún ambiente configurado -- creá uno primero en /sysadmin/ambientes.</p>
+                  <p :if={@ambientes == []} class="text-[11px] text-amber-600 mt-0.5">No hay ningún ambiente configurado -- crea uno primero en /sysadmin/ambientes.</p>
                 </div>
 
                 <p :if={@error_generador} class="text-[11px] text-red-600 whitespace-pre-wrap">{@error_generador}</p>
@@ -506,7 +506,7 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
                       type="button"
                       phx-click="detectar_metadata_imagen"
                       disabled={@detectando_metadata or blank?(@form[:imagen_docker].value)}
-                      title={if blank?(@form[:imagen_docker].value), do: "Escribí primero el nombre de la imagen"}
+                      title={if blank?(@form[:imagen_docker].value), do: "Escribe primero el nombre de la imagen"}
                       class="text-[11px] text-purple-600 hover:underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed"
                     >
                       {if @detectando_metadata, do: "Detectando...", else: "Detectar puerto/variables"}
@@ -549,7 +549,7 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
                     </option>
                   </select>
                   <p :if={@form[:ambiente_id].errors != []} class="text-[11px] text-red-600 mt-0.5">{elem(hd(@form[:ambiente_id].errors), 0)}</p>
-                  <p :if={@ambientes == []} class="text-[11px] text-amber-600 mt-0.5">No hay ningún ambiente configurado -- creá uno primero en /sysadmin/ambientes.</p>
+                  <p :if={@ambientes == []} class="text-[11px] text-amber-600 mt-0.5">No hay ningún ambiente configurado -- crea uno primero en /sysadmin/ambientes.</p>
                 </div>
 
                 <div class="flex justify-end pt-2 border-t border-gray-100">
@@ -599,14 +599,14 @@ defmodule MetadataAppWeb.Sysadmin.PanelControlLive do
 
               <div class="pt-3 mt-3 border-t border-gray-100">
                 <button type="button" phx-click="eliminar_app"
-                  data-confirm={"¿Eliminar \"#{@app_seleccionada.nombre}\" del panel? Esto NO borra el deployment de k3s, el bloque de Caddy ni el registro DNS -- hacelo a mano si hace falta."}
+                  data-confirm={"¿Eliminar \"#{@app_seleccionada.nombre}\" del panel? Esto NO borra el deployment de k3s, el bloque de Caddy ni el registro DNS -- hazlo a mano si hace falta."}
                   class="text-red-600 hover:text-red-800 text-xs font-semibold">
                   Eliminar del panel
                 </button>
               </div>
 
             <% true -> %>
-              <p class="text-sm text-gray-400">Seleccioná una app de la izquierda, o creá una nueva.</p>
+              <p class="text-sm text-gray-400">Selecciona una app de la izquierda, o crea una nueva.</p>
           <% end %>
         </div>
       </div>

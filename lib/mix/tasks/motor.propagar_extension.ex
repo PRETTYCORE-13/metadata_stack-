@@ -2,21 +2,21 @@ defmodule Mix.Tasks.Motor.PropagarExtension do
   use Mix.Task
   alias MetadataApp.{Ambientes, MotorAlta}
 
-  @shortdoc "Propaga la imagen de un canal a otro, sin reconstruir (SPEC-SYS-0309202601)"
+  @shortdoc "Propaga la imagen de un canal a otro, sin reconstruir (SPEC-ARQ-0309202601)"
 
   @moduledoc """
   Uso: mix motor.propagar_extension <ambiente> <origen> <destino> [--commit=<hash>]
 
-  Propagación entre canales (SPEC-SYS-0309202601/design.md §3) -- consulta
+  Propagación entre canales (SPEC-ARQ-0309202601/design.md §3) -- consulta
   qué imagen corre HOY en `<origen>` y la aplica tal cual sobre `<destino>`,
   disparando `actualizar-sistema.yml` (GitHub Actions) vía `gh workflow
   run`. Nunca hay build nuevo acá -- propagar es mover el MISMO artefacto
   ya construido de un canal al siguiente, jamás reconstruirlo. Se llamaba
-  `mix motor.promover` -- renombrado (SPEC-SYS-1809202603 R1) para no
+  `mix motor.promover` -- renombrado (SPEC-ARQ-1809202603 R1) para no
   colisionar en vocabulario con una futura propagación de artefactos de
   negocio.
 
-  `--commit=<hash>` (SPEC-SYS-1809202603 R8) -- opcional. Sin el flag,
+  `--commit=<hash>` (SPEC-ARQ-1809202603 R8) -- opcional. Sin el flag,
   comportamiento de siempre (toma la imagen que corre AHORA en
   `<origen>`). Con el flag, ignora `<origen>` para elegir la imagen --
   arma `<hash>` como el tag exacto a propagar, validado antes contra el
@@ -40,7 +40,7 @@ defmodule Mix.Tasks.Motor.PropagarExtension do
   `mix motor.alta`.
 
   Si `<destino>` ya está exactamente en la imagen de `<origen>`, no se
-  dispara ningún workflow (SPEC-SYS-1809202603 R6) -- se avisa y termina
+  dispara ningún workflow (SPEC-ARQ-1809202603 R6) -- se avisa y termina
   sin hacer nada.
   """
 
@@ -83,7 +83,9 @@ defmodule Mix.Tasks.Motor.PropagarExtension do
             Mix.shell().info("  #{imagen}")
             Mix.shell().info("== disparando actualizar-sistema.yml: \"#{destino}\" -> #{imagen} ==")
 
-            case MotorAlta.disparar_actualizacion(ambiente, destino, imagen) do
+            origen_para_mostrar = if is_nil(commit), do: origen, else: nil
+
+            case MotorAlta.disparar_actualizacion(ambiente, destino, imagen, &MotorAlta.imagen_actual/2, origen_para_mostrar) do
               {:ok, :sin_cambios, mensaje} ->
                 Mix.shell().info(mensaje)
 
@@ -91,7 +93,7 @@ defmodule Mix.Tasks.Motor.PropagarExtension do
                 Mix.shell().info(salida)
 
                 Mix.shell().info(
-                  "Disparado -- \"#{destino}\" va camino a #{imagen}. Seguí el progreso con \"gh run list\" / \"gh run watch\"."
+                  "Disparado -- \"#{destino}\" va camino a #{imagen}. Sigue el progreso con \"gh run list\" / \"gh run watch\"."
                 )
 
               {:error, mensaje} ->
@@ -102,7 +104,7 @@ defmodule Mix.Tasks.Motor.PropagarExtension do
   end
 
   # Sin --commit: comportamiento de siempre (imagen actual de <origen>,
-  # consultada por SSH). Con --commit: (SPEC-SYS-1809202603 R8) arma la
+  # consultada por SSH). Con --commit: (SPEC-ARQ-1809202603 R8) arma la
   # imagen de ESE commit puntual, validada contra el registro de
   # contenedores -- nunca consulta <origen> en este camino, la elección
   # explícita del operador reemplaza la inferencia.

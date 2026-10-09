@@ -14,6 +14,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   alias MetadataAppWeb.AuditoriaContexto
   alias Phoenix.LiveView.JS
 
+  require Logger
+
   @topic "bc_contextos"
   @por_pagina 30
 
@@ -91,12 +93,16 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:copiar_error, nil)
      |> assign(:consulta_form, nil)
      |> assign(:consulta_error, nil)
+     |> assign(:sql_view_form, nil)
+     |> assign(:sql_view_error, nil)
      |> assign(:catalogos_base_disponibles, [])
      |> assign(:tablas_relacionadas, [])
      |> assign(:selector_tabla_relacionada_abierto, false)
      |> assign(:catalogos_relacionables_disponibles, [])
      |> assign(:union_manual, nil)
-     |> cargar_headers()}
+     |> assign(:listos, %{})
+     |> assign(:revision_listos, :pendiente)
+     |> recargar()}
   end
 
   def handle_event("change_page", %{"id" => id}, socket) do
@@ -298,7 +304,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                socket
                |> assign(:accion_eliminar, nil)
                |> put_flash(:info, "Carpeta #{header.schema_context_label} eliminada.")
-               |> cargar_headers()}
+               |> recargar()}
 
             {:error, motivo} ->
               {:noreply,
@@ -343,7 +349,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
              socket
              |> assign(:accion_eliminar, nil)
              |> put_flash(:info, "Consulta #{header.schema_context_label} eliminada.")
-             |> cargar_headers()}
+             |> recargar()}
 
           {:error, motivo} ->
             {:noreply,
@@ -383,7 +389,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
            socket
            |> assign(:accion_eliminar, siguiente_paso_tras_eliminar(tabla, socket.assigns.accion_eliminar.label))
            |> put_flash(:info, "Catálogo #{tabla} eliminado.")
-           |> cargar_headers()}
+           |> recargar()}
 
         {:error, motivo} ->
           {:noreply,
@@ -409,14 +415,14 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   # El botón "Despliegue" individual (exportaba .meta.json/.motor.json a
   # disco, sin publicar nada) se sacó el 2026-07-24 al llegar el wizard de
-  # publicación: regenerar_paquete/1 + exportar_paquete/1, más abajo, ya
-  # hacen exactamente esto para el paquete completo como parte de publicar
+  # publicación: MetaPublicador.preparar_paquete/3 ya hace exactamente
+  # esto para el paquete completo como parte de publicar
   # de verdad — mantener las dos acciones por separado solo generaba
   # confusión (un botón que decía "Despliegue" pero nunca desplegaba nada).
 
   # Selección para el wizard de publicación (multi-catálogo) — checkbox por
-  # fila, solo disponible donde adjuntar_puede_desplegar/1 marcó el
-  # catálogo como listo (real, completo, válido, compilado).
+  # fila, solo disponible donde revisar_listos/1 marcó el catálogo como
+  # listo (real, completo, válido, compilado).
   def handle_event("toggle_seleccion", %{"tabla" => tabla}, socket) do
     seleccionados =
       if MapSet.member?(socket.assigns.seleccionados, tabla) do
@@ -433,26 +439,48 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # lectura antes de tocar nada — mismo espíritu que "pedir_eliminar"
   # (consultar impacto antes de confirmar), pero acá el "impacto" es qué se
   # va a publicar y en qué orden.
+  #
+  # Antes de eso se vuelve a revisar SOLO lo marcado: @listos es el
+  # resultado de la última revisar_listos/1 y el catálogo pudo cambiar
+  # después (ej. editado en BC Motor en otra pestaña).
   def handle_event("abrir_wizard_publicar", _params, socket) do
-    nombres = socket.assigns.seleccionados |> MapSet.to_list() |> Enum.sort()
+    {listos, ya_no_listos} =
+      socket.assigns.seleccionados
+      |> MapSet.to_list()
+      |> Enum.sort()
+      |> Enum.split_with(&MetaEstadosAdmin.puede_desplegar?/1)
 
-    case MetaPublicador.validar(nombres) do
-      {:ok, %{catalogos: catalogos, problemas: problemas}} ->
-        {:noreply,
-         assign(socket, :wizard_publicar, %{
-           seleccionados: nombres,
-           catalogos: catalogos,
-           problemas: problemas,
-           # SPEC-SYS-0309202601, R5: sin sistema elegido no hay a quién
-           # publicarle -- nil a propósito, sin default, el botón
-           # "Publicar" queda deshabilitado hasta que se elija uno.
-           sistema: nil,
-           error: nil,
-           procesando?: false
-         })}
+    socket =
+      socket
+      |> assign(:seleccionados, MapSet.new(listos))
+      |> assign(:listos, Map.merge(socket.assigns.listos, Map.new(ya_no_listos, &{&1, false})))
+      |> then(fn s ->
+        if ya_no_listos == [],
+          do: s,
+          else: put_flash(s, :error, "Ya no están listos para publicarse y se quitaron de la selección: #{Enum.join(ya_no_listos, ", ")}.")
+      end)
 
-      {:error, mensaje} ->
-        {:noreply, put_flash(socket, :error, mensaje)}
+    if listos == [] do
+      {:noreply, socket}
+    else
+      case MetaPublicador.validar(listos) do
+        {:ok, %{catalogos: catalogos, problemas: problemas}} ->
+          {:noreply,
+           assign(socket, :wizard_publicar, %{
+             seleccionados: listos,
+             catalogos: catalogos,
+             problemas: problemas,
+             # SPEC-ARQ-0309202601, R5: sin sistema elegido no hay a quién
+             # publicarle -- nil a propósito, sin default, el botón
+             # "Publicar" queda deshabilitado hasta que se elija uno.
+             sistema: nil,
+             error: nil,
+             procesando?: false
+           })}
+
+        {:error, mensaje} ->
+          {:noreply, put_flash(socket, :error, mensaje)}
+      end
     end
   end
 
@@ -528,12 +556,23 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       |> Map.put("visible", contexto["visible"] == "true")
       |> Map.put("nav_final", normalizar_slug_carpeta(contexto["nav_final"]))
       |> Map.put("icono", normalizar_icono_carpeta(contexto["icono"]))
+      |> Map.put("prefijo", normalizar_prefijo_carpeta(contexto["prefijo"]))
 
     nav = componer_nav_carpeta(contexto["carpeta_padre"], contexto["nav_final"])
 
     error =
-      if nav != "" and MetaSchemaContext.obtener_header_por_nav(nav) do
-        "Esa ruta ya la usa otro catálogo o carpeta."
+      cond do
+        nav != "" and MetaSchemaContext.obtener_header_por_nav(nav) ->
+          "Esa ruta ya la usa otro catálogo o carpeta."
+
+        contexto["prefijo"] != "" ->
+          case validar_prefijo_libre_carpeta(contexto["prefijo"], nil) do
+            :ok -> nil
+            {:error, motivo} -> motivo
+          end
+
+        true ->
+          nil
       end
 
     {:noreply,
@@ -551,6 +590,11 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       contexto
       |> Map.put("nav", componer_nav_carpeta(contexto["carpeta_padre"], contexto["nav_final"]))
       |> then(&Map.put(&1, "nombre", nombre_desde_nav_carpeta(&1["nav"])))
+      |> Map.put("prefijo", normalizar_prefijo_carpeta(contexto["prefijo"]))
+
+    # Para volver a pintar el formulario si algo falla: la plantilla compara
+    # "visible" contra true, y del navegador llega como "true"/"false".
+    form_con_error = Map.put(contexto, "visible", contexto["visible"] == "true")
 
     case validar_formulario_carpeta(contexto) do
       :ok ->
@@ -561,6 +605,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           "schema_visible" => contexto["visible"] == "true",
           "schema_context_type" => 2,
           "schema_context_icono" => nil_si_vacio_carpeta(normalizar_icono_carpeta(contexto["icono"])),
+          "prefijo_directorio" => contexto["prefijo"],
           "detalles" => []
         }
 
@@ -573,19 +618,19 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
              |> assign(:carpeta_form, nil)
              |> assign(:carpeta_error, nil)
              |> put_flash(:info, "Carpeta '#{header.schema_context_label}' guardada.")
-             |> cargar_headers()}
+             |> recargar()}
 
           {:error, changeset} ->
             {:noreply,
              socket
-             |> assign(:carpeta_form, contexto)
-             |> assign(:carpeta_error, resumen_errores_carpeta(changeset))}
+             |> assign(:carpeta_form, form_con_error)
+             |> assign(:carpeta_error, mensaje_error_guardado_carpeta(changeset, contexto["prefijo"], nil))}
         end
 
       {:error, motivo} ->
         {:noreply,
          socket
-         |> assign(:carpeta_form, contexto)
+         |> assign(:carpeta_form, form_con_error)
          |> assign(:carpeta_error, motivo)}
     end
   end
@@ -615,6 +660,68 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:tablas_relacionadas, [])
      |> assign(:selector_tabla_relacionada_abierto, false)
      |> assign(:union_manual, nil)}
+  end
+
+  # "+ SQL View" (BC tipo 4, SPEC-SYS-2509202601) — mismo patrón de modal
+  # interno que "Nueva carpeta": etiqueta, navegación y uso. Nace sin SQL y
+  # no visible; el SQL, el ícono y la visibilidad se configuran en su
+  # editor (ConsultaSqlEditorLive).
+  def handle_event("abrir_form_sql_view", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:carpetas_disponibles, MetaSchemaContext.listar_carpetas_existentes())
+     |> assign(:sql_view_form, %{"etiqueta" => "", "carpeta_padre" => "", "nav_final" => "", "uso" => "diccionario"})
+     |> assign(:sql_view_error, nil)}
+  end
+
+  def handle_event("cerrar_form_sql_view", _params, socket) do
+    {:noreply, socket |> assign(:sql_view_form, nil) |> assign(:sql_view_error, nil)}
+  end
+
+  def handle_event("validar_sql_view", %{"contexto" => contexto}, socket) do
+    contexto = Map.put(contexto, "nav_final", normalizar_slug_carpeta(contexto["nav_final"]))
+    nav = componer_nav_carpeta(contexto["carpeta_padre"], contexto["nav_final"])
+
+    error =
+      if nav != "" and MetaSchemaContext.obtener_header_por_nav(nav) do
+        "Esa ruta ya la usa otro catálogo o carpeta."
+      end
+
+    {:noreply, socket |> assign(:sql_view_form, contexto) |> assign(:sql_view_error, error)}
+  end
+
+  def handle_event("guardar_sql_view", %{"contexto" => contexto}, socket) do
+    nav = componer_nav_carpeta(contexto["carpeta_padre"], contexto["nav_final"])
+
+    case MetadataApp.ConsultasSql.crear(%{"etiqueta" => contexto["etiqueta"], "nav" => nav, "uso" => contexto["uso"]}) do
+      {:ok, {header, _consulta_sql}} ->
+        {:noreply,
+         socket
+         |> assign(:sql_view_form, nil)
+         |> assign(:sql_view_error, nil)
+         |> put_flash(:info, "SQL View '#{header.schema_context_label}' creada. Ahora escribe su SQL.")
+         |> push_navigate(to: ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta-sql")}
+
+      {:error, mensaje} ->
+        {:noreply, socket |> assign(:sql_view_form, contexto) |> assign(:sql_view_error, mensaje)}
+    end
+  end
+
+  def handle_event("pedir_eliminar_sql_view", %{"nombre" => nombre, "label" => label}, socket) do
+    {:noreply, assign(socket, :accion_eliminar, %{tipo: :confirmar_sql_view, nombre: nombre, label: label})}
+  end
+
+  # R30: MetadataApp.ConsultasSql.eliminar/1 rechaza si algún campo la usa.
+  def handle_event("confirmar_eliminar_sql_view", _params, socket) do
+    %{nombre: nombre, label: label} = socket.assigns.accion_eliminar
+
+    case MetadataApp.ConsultasSql.eliminar(nombre) do
+      :ok ->
+        {:noreply, socket |> assign(:accion_eliminar, nil) |> put_flash(:info, "SQL View #{label} eliminada.") |> recargar()}
+
+      {:error, mensaje} ->
+        {:noreply, socket |> assign(:accion_eliminar, nil) |> put_flash(:error, mensaje)}
+    end
   end
 
   # --- Consulta Ecto: agregar tablas relacionadas (Fase 2, joins) --------------
@@ -739,13 +846,13 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     cond do
       contexto["catalogo_base"] in [nil, ""] ->
         {:noreply,
-         socket |> assign(:consulta_form, contexto) |> assign(:consulta_error, "Elegí el catálogo base de la consulta.")}
+         socket |> assign(:consulta_form, contexto) |> assign(:consulta_error, "Elige el catálogo base de la consulta.")}
 
       nombre == "" or String.trim(contexto["etiqueta"] || "") == "" ->
         {:noreply,
          socket
          |> assign(:consulta_form, contexto)
-         |> assign(:consulta_error, "Completá etiqueta y navegación antes de guardar.")}
+         |> assign(:consulta_error, "Completa etiqueta y navegación antes de guardar.")}
 
       MetaSchemaContext.obtener_header_por_nav(nav) ->
         {:noreply,
@@ -755,7 +862,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         {:noreply,
          socket
          |> assign(:consulta_form, contexto)
-         |> assign(:consulta_error, "Definí la unión de todas las tablas relacionadas antes de guardar.")}
+         |> assign(:consulta_error, "Define la unión de todas las tablas relacionadas antes de guardar.")}
 
       true ->
         header_attrs = %{
@@ -778,7 +885,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
            |> assign(:consulta_error, nil)
            |> assign(:tablas_relacionadas, [])
            |> put_flash(:info, "Consulta '#{header.schema_context_label}' creada.")
-           |> cargar_headers()}
+           |> recargar()}
         else
           {:error, %Ecto.Changeset{} = changeset} ->
             {:noreply,
@@ -789,7 +896,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   # "Editar carpeta" — mismo cambio que "Nueva carpeta": antes era
   # BcEditarCarpetaLive en ventana emergente, ahora es un modal interno acá
-  # mismo. Solo etiqueta/ícono/visible son editables — nombre de sistema y
+  # mismo. Solo etiqueta/prefijo/ícono/visible son editables — nombre de sistema y
   # navegación se muestran de solo lectura (cambiarlos desconectaría
   # catálogos ya anidados adentro).
   def handle_event("abrir_editar_carpeta", %{"nombre" => nombre}, socket) do
@@ -814,8 +921,22 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       contexto
       |> Map.put("icono", normalizar_icono_carpeta(contexto["icono"]))
       |> Map.put("visible", contexto["visible"] == "true")
+      |> Map.put("prefijo", normalizar_prefijo_carpeta(contexto["prefijo"]))
 
-    {:noreply, update(socket, :carpeta_editar, &Map.put(&1, :contexto, contexto))}
+    %{header: header} = socket.assigns.carpeta_editar
+
+    error =
+      if contexto["prefijo"] != "" do
+        case validar_prefijo_libre_carpeta(contexto["prefijo"], header.id) do
+          :ok -> nil
+          {:error, motivo} -> motivo
+        end
+      end
+
+    {:noreply,
+     socket
+     |> update(:carpeta_editar, &Map.put(&1, :contexto, contexto))
+     |> assign(:carpeta_editar_error, error)}
   end
 
   def handle_event("elegir_icono_editar_carpeta", %{"icono" => icono}, socket) do
@@ -827,37 +948,43 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   def handle_event("guardar_editar_carpeta", %{"contexto" => contexto}, socket) do
     %{header: header} = socket.assigns.carpeta_editar
+    contexto = Map.put(contexto, "prefijo", normalizar_prefijo_carpeta(contexto["prefijo"]))
 
-    case validar_etiqueta_carpeta(contexto["etiqueta"]) do
-      :ok ->
-        attrs = %{
-          "schema_context_label" => String.trim(contexto["etiqueta"]),
-          "schema_context_icono" => nil_si_vacio_carpeta(normalizar_icono_carpeta(contexto["icono"])),
-          "schema_visible" => contexto["visible"] == "true"
-        }
+    # Mismo motivo que en guardar_carpeta: la plantilla compara "visible"
+    # contra true.
+    form_con_error = Map.put(contexto, "visible", contexto["visible"] == "true")
 
-        case MetaSchemaContext.actualizar_header(header, attrs) do
-          {:ok, header_actualizado} ->
-            Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:bc_actualizado, header_actualizado})
+    with :ok <- validar_etiqueta_carpeta(contexto["etiqueta"]),
+         :ok <- validar_prefijo_carpeta(contexto["prefijo"], header.id) do
+      attrs = %{
+        "schema_context_label" => String.trim(contexto["etiqueta"]),
+        "prefijo_directorio" => contexto["prefijo"],
+        "schema_context_icono" => nil_si_vacio_carpeta(normalizar_icono_carpeta(contexto["icono"])),
+        "schema_visible" => contexto["visible"] == "true"
+      }
 
-            {:noreply,
-             socket
-             |> assign(:carpeta_editar, nil)
-             |> assign(:carpeta_editar_error, nil)
-             |> put_flash(:info, "Carpeta '#{header_actualizado.schema_context_label}' actualizada.")
-             |> cargar_headers()}
+      case MetaSchemaContext.actualizar_header(header, attrs) do
+        {:ok, header_actualizado} ->
+          Phoenix.PubSub.broadcast(MetadataApp.PubSub, @topic, {:bc_actualizado, header_actualizado})
 
-          {:error, changeset} ->
-            {:noreply,
-             socket
-             |> update(:carpeta_editar, &Map.put(&1, :contexto, contexto))
-             |> assign(:carpeta_editar_error, resumen_errores_carpeta(changeset))}
-        end
+          {:noreply,
+           socket
+           |> assign(:carpeta_editar, nil)
+           |> assign(:carpeta_editar_error, nil)
+           |> put_flash(:info, "Carpeta '#{header_actualizado.schema_context_label}' actualizada.")
+           |> recargar()}
 
+        {:error, changeset} ->
+          {:noreply,
+           socket
+           |> update(:carpeta_editar, &Map.put(&1, :contexto, form_con_error))
+           |> assign(:carpeta_editar_error, mensaje_error_guardado_carpeta(changeset, contexto["prefijo"], header.id))}
+      end
+    else
       {:error, motivo} ->
         {:noreply,
          socket
-         |> update(:carpeta_editar, &Map.put(&1, :contexto, contexto))
+         |> update(:carpeta_editar, &Map.put(&1, :contexto, form_con_error))
          |> assign(:carpeta_editar_error, motivo)}
     end
   end
@@ -945,21 +1072,25 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   # aplanado de item_de_header/1 (sin traer el Header entero para cada
   # fila). La validación REAL (revalidada, por si el árbol quedó
   # desactualizado) vive en MetaClonador.clonar/2, mismo espíritu que
-  # pedir_eliminar_carpeta/2 ya usa para "Eliminar".
-  defp puede_copiar?(nodo) do
+  # pedir_eliminar_carpeta/2 ya usa para "Eliminar". Corre en cada render
+  # de la tabla, así que "tiene detalles" sale de `ids_con_detalle`
+  # (armado por cargar_headers/1 con los headers ya leídos), nunca de una
+  # consulta por renglón.
+  defp puede_copiar?(nodo, ids_con_detalle) do
     not Map.get(nodo, :es_carpeta, false) and not Map.get(nodo, :es_consulta, false) and
-      is_nil(nodo.schema_encabezado_id) and MetaSchemaContext.listar_catalogos_detalle(nodo.header_id) == []
+      not Map.get(nodo, :es_consulta_sql, false) and is_nil(nodo.schema_encabezado_id) and
+      not MapSet.member?(ids_con_detalle, nodo.header_id)
   end
 
   # "Nueva carpeta"/"Editar carpeta" ya se resuelven solos, arriba, sin
   # depender de este PubSub — sigue transmitiéndose igual por si algo más
   # llega a escucharlo más adelante.
   def handle_info({:bc_creado, _header}, socket) do
-    {:noreply, cargar_headers(socket)}
+    {:noreply, recargar(socket)}
   end
 
   def handle_info({:bc_actualizado, _header}, socket) do
-    {:noreply, cargar_headers(socket)}
+    {:noreply, recargar(socket)}
   end
 
   # Pagina por CARPETA RAÍZ, no por fila plana — construir_arbol/1 siempre
@@ -1014,6 +1145,11 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     todos = MetaSchemaContext.listar_headers() |> Enum.map(&MetaSchemaContext.item_de_header/1)
     {carpetas, hojas} = Enum.split_with(todos, & &1.es_carpeta)
 
+    # Maestros que tienen al menos un detalle vivo -- mismo criterio que
+    # MetaSchemaContext.listar_catalogos_detalle/1 (delete_guid nulo, igual
+    # que listar_headers/0), sacado de la misma lista, sin consulta extra.
+    ids_con_detalle = for %{schema_encabezado_id: id} when not is_nil(id) <- todos, into: MapSet.new(), do: id
+
     # La búsqueda de texto solo decide qué HOJAS (catálogos/páginas)
     # sobreviven -- las carpetas SIEMPRE se pasan TODAS a construir_arbol/1.
     # Si no, una carpeta real que no matchea por texto pero es ancestro de
@@ -1038,17 +1174,12 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     pagina = socket.assigns.pagina |> max(1) |> min(total_paginas)
     offset = (pagina - 1) * @por_pagina
 
-    raices_pagina = Enum.slice(arbol_completo, offset, @por_pagina)
-
-    # puede_desplegar sigue calculándose solo sobre lo que esta página
-    # realmente va a mostrar (nunca sobre @total_items) — mismo espíritu
-    # que antes, adaptado a que ahora "lo que se muestra" es el subárbol
-    # completo de cada carpeta raíz de esta página, no un slice plano de
-    # tamaño fijo.
-    arbol = Enum.map(raices_pagina, &anotar_nodo/1)
+    arbol = Enum.slice(arbol_completo, offset, @por_pagina)
 
     socket
     |> assign(:arbol, arbol)
+    |> assign(:ids_con_detalle, ids_con_detalle)
+    |> assign(:nombres_maestro, nombres_maestro(hojas))
     |> assign(:pagina, pagina)
     |> assign(:total_paginas, total_paginas)
     |> assign(:total_items, total_items)
@@ -1071,35 +1202,56 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     end)
   end
 
-  # Camina el subárbol de una carpeta raíz de esta página, anotando cada
-  # nodo :pagina con puede_desplegar — las carpetas en sí nunca se anotan
-  # (no tienen autómata propio), solo se recorren.
-  defp anotar_nodo(%{tipo: :carpeta, hijos: hijos} = nodo) do
-    %{nodo | hijos: Enum.map(hijos, &anotar_nodo/1)}
+  # Catálogos que pueden llevar casilla de "Publicar paquete": maestros
+  # reales. Un detalle nunca se publica por separado (comparte el ciclo del
+  # maestro, mismo criterio que ya rige sus estados/transiciones/contrato),
+  # y una Consulta o SQL View no pasa por este paquete. Sale de `hojas`
+  # completas (no de la página ni de la búsqueda), así buscar o paginar
+  # nunca obliga a revisar de nuevo.
+  defp nombres_maestro(hojas) do
+    for %{es_consulta: false, es_consulta_sql: false, schema_encabezado_id: nil, id: nombre} <- hojas, do: nombre
   end
 
-  defp anotar_nodo(%{tipo: :pagina} = nodo) do
-    adjuntar_puede_desplegar(nodo)
+  # "¿Listo para publicarse?" (MetaEstadosAdmin.puede_desplegar?/1) cuesta
+  # ~10 consultas por catálogo, así que corre fuera del proceso de la
+  # LiveView: la tabla se pinta sin esperarlo y las casillas aparecen al
+  # llegar handle_async(:revisar_listos, ...). start_async/3 solo arranca
+  # con el socket conectado, así que el render estático nunca revisa, y si
+  # se relanza con una revisión en curso gana la última. Secuencial a
+  # propósito: MetaReglasCodigo.with_cache/1 guarda su caché en el
+  # diccionario del proceso, que no se comparte entre tareas paralelas.
+  defp revisar_listos(socket) do
+    nombres = socket.assigns.nombres_maestro
+
+    socket
+    |> assign(:revision_listos, :pendiente)
+    |> start_async(:revisar_listos, fn -> Map.new(nombres, &{&1, MetaEstadosAdmin.puede_desplegar?(&1)}) end)
   end
 
-  # Catálogo Maestro-Detalle: un detalle nunca se publica por separado
-  # (comparte el ciclo del maestro, mismo criterio que ya rige sus
-  # estados/transiciones/contrato) — acá directamente NO se le calcula
-  # puede_desplegar?/1 real, se marca :no_aplica para que el checkbox del
-  # wizard no se pinte para un detalle (ver filas_arbol/1). Estas dos
-  # funciones reciben nodos :pagina (ver anotar_nodo/2 arriba), que
-  # conservan todas las llaves del item plano original de
-  # MetaSchemaContext.item_de_header/1 (es_carpeta: false siempre acá, por
-  # eso la primera cláusula de cada una nunca matchea en este punto — se
-  # deja igual para que ninguna de las dos reviente si alguna vez se les
-  # pasa por error un nodo :carpeta).
-  defp adjuntar_puede_desplegar(%{es_carpeta: true} = item), do: item
+  # cargar_headers/1 + revisar_listos/1: para lo que puede cambiar qué
+  # catálogos están listos (crear, eliminar, publicar, aviso de otro
+  # usuario). Buscar, paginar y reordenar usan cargar_headers/1 solo.
+  defp recargar(socket), do: socket |> cargar_headers() |> revisar_listos()
 
-  defp adjuntar_puede_desplegar(%{schema_encabezado_id: id} = item) when not is_nil(id),
-    do: Map.put(item, :puede_desplegar, :no_aplica)
+  def handle_async(:revisar_listos, {:ok, listos}, socket) do
+    seleccionados = MapSet.filter(socket.assigns.seleccionados, &Map.get(listos, &1, false))
 
-  defp adjuntar_puede_desplegar(item),
-    do: Map.put(item, :puede_desplegar, MetaEstadosAdmin.puede_desplegar?(item.id))
+    {:noreply,
+     socket
+     |> assign(:listos, listos)
+     |> assign(:revision_listos, :ok)
+     |> assign(:seleccionados, seleccionados)}
+  end
+
+  def handle_async(:revisar_listos, {:exit, motivo}, socket) do
+    Logger.error("BC Lista: no se pudo revisar qué catálogos están listos para publicarse: #{inspect(motivo)}")
+
+    {:noreply,
+     socket
+     |> assign(:listos, %{})
+     |> assign(:revision_listos, :error)
+     |> assign(:seleccionados, MapSet.new())}
+  end
 
   # Resultado del Task disparado por confirmar_publicar/3 (start_async/3,
   # ver ahí el motivo). {:ok, {:ok, _}} y {:ok, {:error, _}} son las dos
@@ -1116,9 +1268,9 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:seleccionados, MapSet.new())
      |> put_flash(
        :info,
-       "Publicado — #{Enum.join(seleccionados, ", ")} va(n) camino a \"#{sistema}\". Seguí el progreso con \"gh run watch\" o \"gh run list\"."
+       "Publicado — #{Enum.join(seleccionados, ", ")} va(n) camino a \"#{sistema}\". Sigue el progreso con \"gh run watch\" o \"gh run list\"."
      )
-     |> cargar_headers()}
+     |> recargar()}
   end
 
   def handle_async(:publicar_paquete, {:ok, {:error, mensaje}}, socket) do
@@ -1138,7 +1290,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      |> assign(:accion_eliminar, nil)
      |> put_flash(
        :info,
-       "Despublicado — el borrado de #{tabla} va camino a \"#{sistema}\". Seguí el progreso con \"gh run watch\" o \"gh run list\"."
+       "Despublicado — el borrado de #{tabla} va camino a \"#{sistema}\". Sigue el progreso con \"gh run watch\" o \"gh run list\"."
      )}
   end
 
@@ -1151,7 +1303,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
      update(socket, :accion_eliminar, &Map.merge(&1, %{error: "Error inesperado: #{inspect(razon)}", procesando?: false}))}
   end
 
-  # SPEC-SYS-0309202601, R5/R10 -- lista de sistemas válidos para el
+  # SPEC-ARQ-0309202601, R5/R10 -- lista de sistemas válidos para el
   # selector de los dos modales (publicar/despublicar): los clientes
   # reales de priv/sistemas.json + "unstable" (R10, 2026-09-07 -- probar
   # un BC antes de mandarlo a cualquier cliente real). Nunca
@@ -1176,61 +1328,16 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     end
   end
 
-  # Orquesta el paquete completo desde la UI, sin pasar por ningún
-  # Mix.Task (a diferencia de "mix motor.publicar", que sí puede) — esto
-  # corre dentro de la app ya viva bajo supervisión, así que llama
-  # MetaSchemaContext.exportar_header/1 directo en vez de "mix meta.export".
+  # Orquesta el paquete completo desde la UI. Prepara los archivos con el
+  # mismo camino que "mix motor.publicar" (SPEC-SYS-0210202601): regenera
+  # y exporta solo el paquete, sin borrar nada.
   defp publicar_paquete(sistema, seleccionados, catalogos) do
-    with :ok <- regenerar_paquete(catalogos),
-         :ok <- exportar_paquete(catalogos),
+    with :ok <- MetaPublicador.preparar_paquete(catalogos),
          {:ok, bundle_path} <- MetaPublicador.armar_bundle(catalogos),
          {:ok, _tags} <- MetaPublicador.persistir_bundle(seleccionados, bundle_path),
          {:ok, salida} <- MetaPublicador.disparar_deploy(sistema, seleccionados, bundle_path) do
       {:ok, salida}
     end
-  end
-
-  # Equivalente de "mix gen.catalogos" para el paquete calculado — self-heal
-  # de cada schema .ex contra la metadata actual antes de empaquetar nada
-  # (mismo motivo que motor.publicar.ex: un .ex generado antes de que el
-  # catálogo quedara enlazado a un maestro, o antes de un campo nuevo,
-  # queda desactualizado en disco si nadie vuelve a correr esto). Una
-  # carpeta (schema_context_type: 2, ahora seleccionable para publicar,
-  # ver filas_arbol/1) no tiene campos propios ni tabla física — sin este
-  # salto, CatalogoGenerador.generar/1 le pega "No hay metadata en
-  # meta_schema_detail" y el reduce_while aborta TODO el paquete, aunque
-  # el resto de lo seleccionado esté perfecto.
-  defp regenerar_paquete(catalogos) do
-    Enum.reduce_while(catalogos, :ok, fn nombre, :ok ->
-      if es_carpeta?(nombre) do
-        {:cont, :ok}
-      else
-        case CatalogoGenerador.generar(nombre) do
-          {:ok, _} -> {:cont, :ok}
-          {:error, motivo} -> {:halt, {:error, "#{nombre}: #{motivo}"}}
-        end
-      end
-    end)
-  end
-
-  defp es_carpeta?(nombre) do
-    case MetaSchemaContext.obtener_header_por_nombre(nombre) do
-      %{schema_context_type: 2} -> true
-      _ -> false
-    end
-  end
-
-  defp exportar_paquete(catalogos) do
-    Enum.each(catalogos, fn nombre ->
-      case MetaSchemaContext.obtener_header_por_nombre(nombre) do
-        nil ->
-          :ok
-
-        header ->
-          MetaSchemaContext.exportar_header(header)
-          MetaEstadosAdmin.exportar_header(header)
-      end
-    end)
   end
 
   defp coincide_busqueda?(_item, ""), do: true
@@ -1252,6 +1359,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       "etiqueta" => "Catálogo de ",
       "carpeta_padre" => "",
       "nav_final" => "",
+      "prefijo" => "",
       "icono" => "",
       "visible" => true
     }
@@ -1302,6 +1410,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   defp contexto_editar_desde_header(header) do
     %{
       "etiqueta" => header.schema_context_label,
+      "prefijo" => header.prefijo_directorio || "",
       "icono" => header.schema_context_icono || "",
       "visible" => header.schema_visible
     }
@@ -1327,9 +1436,41 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   defp validar_formulario_carpeta(contexto) do
     with :ok <- validar_regex_carpeta(contexto["nombre"], @identificador_carpeta, "Nombre de sistema"),
          :ok <- validar_regex_carpeta(contexto["nav"], @nav_carpeta, "Navegación"),
-         :ok <- validar_completado_carpeta(contexto["etiqueta"], "Catálogo de", "Etiqueta") do
+         :ok <- validar_completado_carpeta(contexto["etiqueta"], "Catálogo de", "Etiqueta"),
+         :ok <- validar_prefijo_carpeta(contexto["prefijo"], nil) do
       validar_nav_libre_carpeta(contexto["nav"])
     end
+  end
+
+  # Prefijo obligatorio en toda carpeta nueva o editada (una carpeta
+  # anterior a este campo lo pide la próxima vez que se edite).
+  # `propio_id` excluye a la misma carpeta al editarla.
+  @prefijo_carpeta ~r/^[A-Z0-9]{1,5}$/
+
+  defp validar_prefijo_carpeta(prefijo, propio_id) do
+    if prefijo && Regex.match?(@prefijo_carpeta, prefijo) do
+      validar_prefijo_libre_carpeta(prefijo, propio_id)
+    else
+      {:error, "El prefijo es obligatorio: de 1 a 5 letras/dígitos (ej. CH)."}
+    end
+  end
+
+  defp validar_prefijo_libre_carpeta(prefijo, propio_id) do
+    case MetaSchemaContext.obtener_header_por_prefijo_directorio(prefijo) do
+      nil -> :ok
+      %{id: ^propio_id} -> :ok
+      otro -> {:error, "El prefijo '#{prefijo}' ya lo usa '#{otro.schema_context_label}' — elige otro."}
+    end
+  end
+
+  # Mayúsculas, sin acentos ni nada que no sea letra/dígito, máximo 5 —
+  # así el campo se corrige solo mientras se teclea.
+  defp normalizar_prefijo_carpeta(valor) do
+    (valor || "")
+    |> quitar_acentos_carpeta()
+    |> String.upcase()
+    |> String.replace(~r/[^A-Z0-9]/, "")
+    |> String.slice(0, 5)
   end
 
   defp validar_regex_carpeta(valor, regex, etiqueta) do
@@ -1347,7 +1488,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   defp validar_nav_libre_carpeta(nav) do
     case MetaSchemaContext.obtener_header_por_nav(nav) do
       nil -> :ok
-      _otro -> {:error, "Esa ruta de navegación ya la usa otro catálogo o carpeta — elegí otra."}
+      _otro -> {:error, "Esa ruta de navegación ya la usa otro catálogo o carpeta — elige otra."}
     end
   end
 
@@ -1443,6 +1584,19 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
 
   defp resumen_errores_carpeta(changeset), do: changeset |> MetadataApp.MetaErrores.traducir() |> inspect()
 
+  # R7 (SPEC-SYS-2909202601): si otro guardado ganó el mismo prefijo entre
+  # la revisión en vivo y este guardado, el índice único lo rechaza aquí;
+  # se muestra el mismo aviso de R5 en vez del error crudo del changeset.
+  defp mensaje_error_guardado_carpeta(changeset, prefijo, propio_id) do
+    with {_mensaje, detalles} <- changeset.errors[:prefijo_directorio],
+         :unique <- detalles[:constraint],
+         {:error, motivo} <- validar_prefijo_libre_carpeta(prefijo, propio_id) do
+      motivo
+    else
+      _ -> resumen_errores_carpeta(changeset)
+    end
+  end
+
   def render(assigns) do
     ~H"""
     <div class="w-full p-4 sm:p-6 lg:p-8">
@@ -1508,6 +1662,15 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             </button>
             <button
               type="button"
+              id="btn-nueva-sql-view"
+              phx-click="abrir_form_sql_view"
+              title="SQL View: un SQL de solo lectura que se convierte en vista — Diccionario para combos de campos referencia, o Consulta"
+              class="pc-btn-secundario bg-linear-to-b from-white to-gray-100 hover:to-gray-200 border border-gray-100 text-gray-800 shadow-sm font-semibold text-xs px-4 py-1.5 rounded-full transition-colors"
+            >
+              + SQL View
+            </button>
+            <button
+              type="button"
               phx-click="abrir_editar_orden"
               title="Arrastrar las carpetas raíz para cambiar el orden en que aparecen acá y en el menú"
               class="pc-btn-secundario bg-linear-to-b from-white to-gray-100 hover:to-gray-200 border border-gray-100 text-gray-800 shadow-sm font-semibold text-xs px-4 py-1.5 rounded-full transition-colors"
@@ -1541,23 +1704,40 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           </button>
         </div>
 
+        <div
+          :if={@revision_listos == :error}
+          id="aviso-revision-listos"
+          class="mb-4 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-sm px-3 py-2"
+        >
+          No se pudo revisar qué catálogos están listos para publicarse. La tabla se muestra igual,
+          pero sin casillas de "Publicar paquete"; recarga la página para intentarlo de nuevo.
+        </div>
+
         <div class="overflow-x-auto rounded-xl border border-gray-200">
           <table class="min-w-full divide-y divide-gray-100 text-sm">
             <thead>
               <tr class="border-b-2 border-gray-200">
-                <th class="px-4 py-3 w-8"></th>
+                <th class="px-4 py-3 w-8">
+                  <span
+                    :if={@revision_listos == :pendiente}
+                    id="revisando-listos"
+                    title="Revisando qué catálogos están listos para publicarse…"
+                    class="block w-3 h-3 rounded-full border-2 border-purple-200 border-t-purple-600 animate-spin"
+                  />
+                </th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Nombre de sistema</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Etiqueta</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide" title="Prefijo de directorio (solo carpetas)">Prefijo</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Navegación</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Estado</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">Acciones</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
-              <.filas_arbol nodos={@arbol} carpetas_expandidas={@carpetas_expandidas} seleccionados={@seleccionados} />
+              <.filas_arbol nodos={@arbol} carpetas_expandidas={@carpetas_expandidas} seleccionados={@seleccionados} ids_con_detalle={@ids_con_detalle} listos={@listos} />
               <%= if @arbol == [] do %>
                 <tr>
-                  <td class="px-4 py-6 text-center text-gray-400" colspan="6">
+                  <td class="px-4 py-6 text-center text-gray-400" colspan="7">
                     {if @busqueda == "", do: "Todavía no hay contextos creados", else: "Sin resultados para \"#{@busqueda}\""}
                   </td>
                 </tr>
@@ -1584,6 +1764,86 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
       catalogos_relacionables={@catalogos_relacionables_disponibles}
     />
     <.modal_union_manual union_manual={@union_manual} />
+    <.modal_sql_view form={@sql_view_form} error={@sql_view_error} carpetas={@carpetas_disponibles} />
+    """
+  end
+
+  defp modal_sql_view(%{form: nil} = assigns), do: ~H""
+
+  defp modal_sql_view(%{form: form} = assigns) do
+    assigns =
+      assigns
+      |> assign(:nav_preview, componer_nav_carpeta(form["carpeta_padre"], form["nav_final"]))
+      |> assign(:nombre_preview, MetadataApp.ConsultasSql.nombre_desde_nav(componer_nav_carpeta(form["carpeta_padre"], form["nav_final"])))
+
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-lg w-full max-h-[90vh] overflow-y-auto overflow-x-hidden">
+        <div class="flex items-center gap-1.5 bg-[#fafafa] border-b border-gray-200 px-4 py-2.5 rounded-t-xl">
+          <span class="material-symbols-outlined text-gray-400" style="font-size: 18px">database</span>
+          <span class="text-sm font-semibold text-gray-900">Nueva SQL View</span>
+        </div>
+
+        <div :if={@error} id="sql-view-error" class="px-4 py-1.5 text-xs font-medium border-b border-gray-200 bg-red-50 text-red-700">
+          {@error}
+        </div>
+
+        <form id="form-sql-view" phx-submit="guardar_sql_view" phx-change="validar_sql_view" class="p-4 space-y-3 text-xs">
+          <div class="grid grid-cols-1 sm:grid-cols-[110px_1fr] gap-y-2 gap-x-2 items-start">
+            <label class="font-medium text-gray-900 pt-1">Etiqueta:</label>
+            <input type="text" name="contexto[etiqueta]" value={@form["etiqueta"]} required maxlength="100"
+              class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="Rutas de preventa con perfil activo" />
+
+            <label class="font-medium text-gray-900 pt-1">Navegación:</label>
+            <div class="min-w-0">
+              <div class="flex items-center gap-1 flex-wrap">
+                <select name="contexto[carpeta_padre]"
+                  class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 min-w-0 max-w-full focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors">
+                  <option value="" selected={@form["carpeta_padre"] in [nil, ""]}>— Sin carpeta (raíz) —</option>
+                  <option :for={carpeta <- @carpetas} value={carpeta.ruta} selected={@form["carpeta_padre"] == carpeta.ruta}>{carpeta.etiqueta}</option>
+                </select>
+                <span class="text-gray-400">/</span>
+                <input type="text" name="contexto[nav_final]" value={@form["nav_final"]} required maxlength="50"
+                  class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 flex-1 min-w-[8rem] focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="rutas-preventa" />
+              </div>
+              <div class="mt-1 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg px-1.5 py-0.5 flex flex-wrap items-center gap-1 max-w-full">
+                <span class="text-purple-400">Vista previa:</span>
+                <span class="font-mono break-all">{@nav_preview}</span>
+                <span :if={@nombre_preview != ""} class="text-purple-400">· vista</span>
+                <span :if={@nombre_preview != ""} class="font-mono break-all">{@nombre_preview}</span>
+              </div>
+            </div>
+
+            <label class="font-medium text-gray-900 pt-1">Uso:</label>
+            <div class="flex flex-col gap-1">
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" name="contexto[uso]" value="diccionario" checked={@form["uso"] not in ["consulta", "servicio"]} class="accent-purple-600" />
+                <span><strong>Diccionario</strong> — lista para los combos de campos referencia</span>
+              </label>
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" name="contexto[uso]" value="consulta" checked={@form["uso"] == "consulta"} class="accent-purple-600" />
+                <span><strong>Consulta</strong> — reporte de solo lectura</span>
+              </label>
+              <label class="flex items-center gap-1.5 cursor-pointer">
+                <input type="radio" id="uso-servicio" name="contexto[uso]" value="servicio" checked={@form["uso"] == "servicio"} class="accent-purple-600" />
+                <span><strong>Servicio</strong> — recibe parámetros; lo llaman las reglas de un BC o una API</span>
+              </label>
+            </div>
+          </div>
+
+          <p class="text-gray-500">Nace sin SQL y no visible. El SQL, el ícono y la visibilidad se configuran en su editor.</p>
+
+          <div class="flex justify-end gap-2">
+            <button type="button" phx-click="cerrar_form_sql_view" class="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 font-semibold hover:bg-gray-50 transition-colors">
+              Cancelar
+            </button>
+            <button type="submit" id="guardar-sql-view" class="px-3 py-1.5 rounded-lg bg-purple-600 text-white font-semibold hover:bg-purple-700 transition-colors">
+              Crear
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
     """
   end
 
@@ -1623,7 +1883,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             Editar vista<span :if={@carpeta}> — {@carpeta.nombre}</span>
           </h2>
           <p class="text-xs text-purple-600">
-            Arrastrá para cambiar el orden — carpetas y archivos, a cualquier nivel. Se guarda solo al soltar, y se refleja acá y en el menú.
+            Arrastra para cambiar el orden — carpetas y archivos, a cualquier nivel. Se guarda solo al soltar, y se refleja acá y en el menú.
           </p>
         </div>
         <button type="button" phx-click="cerrar_editar_orden" class="px-3.5 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-semibold hover:bg-purple-700 transition-colors">
@@ -1688,6 +1948,37 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
     """
   end
 
+  # Prefijo de directorio (SPEC-SYS-2909202601, R1-R3) — compartido por
+  # "Nueva carpeta" y "Editar carpeta". El hook PrefijoDirectorio
+  # (assets/js/app.js) corrige mientras se teclea, porque LiveView no
+  # reescribe un campo con el foco; el servidor normaliza igual
+  # (normalizar_prefijo_carpeta/1) y es quien hace cumplir la regla.
+  attr :id, :string, required: true
+  attr :valor, :string, default: ""
+
+  defp campo_prefijo_directorio(assigns) do
+    ~H"""
+    <label for={@id} class="font-medium text-gray-900 pt-1">Prefijo:</label>
+    <div>
+      <input
+        type="text"
+        id={@id}
+        name="contexto[prefijo]"
+        value={@valor}
+        required
+        maxlength="5"
+        autocomplete="off"
+        spellcheck="false"
+        phx-hook="PrefijoDirectorio"
+        phx-debounce="300"
+        class="w-24 border border-gray-300 rounded-lg text-gray-900 font-mono uppercase tracking-wider px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors"
+        placeholder="CH"
+      />
+      <p class="mt-0.5 text-[11px] text-gray-500">1 a 5 letras o números, ej. CH. No se puede repetir.</p>
+    </div>
+    """
+  end
+
   # "Nueva carpeta" como modal interno — mismo patrón visual que
   # modal_estado/modal_transicion en BcMotorLive (fixed inset-0 + tarjeta
   # centrada), ya no una ventana emergente del navegador aparte.
@@ -1715,13 +2006,15 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           </div>
         <% end %>
 
-        <form phx-submit="guardar_carpeta" phx-change="validar_carpeta" class="p-4 space-y-3 text-xs">
+        <form id="form-nueva-carpeta" phx-submit="guardar_carpeta" phx-change="validar_carpeta" class="p-4 space-y-3 text-xs">
           <fieldset class="border border-gray-200 rounded-lg">
             <legend class="px-1.5 ml-2 font-bold uppercase tracking-wide text-[11px] text-gray-500">Contexto</legend>
             <div class="grid grid-cols-1 sm:grid-cols-[110px_1fr] gap-y-1.5 gap-x-2 p-2.5 items-start">
               <label class="font-medium text-gray-900 pt-1">Etiqueta:</label>
               <input type="text" name="contexto[etiqueta]" value={@form["etiqueta"]} required maxlength="100"
                 class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="Catálogo de carros" />
+
+              <.campo_prefijo_directorio id="prefijo-nueva-carpeta" valor={@form["prefijo"]} />
 
               <label class="font-medium text-gray-900 pt-1">Navegación:</label>
               <div class="min-w-0">
@@ -1875,7 +2168,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             <legend class="px-1.5 ml-2 font-bold uppercase tracking-wide text-[11px] text-gray-500">Tablas relacionadas (opcional)</legend>
             <div class="p-2.5">
               <p :if={@tablas_relacionadas == []} class="text-gray-400 mb-2">
-                Solo <strong>{@form["catalogo_base"]}</strong> por ahora — agregá más tablas si el reporte necesita combinar datos de varias.
+                Solo <strong>{@form["catalogo_base"]}</strong> por ahora — agrega más tablas si el reporte necesita combinar datos de varias.
               </p>
               <ul :if={@tablas_relacionadas != []} class="space-y-1 mb-2">
                 <li :for={{t, indice} <- Enum.with_index(@tablas_relacionadas)} class="flex items-center justify-between gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5">
@@ -1961,7 +2254,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
         <form phx-submit="guardar_union_manual" class="p-4 space-y-3 text-xs">
           <p class="text-gray-500">
             No hay ninguna "Relación" configurada entre <strong>{@um.catalogo}</strong> y las tablas que ya están en la
-            consulta — elegí a mano qué campo de cada lado conecta.
+            consulta — elige a mano qué campo de cada lado conecta.
           </p>
 
           <p :if={@um.maestro_detalle} class="text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
@@ -2035,7 +2328,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           </div>
         <% end %>
 
-        <form phx-submit="guardar_editar_carpeta" phx-change="validar_editar_carpeta" class="p-4 space-y-3 text-xs">
+        <form id="form-editar-carpeta" phx-submit="guardar_editar_carpeta" phx-change="validar_editar_carpeta" class="p-4 space-y-3 text-xs">
           <fieldset class="border border-gray-200 rounded-lg">
             <legend class="px-1.5 ml-2 font-bold uppercase tracking-wide text-[11px] text-gray-500">Contexto</legend>
             <div class="grid grid-cols-1 sm:grid-cols-[110px_1fr] gap-y-1.5 gap-x-2 p-2.5 items-start">
@@ -2055,6 +2348,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               <label class="font-medium text-gray-900 pt-1">Etiqueta:</label>
               <input type="text" name="contexto[etiqueta]" value={@contexto["etiqueta"]} required maxlength="100"
                 class="border border-gray-300 rounded-lg text-gray-900 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors" placeholder="Catálogo de carros" />
+
+              <.campo_prefijo_directorio id="prefijo-editar-carpeta" valor={@contexto["prefijo"]} />
 
               <label class="font-medium text-gray-900 pt-1">Ícono:</label>
               <div>
@@ -2333,8 +2628,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
               Sistema destino
             </label>
             <form phx-change="elegir_sistema_despublicar">
-              <select name="sistema" class="select select-bordered w-full text-sm">
-                <option value="" selected={is_nil(@accion.sistema)}>Elegí un sistema…</option>
+              <select name="sistema" class="w-full bg-white border border-gray-300 rounded-lg text-gray-900 text-sm px-3 py-2 cursor-pointer hover:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors">
+                <option value="" selected={is_nil(@accion.sistema)}>Elige un sistema…</option>
                 <option :for={sistema <- @sistemas_disponibles} value={sistema} selected={@accion.sistema == sistema}>
                   {sistema}
                 </option>
@@ -2390,6 +2685,29 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             phx-click="confirmar_eliminar_carpeta"
             class="px-4 py-2 rounded bg-red-600 text-white text-sm font-semibold hover:bg-red-700"
           >
+            Eliminar
+          </button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp modal_eliminar(%{accion: %{tipo: :confirmar_sql_view}} = assigns) do
+    ~H"""
+    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-6">
+        <h2 class="text-lg font-bold text-gray-900 mb-2">Eliminar SQL View</h2>
+        <p class="text-sm text-gray-700 mb-6">
+          Se eliminará la SQL View <strong>"{@accion.label}"</strong> y su vista en la base de datos. Si algún campo la usa, no se eliminará.
+        </p>
+        <div class="flex justify-end gap-3">
+          <button type="button" phx-click="cancelar_eliminar"
+            class="px-4 py-2 rounded border border-gray-300 text-gray-700 text-sm font-semibold hover:bg-gray-50">
+            Cancelar
+          </button>
+          <button type="button" id="confirmar-eliminar-sql-view" phx-click="confirmar_eliminar_sql_view"
+            class="px-4 py-2 rounded bg-red-600 text-white text-sm font-semibold hover:bg-red-700">
             Eliminar
           </button>
         </div>
@@ -2496,9 +2814,9 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             <form phx-change="elegir_sistema_publicar">
               <select
                 name="sistema"
-                class="select select-bordered w-full text-sm"
+                class="w-full bg-white border border-gray-300 rounded-lg text-gray-900 text-sm px-3 py-2 cursor-pointer hover:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500/40 focus:border-purple-500 transition-colors"
               >
-                <option value="" selected={is_nil(@wizard.sistema)}>Elegí un sistema…</option>
+                <option value="" selected={is_nil(@wizard.sistema)}>Elige un sistema…</option>
                 <option :for={sistema <- @sistemas_disponibles} value={sistema} selected={@wizard.sistema == sistema}>
                   {sistema}
                 </option>
@@ -2572,6 +2890,8 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
   attr :carpetas_expandidas, :any, default: MapSet.new()
   attr :ruta_padre, :string, default: ""
   attr :seleccionados, :any, default: MapSet.new()
+  attr :ids_con_detalle, :any, default: MapSet.new()
+  attr :listos, :map, default: %{}
 
   def filas_arbol(assigns) do
     ~H"""
@@ -2598,25 +2918,45 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             />
           </td>
           <td
-            colspan="5"
+            colspan="2"
             class="px-4 py-2 text-xs select-none"
             style={"padding-left: #{16 + @nivel * 20}px"}
           >
-            <div class="flex items-center justify-between gap-2">
-              <button
-                type="button"
-                phx-click="toggle_carpeta"
-                phx-value-ruta={ruta}
-                class="pc-carpeta-fila flex items-center gap-2 font-normal text-gray-600 uppercase tracking-wide cursor-pointer flex-1 text-left"
-              >
-                <span class="pc-carpeta-chevron inline-block w-3 text-gray-400">{if expandida?, do: "▾", else: "▸"}</span>
-                <span class="w-6 h-6 rounded-md bg-gray-400/30 text-(--pc-texto) flex items-center justify-center flex-shrink-0">
-                  <span class="material-symbols-outlined" style="font-size: 15px">
-                    {if Map.get(nodo, :icono) not in [nil, ""], do: nodo.icono, else: "folder"}
-                  </span>
+            <button
+              type="button"
+              phx-click="toggle_carpeta"
+              phx-value-ruta={ruta}
+              class="pc-carpeta-fila flex items-center gap-2 font-normal text-gray-600 uppercase tracking-wide cursor-pointer w-full text-left"
+            >
+              <span class="pc-carpeta-chevron inline-block w-3 text-gray-400">{if expandida?, do: "▾", else: "▸"}</span>
+              <span class="w-6 h-6 rounded-md bg-gray-400/30 text-(--pc-texto) flex items-center justify-center flex-shrink-0">
+                <span class="material-symbols-outlined" style="font-size: 15px">
+                  {if Map.get(nodo, :icono) not in [nil, ""], do: nodo.icono, else: "folder"}
                 </span>
-                {nodo.nombre}
-              </button>
+              </span>
+              {nodo.nombre}
+            </button>
+          </td>
+          <%!-- Prefijo de directorio (SPEC-SYS-2909202601, R11): solo en
+               carpetas explícitas; "Sin prefijo" marca las creadas antes de
+               que existiera (R9), para ubicarlas de un vistazo. --%>
+          <td class="px-4 py-2 text-xs">
+            <%= cond do %>
+              <% nodo.id == nil -> %>
+              <% Map.get(nodo, :prefijo_directorio) not in [nil, ""] -> %>
+                <span id={"prefijo-#{nodo.id}"} class="font-mono font-semibold tracking-wider text-gray-800">{nodo.prefijo_directorio}</span>
+              <% true -> %>
+                <span
+                  id={"sin-prefijo-#{nodo.id}"}
+                  title="Esta carpeta se creó antes de que existiera el prefijo; lo pedirá la próxima vez que se edite."
+                  class="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-amber-100 text-amber-700"
+                >
+                  Sin prefijo
+                </span>
+            <% end %>
+          </td>
+          <td colspan="3" class="px-4 py-2 text-xs select-none">
+            <div class="flex items-center justify-end gap-2">
               <%= if nodo.id || (@nivel == 0 and nodo.hijos != []) do %>
                 <div class="flex items-center gap-2 normal-case tracking-normal flex-shrink-0 pc-acciones-chip rounded-lg px-2.5 py-1">
                   <%= if nodo.id do %>
@@ -2659,13 +2999,13 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           </td>
         </tr>
         <%= if expandida? do %>
-          <.filas_arbol nodos={nodo.hijos} nivel={@nivel + 1} carpetas_expandidas={@carpetas_expandidas} ruta_padre={ruta} seleccionados={@seleccionados} />
+          <.filas_arbol nodos={nodo.hijos} nivel={@nivel + 1} carpetas_expandidas={@carpetas_expandidas} ruta_padre={ruta} seleccionados={@seleccionados} ids_con_detalle={@ids_con_detalle} listos={@listos} />
         <% end %>
       <% else %>
         <tr class="hover:bg-gray-50 transition-colors">
           <td class="px-4 py-2.5">
             <input
-              :if={nodo.puede_desplegar == true}
+              :if={Map.get(@listos, nodo.id) == true}
               type="checkbox"
               checked={MapSet.member?(@seleccionados, nodo.id)}
               phx-click="toggle_seleccion"
@@ -2680,6 +3020,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                   <%= cond do %>
                     <% Map.get(nodo, :icono) not in [nil, ""] -> %>{nodo.icono}
                     <% Map.get(nodo, :es_consulta, false) -> %>search
+                    <% Map.get(nodo, :es_consulta_sql, false) -> %>database
                     <% true -> %>description
                   <% end %>
                 </span>
@@ -2694,8 +3035,15 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
             >
               Consulta
             </span>
+            <span
+              :if={Map.get(nodo, :es_consulta_sql, false)}
+              class="inline-block mr-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-indigo-100 text-indigo-700"
+            >
+              SQL View
+            </span>
             {nodo.label}
           </td>
+          <td class="px-4 py-2.5"></td>
           <td class="px-4 py-2.5 text-gray-600 max-w-[260px]">
             <div class="flex items-center gap-1 min-w-0">
               <span class="truncate" title={nodo.nav}>{nodo.nav}</span>
@@ -2728,7 +3076,24 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
           <td class="px-4 py-2.5">
             <div class="inline-flex flex-wrap items-center gap-2 pc-acciones-chip rounded-lg px-2.5 py-1">
               <.link
-                :if={not Map.get(nodo, :es_consulta, false)}
+                :if={Map.get(nodo, :es_consulta_sql, false)}
+                navigate={~p"/sysadmin/bc-list/#{nodo.id}/consulta-sql"}
+                class="text-blue-600 hover:text-blue-800 text-xs font-semibold"
+              >
+                Editar
+              </.link>
+              <button
+                :if={Map.get(nodo, :es_consulta_sql, false)}
+                type="button"
+                phx-click="pedir_eliminar_sql_view"
+                phx-value-nombre={nodo.id}
+                phx-value-label={nodo.label}
+                class="text-red-600 hover:text-red-800 text-xs font-semibold"
+              >
+                Eliminar
+              </button>
+              <.link
+                :if={not Map.get(nodo, :es_consulta, false) and not Map.get(nodo, :es_consulta_sql, false)}
                 navigate={~p"/sysadmin/bc-list/#{nodo.id}/motor"}
                 class="text-blue-600 hover:text-blue-800 text-xs font-semibold"
               >
@@ -2742,7 +3107,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                 Editar
               </.link>
               <button
-                :if={puede_copiar?(nodo)}
+                :if={puede_copiar?(nodo, @ids_con_detalle)}
                 type="button"
                 phx-click="abrir_copiar"
                 phx-value-tabla={nodo.id}
@@ -2761,7 +3126,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLive do
                 Eliminar
               </button>
               <button
-                :if={not Map.get(nodo, :es_consulta, false)}
+                :if={not Map.get(nodo, :es_consulta, false) and not Map.get(nodo, :es_consulta_sql, false)}
                 type="button"
                 phx-click="pedir_eliminar"
                 phx-value-tabla={nodo.id}

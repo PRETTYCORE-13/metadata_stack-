@@ -207,6 +207,10 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   # in: nil"), tumbando la pantalla entera. Ahora se degrada a un aviso
   # (ver render/1) en vez de crashear -- no se intenta reparar el dato
   # solo, es un caso real que el admin tiene que revisar a mano.
+  # Una Consulta SQL (tipo 4) no tiene catálogo base: se acota por las
+  # columnas de control que entregue su SQL (ver render/1).
+  defp catalogo_base_de_consulta(%{es_consulta_sql: true}), do: nil
+
   defp catalogo_base_de_consulta(%{es_consulta: true, id: header_id}) do
     case MetaConsultas.obtener_por_header_id(header_id) do
       nil ->
@@ -350,7 +354,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
 
   def handle_event("cambiar_alcance_tipo", _params, socket), do: {:noreply, socket}
 
-  # Relocado acá desde BcMotorLive/Get View (2026-08-12, ajuste UI:
+  # Relocado acá desde BcMotorLive/Lista (2026-08-12, ajuste UI:
   # "revuelve mucho" tener el on/off en una pestaña y la config por rol en
   # otra — ahora activar/desactivar y `panel_alcance_de_rol` viven juntos).
   # Apagar solo pisa el flag (nunca borra columnas físicas ni filas de
@@ -397,7 +401,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     roles =
       case socket.assigns.modo do
         :todos ->
-          # Mismo motivo que en RolesLive: los 10 roles "acceso_sysadmin_*"
+          # Mismo motivo que en RolesLive: los roles "acceso_sysadmin_*"
           # son ruido para cualquiera que esté configurando permisos de UN
           # catálogo de negocio -- ocultos por default, solo super_admin
           # los puede traer con el checkbox. Modo :por_usuario abajo NO se
@@ -556,7 +560,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
               </button>
             </li>
             <li class="hidden only:block px-3 py-2 text-xs text-gray-400">
-              {if @busqueda_catalogo_picker == "", do: "No hay catálogos con permisos configurables.", else: "Sin resultados."}
+              {if @busqueda_catalogo_picker == "", do: "No hay catálogos.", else: "Sin resultados."}
             </li>
           </ul>
         </div>
@@ -653,7 +657,14 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
 
       <div :if={@catalogo && @catalogo.es_consulta} class="mt-6 rounded-xl border border-gray-200 p-4 bg-gray-50">
         <h2 class="text-xs font-bold text-gray-700 uppercase tracking-wide">Alcance de datos</h2>
-        <%= if @catalogo_base_de_consulta do %>
+        <%= cond do %>
+          <% Map.get(@catalogo, :es_consulta_sql, false) -> %>
+          <p id="alcance-sql-view" class="text-[11px] text-gray-500 mt-0.5 max-w-2xl">
+            Una SQL View no tiene Alcance de Datos propio: se acota automáticamente por las columnas
+            <code class="font-mono">branch_id</code>, <code class="font-mono">sales_unit_id</code> e
+            <code class="font-mono">inventory_id</code> que entregue su SQL (el administrador ve todo). Revisa qué columnas entrega en su tab Configuración.
+          </p>
+          <% @catalogo_base_de_consulta -> %>
           <p class="text-[11px] text-gray-500 mt-0.5 max-w-2xl">
             Una Consulta no tiene Alcance de Datos propio — sigue el de su catálogo base,
             <span class="font-semibold">{@catalogo_base_de_consulta.label}</span>
@@ -667,10 +678,10 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
             <% end %>
             Para cambiarlo, ir a Permisos del catálogo base.
           </p>
-        <% else %>
+          <% true -> %>
           <p class="text-[11px] text-red-600 mt-0.5 max-w-2xl">
             Esta Consulta no tiene su configuración armada (falta la fila en
-            <code class="font-mono">meta_schema_consulta</code>) — no se puede resolver su catálogo base ni su Alcance de Datos. Revisala desde BC Motor antes de seguir configurando sus permisos.
+            <code class="font-mono">meta_schema_consulta</code>) — no se puede resolver su catálogo base ni su Alcance de Datos. Revísala desde BC Motor antes de seguir configurando sus permisos.
           </p>
         <% end %>
       </div>
@@ -710,7 +721,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   # NO otra columna de la matriz de arriba, a propósito: es un concepto
   # distinto (QUÉ FILAS, no QUÉ ACCIONES). Solo aparece si el catálogo ya
   # activó alcance_habilitado (toggle arriba, relocado 2026-08-12 desde
-  # BcMotorLive/Get View), la mayoría de los catálogos hoy no lo tiene prendido.
+  # BcMotorLive/Lista), la mayoría de los catálogos hoy no lo tiene prendido.
   # `roles` acá es @roles_con_permiso (cargar_matriz/1), no @roles -- un rol
   # sin ningún permiso/transición concedida en este catálogo no tiene nada
   # que configurar todavía, a pedido explícito para no saturar esta lista.
@@ -752,7 +763,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
             </td>
           </tr>
           <tr :if={@roles == []}>
-            <td colspan="2" class="px-4 py-6 text-center text-sm text-gray-400">Ningún rol tiene permisos en este catálogo todavía — configuralos arriba primero.</td>
+            <td colspan="2" class="px-4 py-6 text-center text-sm text-gray-400">Ningún rol tiene permisos en este catálogo todavía — configúralos arriba primero.</td>
           </tr>
         </tbody>
       </table>

@@ -9,7 +9,7 @@ defmodule Mix.Tasks.Motor.Despublicar do
   Uso: mix motor.despublicar --sistema=<sistema> <catalogo>
 
   `--sistema=` obligatorio, sin default, mismo criterio que
-  `mix motor.publicar` (SPEC-SYS-0309202601, R5/R10) — se valida con
+  `mix motor.publicar` (SPEC-ARQ-0309202601, R5/R10) — se valida con
   `MetadataApp.MotorAlta.publicable?/1` antes de tocar nada: un cliente
   real de `priv/sistemas.json`, o `"unstable"` (nunca
   `"testing"`/`"stable"`).
@@ -21,12 +21,12 @@ defmodule Mix.Tasks.Motor.Despublicar do
   su migración de DROP) ni por `mix motor.publicar` (exige que el catálogo
   SÍ exista para armar el paquete).
 
-  Reutiliza `MetaPublicador.armar_bundle/1` tal cual: como el `.ex`, el
-  `.meta.json`/`.motor.json` y la carpeta de reglas del catálogo ya no
-  existen (se borraron junto con la tabla), el único archivo que
-  `rutas_de/1` encuentra es la migración de DROP que `eliminar/4` dejó en
-  `priv/repo/migrations/` -- el bundle queda armado solo con eso, sin
-  código nuevo de empaquetado.
+  Reutiliza `MetaPublicador.armar_bundle/2`, filtrado a las migraciones
+  de borrado (`*_eliminar_<catalogo>_*`): el bundle lleva solo eso. Antes
+  se confiaba en que el `.ex`, el `.meta.json`, etc. ya no existieran en
+  la máquina, pero si alguna copia local quedaba, viajaba en el bundle y
+  el import de cada arranque recreaba el catálogo (encontrado real,
+  2026-10-05, con pty_carpeta_gimnasio).
 
   Ese bundle reemplaza (`--clobber`) el Release `bc-<catalogo>` que dejó
   la publicación original -- CRÍTICO: `ci.yml` restaura TODOS los
@@ -70,7 +70,7 @@ defmodule Mix.Tasks.Motor.Despublicar do
     if existe? do
       Mix.raise(
         "\"#{catalogo}\" todavía existe en esta base -- despublicar es para un catálogo YA " <>
-          "borrado local (BC List → Eliminar). Para publicar uno que SÍ existe, usá \"mix motor.publicar\"."
+          "borrado local (BC List → Eliminar). Para publicar uno que SÍ existe, usa \"mix motor.publicar\"."
       )
     end
 
@@ -90,7 +90,12 @@ defmodule Mix.Tasks.Motor.Despublicar do
   end
 
   defp armar_y_desplegar(sistema, catalogo) do
-    case MetaPublicador.armar_bundle([catalogo]) do
+    # Solo las migraciones de borrado: cualquier otro archivo del catálogo
+    # que siga en esta máquina (.meta.json, plantillas, .ex) lo volvería a
+    # crear en el siguiente arranque del destino.
+    solo_borrado = &(String.starts_with?(&1, "priv/repo/migrations/") and &1 =~ "_eliminar_#{catalogo}_")
+
+    case MetaPublicador.armar_bundle([catalogo], incluir: solo_borrado) do
       {:error, mensaje} ->
         Mix.raise(mensaje)
 
@@ -109,7 +114,7 @@ defmodule Mix.Tasks.Motor.Despublicar do
             case MetaPublicador.disparar_deploy(sistema, [catalogo], bundle_path) do
               {:ok, salida} ->
                 Mix.shell().info(salida)
-                Mix.shell().info("Disparado — el borrado de #{catalogo} va camino a \"#{sistema}\". Seguí con \"gh run list\" / \"gh run watch\".")
+                Mix.shell().info("Disparado — el borrado de #{catalogo} va camino a \"#{sistema}\". Sigue con \"gh run list\" / \"gh run watch\".")
 
               {:error, mensaje} ->
                 Mix.raise(mensaje)

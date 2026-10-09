@@ -25,6 +25,8 @@ defmodule MetadataApp.ConsultaEndpoints do
   alias MetadataApp.MetaSchema.ConsultaEndpointCredencial
   alias MetadataApp.MetaSchema.ConsultaEndpointJob
   alias MetadataApp.MetaConsultas
+  alias MetadataApp.ConsultasSql
+  alias MetadataApp.MetaSchema.ConsultaSql
   alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.MetaPublicador
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
@@ -34,11 +36,26 @@ defmodule MetadataApp.ConsultaEndpoints do
     Repo.get_by(ConsultaEndpoint, meta_schema_consulta_id: consulta_id)
   end
 
+  @doc "Endpoint de un Servicio (SPEC-SYS-2509202601 §11.6), o `nil`."
+  def obtener_por_servicio(consulta_sql_id) do
+    Repo.get_by(ConsultaEndpoint, meta_schema_consulta_sql_id: consulta_sql_id)
+  end
+
+  # Origen de un endpoint: su Consulta interna o el Servicio del que
+  # cuelga. Las dos llegan con su Header precargado.
+  @precarga_origen [consulta: :header, consulta_sql: :header]
+
+  @doc "¿El endpoint cuelga de un Servicio y no de una Consulta?"
+  def de_servicio?(%ConsultaEndpoint{meta_schema_consulta_sql_id: id}), do: not is_nil(id)
+
+  @doc "Nombre técnico de la Consulta interna o del Servicio del que cuelga (con `@precarga_origen`)."
+  def nombre_de_origen(%ConsultaEndpoint{} = endpoint), do: header_de_origen(endpoint).schema_context_name
+
   @doc "Todos los endpoints (cualquier estado), más recientes primero -- para la sección Endpoints (2026-09-14), no depende de pasar por BC List/una Consulta puntual."
   def listar_todos do
     from(e in ConsultaEndpoint, where: is_nil(e.delete_guid), order_by: [desc: e.inserted_at])
     |> Repo.all()
-    |> Repo.preload(consulta: :header)
+    |> Repo.preload(@precarga_origen)
   end
 
   @doc """
@@ -51,8 +68,17 @@ defmodule MetadataApp.ConsultaEndpoints do
   (SPEC-SYS-1009202602, ver requirements.md).
   """
   def eliminar(%ConsultaEndpoint{} = endpoint) do
-    endpoint = Repo.preload(endpoint, consulta: :header)
-    MetaSchemaContext.eliminar_header(endpoint.consulta.header)
+    if de_servicio?(endpoint) do
+      # El Servicio existe por su cuenta (no es una Consulta interna del
+      # endpoint): solo se borra el endpoint, y sus credenciales en cascada.
+      case Repo.delete(endpoint) do
+        {:ok, _} -> :ok
+        {:error, changeset} -> {:error, changeset}
+      end
+    else
+      endpoint = Repo.preload(endpoint, consulta: :header)
+      MetaSchemaContext.eliminar_header(endpoint.consulta.header)
+    end
   end
 
   @doc "Solo un endpoint con estado \"publicado\" y sin baja lógica (R24) -- ya trae la Consulta precargada, el controller siempre necesita las dos."
@@ -61,11 +87,28 @@ defmodule MetadataApp.ConsultaEndpoints do
       where: e.metodo == ^metodo and e.ruta == ^ruta and e.estado == "publicado" and is_nil(e.delete_guid)
     )
     |> Repo.one()
+    |> Kernel.||(servicio_publicado_con_otro_metodo(metodo, ruta))
     |> case do
       nil -> nil
-      endpoint -> Repo.preload(endpoint, :consulta)
+      endpoint -> Repo.preload(endpoint, @precarga_origen)
     end
   end
+
+  # R50 (SPEC-SYS-2509202601 §11.4): un endpoint de Servicio responde por
+  # GET y por POST sin importar cuál se configuró. Solo entra si no hubo
+  # coincidencia exacta de método, así que un endpoint de Consulta con la
+  # misma ruta y el otro método conserva su lugar.
+  defp servicio_publicado_con_otro_metodo(metodo, ruta) when metodo in ["get", "post"] do
+    from(e in ConsultaEndpoint,
+      where:
+        e.ruta == ^ruta and e.estado == "publicado" and is_nil(e.delete_guid) and
+          not is_nil(e.meta_schema_consulta_sql_id),
+      limit: 1
+    )
+    |> Repo.one()
+  end
+
+  defp servicio_publicado_con_otro_metodo(_metodo, _ruta), do: nil
 
   @doc """
   Igual que `obtener_publicado/2` pero SIN filtrar por método -- los
@@ -81,7 +124,7 @@ defmodule MetadataApp.ConsultaEndpoints do
     |> Repo.one()
     |> case do
       nil -> nil
-      endpoint -> Repo.preload(endpoint, :consulta)
+      endpoint -> Repo.preload(endpoint, @precarga_origen)
     end
   end
 
@@ -91,6 +134,22 @@ defmodule MetadataApp.ConsultaEndpoints do
   cambian tras la primera vez que se guarda, aunque `attrs` los
   incluya (se ignoran en una actualización).
   """
+  def crear_o_actualizar(%ConsultaSql{} = servicio, attrs) do
+    case obtener_por_servicio(servicio.id) do
+      nil ->
+        %ConsultaEndpoint{}
+        |> ConsultaEndpoint.changeset(Map.put(attrs, "meta_schema_consulta_sql_id", servicio.id), servicio)
+        |> Ecto.Changeset.change(insert_guid: generar_guid())
+        |> Repo.insert()
+
+      existente ->
+        existente
+        |> ConsultaEndpoint.changeset(Map.drop(attrs, ["empresa_id", "meta_schema_consulta_sql_id", "meta_schema_consulta_id"]), servicio)
+        |> Ecto.Changeset.change(update_guid: generar_guid())
+        |> Repo.update()
+    end
+  end
+
   def crear_o_actualizar(consulta, attrs) do
     case obtener_por_consulta(consulta.id) do
       nil -> crear(consulta, attrs)
@@ -140,7 +199,38 @@ defmodule MetadataApp.ConsultaEndpoints do
   y el Endpoint nunca se creaba ("consulta no encontrada", visto real
   en el log de `bc-deploy.yml`).
   """
-  def exportar_endpoint(%ConsultaEndpoint{} = endpoint, dir \\ "priv/repo/catalogos") do
+  def exportar_endpoint(endpoint, dir \\ "priv/repo/catalogos")
+
+  # Endpoint de un Servicio: solo su config y el nombre del Servicio. El
+  # Servicio viaja por su cuenta (header + definición + migración de la
+  # función); `"servicio" => true` le dice a `importar_endpoint/1` que lo
+  # busque como Consulta SQL y no arme una Consulta interna.
+  def exportar_endpoint(%ConsultaEndpoint{meta_schema_consulta_sql_id: id} = endpoint, dir) when not is_nil(id) do
+    File.mkdir_p!(dir)
+    endpoint = Repo.preload(endpoint, consulta_sql: :header)
+    empresa = Repo.get!(Empresa, endpoint.empresa_id)
+    nombre = endpoint.consulta_sql.header.schema_context_name
+
+    contenido =
+      Jason.encode!(
+        %{
+          catalogo: nombre,
+          servicio: true,
+          nombre: endpoint.nombre,
+          metodo: endpoint.metodo,
+          ruta: endpoint.ruta,
+          descripcion: endpoint.descripcion,
+          estado: endpoint.estado,
+          empresa_nombre: empresa.nombre
+        },
+        pretty: true
+      )
+
+    File.write!(Path.join(dir, "#{nombre}.endpoint.json"), contenido)
+    nombre
+  end
+
+  def exportar_endpoint(%ConsultaEndpoint{} = endpoint, dir) do
     File.mkdir_p!(dir)
     endpoint = Repo.preload(endpoint, consulta: :header)
     empresa = Repo.get!(Empresa, endpoint.empresa_id)
@@ -174,6 +264,19 @@ defmodule MetadataApp.ConsultaEndpoints do
   end
 
   @doc """
+  ¿`archivo` (en `dir`) es la marca de baja `{"eliminado": true}` que deja
+  `mix endpoint.despublicar`? Ninguna exportación debe pisarla ni borrarla:
+  es el registro de una baja ya publicada, y quitarla la desharía en el
+  siguiente deploy.
+  """
+  def marca_de_baja?(dir, archivo) do
+    case dir |> Path.join(archivo) |> File.read() do
+      {:ok, contenido} -> match?({:ok, %{"eliminado" => true}}, Jason.decode(contenido))
+      {:error, _} -> false
+    end
+  end
+
+  @doc """
   Publica este Endpoint a `sistema` SIN pasar por la terminal
   (SPEC-SYS-1009202602, design.md §15, R73) -- llama `MetaPublicador`
   directo, nunca `Mix.Task.rerun` (ese asume una terminal real,
@@ -189,15 +292,21 @@ defmodule MetadataApp.ConsultaEndpoints do
   `{:ok, salida}` | `{:error, mensaje}`.
   """
   def publicar_a_ambiente(%ConsultaEndpoint{} = endpoint, sistema) do
-    endpoint = Repo.preload(endpoint, consulta: :header)
-    nombre = endpoint.consulta.header.schema_context_name
+    endpoint = Repo.preload(endpoint, @precarga_origen)
+    header = header_de_origen(endpoint)
 
-    MetaSchemaContext.exportar_header(endpoint.consulta.header)
-    MetaEstadosAdmin.exportar_header(endpoint.consulta.header)
+    # Para un Servicio, exportar_header/1 ya incluye su definición
+    # (ConsultasSql.exportar_definicion/1) y el bundle lleva la migración
+    # de su función (`*_funcion_<nombre>_*`), igual que una SQL View.
+    MetaSchemaContext.exportar_header(header)
+    unless de_servicio?(endpoint), do: MetaEstadosAdmin.exportar_header(header)
     exportar_endpoint(endpoint)
 
-    armar_subir_y_desplegar(sistema, nombre)
+    armar_subir_y_desplegar(sistema, header.schema_context_name)
   end
+
+  defp header_de_origen(%ConsultaEndpoint{consulta_sql: %ConsultaSql{header: header}}) when not is_nil(header), do: header
+  defp header_de_origen(%ConsultaEndpoint{consulta: consulta}), do: consulta.header
 
   @doc """
   Quita este Endpoint de `sistema` SIN tocarlo local (R74) -- a
@@ -217,12 +326,12 @@ defmodule MetadataApp.ConsultaEndpoints do
   `{:ok, salida}` | `{:error, mensaje}`.
   """
   def despublicar_de_ambiente(%ConsultaEndpoint{} = endpoint, sistema) do
-    endpoint = Repo.preload(endpoint, consulta: :header)
-    nombre = endpoint.consulta.header.schema_context_name
+    endpoint = Repo.preload(endpoint, @precarga_origen)
+    nombre = header_de_origen(endpoint).schema_context_name
     dir = "priv/repo/catalogos"
     File.mkdir_p!(dir)
 
-    tombstone = Jason.encode!(%{catalogo: nombre, eliminado: true}, pretty: true)
+    tombstone = Jason.encode!(%{catalogo: nombre, eliminado: true, servicio: de_servicio?(endpoint)}, pretty: true)
     File.write!(Path.join(dir, "#{nombre}.endpoint.json"), tombstone)
 
     resultado = armar_subir_y_desplegar(sistema, nombre)
@@ -242,13 +351,22 @@ defmodule MetadataApp.ConsultaEndpoints do
 
   @doc """
   Ejecuta la Consulta con el `scope` REAL de quien está probando (el
-  admin logueado en Get Config/editor de Consulta) -- nunca con una
+  admin logueado en Lista/editor de Consulta) -- nunca con una
   credencial ni acotado por `campos_permitidos` (eso solo aplica a una
   llamada externa real, R43). No exige que el endpoint esté publicado
   (R28) ni siquiera que exista todavía guardado -- por eso no recibe
   `endpoint`, solo lo que hace falta para ejecutar.
   """
-  def probar(consulta, scope, overrides_parametro \\ %{}) do
+  def probar(origen, scope, valores \\ %{})
+
+  # Servicio: `valores` son los parámetros de la llamada (R52), con el
+  # alcance real de quien prueba, igual que una Consulta.
+  def probar(%ConsultaSql{} = servicio, scope, valores) do
+    servicio = Repo.preload(servicio, :header)
+    ConsultasSql.ejecutar_servicio(servicio.header.schema_context_name, valores, scope)
+  end
+
+  def probar(consulta, scope, overrides_parametro) do
     MetaConsultas.ejecutar(consulta, scope, %{}, [], nil, overrides_parametro)
   end
 
@@ -508,7 +626,7 @@ defmodule MetadataApp.ConsultaEndpoints do
   end
 
   @doc """
-  R62-R64 (agregado 2026-09-14, revisado en el mismo día -- "regresalo
+  R62-R64 (agregado 2026-09-14, revisado en el mismo día -- "regrésalo
   como estaba por descripción"): cualquier campo tipo "referencia" en
   `attrs` (según el contrato real de `catalogo`, vía `meta_schema_detail`)
   se interpreta como el valor de su campo "acompañamiento" (ej.
@@ -682,6 +800,10 @@ defmodule MetadataApp.ConsultaEndpoints do
     {:ok, actualizado} = job |> ConsultaEndpointJob.changeset(attrs) |> Repo.update()
     actualizado
   end
+
+  # Servicio: sus columnas de salida (R38) son lo que una credencial puede
+  # recibir; `campos_permitidos` se valida contra ellas.
+  defp claves_visibles(%ConsultaSql{columnas: columnas}), do: Enum.map(columnas, & &1["nombre"])
 
   defp claves_visibles(consulta) do
     consulta.campos

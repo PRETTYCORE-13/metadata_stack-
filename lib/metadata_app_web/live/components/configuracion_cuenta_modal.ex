@@ -258,7 +258,7 @@ defmodule MetadataAppWeb.ConfiguracionCuentaModal do
               <.input
                 field={@alias_form[:alias]}
                 type="text"
-                placeholder="Cómo querés que te muestre la barra superior"
+                placeholder="Cómo quieres que te muestre la barra superior"
                 maxlength="40"
                 class={@campo_class}
               />
@@ -325,7 +325,7 @@ defmodule MetadataAppWeb.ConfiguracionCuentaModal do
               </.form>
           <% else %>
               <div class="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg p-3">
-                Para cambiar tu email o contraseña necesitás volver a iniciar sesión (por seguridad).
+                Para cambiar tu email o contraseña necesitas volver a iniciar sesión (por seguridad).
                 <.link href="/meta_schema_usuario/log-out" method="delete" class="text-purple-600 hover:text-purple-800 font-medium">
                   Cerrar sesión
                 </.link>

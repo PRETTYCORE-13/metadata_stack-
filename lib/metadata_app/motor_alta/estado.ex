@@ -1,6 +1,6 @@
 defmodule MetadataApp.MotorAlta.Estado do
   @moduledoc """
-  `mix motor.estado_extension` (SPEC-SYS-1809202603 R4-R5) -- qué imagen
+  `mix motor.estado_extension` (SPEC-ARQ-1809202603 R4-R5) -- qué imagen
   corre AHORA MISMO en los 3 canales (`MotorAlta.canales/0`) y en cada
   cliente de `priv/sistemas.json`, consultados en una sola corrida.
 

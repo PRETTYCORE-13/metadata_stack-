@@ -8,11 +8,18 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :schema_context_type, :integer, default: 1
     field :schema_context_nav, :string
     field :schema_context_icono, :string
+
+    # Prefijo de directorio (SPEC-SYS-2909202601): abreviatura de una
+    # carpeta (tipo 2), 1 a 5 letras/dígitos en mayúsculas, ej. "CH" para
+    # Capital Humano. No confundir con el prefijo propio de un BC (otro
+    # atributo, otra spec). Único entre headers vivos (índice parcial
+    # meta_schema_header_prefijo_directorio_unico_index).
+    field :prefijo_directorio, :string
     field :schema_visible, :boolean
     field :schema_set_permissions, :map
     field :schema_profiles, :map
 
-    # Get View → Filtros (bc_motor_live.ex): si está en true, la tabla del
+    # Lista → Filtros (bc_motor_live.ex): si está en true, la tabla del
     # catálogo (CatalogoLive) trae TODOS los registros y columnas apenas
     # se abre, sin esperar que el usuario final aplique un filtro/búsqueda
     # primero — ver datos_solicitados?/1 en catalogo_live.ex. El usuario
@@ -20,7 +27,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # esto solo cambia el estado inicial.
     field :cargar_todos_por_default, :boolean, default: false
 
-    # "Filtros por default" (Get Config → filtraba directo sobre la
+    # "Filtros por default" (Lista → filtraba directo sobre la
     # columna real "fecha_registro" del catálogo) existió acá hasta
     # 2026-09-11 (SPEC-SYS-1109202606 §5) y se eliminó a pedido
     # explícito del usuario: ningún catálogo real lo tenía configurado,
@@ -45,7 +52,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # transaccional no necesariamente necesita folio.
     field :requiere_folio, :boolean, default: false
 
-    # Get View → columnas ESTRUCTURALES (bc_motor_live.ex, 2026-08-06) — a
+    # Lista → columnas ESTRUCTURALES (bc_motor_live.ex, 2026-08-06) — a
     # diferencia de cargar_todos_por_default (qué filas trae), esto es
     # qué COLUMNAS de sistema muestra CatalogoLive:
     # ID siempre existía sin ningún gate, Estado/TRN ya se ocultaban solos
@@ -72,7 +79,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # MetadataApp.Permissions.alcance_tipo_efectivo/2.
     field :alcance_habilitado, :boolean, default: false
 
-    # Get View → columnas de Alcance de Datos (2026-08-12) -- mismo
+    # Lista → columnas de Alcance de Datos (2026-08-12) -- mismo
     # criterio que mostrar_id_en_tabla/mostrar_estado_en_tabla arriba,
     # pero estas 4 SOLO tienen sentido (y CatalogoLive las hace AND con
     # alcance_habilitado antes de mostrarlas) cuando el catálogo activó
@@ -85,23 +92,23 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     field :mostrar_inventory_location_en_tabla, :boolean, default: true
     field :mostrar_sales_unit_en_tabla, :boolean, default: true
 
-    # "Creado por" (Get View → Campos de Control) — no es columna física
+    # "Creado por" (Lista → Campos de Control) — no es columna física
     # propia, se resuelve contra meta_schema_auditoria (bc + entidad_id,
     # operacion "alta"; el maestro cuando el catálogo es detalle), mismo
     # criterio que "Empresa" arriba (tampoco es columna propia).
     field :mostrar_creado_por_en_tabla, :boolean, default: false
 
-    # Get View unificado (Campos de Control + Campos de negocio en una
-    # sola grilla arrastrable) — orden combinado de claves: nombres de
+    # Lista unificada (Campos de Control + Campos de negocio en una
+    # sola tabla arrastrable) — orden combinado de claves: nombres de
     # campo real (schema_context_field) y claves fijas de control ("id",
     # "estado", "trn", "empresa", "branch", "inventory_location",
     # "sales_unit", "creado_por"). [] = nunca configurado, CatalogoLive
     # cae al orden de siempre. No reemplaza el "orden" propio de cada
     # campo (schema_context_properties, usado por la pestaña Campos/Ficha/
-    # contrato de API) — es aparte, específico de esta grilla.
+    # contrato de API) — es aparte, específico de esta tabla.
     field :orden_columnas_tabla, {:array, :string}, default: []
 
-    # "Orden de resultados" del Get Config (BC Motor, 2026-09-02) -- mismo
+    # "Orden de resultados" de la Lista (BC Motor, 2026-09-02) -- mismo
     # concepto que Consulta.orden_por (ver meta_schema/consulta.ex), pero
     # sin "catalogo": un BC normal es una sola tabla, no hace falta
     # desambiguar. [%{"campo" =>, "direccion" => "asc"|"desc"}, ...],
@@ -112,6 +119,16 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
     # control (id/estado/trn/...) por ahora -- alcance explícito, no todos
     # tienen una columna física con el mismo nombre que su clave lógica.
     field :orden_resultados, {:array, :map}, default: []
+
+    # "Llave de identificación" de la Ficha 360° (BC Motor, 2026-09-25) --
+    # hasta 3 campos de negocio elegidos a mano, mostrados junto al título
+    # ("Catálogo de productos #69 · Arroz Morelos 1kg · Paq") para poder
+    # reconocer un registro más allá del id interno -- se ve solo el
+    # VALOR, nunca el nombre del campo. [] = sin configurar, no se
+    # muestra nada (a pedido explícito -- se probó un fallback automático
+    # al índice único de negocio y se descartó). Orden = orden de
+    # aparición, mismo criterio que orden_resultados.
+    field :campos_llave_ficha, {:array, :string}, default: []
 
     # Catálogo Maestro-Detalle (ver docs/catalogo-maestro-detalle-requerimientos.md,
     # R1/R16) — no nulo implica "este catálogo es detalle de otro". No se
@@ -150,6 +167,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
       @requeridos ++
         [
           :schema_context_icono,
+          :prefijo_directorio,
           :schema_set_permissions,
           :schema_profiles,
           :schema_es_transaccional,
@@ -169,19 +187,29 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchema.Header do
           :mostrar_sales_unit_en_tabla,
           :mostrar_creado_por_en_tabla,
           :orden_columnas_tabla,
-          :orden_resultados
+          :orden_resultados,
+          :campos_llave_ficha
         ]
     )
     |> validate_required(@requeridos)
+    |> validate_length(:campos_llave_ficha, max: 3, message: "no puede tener más de 3 campos")
     |> update_change(:codigo_trn, &nil_si_vacio_o_mayusculas/1)
     |> validar_codigo_trn()
+    |> update_change(:prefijo_directorio, &nil_si_vacio_o_mayusculas/1)
+    |> validate_format(:prefijo_directorio, ~r/^[A-Z0-9]{1,5}$/,
+      message: "debe tener de 1 a 5 letras/dígitos, sin espacios ni acentos (ej. CH)"
+    )
     |> validar_requiere_folio()
     |> validar_encabezado()
     |> unique_constraint(:schema_context_name,
       name: :meta_schema_header_schema_context_name_unico_index,
-      message: "ya existe un catálogo con este nombre — elegí otro"
+      message: "ya existe un catálogo con este nombre — elige otro"
     )
     |> unique_constraint(:codigo_trn, name: :meta_schema_header_codigo_trn_unico_index)
+    |> unique_constraint(:prefijo_directorio,
+      name: :meta_schema_header_prefijo_directorio_unico_index,
+      message: "ya lo usa otra carpeta — elige otro"
+    )
   end
 
   defp nil_si_vacio_o_mayusculas(nil), do: nil

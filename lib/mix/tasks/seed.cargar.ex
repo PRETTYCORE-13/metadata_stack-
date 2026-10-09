@@ -84,7 +84,7 @@ defmodule Mix.Tasks.Seed.Cargar do
         {:error, :ciclo, involucrados} ->
           {:error,
            "Ciclo real de dependencias entre: #{Enum.join(involucrados, ", ")} -- no hay un orden " <>
-             "automático posible (cargá por nombre explícito, en el orden que elijas)."}
+             "automático posible (carga por nombre explícito, en el orden que elijas)."}
       end
     end
   end

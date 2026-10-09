@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # SPEC-ARQ-3009202601 (design §6.1): "Purgar en unstable" reconstruye
+  # unstable a mano después de retirar un artefacto, para que la imagen
+  # nueva ya no lo traiga (gh workflow run ci.yml --ref main).
+  workflow_dispatch:
 
 env:
   ELIXIR_VERSION: "1.18.4"
@@ -105,7 +109,7 @@ jobs:
   # el) y la publica en GitHub Container Registry.
   build-image:
     needs: validate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -149,7 +153,7 @@ jobs:
           repo="${repo%[-._]}"
           echo "IMAGE_NAME=$repo" >> "$GITHUB_ENV"
 
-      # SPEC-SYS-1809202603 R11: hash corto + fecha del commit, para
+      # SPEC-ARQ-1809202603 R11: hash corto + fecha del commit, para
       # mostrar la versión en el pie de página de la app (cualquier
       # usuario, sin necesitar acceso a plataforma). Sobre el checkout
       # que este job ya tiene -- funciona con el shallow clone (depth=1)
@@ -193,7 +197,7 @@ jobs:
   # real 2026-08-28, "Actualizar ... en Docker Swarm" fallando en TODAS
   # las corridas recientes).
   #
-  # SPEC-SYS-0309202601 (Grupo E, §3): `metadata-stack-app` se recrea como
+  # SPEC-ARQ-0309202601 (Grupo E, §3): `metadata-stack-app` se recrea como
   # `metadata-unstable`, el primero de tres canales (unstable/testing/
   # stable) -- este job sigue siendo el único 100% automático (cada push a
   # main), y apunta SIEMPRE a unstable; propagar a testing/stable es manual
@@ -203,7 +207,7 @@ jobs:
   # para "elixir" en ese servidor).
   deploy:
     needs: build-image
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:

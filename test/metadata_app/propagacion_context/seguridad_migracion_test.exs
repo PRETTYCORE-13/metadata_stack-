@@ -5,7 +5,7 @@ defmodule MetadataApp.PropagacionContext.SeguridadMigracionTest do
 
   # clasificar/1 es PURO (solo AST, nunca toca una base) -- usamos
   # migraciones REALES del repo como fixtures cuando calzan (mismo
-  # criterio del skill spec: verificar contra la realidad, no inventar
+  # criterio del skill pty-sdd: verificar contra la realidad, no inventar
   # ejemplos sintéticos cuando ya hay uno real que sirve), y archivos
   # temporales chicos para los casos que no tienen un ejemplo real a mano.
 

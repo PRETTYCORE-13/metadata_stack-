@@ -21,6 +21,7 @@ defmodule MetadataApp.MetaImportExport do
   alias MetadataApp.MetaPlantillas
   alias MetadataApp.MetaConsultas
   alias MetadataApp.ConsultaEndpoints
+  alias MetadataApp.Permissions
   alias MetadataApp.Autenticacion.Empresa
   alias MetadataApp.MetaSchema.Consulta
   alias MetadataApp.Repo
@@ -133,7 +134,27 @@ defmodule MetadataApp.MetaImportExport do
     end
   end
 
+  # SQL View (tipo 4, SPEC-SYS-2509202601 R31): además del header, su
+  # definición (uso, SQL, columnas, BC autorizados) viaja en el bloque
+  # "consulta_sql" del .meta.json. La vista en sí la crea su migración
+  # `*_vista_pty_sql_*`, que viaja en el mismo paquete.
   defp importar_contexto(contexto) do
+    mensaje = importar_contexto_base(contexto)
+
+    case contexto do
+      %{"schema_context_type" => 4, "consulta_sql" => datos} when is_map(datos) ->
+        case MetadataApp.ConsultasSql.importar_definicion(contexto["schema_context_name"], datos) do
+          :sin_cambios -> mensaje
+          :creada -> mensaje <> "; definición SQL creada"
+          :actualizada -> mensaje <> "; definición SQL actualizada"
+        end
+
+      _ ->
+        mensaje
+    end
+  end
+
+  defp importar_contexto_base(contexto) do
     nombre = contexto["schema_context_name"]
 
     case MetaSchemaContext.obtener_header_por_nombre(nombre) do
@@ -143,20 +164,37 @@ defmodule MetadataApp.MetaImportExport do
             raise "Error importando #{nombre}: #{mensaje}"
 
           {:ok, contexto} ->
+            {contexto, aviso_prefijo} = separar_prefijo_ocupado(contexto)
+
             case MetaSchemaContext.crear_header_con_detalles(contexto) do
-              {:ok, {_header, _detalles}} -> "+ #{nombre}: creado"
-              {:error, motivo} -> raise "Error importando #{nombre}: #{inspect(motivo)}"
+              {:ok, {_header, _detalles}} ->
+                # Bug real (2026-09-30): "mix motor.publicar" nunca registraba
+                # los permisos del catalogo en el ambiente destino (solo
+                # "mix motor.tepache.importar" lo hacia) -- quedaba invisible
+                # incluso para un administrador (Permissions.can?/3 solo ve
+                # permisos YA REGISTRADOS, nunca es un comodin ciego). Este es
+                # el unico codigo que corre en TODOS los caminos de import
+                # (CI/CD, manual, y el release via rel/overlays/bin/import_meta).
+                Permissions.registrar_permisos_catalogo(nombre)
+                Enum.join(Enum.reject(["+ #{nombre}: creado", aviso_prefijo], &is_nil/1), "; ")
+
+              {:error, motivo} ->
+                raise "Error importando #{nombre}: #{inspect(motivo)}"
             end
         end
 
       existente ->
+        # Idempotente (ver registrar_permisos_catalogo/1) -- corre tambien acá
+        # para que una transicion agregada DESPUÉS de la creación original
+        # (ej. una nueva versión del catálogo ya publicado) quede registrada.
+        Permissions.registrar_permisos_catalogo(nombre)
         cambios =
           Enum.reject(
             [
               if(sincronizar_icono(existente, contexto["schema_context_icono"]), do: "ícono actualizado"),
               if(sincronizar_orden(existente, contexto["orden"]), do: "orden de menú actualizado"),
               if(sincronizar_orden_columnas_tabla(existente, contexto["orden_columnas_tabla"]),
-                do: "orden de columnas (Get Config) actualizado"
+                do: "orden de columnas (Lista) actualizado"
               ),
               if(sincronizar_orden_resultados(existente, contexto["orden_resultados"]),
                 do: "orden de resultados actualizado"
@@ -208,6 +246,8 @@ defmodule MetadataApp.MetaImportExport do
             &is_nil/1
           )
 
+        cambios = cambios_de_directorio(existente, contexto) ++ cambios
+
         case cambios do
           [] -> "= #{nombre}: ya existía, sin cambios"
           cambios -> "~ #{nombre}: ya existía, #{Enum.join(cambios, "; ")}"
@@ -234,6 +274,96 @@ defmodule MetadataApp.MetaImportExport do
     end
   end
 
+  # Directorio (schema_context_type 2, SPEC-SYS-2909202601 R13-R15): viaja
+  # completo -- además de ícono y orden (comunes a todo header, arriba),
+  # su etiqueta, visibilidad y prefijo de directorio. Solo directorios: en
+  # catálogos la etiqueta/visibilidad del header nunca se sincronizó, y
+  # cambiarlo queda fuera de esa spec. La ruta no se toca (no es editable).
+  defp cambios_de_directorio(%{schema_context_type: 2} = existente, contexto) do
+    Enum.reject(
+      [
+        if(sincronizar_campo_header(existente, :schema_context_label, contexto["schema_context_label"]),
+          do: "etiqueta actualizada"
+        ),
+        if(sincronizar_campo_header(existente, :schema_visible, contexto["schema_visible"]),
+          do: "visibilidad actualizada"
+        ),
+        sincronizar_prefijo_directorio(existente, contexto["prefijo_directorio"])
+      ],
+      &is_nil/1
+    )
+  end
+
+  defp cambios_de_directorio(_existente, _contexto), do: []
+
+  # Mismo criterio que sincronizar_icono/2 (nil = el bundle no lo trae, no
+  # se toca), para un campo cualquiera del header.
+  defp sincronizar_campo_header(_header, _campo, nil), do: false
+
+  defp sincronizar_campo_header(header, campo, valor) do
+    if Map.get(header, campo) == valor do
+      false
+    else
+      case MetaSchemaContext.actualizar_header(header, %{campo => valor}) do
+        {:ok, _header} ->
+          true
+
+        {:error, changeset} ->
+          raise "Error sincronizando #{campo} de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+      end
+    end
+  end
+
+  # R14: nil (directorio sin prefijo en el origen) no borra el del destino.
+  # R15: si otro directorio del destino ya lo usa, no se escribe y se
+  # devuelve el aviso -- el resto del directorio sí se aplica. Devuelve el
+  # texto para el mensaje del import, o nil si no hubo nada que hacer.
+  defp sincronizar_prefijo_directorio(_header, nil), do: nil
+
+  defp sincronizar_prefijo_directorio(%{prefijo_directorio: mismo}, mismo), do: nil
+
+  defp sincronizar_prefijo_directorio(header, prefijo_nuevo) do
+    case aviso_prefijo_ocupado(prefijo_nuevo, header.id) do
+      nil ->
+        case MetaSchemaContext.actualizar_header(header, %{"prefijo_directorio" => prefijo_nuevo}) do
+          {:ok, _header} ->
+            "prefijo de directorio actualizado"
+
+          {:error, changeset} ->
+            raise "Error sincronizando prefijo de directorio de #{header.schema_context_name}: #{inspect(changeset.errors)}"
+        end
+
+      aviso ->
+        aviso
+    end
+  end
+
+  # Alta de un directorio (R12) cuyo prefijo ya usa otro directorio del
+  # destino (R15): se crea sin prefijo, y el aviso viaja en el mensaje.
+  defp separar_prefijo_ocupado(%{"schema_context_type" => 2, "prefijo_directorio" => prefijo} = contexto)
+       when is_binary(prefijo) and prefijo != "" do
+    case aviso_prefijo_ocupado(prefijo, nil) do
+      nil -> {contexto, nil}
+      aviso -> {Map.delete(contexto, "prefijo_directorio"), aviso}
+    end
+  end
+
+  defp separar_prefijo_ocupado(contexto), do: {contexto, nil}
+
+  defp aviso_prefijo_ocupado(prefijo, propio_id) do
+    case MetaSchemaContext.obtener_header_por_prefijo_directorio(prefijo) do
+      nil ->
+        nil
+
+      %{id: ^propio_id} ->
+        nil
+
+      otro ->
+        "AVISO: prefijo de directorio \"#{prefijo}\" no aplicado, ya lo usa " <>
+          "\"#{otro.schema_context_label}\" (#{otro.schema_context_name})"
+    end
+  end
+
   # Encontrado real (2026-09-17): "orden" (drag-and-drop manual entre
   # hermanos del árbol, ver Header.orden) nunca viajaba en el .meta.json --
   # exportar_header/2 no lo incluía -- así que un BC ya publicado con orden
@@ -254,7 +384,7 @@ defmodule MetadataApp.MetaImportExport do
   end
 
   # Encontrado real (2026-09-17, mismo barrido que "orden" arriba):
-  # orden_columnas_tabla (orden combinado de la grilla Get Config) y
+  # orden_columnas_tabla (orden combinado de la tabla Lista) y
   # orden_resultados (orden de filas por default) tampoco viajaban en el
   # .meta.json -- exportar_header/2 no los incluía. `nil` (bundle viejo,
   # sin la clave) se ignora; `[]` (el default real del campo, o vaciado a
@@ -307,10 +437,10 @@ defmodule MetadataApp.MetaImportExport do
     end
   end
 
-  # Get View → columnas estructurales (ID/Estado/TRN, 2026-08-06; Empresa/
+  # Lista → columnas estructurales (ID/Estado/TRN, 2026-08-06; Empresa/
   # Sucursal/Almacén/Unidad de venta sumadas 2026-08-13, bug operacional
   # encontrado en vivo: se agregaron esas 4 columnas de Alcance de Datos a
-  # Get View pero se olvidó sumarlas acá -- el bundle nunca las llevaba,
+  # Lista pero se olvidó sumarlas acá -- el bundle nunca las llevaba,
   # así que tras un deploy quedaban en su default `true` (todas visibles)
   # sin importar lo que el admin hubiera configurado) -- mismo criterio
   # que sincronizar_cargar_todos_por_default/2: es puro flag de
@@ -482,8 +612,8 @@ defmodule MetadataApp.MetaImportExport do
 
   # "visible" y "orden" de un campo YA existente (2026-09-17, mismo barrido
   # que orden_columnas_tabla/orden_resultados arriba) -- mismo criterio que
-  # sincronizar_etiquetas_campos/2: presentación pura del Get Config
-  # (columna oculta/visible, posición en la grilla de campos), nunca toca
+  # sincronizar_etiquetas_campos/2: presentación pura de la Lista
+  # (columna oculta/visible, posición en la tabla de campos), nunca toca
   # la columna física. Antes de esto, ocultar o reordenar un campo YA
   # publicado y volver a publicar no se sincronizaba -- solo un campo
   # NUEVO se creaba con su visible/orden correctos (sincronizar_detalles_nuevos/2).
@@ -826,14 +956,14 @@ defmodule MetadataApp.MetaImportExport do
 
   @doc """
   Importa cada `*.plantillas.json` de `dir` -- crea/sincroniza las
-  plantillas del Constructor (Post Config: Vistas + Impresión) de cada
+  plantillas del Constructor (Formulario: Vistas + Impresión) de cada
   catálogo, resolviendo el catálogo por NOMBRE (igual que `importar_motor/1`).
   Idempotente por (nombre, propósito) dentro de cada catálogo -- coincide
   con el criterio que ya usa la propia app (`regenerar_plantilla_automatica/1`
   matchea "Plantilla automática" por nombre).
 
   Encontrado real (2026-09-17): las plantillas custom armadas a mano en el
-  Constructor (Post Config) nunca viajaban al publicar un catálogo -- solo
+  Constructor (Formulario) nunca viajaban al publicar un catálogo -- solo
   la plantilla AUTOMÁTICA se autogeneraba en cada ambiente por separado
   (`CatalogoGenerador.generar/1`), así que un diseño a medida en dev jamás
   llegaba a unstable/producción.
@@ -984,6 +1114,19 @@ defmodule MetadataApp.MetaImportExport do
     error -> "! #{nombre}: #{Exception.message(error)}"
   end
 
+  # Endpoint de un Servicio (SPEC-SYS-2509202601 §11.6): el Servicio ya
+  # llegó por importar_meta/1 (su definición) y su migración `funcion`;
+  # acá solo se crea, actualiza o borra el endpoint que cuelga de él.
+  defp importar_endpoint_datos(%{"catalogo" => nombre, "servicio" => true} = datos) do
+    case MetadataApp.ConsultasSql.obtener_por_catalogo(nombre) do
+      nil ->
+        "- #{nombre}: servicio no encontrado, saltado (¿faltó importar_meta antes?)"
+
+      servicio ->
+        importar_endpoint_de_servicio(nombre, servicio, datos)
+    end
+  end
+
   defp importar_endpoint_datos(%{"catalogo" => nombre, "eliminado" => true}) do
     case MetaConsultas.obtener_por_catalogo(nombre) do
       nil ->
@@ -1022,6 +1165,34 @@ defmodule MetadataApp.MetaImportExport do
               {:ok, _endpoint} -> "+ #{nombre} endpoint: creado"
               {:error, changeset} -> raise "Error importando endpoint de #{nombre}: #{inspect(changeset.errors)}"
             end
+        end
+    end
+  end
+
+  defp importar_endpoint_de_servicio(nombre, servicio, %{"eliminado" => true}) do
+    case ConsultaEndpoints.obtener_por_servicio(servicio.id) do
+      nil ->
+        "= #{nombre} endpoint: ya no existía"
+
+      endpoint ->
+        Repo.delete!(endpoint)
+        "- #{nombre} endpoint: eliminado"
+    end
+  end
+
+  defp importar_endpoint_de_servicio(nombre, servicio, datos) do
+    case resolver_empresa_por_nombre(datos["empresa_nombre"]) do
+      {:error, mensaje} ->
+        "! #{nombre} endpoint: #{mensaje}"
+
+      {:ok, empresa} ->
+        existia? = ConsultaEndpoints.obtener_por_servicio(servicio.id) != nil
+        attrs = datos |> Map.drop(["servicio", "catalogo"]) |> Map.put("empresa_id", empresa.id)
+
+        case ConsultaEndpoints.crear_o_actualizar(servicio, attrs) do
+          {:ok, _endpoint} when existia? -> "~ #{nombre} endpoint: actualizado"
+          {:ok, _endpoint} -> "+ #{nombre} endpoint: creado"
+          {:error, changeset} -> raise "Error importando endpoint de #{nombre}: #{inspect(changeset.errors)}"
         end
     end
   end

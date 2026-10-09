@@ -79,6 +79,8 @@ defmodule MetadataAppWeb.GridEditableComponents do
   defp columna_meta(col) do
     props = col.schema_context_properties
 
+    {decimales, moneda?} = formato_numero(props)
+
     %{
       campo: col.schema_context_field,
       etiqueta: props["etiqueta"],
@@ -87,13 +89,23 @@ defmodule MetadataAppWeb.GridEditableComponents do
       longitud: props["longitud"],
       valores: props["valores"],
       opciones: opciones_columna(col),
-      resumen: resumen_estandar(props["tipo"])
+      resumen: resumen_estandar(props["tipo"]),
+      solo_lectura: Map.get(col, :solo_lectura, false),
+      decimales: decimales,
+      moneda: moneda?
     }
   end
 
+  # Mismo criterio que FichaLive.formatear_numero_columna/2: el formato de
+  # captura "numero"/"moneda" manda; si no, 2 decimales.
+  defp formato_numero(%{"formato_captura" => %{"habilitada" => true, "modo" => modo} = fc}) when modo in ["numero", "moneda"],
+    do: {fc["decimales"] || 2, modo == "moneda"}
+
+  defp formato_numero(_props), do: {2, false}
+
   @doc """
-  Fila de resumen (pie fijo de la grilla, ver `grid/1` + hook `GridEditable`)
-  — estándar fijo para TODAS las grillas de renglones, sin configuración
+  Fila de resumen (pie fijo de la tabla, ver `grid/1` + hook `GridEditable`)
+  — estándar fijo para TODAS las tablas de renglones, sin configuración
   por catálogo: toda columna numérica suma por default; el resto no
   muestra nada por default, pero sí admite "Recuento" (cuántos renglones
   tienen algo cargado ahí) con clic derecho — sumar/promediar/etc no

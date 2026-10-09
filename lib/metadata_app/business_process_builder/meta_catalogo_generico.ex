@@ -122,7 +122,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
 
       def changeset(struct, attrs) do
         struct
-        |> cast(MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.forzar_defaults(attrs, @campos_meta), @campos)
+        |> cast(MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.forzar_defaults(struct, attrs, @campos_meta), @campos)
         |> MetadataApp.BusinessProcessBuilder.MetaSchemaContext.aplicar_campos_calculados(unquote(tabla))
         |> validate_required(@campos_requeridos, message: "no puede quedar vacío")
         |> MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico.aplicar_validaciones(@campos_meta)
@@ -196,6 +196,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
   end
 
   import Ecto.Changeset
+  import Ecto.Query, only: [from: 2]
 
   # "Obligatorio + valor default forzoso" (2026-08-05, a pedido explícito)
   # — regla de negocio a nivel changeset, aparte de la restricción física de
@@ -209,26 +210,129 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
   # ese casteo acá a mano. Un campo opcional que llega vacío se queda
   # vacío -- es una elección legítima de quien carga el dato, no un hueco
   # que forzar a rellenar.
-  def forzar_defaults(attrs, campos_meta) do
-    Enum.reduce(campos_meta, attrs, fn {campo, tipo, opciones}, acc ->
-      aplicar_default_forzoso(acc, campo, tipo, opciones)
-    end)
-  end
+  #
+  # SPEC-SYS-1109202601 R45-R47 (2026-10-08): solo en un alta (el struct
+  # todavía no está en la base). Al editar, un cambio que no trae el campo
+  # lo reemplazaba por el default. Un opcional toma el default solo si la
+  # llave no viene; si viene vacía, se respeta.
+  def forzar_defaults(%Ecto.Changeset{data: struct}, attrs, campos_meta), do: forzar_defaults(struct, attrs, campos_meta)
 
-  defp aplicar_default_forzoso(attrs, campo, tipo, %{opcional: opcional, valor_default: valor_default})
-       when opcional != true and valor_default not in [nil, ""] do
-    if valor_en_blanco?(attrs, campo) do
-      attrs |> Map.delete(campo) |> Map.put(Atom.to_string(campo), resolver_valor_default(tipo, valor_default))
-    else
+  def forzar_defaults(struct, attrs, campos_meta) do
+    if Ecto.get_meta(struct, :state) == :loaded do
       attrs
+    else
+      Enum.reduce(campos_meta, attrs, fn {campo, tipo, opciones}, acc ->
+        aplicar_default(acc, campo, tipo, opciones)
+      end)
     end
   end
 
-  defp aplicar_default_forzoso(attrs, _campo, _tipo, _opciones), do: attrs
+  defp aplicar_default(attrs, campo, tipo, %{valor_default: valor_default} = opciones)
+       when valor_default not in [nil, ""] do
+    aplicar? =
+      if opciones[:opcional] == true,
+        do: not llave_presente?(attrs, campo),
+        else: valor_en_blanco?(attrs, campo)
 
-  defp resolver_valor_default(:date, "hoy"), do: Date.utc_today()
-  defp resolver_valor_default(:time, "ahora"), do: Time.utc_now() |> Time.truncate(:second)
-  defp resolver_valor_default(_tipo, valor), do: valor
+    with true <- aplicar?,
+         {:ok, valor} <- valor_default_vigente(tipo, valor_default, opciones) do
+      poner(attrs, campo, valor)
+    else
+      _ -> attrs
+    end
+  end
+
+  defp aplicar_default(attrs, _campo, _tipo, _opciones), do: attrs
+
+  # R47: el registro default de una referencia se usa solo si sigue existiendo.
+  defp valor_default_vigente(:integer, valor, %{tabla_referenciada: tabla}) when is_binary(tabla) do
+    with {id, ""} <- Integer.parse(to_string(valor)),
+         true <- MetadataApp.Repo.exists?(from(t in tabla, where: field(t, :id) == ^id)) do
+      {:ok, id}
+    else
+      _ -> :sin_default
+    end
+  end
+
+  defp valor_default_vigente(tipo, valor, _opciones), do: {:ok, resolver_valor_default(tipo, valor)}
+
+  @doc """
+  Resuelve las variables de un valor default (R42, R48): `hoy`, `hoy+N`,
+  `hoy-N` (fecha local) y `ahora` (hora local). Cualquier otro valor se
+  regresa tal cual, para que lo castee el changeset.
+  """
+  def resolver_valor_default(:date, "hoy"), do: MetadataApp.Hoy.fecha()
+
+  def resolver_valor_default(:date, "hoy" <> desfase = valor) do
+    case Integer.parse(desfase) do
+      {dias, ""} -> Date.add(MetadataApp.Hoy.fecha(), dias)
+      _ -> valor
+    end
+  end
+
+  def resolver_valor_default(:time, "ahora"), do: MetadataApp.Hoy.hora()
+  def resolver_valor_default(_tipo, valor), do: valor
+
+  @doc """
+  Valida un valor default contra el tipo del campo (R43), con las
+  propiedades del campo de `schema_context_properties`. `:ok` o
+  `{:error, motivo}`.
+  """
+  def validar_valor_default(_props, valor) when valor in [nil, ""], do: :ok
+
+  def validar_valor_default(%{"tipo" => "date"}, valor) do
+    cond do
+      valor == "hoy" -> :ok
+      Regex.match?(~r/^hoy[+-](\d{1,4})$/, valor) and dias_validos?(valor) -> :ok
+      match?({:ok, _}, Date.from_iso8601(valor)) -> :ok
+      true -> {:error, "usa AAAA-MM-DD, hoy, hoy+N u hoy-N (N de 1 a 3650)"}
+    end
+  end
+
+  def validar_valor_default(%{"tipo" => "hora"}, valor) do
+    if valor == "ahora" or match?({:ok, _}, Time.from_iso8601(valor <> if(String.length(valor) == 5, do: ":00", else: ""))),
+      do: :ok,
+      else: {:error, "usa HH:MM o ahora"}
+  end
+
+  def validar_valor_default(%{"tipo" => "integer"}, valor),
+    do: if(Regex.match?(~r/^-?\d+$/, valor), do: :ok, else: {:error, "debe ser un número entero"})
+
+  def validar_valor_default(%{"tipo" => "decimal"}, valor),
+    do: if(Regex.match?(~r/^-?\d+(\.\d+)?$/, valor), do: :ok, else: {:error, "debe ser un número"})
+
+  def validar_valor_default(%{"tipo" => "boolean"}, valor),
+    do: if(valor in ["true", "false"], do: :ok, else: {:error, "debe ser true o false"})
+
+  def validar_valor_default(%{"tipo" => "enum", "valores" => valores}, valor) when is_list(valores) do
+    permitidos = Enum.map(valores, fn %{"valor" => v} -> v; v -> v end)
+    if valor in permitidos, do: :ok, else: {:error, "debe ser una de las opciones de la lista"}
+  end
+
+  def validar_valor_default(%{"tipo" => "referencia"}, valor),
+    do: if(Regex.match?(~r/^\d+$/, valor), do: :ok, else: {:error, "elige un registro de la lista"})
+
+  def validar_valor_default(%{"longitud" => longitud}, valor) when is_integer(longitud) do
+    if String.length(valor) <= longitud, do: :ok, else: {:error, "excede la longitud del campo (#{longitud})"}
+  end
+
+  def validar_valor_default(_props, _valor), do: :ok
+
+  defp dias_validos?("hoy" <> desfase) do
+    {dias, ""} = Integer.parse(desfase)
+    abs(dias) in 1..3650
+  end
+
+  defp llave_presente?(attrs, campo), do: Map.has_key?(attrs, campo) or Map.has_key?(attrs, Atom.to_string(campo))
+
+  # Mismo tipo de llave que el resto de attrs (cast/2 no acepta mezcladas).
+  defp poner(attrs, campo, valor) do
+    attrs = attrs |> Map.delete(campo) |> Map.delete(Atom.to_string(campo))
+
+    if Enum.any?(Map.keys(attrs), &is_atom/1),
+      do: Map.put(attrs, campo, valor),
+      else: Map.put(attrs, Atom.to_string(campo), valor)
+  end
 
   defp valor_en_blanco?(attrs, campo) do
     valor = Map.get(attrs, campo, Map.get(attrs, Atom.to_string(campo)))
@@ -327,8 +431,15 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
 
   defp aplicar_valores(cs, _campo, _opciones), do: cs
 
-  defp aplicar_referencia(cs, campo, %{tabla_referenciada: tabla}) when is_binary(tabla),
-    do: foreign_key_constraint(cs, campo, message: "no existe un registro con este valor")
+  # SPEC-SYS-0810202601 (R9, D5): el generador nombra la llave
+  # "<campo>_fkey"; el nombre por omisión de Ecto ("<tabla>_<campo>_fkey")
+  # queda para tablas viejas. Sin el nombre real, Ecto no traduce el error y
+  # la operación truena en lugar de regresar el campo.
+  defp aplicar_referencia(cs, campo, %{tabla_referenciada: tabla}) when is_binary(tabla) do
+    cs
+    |> foreign_key_constraint(campo, message: "no existe un registro con este valor")
+    |> foreign_key_constraint(campo, name: "#{campo}_fkey", message: "no existe un registro con este valor")
+  end
 
   defp aplicar_referencia(cs, _campo, _opciones), do: cs
 

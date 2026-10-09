@@ -95,8 +95,8 @@ defmodule MetadataApp.MetaImportExportTest do
     assert detalle.schema_context_properties["acotado"] == true
   end
 
-  # Encontrado real (2026-09-17): captura mostrando el orden de Get Config
-  # (grilla de columnas + orden de filas por default) sin efecto tras
+  # Encontrado real (2026-09-17): captura mostrando el orden de Lista
+  # (tabla de columnas + orden de filas por default) sin efecto tras
   # publicar -- exportar_header/2 no incluía orden_columnas_tabla ni
   # orden_resultados en el .meta.json.
   test "republicar un catálogo ya existente sincroniza orden_columnas_tabla y orden_resultados" do
@@ -132,7 +132,7 @@ defmodule MetadataApp.MetaImportExportTest do
 
     mensajes = MetaImportExport.importar_meta(dir)
 
-    assert Enum.any?(mensajes, &(&1 =~ "orden de columnas (Get Config) actualizado"))
+    assert Enum.any?(mensajes, &(&1 =~ "orden de columnas (Lista) actualizado"))
     assert Enum.any?(mensajes, &(&1 =~ "orden de resultados actualizado"))
 
     actualizado = MetaSchemaContext.obtener_header_por_nombre(nombre)
@@ -141,7 +141,7 @@ defmodule MetadataApp.MetaImportExportTest do
   end
 
   # Encontrado real (2026-09-17): un campo YA publicado que se oculta o
-  # reordena en dev (Get Config → checkbox visible / drag-and-drop) y se
+  # reordena en dev (Lista → checkbox visible / drag-and-drop) y se
   # vuelve a publicar no se sincronizaba -- solo sincronizar_detalles_nuevos/2
   # cubría un campo recién creado, nunca uno existente.
   test "republicar un catálogo ya existente sincroniza visible/orden de un campo YA existente" do
@@ -320,7 +320,7 @@ defmodule MetadataApp.MetaImportExportTest do
     assert MetaSchemaContext.obtener_header_por_nombre(nombre).orden == 4
   end
 
-  # SPEC-SYS-0309202601, auditoría de replay desde cero (2026-09-04):
+  # SPEC-ARQ-0309202601, auditoría de replay desde cero (2026-09-04):
   # un catálogo con un campo "referencia" hacia otro catálogo SIN
   # relación de maestro/detalle tumbaba el import entero si el orden
   # alfabético del directorio los procesaba al revés (encontrado real:
@@ -550,7 +550,7 @@ defmodule MetadataApp.MetaImportExportTest do
   end
 
   # Encontrado real (2026-09-17): las plantillas custom del Constructor
-  # (Post Config) nunca viajaban al publicar un catálogo -- solo la
+  # (Formulario) nunca viajaban al publicar un catálogo -- solo la
   # plantilla AUTOMÁTICA se autogeneraba en cada ambiente por separado, así
   # que un diseño a medida en dev jamás llegaba a unstable/producción.
   # Mismo criterio de tolerancia por catálogo que importar_motor/1.
@@ -906,5 +906,174 @@ defmodule MetadataApp.MetaImportExportTest do
     # Sin cambios: no reporta nada.
     mensajes = MetaImportExport.importar_meta(dir)
     refute Enum.any?(mensajes, &(&1 =~ "configuración de referencia actualizada"))
+  end
+
+  describe "directorio viaja completo (SPEC-SYS-2909202601, R12-R15)" do
+    defp dir_temporal do
+      dir = Path.join(System.tmp_dir!(), "meta_import_directorio_test_#{unique()}")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+      dir
+    end
+
+    defp contexto_directorio(nombre, cambios) do
+      Map.merge(
+        %{
+          "schema_context_name" => nombre,
+          "schema_context_label" => "Directorio original",
+          "schema_context_nav" => "/#{nombre}",
+          "schema_visible" => true,
+          "schema_context_type" => 2,
+          "schema_context_icono" => "folder",
+          "orden" => 1,
+          "prefijo_directorio" => nil,
+          "detalles" => []
+        },
+        cambios
+      )
+    end
+
+    defp crear_directorio(nombre, cambios) do
+      {:ok, {header, _}} = MetaSchemaContext.crear_header_con_detalles(contexto_directorio(nombre, cambios))
+      header
+    end
+
+    test "alta: crea el directorio con todas sus características (R12)" do
+      nombre = "pty_carpeta_imp_#{unique()}"
+      dir = dir_temporal()
+
+      escribir_meta_json(
+        dir,
+        contexto_directorio(nombre, %{
+          "schema_context_label" => "Capital Humano",
+          "schema_visible" => false,
+          "schema_context_icono" => "badge",
+          "orden" => 7,
+          "prefijo_directorio" => "IMA"
+        })
+      )
+
+      mensajes = MetaImportExport.importar_meta(dir)
+      assert Enum.any?(mensajes, &(&1 =~ "+ #{nombre}: creado"))
+
+      header = MetaSchemaContext.obtener_header_por_nombre(nombre)
+      assert header.schema_context_label == "Capital Humano"
+      assert header.schema_visible == false
+      assert header.schema_context_icono == "badge"
+      assert header.orden == 7
+      assert header.prefijo_directorio == "IMA"
+    end
+
+    test "ya existe: actualiza etiqueta, visibilidad, ícono, orden y prefijo (R13)" do
+      nombre = "pty_carpeta_imp_#{unique()}"
+      crear_directorio(nombre, %{"prefijo_directorio" => "IMB"})
+      dir = dir_temporal()
+
+      escribir_meta_json(
+        dir,
+        contexto_directorio(nombre, %{
+          "schema_context_label" => "Etiqueta nueva",
+          "schema_visible" => false,
+          "schema_context_icono" => "badge",
+          "orden" => 3,
+          "prefijo_directorio" => "IMC"
+        })
+      )
+
+      [mensaje] = MetaImportExport.importar_meta(dir) |> Enum.filter(&(&1 =~ nombre))
+      assert mensaje =~ "etiqueta actualizada"
+      assert mensaje =~ "visibilidad actualizada"
+      assert mensaje =~ "prefijo de directorio actualizado"
+      assert mensaje =~ "ícono actualizado"
+      assert mensaje =~ "orden de menú actualizado"
+
+      header = MetaSchemaContext.obtener_header_por_nombre(nombre)
+      assert header.schema_context_label == "Etiqueta nueva"
+      assert header.schema_visible == false
+      assert header.schema_context_icono == "badge"
+      assert header.orden == 3
+      assert header.prefijo_directorio == "IMC"
+
+      # Republicar lo mismo: nada que reportar.
+      [mensaje] = MetaImportExport.importar_meta(dir) |> Enum.filter(&(&1 =~ nombre))
+      assert mensaje =~ "sin cambios"
+    end
+
+    test "prefijo nil en el origen no borra el del destino (R14)" do
+      nombre = "pty_carpeta_imp_#{unique()}"
+      crear_directorio(nombre, %{"prefijo_directorio" => "IMD"})
+      dir = dir_temporal()
+
+      escribir_meta_json(dir, contexto_directorio(nombre, %{"prefijo_directorio" => nil}))
+      MetaImportExport.importar_meta(dir)
+
+      assert MetaSchemaContext.obtener_header_por_nombre(nombre).prefijo_directorio == "IMD"
+    end
+
+    test "choque en directorio existente: aplica el resto y avisa (R15)" do
+      crear_directorio("pty_carpeta_duena_#{unique()}", %{"schema_context_label" => "Dueña", "prefijo_directorio" => "IME"})
+      nombre = "pty_carpeta_imp_#{unique()}"
+      crear_directorio(nombre, %{"prefijo_directorio" => "IMF"})
+      dir = dir_temporal()
+
+      escribir_meta_json(
+        dir,
+        contexto_directorio(nombre, %{"schema_context_label" => "Etiqueta aplicada", "prefijo_directorio" => "IME"})
+      )
+
+      [mensaje] = MetaImportExport.importar_meta(dir) |> Enum.filter(&(&1 =~ nombre))
+      assert mensaje =~ "etiqueta actualizada"
+      assert mensaje =~ ~s(AVISO: prefijo de directorio "IME" no aplicado, ya lo usa "Dueña")
+
+      header = MetaSchemaContext.obtener_header_por_nombre(nombre)
+      assert header.schema_context_label == "Etiqueta aplicada"
+      assert header.prefijo_directorio == "IMF"
+    end
+
+    test "choque en alta: crea el directorio sin prefijo y avisa (R12, R15)" do
+      crear_directorio("pty_carpeta_duena_#{unique()}", %{"schema_context_label" => "Dueña", "prefijo_directorio" => "IMG"})
+      nombre = "pty_carpeta_imp_#{unique()}"
+      dir = dir_temporal()
+
+      escribir_meta_json(dir, contexto_directorio(nombre, %{"prefijo_directorio" => "IMG"}))
+
+      [mensaje] = MetaImportExport.importar_meta(dir) |> Enum.filter(&(&1 =~ nombre))
+      assert mensaje =~ "+ #{nombre}: creado"
+      assert mensaje =~ ~s(AVISO: prefijo de directorio "IMG" no aplicado)
+
+      header = MetaSchemaContext.obtener_header_por_nombre(nombre)
+      assert header.prefijo_directorio == nil
+    end
+
+    test "un catálogo existente NO sincroniza su etiqueta (fuera de alcance)" do
+      nombre = "pty_test_etiqueta_#{unique()}"
+
+      {:ok, _} =
+        MetaSchemaContext.crear_header_con_detalles(%{
+          "schema_context_name" => nombre,
+          "schema_context_label" => "Etiqueta original",
+          "schema_context_nav" => "/#{nombre}",
+          "schema_visible" => true,
+          "schema_context_type" => 1,
+          "detalles" => []
+        })
+
+      dir = dir_temporal()
+
+      escribir_meta_json(dir, %{
+        "schema_context_name" => nombre,
+        "schema_context_label" => "Etiqueta nueva",
+        "schema_context_nav" => "/#{nombre}",
+        "schema_visible" => false,
+        "schema_context_type" => 1,
+        "detalles" => []
+      })
+
+      MetaImportExport.importar_meta(dir)
+
+      header = MetaSchemaContext.obtener_header_por_nombre(nombre)
+      assert header.schema_context_label == "Etiqueta original"
+      assert header.schema_visible == true
+    end
   end
 end

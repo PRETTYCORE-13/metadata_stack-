@@ -6,7 +6,7 @@ defmodule MetadataApp.ReleaseTest do
   alias MetadataApp.Repo
   alias MetadataApp.Autenticacion.{Branch, Empresa, InventoryLocation, SalesUnit}
 
-  # SPEC-SYS-0309202601, R9 (Grupo C), tarea 15: Release.setup/0 (camino
+  # SPEC-ARQ-0309202601, R9 (Grupo C), tarea 15: Release.setup/0 (camino
   # SYSADMIN_EMAIL, sin wizard) llama a la MISMA
   # Autenticacion.crear_empresa_para_usuario/2 que ya usa el wizard --
   # confirma que el camino sin wizard también termina con

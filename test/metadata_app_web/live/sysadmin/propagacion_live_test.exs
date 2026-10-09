@@ -1,6 +1,6 @@
 defmodule MetadataAppWeb.Sysadmin.PropagacionLiveTest do
   @moduledoc """
-  Pantalla "Propagación" (SPEC-SYS-1809202603, Grupo E) -- solo lectura
+  Pantalla "Propagación" (SPEC-ARQ-1809202603, Grupo E) -- solo lectura
   en este incremento. Cubre el gate RBAC (sysadmin_propagacion/leer) y el
   estado sin ambientes registrados -- NO crea ningún `Ambiente` en estos
   tests a propósito: con uno registrado, el mount dispara una carga

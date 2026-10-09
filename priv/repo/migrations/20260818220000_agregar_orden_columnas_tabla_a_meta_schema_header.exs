@@ -2,7 +2,7 @@ defmodule MetadataApp.Repo.Migrations.AgregarOrdenColumnasTablaAMetaSchemaHeader
   use Ecto.Migration
 
   # Get View unificado (Campos de Control + Campos de negocio en una sola
-  # grilla arrastrable, a pedido explícito -- antes los de control eran 7
+  # tabla arrastrable, a pedido explícito -- antes los de control eran 7
   # botones de mostrar/ocultar sin ningún orden, siempre en una secuencia
   # fija en CatalogoLive). orden_columnas_tabla mezcla nombres de campo real
   # (schema_context_field) y claves fijas de control ("id", "estado", "trn",

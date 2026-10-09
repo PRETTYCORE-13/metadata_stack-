@@ -9,7 +9,7 @@ defmodule MetadataApp.Autenticacion.Rol do
     field :descripcion, :string
     field :es_sistema, :boolean, default: false
 
-    # 0: sysadmin (los 10 "acceso_sysadmin_*" sembrados, ver
+    # 0: sysadmin (los "acceso_sysadmin_*" sembrados, ver
     # Permissions.capacidades_sysadmin/0 — pantallas técnicas de la
     # plataforma, RolesLive los oculta por default y solo se los muestra a
     # super_admin), 1: negocio (todo lo demás, incluido "administrador").

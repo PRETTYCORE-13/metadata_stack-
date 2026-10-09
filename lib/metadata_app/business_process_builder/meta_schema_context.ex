@@ -164,9 +164,11 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
       nav: h.schema_context_nav,
       visible: h.schema_visible,
       icono: h.schema_context_icono,
+      prefijo_directorio: h.prefijo_directorio,
       orden: h.orden,
       es_carpeta: h.schema_context_type == 2,
-      es_consulta: h.schema_context_type == 3
+      es_consulta: h.schema_context_type == 3,
+      es_consulta_sql: h.schema_context_type == 4
     }
   end
 
@@ -181,7 +183,15 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     items
     |> Enum.reduce(%{}, fn item, arbol ->
       if item.es_carpeta do
-        insertar_carpeta_explicita(arbol, segmentos(item.nav), item.label, item[:icono], item.id, item[:orden], "", ordenes_implicitas)
+        atributos = %{
+          nombre: item.label,
+          icono: item[:icono],
+          id: item.id,
+          orden: item[:orden],
+          prefijo_directorio: item[:prefijo_directorio]
+        }
+
+        insertar_carpeta_explicita(arbol, segmentos(item.nav), atributos, "", ordenes_implicitas)
       else
         insertar_en_arbol(arbol, segmentos_con_carpeta(item), item, "", ordenes_implicitas)
       end
@@ -247,9 +257,11 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   # viaja también, para que la UI de administración sepa qué carpeta tiene
   # un Header real detrás (editable/eliminable) y cuál es solo un segmento
   # de ruta inferido de sus hijos (no hay nada que editar/eliminar ahí).
-  defp insertar_carpeta_explicita(mapa, [], _label, _icono, _id, _orden, _ruta_padre, _ordenes_implicitas), do: mapa
+  # `atributos` = %{nombre:, icono:, id:, orden:, prefijo_directorio:} del
+  # Header, en un solo mapa para no crecer la aridad con cada atributo nuevo.
+  defp insertar_carpeta_explicita(mapa, [], _atributos, _ruta_padre, _ordenes_implicitas), do: mapa
 
-  defp insertar_carpeta_explicita(mapa, [ultimo], label, icono, id, orden, _ruta_padre, _ordenes_implicitas) do
+  defp insertar_carpeta_explicita(mapa, [ultimo], atributos, _ruta_padre, _ordenes_implicitas) do
     # Map.merge en vez de %{nodo | ...}: si esta carpeta ya existía en el
     # mapa como nodo "inferido" (creado por insertar_en_arbol/3 al procesar
     # una página hija que se coló primero en el Enum.reduce — el orden
@@ -257,12 +269,10 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     # nodo no tiene las claves :icono/:id/:orden todavía. %{nodo | ...}
     # exige que ya existan (KeyError si no) — Map.merge las agrega sin
     # problema.
-    Map.update(mapa, {:carpeta, ultimo}, %{nombre: label, icono: icono, id: id, orden: orden, hijos: %{}}, fn nodo ->
-      Map.merge(nodo, %{nombre: label, icono: icono, id: id, orden: orden})
-    end)
+    Map.update(mapa, {:carpeta, ultimo}, Map.put(atributos, :hijos, %{}), &Map.merge(&1, atributos))
   end
 
-  defp insertar_carpeta_explicita(mapa, [seg | resto], label, icono, id, orden, ruta_padre, ordenes_implicitas) do
+  defp insertar_carpeta_explicita(mapa, [seg | resto], atributos, ruta_padre, ordenes_implicitas) do
     ruta = ruta_con(ruta_padre, seg)
 
     nodo_default = %{
@@ -270,11 +280,11 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
       icono: nil,
       id: nil,
       orden: Map.get(ordenes_implicitas, ruta),
-      hijos: insertar_carpeta_explicita(%{}, resto, label, icono, id, orden, ruta, ordenes_implicitas)
+      hijos: insertar_carpeta_explicita(%{}, resto, atributos, ruta, ordenes_implicitas)
     }
 
     Map.update(mapa, {:carpeta, seg}, nodo_default, fn nodo ->
-      %{nodo | hijos: insertar_carpeta_explicita(nodo.hijos, resto, label, icono, id, orden, ruta, ordenes_implicitas)}
+      %{nodo | hijos: insertar_carpeta_explicita(nodo.hijos, resto, atributos, ruta, ordenes_implicitas)}
     end)
   end
 
@@ -295,6 +305,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
           icono: Map.get(nodo, :icono),
           id: Map.get(nodo, :id),
           orden: Map.get(nodo, :orden),
+          prefijo_directorio: Map.get(nodo, :prefijo_directorio),
           hijos: mapa_a_lista_ordenada(nodo.hijos)
         }
     end)
@@ -399,18 +410,60 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   # un tipo seleccionable pero sin forma de elegir a qué apuntaba, y
   # CatalogoGenerador.generar/1 fallaba en silencio al no encontrar esa
   # propiedad (ver construir_opciones/2 en catalogo_generador.ex).
+  #
+  # `nav` viaja para filtrar por módulo en memoria (SPEC-SYS-1109202601
+  # R35-R40, ver catalogos_del_modulo/2); los de sistema llevan nav: nil
+  # porque no viven en ningún directorio.
   def listar_catalogos_referenciables do
     catalogos =
       from(h in Header, where: is_nil(h.delete_guid) and h.schema_context_type == 1, order_by: h.schema_context_label)
       |> Repo.all()
-      |> Enum.map(&%{nombre: &1.schema_context_name, etiqueta: &1.schema_context_label})
+      |> Enum.map(&%{nombre: &1.schema_context_name, etiqueta: &1.schema_context_label, nav: &1.schema_context_nav})
 
     sistema =
       @catalogos_sistema
-      |> Enum.map(fn {nombre, %{etiqueta: etiqueta}} -> %{nombre: nombre, etiqueta: "#{etiqueta} (sistema)"} end)
+      |> Enum.map(fn {nombre, %{etiqueta: etiqueta}} -> %{nombre: nombre, etiqueta: "#{etiqueta} (sistema)", nav: nil} end)
       |> Enum.sort_by(& &1.etiqueta)
 
     catalogos ++ sistema
+  end
+
+  # Módulos para filtrar "Catálogo destino" (SPEC-SYS-1109202601 R35): los
+  # directorios vivos con prefijo de directorio (SPEC-SYS-2909202601),
+  # ordenados por prefijo. Los que no tienen prefijo no son módulo.
+  def listar_modulos do
+    from(h in Header,
+      where: is_nil(h.delete_guid) and h.schema_context_type == 2 and not is_nil(h.prefijo_directorio),
+      order_by: h.prefijo_directorio,
+      select: %{prefijo: h.prefijo_directorio, etiqueta: h.schema_context_label, nav: h.schema_context_nav}
+    )
+    |> Repo.all()
+  end
+
+  # R36/R39: "" (Todos) devuelve la lista completa; si no, los catálogos
+  # dentro del directorio del módulo o de sus subdirectorios -- comparando
+  # por segmento completo ("/ch/"), así "/ch" no incluye "/chx" -- más los
+  # de sistema (nav: nil), que siempre aparecen. Solo memoria (R40).
+  def catalogos_del_modulo(catalogos, prefijo, modulos) do
+    case Enum.find(modulos, &(&1.prefijo == prefijo)) do
+      nil -> catalogos
+      %{nav: nav_modulo} -> Enum.filter(catalogos, &(&1.nav == nil or dentro_de_nav?(&1.nav, nav_modulo)))
+    end
+  end
+
+  # R37: el prefijo del directorio con prefijo más cercano que contiene
+  # `nav` (el de ruta más larga que la contiene), o "" si ninguno.
+  def modulo_de_nav(modulos, nav) when is_binary(nav) do
+    modulos
+    |> Enum.filter(&dentro_de_nav?(nav, &1.nav))
+    |> Enum.max_by(&String.length(&1.nav), fn -> %{prefijo: ""} end)
+    |> Map.fetch!(:prefijo)
+  end
+
+  def modulo_de_nav(_modulos, _nav), do: ""
+
+  defp dentro_de_nav?(nav, nav_directorio) do
+    String.starts_with?(nav, String.trim_trailing(nav_directorio, "/") <> "/")
   end
 
   def obtener_header!(id), do: Repo.get!(Header, id)
@@ -532,6 +585,15 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     )
   end
 
+  # Mismo criterio que el índice parcial meta_schema_header_prefijo_directorio_unico_index
+  # (solo headers vivos) — para avisar en el formulario antes de chocar
+  # con la restricción al guardar.
+  def obtener_header_por_prefijo_directorio(prefijo) do
+    Repo.one(
+      from h in Header, where: h.prefijo_directorio == ^prefijo and is_nil(h.delete_guid)
+    )
+  end
+
   # --- Validación de nombre/nav compartida ("Nuevo catálogo" y "Copiar",
   # SPEC-SYS-1809202602) -- movidos acá desde BcNuevoCompletoLive para que
   # los dos caminos de creación usen EXACTAMENTE el mismo criterio, sin
@@ -580,7 +642,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   defp validar_nombre_libre(nombre_sistema) do
     case obtener_header_por_nombre(nombre_sistema) do
       nil -> :ok
-      _otro -> {:error, "\"#{nombre_sistema}\" ya existe — elegí otro nombre."}
+      _otro -> {:error, "\"#{nombre_sistema}\" ya existe — elige otro nombre."}
     end
   end
 
@@ -599,7 +661,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   defp validar_nav_libre(nav) do
     case obtener_header_por_nav(nav) do
       nil -> :ok
-      _otro -> {:error, "Esa ruta de navegación ya la usa otro catálogo o carpeta — elegí otra."}
+      _otro -> {:error, "Esa ruta de navegación ya la usa otro catálogo o carpeta — elige otra."}
     end
   end
 
@@ -728,7 +790,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   # schema_context_name de todo catálogo que bloquea el borrado total de
   # schema_context_name -- dos motivos distintos, unificados en una sola
   # lista porque ambos usan el mismo mensaje/UX ("catálogo(s)
-  # dependientes, borralos primero"):
+  # dependientes, bórralos primero"):
   #
   #   1) tiene un detalle tipo "referencia" apuntando acá (de siempre).
   #   2) es un catálogo DETALLE de este maestro (schema_encabezado_id
@@ -960,7 +1022,11 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
 
       cond do
         valor_padre != nil and campo_remoto not in [nil, ""] ->
-          {:cont, {:ok, Map.put(filtros, campo_remoto, valor_padre)}}
+          # "origen": "diccionario" (SPEC-SYS-1109202601 R33): la columna es
+          # del Diccionario del campo, no del destino -- la llave con prefijo
+          # le dice a CatalogoGenerico.opciones_referencia/3 dónde aplicarla.
+          llave = if dep["origen"] == "diccionario", do: "diccionario:" <> campo_remoto, else: campo_remoto
+          {:cont, {:ok, Map.put(filtros, llave, valor_padre)}}
 
         obligatorio? ->
           mensaje = props["mensaje_sin_padre"] || mensaje_sin_padre_por_defecto(campo_padre, campos_hermanos)
@@ -1013,9 +1079,71 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     # "Filtros fijos" (SPEC-SYS-1109202601 R27): viaja en este mismo paso
     # del changeset generado en vez de uno propio -- sumar un paso nuevo al
     # pipeline obligaría a regenerar el .ex de cada catálogo existente.
+    changeset =
+      detalles
+      |> Enum.filter(&con_lista?(&1, "filtros_fijos"))
+      |> Enum.reduce(changeset, &validar_filtros_fijos_contra_registro(&2, &1))
+
+    # "Diccionario" (SPEC-SYS-2509202601 R28): mismo paso, mismo motivo.
     detalles
-    |> Enum.filter(&con_lista?(&1, "filtros_fijos"))
-    |> Enum.reduce(changeset, &validar_filtros_fijos_contra_registro(&2, &1))
+    |> Enum.filter(&con_diccionario?/1)
+    |> Enum.reduce(changeset, &validar_diccionario_contra_registro(&2, &1))
+  end
+
+  defp con_diccionario?(detalle) do
+    props = detalle.schema_context_properties
+    props["tipo"] == "referencia" and is_binary(get_in(props, ["diccionario", "consulta"]))
+  end
+
+  # Solo si el valor CAMBIÓ, igual que los filtros fijos. Las dependencias
+  # se resuelven con los valores del propio changeset (sin padre todavía,
+  # no se filtra por esa dependencia). Sin alcance: el changeset no conoce
+  # la sesión (ver SPEC-SYS-2509202601 02.design.md §6).
+  defp validar_diccionario_contra_registro(changeset, detalle) do
+    campo_atom = String.to_existing_atom(detalle.schema_context_field)
+    props = detalle.schema_context_properties
+
+    with valor when valor not in [nil, ""] <- Ecto.Changeset.get_change(changeset, campo_atom),
+         id when not is_nil(id) <- a_entero_seguro(valor) do
+      valores = valores_de_padres(changeset, props)
+
+      filtros =
+        case resolver_filtros(Map.put(props, "dependencias", Enum.map(props["dependencias"] || [], &Map.put(&1, "obligatorio", false))), valores) do
+          {:ok, f} -> f
+          _ -> %{}
+        end
+
+      {filtros_dic, filtros_destino} = CatalogoGenerico.separar_filtros_diccionario(filtros)
+
+      if MetadataApp.ConsultasSql.pertenece?(
+           props,
+           id,
+           filtros_dic ++ CatalogoGenerico.filtros_fijos_diccionario(props),
+           filtros_destino ++ CatalogoGenerico.filtros_fijos(props)
+         ),
+         do: changeset,
+         else: Ecto.Changeset.add_error(changeset, campo_atom, "el valor seleccionado no está en el diccionario de este campo")
+    else
+      _ -> changeset
+    end
+  rescue
+    ArgumentError -> changeset
+  end
+
+  defp valores_de_padres(changeset, props) do
+    for dep <- props["dependencias"] || [],
+        padre = dep["campo_padre"],
+        is_binary(padre) and padre != "",
+        into: %{} do
+      valor =
+        try do
+          Ecto.Changeset.get_field(changeset, String.to_existing_atom(padre))
+        rescue
+          ArgumentError -> nil
+        end
+
+      {padre, if(is_nil(valor), do: nil, else: to_string(valor))}
+    end
   end
 
   defp con_lista?(detalle, clave) do
@@ -1062,26 +1190,35 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   `CatalogoGenerico` compara, así en tiempo de ejecución solo se
   normaliza la columna. `{:ok, filtros_normalizados}` o `{:error, mensaje}`.
   """
-  def validar_filtros_fijos(filtros, campos_destino) do
+  #
+  # `columnas_diccionario` (SPEC-SYS-1109202601 R33): nombres de columna del
+  # Diccionario del campo, para las filas con `"origen" => "diccionario"`;
+  # esas filas conservan su "origen" en la salida.
+  def validar_filtros_fijos(filtros, campos_destino, columnas_diccionario \\ []) do
     nombres = MapSet.new(campos_destino, & &1.schema_context_field)
+    nombres_dic = MapSet.new(columnas_diccionario)
 
     filtros
-    |> Enum.map(fn f -> {to_string(f["campo"] || ""), normalizar_valores_filtro(f["valores"])} end)
-    |> Enum.reject(fn {campo, valores} -> campo == "" and valores == [] end)
+    |> Enum.map(fn f -> {to_string(f["campo"] || ""), normalizar_valores_filtro(f["valores"]), f["origen"] == "diccionario"} end)
+    |> Enum.reject(fn {campo, valores, _dic?} -> campo == "" and valores == [] end)
     |> Enum.reduce_while({:ok, []}, fn
-      {"", _valores}, _acc ->
+      {"", _valores, _dic?}, _acc ->
         {:halt, {:error, "Cada filtro fijo tiene que indicar un campo."}}
 
-      {campo, valores}, {:ok, acc} ->
+      {campo, valores, dic?}, {:ok, acc} ->
         cond do
-          not MapSet.member?(nombres, campo) ->
+          dic? and not MapSet.member?(nombres_dic, campo) ->
+            {:halt, {:error, "La columna \"#{campo}\" no existe en el Diccionario del campo."}}
+
+          not dic? and not MapSet.member?(nombres, campo) ->
             {:halt, {:error, "El campo \"#{campo}\" no existe en el catálogo destino."}}
 
           valores == [] ->
             {:halt, {:error, "El filtro fijo sobre \"#{campo}\" necesita al menos un valor."}}
 
           true ->
-            {:cont, {:ok, acc ++ [%{"campo" => campo, "valores" => valores}]}}
+            filtro = %{"campo" => campo, "valores" => valores}
+            {:cont, {:ok, acc ++ [if(dic?, do: Map.put(filtro, "origen", "diccionario"), else: filtro)]}}
         end
     end)
   end
@@ -1118,6 +1255,11 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   # error) — un `with`/`else` que colapsara ambos en el mismo valor
   # (ej. `false`) los confundiría y podría rechazar guardados válidos
   # solo porque la metadata está incompleta.
+  # Una dependencia sobre una columna del Diccionario se valida en
+  # validar_diccionario_contra_registro/2, no contra el catálogo destino.
+  defp validar_dependencia_contra_registro(changeset, _campo_atom, _valor_hijo, _catalogo_destino, %{"origen" => "diccionario"}),
+    do: changeset
+
   defp validar_dependencia_contra_registro(changeset, campo_atom, valor_hijo, catalogo_destino, dep) do
     campo_padre = dep["campo_padre"]
     campo_remoto = dep["campo_remoto"]
@@ -1474,11 +1616,24 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     end
   end
 
+  # SPEC-SYS-2509202601 R32: un campo con Diccionario arrastra esa SQL View,
+  # y una SQL View arrastra los catálogos que usa su SQL (vía pg_depend).
   defp referencias_de(catalogo, detalles_por_catalogo) do
-    detalles_por_catalogo
-    |> Map.get(catalogo, [])
-    |> Enum.filter(&(&1.schema_context_properties["tipo"] == "referencia"))
-    |> Enum.map(& &1.schema_context_properties["catalogo"])
+    referencias =
+      detalles_por_catalogo
+      |> Map.get(catalogo, [])
+      |> Enum.filter(&(&1.schema_context_properties["tipo"] == "referencia"))
+
+    destinos = Enum.map(referencias, & &1.schema_context_properties["catalogo"])
+    diccionarios = referencias |> Enum.map(&get_in(&1.schema_context_properties, ["diccionario", "consulta"])) |> Enum.reject(&is_nil/1)
+
+    vistas =
+      case obtener_header_por_nombre(catalogo) do
+        %{schema_context_type: 4} -> MetadataApp.ConsultasSql.catalogos_que_usa(catalogo)
+        _ -> []
+      end
+
+    destinos ++ diccionarios ++ vistas
   end
 
   @doc """
@@ -1684,18 +1839,18 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     end
   end
 
-  defp validar_config_visualizacion(_config, _campos_reales), do: {:error, "elegí un campo de visualización"}
+  defp validar_config_visualizacion(_config, _campos_reales), do: {:error, "elige un campo de visualización"}
 
   defp validar_campo_existente(campo, etiqueta, campos_reales) do
     cond do
-      campo in [nil, ""] -> {:error, "elegí #{etiqueta}"}
+      campo in [nil, ""] -> {:error, "elige #{etiqueta}"}
       campo not in campos_reales -> {:error, "#{etiqueta} inexistente: #{campo}"}
       true -> :ok
     end
   end
 
   defp validar_texto_no_vacio(texto, etiqueta) do
-    if texto in [nil, ""], do: {:error, "completá #{etiqueta}"}, else: :ok
+    if texto in [nil, ""], do: {:error, "completa #{etiqueta}"}, else: :ok
   end
 
   # Solo valida referencias simples "{campo}" contra los campos reales del
@@ -1739,6 +1894,7 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
           schema_context_type: header.schema_context_type,
           schema_context_nav: header.schema_context_nav,
           schema_context_icono: header.schema_context_icono,
+          prefijo_directorio: header.prefijo_directorio,
           schema_visible: header.schema_visible,
           orden: header.orden,
           schema_set_permissions: header.schema_set_permissions,
@@ -1759,7 +1915,10 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
           codigo_trn: header.codigo_trn,
           schema_encabezado_catalogo: nombre_encabezado(header.schema_encabezado_id),
           detalles: Enum.map(detalles, &serializar_detalle/1)
-        },
+        }
+        # SQL View (tipo 4, SPEC-SYS-2509202601 R31): solo para ese tipo, así
+        # el .meta.json de los demás catálogos no cambia.
+        |> Map.merge(MetadataApp.ConsultasSql.exportar_definicion(header)),
         pretty: true
       )
 
@@ -1923,12 +2082,12 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   end
 
   @doc """
-  Orden combinado de columnas del Get View unificado (Campos de Control +
+  Orden combinado de columnas de la Lista unificada (Campos de Control +
   Campos de negocio, ver panel_get_view/1 en BcMotorLive) — a diferencia de
   reordenar_campos/2 de arriba, esto NO toca schema_context_properties de
   ningún campo (el orden de la pestaña Campos/Ficha/contrato de API sigue
   intacto); vive aparte, en Header.orden_columnas_tabla, exclusivo de esta
-  grilla.
+  tabla.
   """
   def reordenar_columnas_tabla(%Header{} = header, orden) do
     actualizar_header(header, %{"orden_columnas_tabla" => orden})

@@ -3,7 +3,7 @@ defmodule Mix.Tasks.Plantillas.Export do
   alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
   alias MetadataApp.MetaPlantillas
 
-  @shortdoc "Exporta las plantillas del Constructor (Post Config: Vistas + Impresión) a un archivo JSON por catálogo"
+  @shortdoc "Exporta las plantillas del Constructor (Formulario: Vistas + Impresión) a un archivo JSON por catálogo"
 
   @moduledoc """
   Uso: mix plantillas.export [directorio_salida]
@@ -17,8 +17,9 @@ defmodule Mix.Tasks.Plantillas.Export do
   que publicar UNO tocara el diff de TODOS. Resuelve el catálogo por
   NOMBRE, no por id.
 
-  Sincroniza el directorio: catálogos sin ninguna plantilla (o borrados)
-  no dejan un `.plantillas.json` huérfano.
+  Los `.plantillas.json` huérfanos (catálogos sin plantillas o que no
+  existen en la base local) se listan y solo se borran si se confirma
+  (`Mix.Tasks.Meta.Huerfanos`, SPEC-SYS-0210202601 R6).
   """
 
   def run(args) do
@@ -34,20 +35,7 @@ defmodule Mix.Tasks.Plantillas.Export do
         |> Enum.reject(&is_nil/1)
       end)
 
-    limpiar_huerfanos(dir, nombres, ".plantillas.json")
+    Mix.Tasks.Meta.Huerfanos.limpiar(dir, nombres, ".plantillas.json")
     Mix.shell().info("Exportadas las plantillas de #{length(nombres)} catálogo(s) a #{dir}/")
-  end
-
-  defp limpiar_huerfanos(dir, nombres_vigentes, sufijo) do
-    esperados = MapSet.new(nombres_vigentes, &"#{&1}#{sufijo}")
-
-    dir
-    |> File.ls!()
-    |> Enum.filter(&String.ends_with?(&1, sufijo))
-    |> Enum.reject(&MapSet.member?(esperados, &1))
-    |> Enum.each(fn archivo ->
-      File.rm!(Path.join(dir, archivo))
-      Mix.shell().info("  (huérfano borrado: #{archivo})")
-    end)
   end
 end

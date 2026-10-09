@@ -312,6 +312,121 @@ defmodule MetadataApp.ConsultaEndpointsTest do
     end
   end
 
+  describe "Endpoint sobre un Servicio (SPEC-SYS-2509202601 O2)" do
+    alias MetadataApp.ConsultasSql
+
+    defp servicio! do
+      {:ok, {header, _}} =
+        ConsultasSql.crear(%{"etiqueta" => "Svc O2", "nav" => "/o2_#{unique()}", "uso" => "servicio"})
+
+      {:ok, servicio} =
+        ConsultasSql.guardar_sql(
+          header.schema_context_name,
+          "SELECT t.id, t.nombre FROM (VALUES (1, 'uno'), (2, 'dos')) AS t(id, nombre) WHERE t.id = ANY(:ids)",
+          %{"parametros" => [%{"nombre" => "ids", "tipo" => "lista_enteros", "obligatorio" => true}]}
+        )
+
+      {header.schema_context_name, servicio}
+    end
+
+    defp attrs_servicio(empresa),
+      do: %{"nombre" => "Precios", "metodo" => "post", "ruta" => "o2-#{unique()}", "empresa_id" => empresa.id}
+
+    test "crear_o_actualizar/2 crea y luego actualiza sin cambiar empresa ni origen" do
+      empresa = empresa!()
+      {_nombre, servicio} = servicio!()
+
+      assert {:ok, endpoint} = ConsultaEndpoints.crear_o_actualizar(servicio, attrs_servicio(empresa))
+      assert ConsultaEndpoints.de_servicio?(endpoint)
+      assert endpoint.parametros == servicio.parametros
+
+      otra = empresa!()
+
+      assert {:ok, actualizado} =
+               ConsultaEndpoints.crear_o_actualizar(servicio, %{"nombre" => "Precio de venta", "empresa_id" => otra.id})
+
+      assert actualizado.id == endpoint.id
+      assert actualizado.nombre == "Precio de venta"
+      assert actualizado.empresa_id == empresa.id
+      assert ConsultaEndpoints.obtener_por_servicio(servicio.id).id == endpoint.id
+    end
+
+    test "probar/3 ejecuta el Servicio con los valores y el alcance de quien prueba" do
+      {_nombre, servicio} = servicio!()
+
+      assert {:ok, %{filas: [%{"id" => 2, "nombre" => "dos"}]}} =
+               ConsultaEndpoints.probar(servicio, :sistema, %{"ids" => [2]})
+    end
+
+    test "obtener_publicado/2 y listar_todos/0 traen el Servicio con su header" do
+      empresa = empresa!()
+      {nombre, servicio} = servicio!()
+      {:ok, endpoint} = ConsultaEndpoints.crear_o_actualizar(servicio, attrs_servicio(empresa))
+      {:ok, _} = ConsultaEndpoints.publicar(endpoint)
+
+      publicado = ConsultaEndpoints.obtener_publicado("post", endpoint.ruta)
+      assert publicado.consulta_sql.header.schema_context_name == nombre
+      assert publicado.consulta == nil
+
+      assert Enum.any?(ConsultaEndpoints.listar_todos(), &(&1.id == endpoint.id and &1.consulta_sql.header.schema_context_name == nombre))
+    end
+
+    test "una credencial solo acepta columnas de salida del Servicio" do
+      empresa = empresa!()
+      {_nombre, servicio} = servicio!()
+      {:ok, endpoint} = ConsultaEndpoints.crear_o_actualizar(servicio, attrs_servicio(empresa))
+
+      assert {:ok, _credencial, _key} =
+               ConsultaEndpoints.crear_credencial(endpoint, servicio, %{"nombre" => "App", "campos_permitidos" => ["id", "nombre"]})
+
+      assert {:error, changeset} =
+               ConsultaEndpoints.crear_credencial(endpoint, servicio, %{"nombre" => "Mal", "campos_permitidos" => ["precio"]})
+
+      assert Keyword.has_key?(changeset.errors, :campos_permitidos)
+    end
+
+    test "eliminar/1 borra solo el endpoint y sus credenciales; el Servicio sigue" do
+      empresa = empresa!()
+      {nombre, servicio} = servicio!()
+      {:ok, endpoint} = ConsultaEndpoints.crear_o_actualizar(servicio, attrs_servicio(empresa))
+      {:ok, credencial, _key} = ConsultaEndpoints.crear_credencial(endpoint, servicio, %{"nombre" => "App", "campos_permitidos" => ["id"]})
+
+      assert ConsultaEndpoints.eliminar(endpoint) == :ok
+      assert ConsultaEndpoints.obtener_por_servicio(servicio.id) == nil
+      assert Repo.get(MetadataApp.MetaSchema.ConsultaEndpointCredencial, credencial.id) == nil
+      assert ConsultasSql.obtener_por_catalogo(nombre)
+    end
+
+    test "exportar e importar: ida y vuelta, y tombstone" do
+      empresa = empresa!()
+      {nombre, servicio} = servicio!()
+      {:ok, endpoint} = ConsultaEndpoints.crear_o_actualizar(servicio, attrs_servicio(empresa))
+
+      dir = Path.join(System.tmp_dir!(), "o2_export_#{unique()}")
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      assert ConsultaEndpoints.exportar_endpoint(endpoint, dir) == nombre
+      contenido = dir |> Path.join("#{nombre}.endpoint.json") |> File.read!() |> Jason.decode!()
+
+      assert contenido["servicio"] == true
+      assert contenido["catalogo"] == nombre
+      assert contenido["empresa_nombre"] == empresa.nombre
+      refute Map.has_key?(contenido, "catalogo_base")
+      refute Map.has_key?(contenido, "empresa_id")
+
+      Repo.delete!(endpoint)
+      assert ["+ #{nombre} endpoint: creado"] == MetadataApp.MetaImportExport.importar_endpoint(dir)
+      recreado = ConsultaEndpoints.obtener_por_servicio(servicio.id)
+      assert recreado.ruta == endpoint.ruta
+      assert recreado.parametros == servicio.parametros
+
+      File.write!(Path.join(dir, "#{nombre}.endpoint.json"), Jason.encode!(%{catalogo: nombre, eliminado: true, servicio: true}))
+      assert ["- #{nombre} endpoint: eliminado"] == MetadataApp.MetaImportExport.importar_endpoint(dir)
+      assert ConsultaEndpoints.obtener_por_servicio(servicio.id) == nil
+    end
+  end
+
   describe "exportar_endpoint/2 (SPEC-SYS-1009202602, design.md §13, R67/R69)" do
     defp dir_temporal! do
       dir = Path.join(System.tmp_dir!(), "consulta_endpoints_export_test_#{unique()}")

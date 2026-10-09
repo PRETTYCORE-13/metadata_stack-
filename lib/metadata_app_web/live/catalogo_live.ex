@@ -25,7 +25,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   @por_pagina 25
 
 
-  # Get View unificado (ver panel_get_view/1 en BcMotorLive) — mismas 8
+  # Lista unificada (ver panel_get_view/1 en BcMotorLive) — mismas 8
   # claves de control que allá, en el mismo orden de siempre (para
   # catálogos que nunca configuraron Header.orden_columnas_tabla, ver
   # construir_columnas_render/3).
@@ -65,10 +65,10 @@ defmodule MetadataAppWeb.CatalogoLive do
 
       header ->
         if autorizado_para_leer?(socket.assigns[:current_scope], header.schema_context_name) do
-          if header.schema_context_type == 3 do
-            montar_consulta(socket, header)
-          else
-            montar_catalogo(socket, header)
+          case header.schema_context_type do
+            3 -> montar_consulta(socket, header)
+            4 -> montar_consulta_sql(socket, header)
+            _ -> montar_catalogo(socket, header)
           end
         else
           {:ok,
@@ -197,7 +197,7 @@ defmodule MetadataAppWeb.CatalogoLive do
      |> cargar_filas()}
   end
 
-  # "Creado por" (Get View) se resuelve contra meta_schema_auditoria, nunca
+  # "Creado por" (Lista) se resuelve contra meta_schema_auditoria, nunca
   # una columna física — para un catálogo detalle usa el `bc`/id del
   # MAESTRO (quién creó el registro completo), no los del renglón mismo
   # (quién cargó esa línea puntual), a pedido explícito.
@@ -231,7 +231,7 @@ defmodule MetadataAppWeb.CatalogoLive do
       end)
 
     # ID va antes de negocio, el resto de control después — mismo orden
-    # visual que la tabla ya mostraba antes de este Get View unificado
+    # visual que la tabla ya mostraba antes de esta Lista unificada
     # (id | campos de negocio | estado/trn/empresa/... ), para no romper
     # ningún catálogo ya publicado que nunca configuró orden_columnas_tabla.
     {id_control, resto_control} = Enum.split_with(control, &(&1.clave == "id"))
@@ -254,6 +254,33 @@ defmodule MetadataAppWeb.CatalogoLive do
     |> Enum.filter(&get_in(&1, [:schema_context_properties, "visible"]))
     |> Enum.sort_by(&get_in(&1, [:schema_context_properties, "orden"]))
   end
+
+  # SQL View (schema_context_type: 4, SPEC-SYS-2509202601 R3): listado de
+  # solo lectura, paginado, con las columnas y el orden de su SQL y el
+  # alcance de datos por columnas (MetadataApp.ConsultasSql.filas/4). Sin
+  # filtros ni parámetros: el SQL es fijo.
+  defp montar_consulta_sql(socket, header) do
+    {:ok,
+     socket
+     |> assign(:current_page, header.schema_context_name)
+     |> assign(:encontrado?, true)
+     |> assign(:es_consulta_sql?, true)
+     |> assign(:label, header.schema_context_label)
+     |> assign(:nombre_sql, header.schema_context_name)
+     |> cargar_pagina_sql(1)}
+  end
+
+  defp cargar_pagina_sql(socket, pagina) do
+    case MetadataApp.ConsultasSql.filas(socket.assigns.nombre_sql, socket.assigns[:current_scope], pagina) do
+      {:ok, resultado} -> socket |> assign(:resultado_sql, resultado) |> assign(:error_sql, nil)
+      {:error, motivo} -> socket |> assign(:resultado_sql, nil) |> assign(:error_sql, MetadataApp.ConsultasSql.mensaje_ejecucion(motivo))
+    end
+  end
+
+  defp valor_sql(nil), do: "—"
+  defp valor_sql(%Decimal{} = d), do: Decimal.to_string(d, :normal)
+  defp valor_sql(valor) when is_binary(valor), do: valor
+  defp valor_sql(valor), do: to_string(valor)
 
   # Consulta Ecto (schema_context_type: 3): reporte de solo lectura, sin
   # motor de estados/TRN/maestro-detalle/alta — reusa el mismo render de
@@ -343,7 +370,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   # ya usa consulta.campos) armado desde meta_schema_detail -- "catalogo"
   # es siempre el propio catálogo (un BC no tiene N tablas unidas como
   # una Consulta). "fecha_registro" queda afuera -- es de control (ver
-  # mismo criterio en bc_motor_live.ex/filas_get_view, Get Config no le
+  # mismo criterio en bc_motor_live.ex/filas_get_view, Lista no le
   # ofrece "Parámetro" tampoco).
   defp campos_param_de_catalogo(header, detalles) do
     detalles
@@ -450,6 +477,11 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   def handle_event("change_page", %{"id" => id}, socket) do
     AdminNav.handle_nav(id, socket, socket.assigns.current_page)
+  end
+
+  # SQL View (tipo 4): paginación del listado de solo lectura.
+  def handle_event("pagina_sql", %{"pagina" => pagina}, %{assigns: %{es_consulta_sql?: true}} = socket) do
+    {:noreply, cargar_pagina_sql(socket, String.to_integer(pagina))}
   end
 
   # --- Asistente "Importar" (Fase 1 del módulo de Importación) -------------
@@ -600,7 +632,7 @@ defmodule MetadataAppWeb.CatalogoLive do
     cantidad = MapSet.size(socket.assigns.seleccionados)
 
     if cantidad > @excel_max_filas do
-      {:noreply, put_flash(socket, :error, "Hay #{cantidad} registros seleccionados — más de lo que Excel puede recibir de una.")}
+      {:noreply, put_flash(socket, :error, "Hay #{cantidad} registros seleccionados — más de lo que Excel puede recibir de una sola vez.")}
     else
       enviar_excel(socket, filas_export_seleccionados(socket))
     end
@@ -612,7 +644,7 @@ defmodule MetadataAppWeb.CatalogoLive do
        put_flash(
          socket,
          :error,
-         "Hay #{socket.assigns.total_filas} registros para exportar — más de lo que Excel puede recibir de una. Filtrá más antes de descargar."
+         "Hay #{socket.assigns.total_filas} registros para exportar — más de lo que Excel puede recibir de una sola vez. Filtra más antes de descargar."
        )}
     else
       enviar_excel(socket, filas_export(socket))
@@ -920,7 +952,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   # --- Barra de Parámetros (Consulta Ecto, rediseño 2026-08-27) ---------
   # Todo guardado inmediato y SOLO en el socket de esta sesión (@overrides_parametro,
   # ver moduledoc de MetaSchema.Consulta) -- nunca pisa el default que
-  # configuró el admin en Get Config (Consulta.campos), eso es de lectura
+  # configuró el admin en Lista (Consulta.campos), eso es de lectura
   # acá. `name="clave[<clave_campo>]"` + `form="form-parametros-reporte"`
   # en vez de phx-value-campo en los <select>/<input> con phx-change
   # propio -- mismo motivo que en ConsultaEditorLive (phx-value-* nunca
@@ -1055,7 +1087,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   # Mismo criterio que recalcular_agregaciones/1 pero para "Filtros Min."
   # (ver celdas_resumen/1) — a diferencia de @agregaciones, que el usuario
   # final elige por columna, acá no hay elección: cada columna NUMÉRICA
-  # con "minmax_recomendado" en el Get View (ver panel_get_view/1 en
+  # con "minmax_recomendado" en la Lista (ver panel_get_view/1 en
   # bc_motor_live.ex) SIEMPRE muestra su {mínimo, máximo}, calculado de
   # una. Restringido a integer/decimal a propósito (igual que "Total
   # 25"/"Totalizado") — el botón para prenderlo ni se muestra para otros
@@ -1202,9 +1234,9 @@ defmodule MetadataAppWeb.CatalogoLive do
 
     # Clic en un encabezado (R2, usuario final) pisa el "Orden de
     # resultados" del admin SOLO para esta sesión -- nunca se persiste en
-    # `consulta` (eso sigue siendo Get Config). Una sola columna a la vez,
+    # `consulta` (eso sigue siendo Lista). Una sola columna a la vez,
     # a diferencia de la lista con prioridad del admin -- el patrón típico
-    # de "clic para ordenar" de cualquier grilla, no una combinación.
+    # de "clic para ordenar" de cualquier tabla, no una combinación.
     consulta_ordenada = if orden_usuario, do: %{consulta | orden_por: [orden_usuario]}, else: consulta
 
     scope = socket.assigns[:current_scope]
@@ -1226,7 +1258,7 @@ defmodule MetadataAppWeb.CatalogoLive do
     |> assign(:fin, min(offset + @por_pagina, total_filas))
   end
 
-  # "Orden de resultados" (Get Config, BC Motor, 2026-09-02) --
+  # "Orden de resultados" (Lista, BC Motor, 2026-09-02) --
   # header.orden_resultados es [%{"campo" =>, "direccion" =>}, ...]
   # (jsonb, strings) -- acá se convierte a lo que
   # CatalogoGenerico.aplicar_orden/2 espera: [{campo_atom, :asc|:desc}].
@@ -1352,7 +1384,7 @@ defmodule MetadataAppWeb.CatalogoLive do
 
   defp ids_unicos(filas, campo), do: filas |> Enum.map(&Map.get(&1, campo)) |> Enum.reject(&is_nil/1) |> Enum.uniq()
 
-  # "Creado por" (Get View) — mismo criterio batch-por-página que
+  # "Creado por" (Lista) — mismo criterio batch-por-página que
   # agregar_alcance_a_filas/2 de arriba (una sola consulta a
   # meta_schema_auditoria, nunca una por fila). `bc_creado_por`/
   # `campo_id_creado_por` ya vienen resueltos desde montar_catalogo/2
@@ -1465,6 +1497,58 @@ defmodule MetadataAppWeb.CatalogoLive do
     """
   end
 
+  def render(%{es_consulta_sql?: true} = assigns) do
+    assigns =
+      assign(
+        assigns,
+        :total_paginas,
+        if(assigns.resultado_sql, do: max(div(assigns.resultado_sql.total + assigns.resultado_sql.por_pagina - 1, assigns.resultado_sql.por_pagina), 1), else: 1)
+      )
+
+    ~H"""
+    <div class="p-6">
+      <div class="bg-white border border-gray-200 rounded-2xl shadow-sm p-5">
+        <div class="flex items-center justify-between gap-3 mb-3">
+          <h1 class="text-lg font-bold text-gray-900">{@label}</h1>
+          <span :if={@resultado_sql} class="text-xs text-gray-500">{@resultado_sql.total} registros</span>
+        </div>
+
+        <p :if={@error_sql} id="error-sql-view" class="bg-red-50 text-red-700 rounded-lg px-3 py-2 text-sm">{@error_sql}</p>
+
+        <div :if={@resultado_sql} class="overflow-x-auto rounded-xl border border-gray-100">
+          <table id="tabla-sql-view" class="min-w-full divide-y divide-gray-200 text-xs">
+            <thead class="bg-gray-50">
+              <tr>
+                <th :for={c <- @resultado_sql.columnas} class="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">
+                  {c["nombre"]}
+                </th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+              <tr :if={@resultado_sql.filas == []}>
+                <td colspan={length(@resultado_sql.columnas)} class="px-3 py-6 text-center text-gray-400">Sin registros.</td>
+              </tr>
+              <tr :for={fila <- @resultado_sql.filas} class="hover:bg-gray-50 transition-colors">
+                <td :for={c <- @resultado_sql.columnas} class="px-3 py-2 text-gray-700 whitespace-nowrap">
+                  {valor_sql(fila[c["nombre"]])}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div :if={@resultado_sql && @total_paginas > 1} class="flex items-center justify-end gap-2 mt-3 text-xs">
+          <button :if={@resultado_sql.pagina > 1} type="button" phx-click="pagina_sql" phx-value-pagina={@resultado_sql.pagina - 1}
+            class="px-3 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors">Anterior</button>
+          <span class="text-gray-500">Página {@resultado_sql.pagina} de {@total_paginas}</span>
+          <button :if={@resultado_sql.pagina < @total_paginas} type="button" phx-click="pagina_sql" phx-value-pagina={@resultado_sql.pagina + 1}
+            class="px-3 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors">Siguiente</button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
   def render(%{es_consulta?: true} = assigns) do
     ~H"""
     <div class="p-6">
@@ -1543,7 +1627,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <tr>
                   <td class="px-4 py-10 text-center text-gray-400 text-sm" colspan={max(length(@columnas), 1) + 1}>
                     <%= if @sin_filtro? do %>
-                      Seleccioná un filtro o buscá algo para ver los datos.
+                      Selecciona un filtro o busca algo para ver los datos.
                     <% else %>
                       Sin registros con ese filtro.
                     <% end %>
@@ -1682,8 +1766,8 @@ defmodule MetadataAppWeb.CatalogoLive do
             <tbody class="divide-y divide-gray-100">
               <%= for fila <- @filas do %>
                 <tr class="hover:bg-purple-50/60 transition-colors cursor-pointer"
-                  ondblclick={"if (!event.target.closest('input')) { window.location='/registro/#{@current_page}/#{fila.id}' }"}
-                  onclick={"if (window.matchMedia('(pointer: coarse)').matches && !event.target.closest('a') && !event.target.closest('input')) { window.location='/registro/#{@current_page}/#{fila.id}' }"}>
+                  ondblclick={"if (!event.target.closest('input')) { liveSocket.js().navigate('/registro/#{@current_page}/#{fila.id}') }"}
+                  onclick={"if (window.matchMedia('(pointer: coarse)').matches && !event.target.closest('a') && !event.target.closest('input')) { liveSocket.js().navigate('/registro/#{@current_page}/#{fila.id}') }"}>
                   <td class="px-2 py-1.5 w-8">
                     <input type="checkbox" phx-click="toggle_seleccion_fila" phx-value-id={fila.id} checked={MapSet.member?(@seleccionados, fila.id)}
                       class="rounded border-gray-300 text-purple-600 focus:ring-purple-500" />
@@ -1695,7 +1779,7 @@ defmodule MetadataAppWeb.CatalogoLive do
                 <tr>
                   <td class="px-4 py-10 text-center text-gray-400 text-sm" colspan={length(@columnas_render) + 1}>
                     <%= if @sin_filtro? do %>
-                      Seleccioná un filtro o buscá algo para ver los datos.
+                      Selecciona un filtro o busca algo para ver los datos.
                     <% else %>
                       Sin registros con ese filtro.
                     <% end %>
@@ -1763,7 +1847,7 @@ defmodule MetadataAppWeb.CatalogoLive do
           </div>
 
           <%= if @modal["paso"] == "plantilla" do %>
-            <p class="text-gray-500 mb-2">Elegí qué plantilla vas a usar:</p>
+            <p class="text-gray-500 mb-2">Elige qué plantilla vas a usar:</p>
             <div class="flex flex-col gap-2">
               <button :for={p <- @plantillas} type="button" phx-click="importar_elegir_plantilla" phx-value-id={p.id}
                 class="text-left border border-gray-200 rounded-lg px-3 py-2 hover:border-purple-400 hover:bg-purple-50">
@@ -1775,7 +1859,7 @@ defmodule MetadataAppWeb.CatalogoLive do
 
           <%= if @modal["paso"] == "cargar" do %>
             <div class="flex items-center justify-between gap-3 mb-2.5">
-              <p class="text-gray-600">Completá la plantilla con tus datos (la fila 2 es solo un ejemplo) y subila acá.</p>
+              <p class="text-gray-600">Completa la plantilla con tus datos (la fila 2 es solo un ejemplo) y súbela acá.</p>
               <%!-- target="_blank" a propósito (bug real reportado): un <a href>
                    normal hace que LiveView detecte "va a navegar" y mate el
                    socket de ESTA página ANTES de saber que la respuesta es una
@@ -1960,7 +2044,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   end
 
   # Las 3 piezas de abajo (celda_encabezado/celda_body/celda_resumen_col)
-  # son el dispatch por tipo de columna del Get View unificado (ver
+  # son el dispatch por tipo de columna de la Lista unificada (ver
   # construir_columnas_render/3) — una por cada fila de la tabla (título,
   # dato, resumen), SIEMPRE en el mismo orden (@columnas_render), para que
   # las 3 sigan alineadas verticalmente sin importar qué tan mezclados
@@ -1972,7 +2056,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   # filtra desde panel_parametros/1 (arriba de la tabla) en vez de por
   # columna, mismo widget que ya tenía una Consulta Ecto. Los campos de
   # control (estado/sucursal/almacén/unidad de venta) no tienen equivalente
-  # en panel_parametros todavía -- mismo criterio que Get Config
+  # en panel_parametros todavía -- mismo criterio que Lista
   # (bc_motor_live.ex, filas_get_view/2 no les ofrece "Parámetro" tampoco,
   # campo_param: nil) -- pierden su filtro sin reemplazo por ahora.
   attr :col, :map, required: true
@@ -2027,7 +2111,7 @@ defmodule MetadataAppWeb.CatalogoLive do
            hoja de estilo nativa del navegador, ninguna clase CSS lo
            pisa -- confirmado real contra Chrome/Edge). Un <div> con
            ícono adentro da control total del color sin pelear con el
-           checkbox nativo -- mismo criterio de "escribí tu propio
+           checkbox nativo -- mismo criterio de "escribe tu propio
            componente" que ya rige para daisyUI. --%>
       <div :if={@booleano?} class={[
         "w-4 h-4 rounded border flex items-center justify-center",
@@ -2182,7 +2266,7 @@ defmodule MetadataAppWeb.CatalogoLive do
     Enum.map(columnas, &%{clave: col_key(&1), etiqueta: &1.schema_context_properties["etiqueta"]})
   end
 
-  # Get View unificado (CatalogoLive) — @columnas_render ya viene en el
+  # Lista unificada (CatalogoLive) — @columnas_render ya viene en el
   # orden final (control + negocio mezclados, ver construir_columnas_render/3),
   # así que el popover de "Campos" lista todo en el mismo orden que las
   # columnas reales de la tabla.
@@ -2190,7 +2274,7 @@ defmodule MetadataAppWeb.CatalogoLive do
     Enum.map(columnas_render, &%{clave: &1.clave, etiqueta: &1.etiqueta})
   end
 
-  # "Total 25" (Get View → Filtros → "Total 25", bc_motor_live.ex) — a
+  # "Total 25" (Lista → Filtros → "Total 25", bc_motor_live.ex) — a
   # diferencia de "Totalizado" (recalcular_totales_generales/1, una query
   # de SUM sobre TODAS las filas que matchean), esto suma directo sobre
   # @filas (las ~25 que ya están cargadas para la página actual), sin
@@ -2219,7 +2303,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   defp sumar_valor(valor, acc), do: valor + acc
 
   # `props` (schema_context_properties del campo) trae la máscara elegida
-  # en Get View → Filtros → "Máscara" (solo para tipo "decimal", ver
+  # en Lista → Filtros → "Máscara" (solo para tipo "decimal", ver
   # panel_filtros_resumen/1 en bc_motor_live.ex): "mascara_separador" —
   # "," (default, formato 1,234.56) o "." (formato 1.234,56) — y
   # "mascara_simbolo" — "" (default) o "$" antepuesto. Un campo sin esas
@@ -2531,7 +2615,7 @@ defmodule MetadataAppWeb.CatalogoLive do
   end
 
   # Extraído de celdas_resumen/1 de arriba — el cuerpo por columna, para
-  # poder reusarlo desde celda_resumen_col/1 (Get View unificado de
+  # poder reusarlo desde celda_resumen_col/1 (Lista unificada de
   # CatalogoLive) sin duplicar todo este bloque. celdas_resumen/1 lo sigue
   # llamando en loop tal cual, así que la tabla de Consultas (que la usa
   # directo) no cambió en nada.

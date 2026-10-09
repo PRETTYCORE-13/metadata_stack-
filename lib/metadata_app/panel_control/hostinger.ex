@@ -33,7 +33,7 @@ defmodule MetadataApp.PanelControl.Hostinger do
   def crear_registro_a(dominio_base, subdominio, ip_destino) do
     case MetadataApp.Integraciones.obtener_credencial_por_sistema("hostinger") do
       nil ->
-        {:error, "No hay ninguna credencial de Hostinger configurada -- creá una en /sysadmin/credenciales con sistema_externo \"hostinger\"."}
+        {:error, "No hay ninguna credencial de Hostinger configurada -- crea una en /sysadmin/credenciales con sistema_externo \"hostinger\"."}
 
       credencial ->
         url = (credencial.base_url || "https://developers.hostinger.com") <> "/api/dns/v1/zones/#{dominio_base}"

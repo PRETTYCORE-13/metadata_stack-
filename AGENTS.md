@@ -20,10 +20,61 @@ This is a web application written using the Phoenix web framework.
   (ej. "grilla" en vez de "tabla", encontrado real en
   `SPEC-SYS-1109202606`). Si se encuentra uno, corregirlo ahí mismo,
   no esperar a que el usuario lo señale.
+- **Área de una SPEC** (`SPEC-<ÁREA>-<DDMMAAAA><secuencia>-<slug>`,
+  convención completa en `docs/specs/README.md`):
+  - `SYS` = plataforma/sistema (funcionalidad del motor y sus pantallas).
+  - `ARQ` = Arquitectura (infraestructura, deploy, alta/baja de
+    sistemas, propagación entre ambientes).
+  - `ADN` = Administración de Negocio (configuración de negocio, no
+    plataforma).
+  - `APP` = aplicación móvil (app Flutter y su API: autenticación,
+    sesiones, endpoints que consume).
+- **Permisos por área de SPEC**: solo ciertas personas pueden alterar
+  cada área, según `.github/spec-permisos.txt` (lo hace cumplir el
+  workflow `spec-permisos.yml` por cada commit, contra el autor). Antes
+  de crear, editar, renombrar o borrar cualquier archivo de
+  `docs/specs/SPEC-<ÁREA>-*`, obtener el usuario de GitHub con
+  `gh api user --jq .login` y verificar que esté permitido en esa área
+  (en un renombrado, en ambas áreas). Si no lo está, no tocar la SPEC:
+  avisar quién sí puede hacerlo. Lo mismo para el archivo de permisos,
+  su script y su workflow (área `ADMIN`).
+- **SDD obligatorio — nunca programar sin SPEC aprobada.** Todo cambio
+  funcional (aunque sea chico: un atributo nuevo, un campo en un modal,
+  una validación) arranca con la skill `pty-sdd`: crear o actualizar la
+  SPEC en `docs/specs/SPEC-<ÁREA>-*`, mostrar cada fase y esperar
+  aprobación explícita antes de tocar `lib/`, `priv/repo/migrations/`,
+  `assets/` o `test/`. Si el pedido llega como "agrega X", se interpreta
+  como "documenta X en la SPEC y propónlo", no como "prográmalo".
+  Excepciones, solo si el usuario lo dice explícitamente: "sin spec",
+  "hotfix", o correcciones de texto/typos.
+  - Guardarraíl del equipo: el hook `PreToolUse` de
+    `.claude/settings.json` (versionado; script
+    `.claude/hooks/requiere_spec.exs`, en Elixir para correr igual en
+    Windows y en el devcontainer) bloquea Edit/Write en esas carpetas si
+    `.claude/spec-activa` no existe. Permisos personales de Claude Code
+    van en `.claude/settings.local.json`, nunca en `settings.json`. Ese archivo (una línea, fuera de git) se escribe **solo
+    después** de que el usuario aprueba la SPEC: la ruta
+    `docs/specs/SPEC-...` (debe tener `03.tasks.md`) o `hotfix` si el
+    usuario lo autoriza. Al cerrar la SPEC se borra. Nunca crearlo para
+    destrabar el bloqueo por cuenta propia.
+- **Una SPEC por capacidad, no por cambio.** Antes de crear una SPEC
+  nueva, buscar si la capacidad ya tiene una SPEC dueña
+  (`docs/specs/README.md`, `grep` en `docs/specs`). Criterio:
+  - **Defecto** (el sistema no hace lo que su SPEC ya dice, o falla):
+    hotfix con prueba (solo si el usuario lo autoriza) y nota en
+    `03.tasks.md` de la SPEC dueña.
+  - **Capacidad nueva o cambio de comportamiento en algo con SPEC
+    dueña:** ampliar esa SPEC con requisitos nuevos numerados (sección
+    "Ampliación AAAA-MM-DD"), con su ciclo de aprobación normal.
+  - **Capacidad nueva sin dueña clara:** SPEC nueva; solo en este caso.
+  Si hay duda de cuál es la dueña, proponerla al usuario antes de
+  escribir.
 - **Toda recomendación** debe pensarse en función de: experiencia del
   cliente final, alta capacidad de respuesta (performance),
   escalabilidad, y volumen transaccional masivo — no solo "que
   funcione".
+- **Si la información no es certera, no darla.** Nunca exagerar; es
+  mejor informar que se carece de la información.
 - **Al revisar una SPEC** (`docs/specs/SPEC-*`), si aplica, proponer
   mejoras — pero nunca escribirlas directo en el documento: pedir
   confirmación/autorización primero para modificar la SPEC.

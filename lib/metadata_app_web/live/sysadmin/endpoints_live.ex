@@ -263,7 +263,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
 
   def handle_event("eliminar_endpoint", %{"nombre" => nombre}, socket) do
     caso =
-      Enum.find(socket.assigns.endpoints, fn e -> e.consulta.header.schema_context_name == nombre end)
+      Enum.find(socket.assigns.endpoints, fn e -> ConsultaEndpoints.nombre_de_origen(e) == nombre end)
 
     case caso && ConsultaEndpoints.eliminar(caso) do
       :ok -> {:noreply, assign(socket, :endpoints, ConsultaEndpoints.listar_todos())}
@@ -337,14 +337,14 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
         {:noreply, push_navigate(socket, to: ~p"/sysadmin/endpoints/#{nombre}")}
 
       nil ->
-        {:noreply, assign(socket, :error_nuevo, "Elegí un catálogo base.")}
+        {:noreply, assign(socket, :error_nuevo, "Elige un catálogo base.")}
 
       {:error, :sin_union} ->
         {:noreply,
          assign(
            socket,
            :error_nuevo,
-           "No se pudo detectar automáticamente la relación entre esas dos tablas -- elegí otra tabla de detalle o dejalo en \"Ninguna\"."
+           "No se pudo detectar automáticamente la relación entre esas dos tablas -- elige otra tabla de detalle o déjalo en \"Ninguna\"."
          )}
 
       {:error, _otro} ->
@@ -374,7 +374,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
   end
 
   # --- :editar -- Campos (Visible/Parámetro, sin salir de esta sección) ----
-  # Mismos handlers/eventos que ya usaba el Get Config de ConsultaEditorLive
+  # Mismos handlers/eventos que ya usaba la Lista de ConsultaEditorLive
   # (ver MetadataAppWeb.ParametrosCatalogoComponents, que fija esos nombres
   # de evento) -- acá SIN reordenamiento por drag-and-drop ni Campos de
   # control/Orden de resultados (esos siguen siendo exclusivos de Get
@@ -587,7 +587,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
      |> assign(:ambiente_procesando?, false)
      |> put_flash(
        :info,
-       "Publicado -- va camino a \"#{socket.assigns.ambiente_sistema}\". Seguí el progreso con \"gh run watch\" o \"gh run list\"."
+       "Publicado -- va camino a \"#{socket.assigns.ambiente_sistema}\". Sigue el progreso con \"gh run watch\" o \"gh run list\"."
      )}
   end
 
@@ -597,7 +597,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
      |> assign(:ambiente_procesando?, false)
      |> put_flash(
        :info,
-       "Quitado de \"#{socket.assigns.ambiente_sistema}\" -- el endpoint sigue publicado local. Seguí el progreso con \"gh run watch\"."
+       "Quitado de \"#{socket.assigns.ambiente_sistema}\" -- el endpoint sigue publicado local. Sigue el progreso con \"gh run watch\"."
      )}
   end
 
@@ -754,7 +754,10 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
         <tbody class="divide-y divide-gray-100">
           <tr :for={endpoint <- @endpoints}>
             <td class="px-3 py-2.5 font-semibold text-gray-800">{endpoint.nombre}</td>
-            <td class="px-3 py-2.5 text-gray-500">{Enum.join(MetaConsultas.catalogos_presentes(endpoint.consulta), " + ")}</td>
+            <td :if={ConsultaEndpoints.de_servicio?(endpoint)} class="px-3 py-2.5 text-gray-500">
+              <span class="text-[10px] font-bold text-teal-700 mr-1">SERVICIO</span>{ConsultaEndpoints.nombre_de_origen(endpoint)}
+            </td>
+            <td :if={!ConsultaEndpoints.de_servicio?(endpoint)} class="px-3 py-2.5 text-gray-500">{Enum.join(MetaConsultas.catalogos_presentes(endpoint.consulta), " + ")}</td>
             <td class="px-3 py-2.5 font-mono text-gray-500">
               <span class="uppercase text-[10px] font-bold text-purple-600 mr-1">{endpoint.metodo}</span>{endpoint.ruta}
             </td>
@@ -768,11 +771,16 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
               </span>
             </td>
             <td class="px-3 py-2.5 text-right">
-              <.link navigate={~p"/sysadmin/endpoints/#{endpoint.consulta.header.schema_context_name}"}
+              <.link
+                navigate={
+                  if ConsultaEndpoints.de_servicio?(endpoint),
+                    do: ~p"/sysadmin/servicios/#{ConsultaEndpoints.nombre_de_origen(endpoint)}",
+                    else: ~p"/sysadmin/endpoints/#{ConsultaEndpoints.nombre_de_origen(endpoint)}"
+                }
                 class="text-blue-600 hover:text-blue-800 font-semibold mr-3">
                 Configurar
               </.link>
-              <button :if={@bpb_habilitado} type="button" phx-click="eliminar_endpoint" phx-value-nombre={endpoint.consulta.header.schema_context_name}
+              <button :if={@bpb_habilitado} type="button" phx-click="eliminar_endpoint" phx-value-nombre={ConsultaEndpoints.nombre_de_origen(endpoint)}
                 data-confirm={"Se borra el endpoint '#{endpoint.nombre}' y todas sus credenciales, para siempre. ¿Eliminar?"}
                 class="text-red-600 hover:text-red-800 font-semibold">
                 Eliminar
@@ -908,7 +916,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
 
     <div :if={!@bpb_habilitado} class="mb-4 rounded-xl border border-blue-200 bg-blue-50 text-blue-700 px-3 py-2">
       La configuración de este endpoint (campos, ruta, parámetros) solo se edita en local (Business Process Builder) --
-      acá podés generar/rotar credenciales y ver la documentación de qué mandar.
+      acá puedes generar/rotar credenciales y ver la documentación de qué mandar.
     </div>
 
     <div class="flex flex-col gap-4">
@@ -1180,7 +1188,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
         <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-3">Credenciales</div>
 
         <div :if={@credencial_key_temporal} class="mb-3 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          <p class="font-semibold text-amber-800 mb-1">Copiá esta API key ahora — no se va a volver a mostrar completa.</p>
+          <p class="font-semibold text-amber-800 mb-1">Copia esta API key ahora — no se va a volver a mostrar completa.</p>
           <code class="font-mono text-[11px] bg-white border border-amber-200 rounded px-2 py-1 block break-all">{@credencial_key_temporal}</code>
         </div>
 
@@ -1368,7 +1376,7 @@ defmodule MetadataAppWeb.Sysadmin.EndpointsLive do
   attr :modos_fecha_simple, :list, required: true
   attr :catalogos_referenciables, :list, required: true
 
-  # Equivalente reducido a la sección "Columnas del GET" de Get Config
+  # Equivalente reducido a la sección "Columnas del GET" de Lista
   # (ConsultaEditorLive) -- Visible/Parámetro y su configuración, SIN
   # reordenamiento por drag-and-drop ni Campos de control/Orden de
   # resultados (siguen siendo exclusivos de esa pantalla, un endpoint no

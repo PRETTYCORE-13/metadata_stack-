@@ -64,7 +64,7 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
       })
 
     {:ok, consulta} = MetaConsultas.crear(header, "meta_fixture_cliente")
-    {:ok, _} = Permissions.crear_permiso(%{recurso: nombre, accion: "leer"})
+    Permissions.crear_permiso(%{recurso: nombre, accion: "leer"})
 
     {header, consulta, nav}
   end
@@ -190,7 +190,7 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
 
   # Barra de "Parámetros" (rediseño 2026-08-27, corregido el mismo día --
   # ver moduledoc de MetaSchema.Consulta) -- opt-in: el admin tiene que
-  # marcar "es_parametro" => true a propósito por columna en Get Config,
+  # marcar "es_parametro" => true a propósito por columna en Lista,
   # ninguna aparece sola por ser de tipo elegible. Aparte del popover de
   # Filtros genérico de siempre. meta_fixture_cliente_sucursal_id
   # (referencia a meta_schema_branch) es el mismo campo agregado antes
@@ -288,7 +288,7 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
     refute html_filtrado =~ cliente_dos.meta_fixture_cliente_nombre
   end
 
-  # El default de fecha vive en Get Config (Consulta.campos, admin) --
+  # El default de fecha vive en Lista (Consulta.campos, admin) --
   # cambiarlo desde acá (usuario final) es SOLO de esta sesión, nunca
   # pisa ese default guardado. "fecha_registro" YA es un campo real de
   # meta_fixture_cliente (meta_schema_detail, ver priv/repo/catalogos/
@@ -300,7 +300,7 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
   # y LiveView reventaba en el test con "Duplicate id found" apenas se
   # armó el ícono de filtro por columna (cada uno con un id propio
   # derivado de catalogo+campo).
-  test "cambiar el modo de un parámetro Fecha desde el reporte no persiste el default de Get Config", %{conn: conn} do
+  test "cambiar el modo de un parámetro Fecha desde el reporte no persiste el default de Lista", %{conn: conn} do
     cliente =
       fixture_cliente(%{meta_fixture_cliente_nombre: "Con fecha #{unique()}", meta_fixture_cliente_edad: 1, meta_fixture_cliente_venta: Decimal.new("1")})
       |> Ecto.Changeset.change(fecha_registro: DateTime.new!(~D[2026-01-15], ~T[12:00:00], "Etc/UTC"))
@@ -348,7 +348,7 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
 
   # "Orden de resultados" (R2, usuario final, 2026-08-27) -- clic en el
   # encabezado ordena SOLO la sesión, nunca pisa "Orden de resultados" que
-  # haya configurado el admin en Get Config (@orden_usuario, socket-only).
+  # haya configurado el admin en Lista (@orden_usuario, socket-only).
   test "clic en un encabezado ordena la sesión (asc -> desc -> vuelve al default), sin persistir nada", %{conn: conn} do
     prefijo = "ordenclic_#{unique()}"
     fixture_cliente(%{meta_fixture_cliente_nombre: "#{prefijo}-b", meta_fixture_cliente_edad: 30, meta_fixture_cliente_venta: Decimal.new("1")})
@@ -367,7 +367,7 @@ defmodule MetadataAppWeb.CatalogoLiveConsultaTest do
     assert :binary.match(html_desc, "#{prefijo}-b") |> elem(0) < (:binary.match(html_desc, "#{prefijo}-a") |> elem(0))
 
     # 3er clic en la MISMA columna vuelve al default del admin (nil) -- sin
-    # ninguna columna de orden configurada en Get Config, no hay garantía
+    # ninguna columna de orden configurada en Lista, no hay garantía
     # de posición, así que acá solo se confirma que la flecha de orden
     # desaparece del encabezado, no un orden de filas puntual.
     html_default = view |> render_click("ordenar_por_columna", %{"catalogo" => "meta_fixture_cliente", "campo" => "meta_fixture_cliente_edad"})

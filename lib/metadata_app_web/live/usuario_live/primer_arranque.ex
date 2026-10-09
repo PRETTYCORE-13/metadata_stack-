@@ -97,9 +97,9 @@ defmodule MetadataAppWeb.UsuarioLive.PrimerArranque do
             style="height: 48px; width: auto; margin-left: auto; margin-right: auto; margin-bottom: 1rem;"
           />
           <.header>
-            <p class="text-white">Configurá tu sistema</p>
+            <p class="text-white">Configura tu sistema</p>
             <:subtitle>
-              <span class="text-white/60">Primer arranque — creá el administrador y la empresa inicial.</span>
+              <span class="text-white/60">Primer arranque — crea el administrador y la empresa inicial.</span>
             </:subtitle>
           </.header>
         </div>

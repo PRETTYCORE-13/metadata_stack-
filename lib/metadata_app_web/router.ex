@@ -24,7 +24,7 @@ defmodule MetadataAppWeb.Router do
     plug :fetch_current_scope_for_usuario
   end
 
-  # SPEC-API-0409202601 (design.md §1.2) -- autenticación por Bearer token,
+  # SPEC-APP-0409202601 (design.md §1.2) -- autenticación por Bearer token,
   # NO por cookie de sesión (a diferencia de :api de arriba) -- para la app
   # Flutter, que no puede participar de una sesión de navegador.
   #
@@ -196,6 +196,10 @@ defmodule MetadataAppWeb.Router do
     # no LiveView (un socket no puede stream-ear un archivo al navegador),
     # ver ImportacionDescargaController.
     get "/sysadmin/importacion/:plantilla_id/descargar", ImportacionDescargaController, :descargar
+
+    # Logo de empresa para la top bar -- controller (respuesta binaria con
+    # caché inmutable por versión), ver EmpresaLogoController.
+    get "/empresas/:id/logo/:version", EmpresaLogoController, :mostrar
   end
 
   scope "/", MetadataAppWeb do
@@ -241,9 +245,13 @@ defmodule MetadataAppWeb.Router do
         live "/sysadmin/bc-list/nuevo-completo", Sysadmin.BcNuevoCompletoLive
         live "/sysadmin/bc-list/:nombre/motor", Sysadmin.BcMotorLive
         live "/sysadmin/bc-list/:nombre/consulta", Sysadmin.ConsultaEditorLive
+        # SPEC-SYS-2509202601: editor de una Consulta SQL (tipo 4).
+        live "/sysadmin/bc-list/:nombre/consulta-sql", Sysadmin.ConsultaSqlEditorLive
         live "/sysadmin/bc-list/:nombre/plantilla", Sysadmin.PlantillaConstructorLive
         live "/sysadmin/bc-list/:nombre/importacion", Sysadmin.ImportacionConstructorLive
         live "/sysadmin/tepache", Sysadmin.TepacheLive
+        # SPEC-ARQ-3009202601: se orquesta desde el BPB local (gh + SSH).
+        live "/sysadmin/purgar", Sysadmin.PurgarLive
 
         # SPEC-SYS-1009202602 (design.md §16, R76, agregado 2026-09-18):
         # "nuevo" SÍ vuelve a depender de bpb_habilitado -- crear un
@@ -281,6 +289,13 @@ defmodule MetadataAppWeb.Router do
       # bpb_habilitado) queda como excepción explícita desde R76.
       live "/sysadmin/endpoints", Sysadmin.EndpointsLive, :index
       live "/sysadmin/endpoints/:nombre", Sysadmin.EndpointsLive, :editar
+
+      # SPEC-SYS-2509202601 R53.1: contrato y credenciales de cada Servicio
+      # en cualquier ambiente (el editor de SQL solo existe en local). Mismo
+      # criterio que Endpoints: metadata pura, protegida por el permiso
+      # "sysadmin_endpoints".
+      live "/sysadmin/servicios", Sysadmin.ServiciosLive, :index
+      live "/sysadmin/servicios/:nombre", Sysadmin.ServiciosLive, :ver
 
       # Buscar TRN: siempre disponible (2026-08-04, a pedido explícito) —
       # a diferencia del resto del BPB de arriba, no depende de código que

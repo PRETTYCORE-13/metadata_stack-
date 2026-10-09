@@ -121,7 +121,9 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     with {:ok, _header} <- buscar_header(schema_context_name),
          :ok <- validar_confirmacion(schema_context_name, confirmar_tabla),
          :ok <- validar_confirmacion_filas(schema_context_name, confirmar_filas),
-         :ok <- validar_sin_dependientes(schema_context_name) do
+         :ok <- validar_sin_dependientes(schema_context_name),
+         # SPEC-SYS-2509202601 R29: una SQL View que usa esta tabla.
+         :ok <- MetadataApp.ConsultasSql.validar_sin_vistas(schema_context_name) do
       # La migración generada (generar_migracion_drop/1) purga la metadata
       # (header/detail/historial/TRN) POR NOMBRE antes de dropear la tabla
       # -- así, cuando esta misma migración corra vía CI/CD contra
@@ -305,7 +307,9 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   def eliminar_campo(schema_context_name, campo, confirmar_campo, contexto \\ %{}) do
     with {:ok, _header} <- buscar_header(schema_context_name),
          :ok <- validar_confirmacion(campo, confirmar_campo),
-         {:ok, detalle} <- buscar_detalle(schema_context_name, campo) do
+         {:ok, detalle} <- buscar_detalle(schema_context_name, campo),
+         # SPEC-SYS-2509202601 R29: una SQL View que usa esta columna.
+         :ok <- MetadataApp.ConsultasSql.validar_sin_vistas(schema_context_name, campo) do
       MetaSchemaContext.eliminar_detalle(detalle)
       quitar_columna(schema_context_name, campo)
       asegurar_campos_nuevos(schema_context_name)
@@ -385,7 +389,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
 
   # fecha_registro es un campo de SISTEMA (fuera de @campos/meta_schema_detail
   # normal, ver MetaCatalogoGenerico) — pero para que el usuario final lo
-  # vea en Get View/tabla como cualquier otro campo real (a diferencia de
+  # vea en Lista/tabla como cualquier otro campo real (a diferencia de
   # estado_id/trn, que son puramente internos), necesita SU PROPIA fila en
   # meta_schema_detail igual. "editable" => false porque no hay ningún
   # camino para cambiarlo por PATCH (ver rechazar_no_editables/4 en
@@ -720,6 +724,8 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
   # literal). La columna queda nullable, igual que "sin default" (rama de
   # abajo) -- el valor real siempre lo pone forzar_defaults/2, no la BD.
   defp formatear_default(tipo, valor) when tipo in [:date, :time] and valor in ["hoy", "ahora"], do: nil
+  # "hoy+N"/"hoy-N" (SPEC-SYS-1109202601 R42): también variable, nunca default de columna.
+  defp formatear_default(:date, "hoy" <> _desfase), do: nil
   defp formatear_default(tipo, valor) when tipo in [:string, :date, :time], do: inspect(valor)
   defp formatear_default(:boolean, valor) when valor in ["true", "false"], do: valor
   defp formatear_default(:boolean, _valor), do: nil
@@ -768,7 +774,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     else
       {:error,
        "confirmar_filas no coincide — el catálogo tiene #{filas} fila(s) ahora mismo. " <>
-         "Consultá GET /api/catalogos/#{schema_context_name}/impacto antes de borrar."}
+         "Consulta GET /api/catalogos/#{schema_context_name}/impacto antes de borrar."}
     end
   end
 
@@ -778,7 +784,7 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
         :ok
 
       dependientes ->
-        {:error, "catálogo(s) dependientes, borralos primero: #{Enum.join(dependientes, ", ")}"}
+        {:error, "catálogo(s) dependientes, bórralos primero: #{Enum.join(dependientes, ", ")}"}
     end
   end
 
@@ -873,6 +879,17 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerador do
     File.rm("priv/repo/catalogos/#{schema_context_name}.motor.json")
     :ok
   end
+
+  @doc """
+  Corre las migraciones pendientes de `priv/repo/migrations` (ruta fuente,
+  ver comentario abajo). Pública para `MetadataApp.ConsultasSql`, que
+  genera la migración de la vista de una Consulta SQL con este mismo
+  mecanismo (SPEC-SYS-2509202601).
+  """
+  def correr_migraciones_pendientes, do: migrar()
+
+  @doc "Timestamp de 14 dígitos para una migración nueva, sin chocar con una existente (ver timestamp_utc/0)."
+  def timestamp_migracion, do: timestamp_utc()
 
   defp migrar do
     # En Windows, sin symlinks, Mix copia priv/ a _build/ y Ecto.Migrator

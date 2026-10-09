@@ -4,7 +4,7 @@ defmodule MetadataAppWeb.CatalogoLiveFiltrosTest do
   (panel_filtros/1, fila_filtro_columna/1) se retiró. Un catálogo (BC)
   normal filtra desde panel_parametros/1 -- el mismo widget "Parámetros"
   que ya tenía una Consulta Ecto -- y solo para columnas que el admin
-  marcó "es_parametro" en Get Config (bc_motor_live.ex). Sin ese flag,
+  marcó "es_parametro" en Lista (bc_motor_live.ex). Sin ese flag,
   el panel ni aparece (ver campos_param_de_catalogo/2 en catalogo_live.ex).
   """
   use MetadataAppWeb.ConnCase, async: true
@@ -30,7 +30,7 @@ defmodule MetadataAppWeb.CatalogoLiveFiltrosTest do
 
     rol_admin = Repo.get_by!(Rol, nombre: "administrador")
     {:ok, _} = Permissions.asignar_rol(usuario.id, rol_admin.id, empresa.id)
-    {:ok, _} = Permissions.crear_permiso(%{recurso: "meta_fixture_cliente", accion: "leer"})
+    Permissions.crear_permiso(%{recurso: "meta_fixture_cliente", accion: "leer"})
 
     conn =
       conn

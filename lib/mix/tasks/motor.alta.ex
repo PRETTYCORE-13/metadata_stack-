@@ -2,14 +2,14 @@ defmodule Mix.Tasks.Motor.Alta do
   use Mix.Task
   alias MetadataApp.{Ambientes, MotorAlta}
 
-  @shortdoc "Da de alta un sistema nuevo (base + app en k3s) -- SPEC-SYS-0309202601"
+  @shortdoc "Da de alta un sistema nuevo (base + app en k3s) -- SPEC-ARQ-0309202601"
 
   @moduledoc """
   Uso: mix motor.alta <ambiente> <sistema> <imagen>
 
   Mecanismo de alta de un sistema nuevo (cliente, o uno de los tres
   canales unstable/testing/stable) -- ver
-  `docs/specs/SPEC-SYS-0309202601-alta-sistema-nuevo/design.md` §4 para
+  `docs/specs/SPEC-ARQ-0309202601-alta-sistema-nuevo/design.md` §4 para
   los 5 pasos completos.
 
   `<ambiente>` -- mismo argumento y mismo mecanismo que ya usa

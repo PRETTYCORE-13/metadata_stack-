@@ -17,7 +17,7 @@ defmodule Mix.Tasks.Meta.Plantillas.RegenerarAutomaticas do
   el CONTENIDO — nunca se toca qué plantilla está publicada ahora mismo
   (si esa era la publicada, sigue siéndolo; si no, sigue en borrador). Si
   un catálogo nunca tuvo una, se crea como borrador, sin publicarse sola
-  — revisala en el Constructor y publicala vos si te gusta cómo quedó.
+  — revísala en el Constructor y publícala tú si te gusta cómo quedó.
 
   Lógica real en `MetadataApp.MetaPlantillas.regenerar_todas_las_automaticas/0`.
   """

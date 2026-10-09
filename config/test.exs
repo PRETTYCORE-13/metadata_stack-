@@ -33,6 +33,13 @@ config :metadata_app, MetadataApp.Mailer, adapter: Swoosh.Adapters.Test
 # transacción de sandbox del test que lo disparó).
 config :metadata_app, Oban, testing: :inline
 
+# SPEC-SYS-2509202601 -- en test, MetadataApp.ConsultasSql crea/quita la
+# vista de una Consulta SQL directo dentro de la transacción de sandbox, en
+# vez de escribir un archivo en priv/repo/migrations y correr Ecto.Migrator
+# (que usa su propia conexión, fuera del sandbox, y dejaría archivos y
+# vistas reales en la base de test).
+config :metadata_app, :consultas_sql_vista_directa, true
+
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
 

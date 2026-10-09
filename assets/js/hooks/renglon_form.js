@@ -75,8 +75,11 @@ export default {
         return
       }
 
-      if (!this.el.checkValidity()) {
-        this.el.reportValidity()
+      // Embebido en la plantilla (SPEC-SYS-1109202607) el elemento es un
+      // <div>, no un <form>: se valida campo por campo.
+      const invalido = campos.find((c) => !c.checkValidity())
+      if (invalido) {
+        invalido.reportValidity()
         return
       }
 

@@ -65,7 +65,7 @@ defmodule MetadataAppWeb.UsuarioSessionController do
 
       {:error, _changeset} ->
         conn
-        |> put_flash(:error, "No se pudo actualizar la contraseña — revisá que tenga al menos 12 caracteres y que la confirmación coincida.")
+        |> put_flash(:error, "No se pudo actualizar la contraseña — revisa que tenga al menos 12 caracteres y que la confirmación coincida.")
         |> redirect(to: ~p"/meta_schema_usuario/settings")
     end
   end

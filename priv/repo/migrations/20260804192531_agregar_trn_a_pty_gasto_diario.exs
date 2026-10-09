@@ -17,7 +17,7 @@ defmodule MetadataApp.Repo.Migrations.AgregarTrnAPtyGastoDiario do
   # garantía de "todo alta nueva tiene TRN" es de aplicación
   # (MetadataApp.TRN.asignar_si_transaccional/1 en cada create), no de
   # constraint de base, mismo criterio documentado en asegurar_trn/3.
-  # Guard agregado (2026-09-04, SPEC-SYS-0309202601, auditoría de replay
+  # Guard agregado (2026-09-04, SPEC-ARQ-0309202601, auditoría de replay
   # desde cero): `pty_gasto_diario` ya no existe en el schema final --se
   # borró en algún punto posterior de la historia real-- así que un
   # sistema nuevo que reproduce las migraciones desde cero rompe acá

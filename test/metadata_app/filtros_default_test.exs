@@ -5,7 +5,7 @@ defmodule MetadataApp.FiltrosDefaultTest do
 
   describe "rango_fecha/3 — modos dinámicos (\"actual\"/\"mes_actual\"/\"mes_a_fecha\"/\"anio_actual\")" do
     test "ignoran cualquier valor guardado — un valor viejo da el mismo resultado que nil" do
-      valor_viejo = Date.add(Date.utc_today(), -400 * 3) |> Date.to_iso8601()
+      valor_viejo = Date.add(MetadataApp.Hoy.fecha(), -400 * 3) |> Date.to_iso8601()
 
       for modo <- ["actual", "mes_actual", "mes_a_fecha", "anio_actual"] do
         assert FiltrosDefault.rango_fecha(modo, nil, nil) == FiltrosDefault.rango_fecha(modo, valor_viejo, nil)
@@ -13,7 +13,7 @@ defmodule MetadataApp.FiltrosDefaultTest do
     end
 
     test "\"actual\" cubre el día completo de hoy (00:00:00 a 23:59:59 UTC)" do
-      hoy = Date.utc_today()
+      hoy = MetadataApp.Hoy.fecha()
 
       assert {desde, hasta} = FiltrosDefault.rango_fecha("actual", nil, nil)
       assert DateTime.to_date(desde) == hoy
@@ -22,21 +22,21 @@ defmodule MetadataApp.FiltrosDefaultTest do
     end
 
     test "\"mes_actual\" cubre del 1° al último día del mes EN CURSO" do
-      hoy = Date.utc_today()
+      hoy = MetadataApp.Hoy.fecha()
       assert {desde, hasta} = FiltrosDefault.rango_fecha("mes_actual", nil, nil)
       assert DateTime.to_date(desde) == Date.new!(hoy.year, hoy.month, 1)
       assert DateTime.to_date(hasta) == Date.new!(hoy.year, hoy.month, Date.days_in_month(hoy))
     end
 
     test "\"mes_a_fecha\" cubre del 1° del mes a HOY" do
-      hoy = Date.utc_today()
+      hoy = MetadataApp.Hoy.fecha()
       assert {desde, hasta} = FiltrosDefault.rango_fecha("mes_a_fecha", nil, nil)
       assert DateTime.to_date(desde) == Date.new!(hoy.year, hoy.month, 1)
       assert DateTime.to_date(hasta) == hoy
     end
 
     test "\"anio_actual\" cubre del 1/1 al 31/12 del año EN CURSO" do
-      anio_actual = Date.utc_today().year
+      anio_actual = MetadataApp.Hoy.fecha().year
       assert {desde, hasta} = FiltrosDefault.rango_fecha("anio_actual", nil, nil)
       assert DateTime.to_date(desde) == Date.new!(anio_actual, 1, 1)
       assert DateTime.to_date(hasta) == Date.new!(anio_actual, 12, 31)
@@ -45,7 +45,7 @@ defmodule MetadataApp.FiltrosDefaultTest do
 
   describe "rango_fecha/3 — modo \"formula\" (única excepción, sí depende de texto guardado)" do
     test "parsea la fórmula de \"desde\" y \"hasta\" por separado" do
-      hoy = Date.utc_today()
+      hoy = MetadataApp.Hoy.fecha()
       assert {desde, hasta} = FiltrosDefault.rango_fecha("formula", "primer_dia_anio", "actual")
       assert DateTime.to_date(desde) == Date.new!(hoy.year, 1, 1)
       assert DateTime.to_date(hasta) == hoy
@@ -58,7 +58,7 @@ defmodule MetadataApp.FiltrosDefaultTest do
     end
 
     test "\"desde\" vacío usa \"primer_dia_mes\", \"hasta\" vacío usa \"actual\"" do
-      hoy = Date.utc_today()
+      hoy = MetadataApp.Hoy.fecha()
       assert {desde, hasta} = FiltrosDefault.rango_fecha("formula", nil, nil)
       assert DateTime.to_date(desde) == Date.new!(hoy.year, hoy.month, 1)
       assert DateTime.to_date(hasta) == hoy
@@ -71,7 +71,7 @@ defmodule MetadataApp.FiltrosDefaultTest do
 
   describe "descripcion/3 — modos dinámicos" do
     test "describen el período actual, no un valor guardado" do
-      valor_viejo = Date.add(Date.utc_today(), -400 * 3) |> Date.to_iso8601()
+      valor_viejo = Date.add(MetadataApp.Hoy.fecha(), -400 * 3) |> Date.to_iso8601()
 
       for modo <- ["actual", "mes_actual", "mes_a_fecha", "anio_actual"] do
         assert FiltrosDefault.descripcion(modo, valor_viejo, nil) == FiltrosDefault.descripcion(modo, nil, nil)

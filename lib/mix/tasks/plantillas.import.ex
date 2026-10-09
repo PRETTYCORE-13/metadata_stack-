@@ -1,7 +1,7 @@
 defmodule Mix.Tasks.Plantillas.Import do
   use Mix.Task
 
-  @shortdoc "Importa las plantillas del Constructor (Post Config) desde priv/repo/catalogos/*.plantillas.json"
+  @shortdoc "Importa las plantillas del Constructor (Formulario) desde priv/repo/catalogos/*.plantillas.json"
 
   @moduledoc """
   Uso: mix plantillas.import [directorio_entrada]

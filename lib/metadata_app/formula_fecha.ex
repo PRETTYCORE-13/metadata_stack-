@@ -26,7 +26,7 @@ defmodule MetadataApp.FormulaFecha do
   Parsea `texto` contra `hoy` (default `Date.utc_today/0`, inyectable para
   tests deterministas) y devuelve `{:ok, Date.t()}` o `{:error, mensaje}`.
   """
-  def parsear(texto, hoy \\ Date.utc_today())
+  def parsear(texto, hoy \\ MetadataApp.Hoy.fecha())
 
   def parsear(nil, _hoy), do: {:error, "Fórmula vacía"}
 

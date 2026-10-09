@@ -8,7 +8,10 @@
          sidebar (pc-sidebar-logo), reusado tal cual para no tener que
          alojar/mantener un archivo de ícono aparte. -->
     <link rel="icon" type="image/png" href="https://ennovacore.com.mx/IMAGENES/IMAGENES_pret/gota.png" />
-    <.live_title default="Prettycore" suffix=" · BPB v1.0">
+    <!-- El nombre va en default y no en el contenido: al montar, el
+         cliente de LiveView reescribe el título con data-default si la
+         pantalla no asigna page_title. -->
+    <.live_title default={titulo_pestana(assigns[:current_scope])}>
       {assigns[:page_title]}
     </.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
@@ -52,5 +55,25 @@
   </head>
   <body>
     {@inner_content}
+    <%!-- Indicador de carga entre pantallas (SPEC-SYS-0909202601 R27–R31).
+         Vive fuera de @inner_content para que la navegación en vivo no lo
+         vuelva a pintar a la mitad de la transición; app.js lo muestra
+         y lo oculta con phx:page-loading-start/stop. --%>
+    <div id="pc-cargando" class="pc-cargando is-hidden" role="status" aria-live="polite">
+      <div class="pc-cargando-loader">
+        <svg viewBox="0 0 72 96" aria-hidden="true">
+          <ellipse class="pc-cargando-mancha" cx="36" cy="76" rx="14" ry="3.5" />
+          <line class="pc-cargando-tierra" x1="8" y1="76" x2="64" y2="76" />
+          <ellipse class="pc-cargando-onda" cx="36" cy="76" rx="10" ry="2.6" />
+          <ellipse class="pc-cargando-onda pc-cargando-onda-2" cx="36" cy="76" rx="6" ry="1.6" />
+          <path
+            class="pc-cargando-gota"
+            d="M36 54 C36 54 29 63 29 67.5 A7 7 0 0 0 43 67.5 C43 63 36 54 36 54 Z"
+          />
+        </svg>
+        <div class="pc-cargando-barra"><span></span></div>
+        <span class="pc-cargando-texto">CARGANDO…</span>
+      </div>
+    </div>
   </body>
 </html>

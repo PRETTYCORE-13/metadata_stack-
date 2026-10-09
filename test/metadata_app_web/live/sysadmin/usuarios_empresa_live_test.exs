@@ -247,7 +247,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLiveTest do
       # al admin A QUIÉN borró) -- lo que no debe quedar es el renglón de
       # la lista ni el panel de detalle abierto para ese usuario.
       refute html =~ "phx-value-id=\"#{objetivo.id}\""
-      assert html =~ "Elegí un usuario de la izquierda."
+      assert html =~ "Elige un usuario de la izquierda."
       refute Repo.get(Usuario, objetivo.id)
     end
 

@@ -14,7 +14,7 @@ defmodule MetadataApp.Release do
   end
 
   # `nombres_archivo` -- lista de basenames de migración EXACTOS (nunca
-  # un solo "version" de corte -- SPEC-SYS-1809202603 Grupo H, bug real
+  # un solo "version" de corte -- SPEC-ARQ-1809202603 Grupo H, bug real
   # encontrado 2026-09-21: `Ecto.Migrator.run(:down, to: version)`
   # ordena TODAS las migraciones aplicadas por su número de versión, y
   # este proyecto tiene migraciones "doble timestamp" -- pty_* publicadas
@@ -66,16 +66,63 @@ defmodule MetadataApp.Release do
     # contra un release de verdad, la ruta relativa daba {:error, :enoent}
     # en silencio).
     dir = Application.app_dir(@app, "priv/repo/catalogos")
+    de_prueba = catalogos_de_prueba(dir)
+    dir_import = dir_sin_catalogos(dir, de_prueba)
 
     {:ok, mensajes, _apps} =
       Ecto.Migrator.with_repo(MetadataApp.Repo, fn _repo ->
-        MetadataApp.MetaImportExport.importar_meta(dir) ++
-          MetadataApp.MetaImportExport.importar_motor(dir) ++
-          MetadataApp.MetaImportExport.importar_plantillas(dir) ++
-          MetadataApp.MetaImportExport.importar_endpoint(dir)
+        MetadataApp.MetaImportExport.importar_meta(dir_import) ++
+          MetadataApp.MetaImportExport.importar_motor(dir_import) ++
+          MetadataApp.MetaImportExport.importar_plantillas(dir_import) ++
+          MetadataApp.MetaImportExport.importar_endpoint(dir_import) ++
+          Enum.map(de_prueba, &purgar_catalogo_de_prueba/1)
       end)
 
+    if dir_import != dir, do: File.rm_rf(dir_import)
     Enum.each(mensajes, &IO.puts/1)
+  end
+
+  # Catálogos de prueba (ruta "/__test__/...", ej. meta_fixture_cliente):
+  # las pruebas los necesitan (sus tablas vienen de migraciones y CI los
+  # importa con `mix meta.import`), pero no deben aparecer en ningún
+  # ambiente desplegado. Solo este import de release los salta -- el de
+  # Mix (CI, dev) no cambia.
+  defp catalogos_de_prueba(dir) do
+    if File.dir?(dir) do
+      dir
+      |> File.ls!()
+      |> Enum.filter(&String.ends_with?(&1, ".meta.json"))
+      |> Enum.map(&(dir |> Path.join(&1) |> File.read!() |> Jason.decode!()))
+      |> Enum.filter(&String.starts_with?(&1["schema_context_nav"] || "", "/__test__/"))
+      |> Enum.map(& &1["schema_context_name"])
+    else
+      []
+    end
+  end
+
+  # Copia temporal de `dir` sin los archivos de `excluir` (los importar_*
+  # leen una carpeta completa, no aceptan filtro).
+  defp dir_sin_catalogos(dir, []), do: dir
+
+  defp dir_sin_catalogos(dir, excluir) do
+    destino = Path.join(System.tmp_dir!(), "catalogos_import_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(destino)
+
+    for archivo <- File.ls!(dir),
+        File.regular?(Path.join(dir, archivo)),
+        not Enum.any?(excluir, &String.starts_with?(archivo, &1 <> ".")),
+        do: File.cp!(Path.join(dir, archivo), Path.join(destino, archivo))
+
+    destino
+  end
+
+  # Borra la metadata que quedó de imports anteriores. La tabla física se
+  # queda (viene de migraciones históricas), invisible sin su header.
+  defp purgar_catalogo_de_prueba(nombre) do
+    MetadataApp.BusinessProcessBuilder.CatalogoGenerador.purgar_metadata_por_nombre(nombre)
+    "- #{nombre}: catálogo de prueba, fuera de este ambiente"
+  rescue
+    error -> "! #{nombre}: no se pudo quitar el catálogo de prueba: #{Exception.message(error)}"
   end
 
   # Bootstrap del usuario SYSADMIN (cross-empresa, ver Usuario.super_admin
@@ -147,7 +194,7 @@ defmodule MetadataApp.Release do
       IO.puts("== Empresa inicial ==")
       asegurar_empresa_inicial()
     else
-      IO.puts("SYSADMIN_EMAIL no configurado -- completá el primer arranque desde el navegador (wizard).")
+      IO.puts("SYSADMIN_EMAIL no configurado -- completa el primer arranque desde el navegador (wizard).")
     end
 
     IO.puts("Setup completo.")

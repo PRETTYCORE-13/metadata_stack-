@@ -7,6 +7,11 @@
 # General application configuration
 import Config
 
+# SPEC-SYS-1109202601 R48: "hoy" y "ahora" de negocio en hora local, no UTC.
+# Se cambia por ambiente con ZONA_HORARIA (runtime.exs).
+config :elixir, :time_zone_database, Tz.TimeZoneDatabase
+config :metadata_app, :zona_horaria, "America/Mexico_City"
+
 config :metadata_app, :scopes,
   usuario: [
     default: true,
@@ -85,7 +90,8 @@ config :metadata_app, MetadataApp.Mailer, adapter: Swoosh.Adapters.Local
 config :metadata_app, Oban,
   engine: Oban.Engines.Basic,
   repo: MetadataApp.Repo,
-  queues: [consulta_endpoint_jobs: 2]
+  # purga (SPEC-ARQ-3009202601 §6.1): "Purgar en unstable", uno a la vez.
+  queues: [consulta_endpoint_jobs: 2, purga: 1]
 
 # Configure esbuild (the version is required)
 config :esbuild,

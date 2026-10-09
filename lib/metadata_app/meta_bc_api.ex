@@ -41,6 +41,25 @@ defmodule MetadataApp.MetaBcApi do
     end
   end
 
+  @doc """
+  Ejecuta un Servicio (Consulta SQL de uso "servicio", SPEC-SYS-2509202601
+  §11.5) por su nombre — lectura, permitido desde PRE y POST. Corre como
+  `:sistema`, igual que el resto de este módulo (R44). Dentro de una
+  transición ve los cambios todavía no confirmados de esa misma
+  transacción (R47) y un error nunca la aborta (R46).
+
+      MetaBcApi.ejecutar_servicio("pty_sql_materiales_precio_venta",
+        %{"direccion_id" => 1, "productos" => [101, 102]})
+
+  `{:ok, %{columnas: [texto], filas: [%{texto => valor}]}}` o
+  `{:error, :tiempo_excedido | mensaje}` (por ejemplo, "No existe el
+  servicio ... en este ambiente.", R48).
+  """
+  @spec ejecutar_servicio(String.t(), map()) :: {:ok, map()} | {:error, term()}
+  def ejecutar_servicio(nombre, valores) when is_binary(nombre) and is_map(valores) do
+    MetadataApp.ConsultasSql.ejecutar_servicio(nombre, valores, :sistema)
+  end
+
   @doc "Alta en otro catálogo — solo permitido desde reglas POST."
   @spec crear(String.t(), map()) :: {:ok, struct()} | {:error, term()}
   def crear(tabla, attrs) do

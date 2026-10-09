@@ -53,7 +53,7 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
          socket
          |> assign(:encontrado?, true)
          |> assign(:header, header)
-         |> assign(:campos_disponibles, MetaImportacionDatos.campos_disponibles(nombre))
+         |> assign(:campos_disponibles, MetaImportacionDatos.campos_importables(nombre))
          |> assign(:detalles_disponibles, MetaImportacionDatos.catalogos_detalle_disponibles(header.id))
          |> assign(:plantillas, MetaImportacionDatos.listar_plantillas(header.id))
          |> assign(:editor, nil)}
@@ -142,7 +142,7 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
 
     cond do
       paso == 3 and Enum.all?(editor["elegidos"], &(!&1["incluido"])) ->
-        {:noreply, assign(socket, :editor, Map.put(editor, "error", "Elegí al menos un campo del encabezado para incluir en la plantilla."))}
+        {:noreply, assign(socket, :editor, Map.put(editor, "error", "Elige al menos un campo del encabezado para incluir en la plantilla."))}
 
       motivo_detalles ->
         {:noreply, assign(socket, :editor, Map.put(editor, "error", motivo_detalles))}
@@ -162,7 +162,7 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
         {:noreply, assign(socket, :editor, Map.put(editor, "error", "El nombre no puede quedar vacío."))}
 
       Enum.all?(editor["elegidos"], &(!&1["incluido"])) ->
-        {:noreply, assign(socket, :editor, Map.put(editor, "error", "Elegí al menos un campo del encabezado para incluir en la plantilla."))}
+        {:noreply, assign(socket, :editor, Map.put(editor, "error", "Elige al menos un campo del encabezado para incluir en la plantilla."))}
 
       motivo_detalles ->
         {:noreply, assign(socket, :editor, Map.put(editor, "error", motivo_detalles))}
@@ -229,7 +229,7 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
         nil
 
       editor["campo_identificador_encabezado"] in [nil, ""] ->
-        "Elegí el campo identificador del encabezado (ej. Folio) para poder vincular los detalles."
+        "Elige el campo identificador del encabezado (ej. Folio) para poder vincular los detalles."
 
       Enum.any?(detalles_activos, &Enum.all?(&1["elegidos"], fn c -> !c["incluido"] end)) ->
         "Cada detalle activado necesita al menos un campo incluido."
@@ -317,13 +317,13 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
       "catalogo" => catalogo,
       "etiqueta" => etiqueta,
       "activo" => false,
-      "elegidos" => elegidos_iniciales(MetaImportacionDatos.campos_disponibles(catalogo)),
+      "elegidos" => elegidos_iniciales(MetaImportacionDatos.campos_importables(catalogo)),
       "campo_identificador_detalle" => nil
     }
   end
 
   defp detalle_inicial(%{catalogo: catalogo, etiqueta: etiqueta}, guardado) do
-    campos_disponibles = MetaImportacionDatos.campos_disponibles(catalogo)
+    campos_disponibles = MetaImportacionDatos.campos_importables(catalogo)
     guardados = Map.new(guardado["campos"] || [], &{&1["campo"], &1})
 
     elegidos =

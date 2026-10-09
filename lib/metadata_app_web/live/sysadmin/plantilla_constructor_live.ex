@@ -102,7 +102,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   # "folio" agregado 2026-09-11 (SPEC-SYS-1109202607, hallazgo real): la
   # feature de folio (SPEC-SYS-0109202601 R9) ya soportaba esta clave en
   # FichaLive (@claves_campos_control, valor_legible_control/4) y en
-  # BcMotorLive/Get View desde que se construyó -- solo faltaba acá, así
+  # BcMotorLive/Lista desde que se construyó -- solo faltaba acá, así
   # que un catálogo con folio no podía colocar un nodo "Folio" al armar
   # una plantilla custom (solo lo veía en la fila fija de la plantilla
   # automática).
@@ -437,14 +437,14 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
 
   # Ancla = nodo ya seleccionado (@nodo_seleccionado_id); destino = celda
   # elegida después con un clic (@celda_seleccionada) — mismo gesto de
-  # "elegí origen, después destino" que ya usa el resto del panel.
+  # "elige origen, después destino" que ya usa el resto del panel.
   def handle_event("grid_combinar", _params, socket) do
     with id when not is_nil(id) <- socket.assigns.nodo_seleccionado_id,
          %{fila: fila_fin, columna: columna_fin} <- socket.assigns.celda_seleccionada,
          {:ok, definicion} <- MetaPlantillas.combinar_celdas(socket.assigns.definicion, socket.assigns.grid_editando_id, id, fila_fin, columna_fin) do
       {:noreply, socket |> aplicar_cambio_grid(definicion) |> assign(:celda_seleccionada, nil)}
     else
-      _ -> {:noreply, assign(socket, :mensaje, {:error, "Elegí un componente y después una celda destino para combinar."})}
+      _ -> {:noreply, assign(socket, :mensaje, {:error, "Elige un componente y después una celda destino para combinar."})}
     end
   end
 
@@ -551,9 +551,14 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         par -> par
       end)
 
-    definicion = MetaPlantillas.actualizar_propiedades(socket.assigns.definicion, id, propiedades)
+    case validar_modo_captura(socket, id, propiedades) do
+      :ok ->
+        definicion = MetaPlantillas.actualizar_propiedades(socket.assigns.definicion, id, propiedades)
+        {:noreply, assign(socket, :definicion, definicion)}
 
-    {:noreply, assign(socket, :definicion, definicion)}
+      {:error, mensaje} ->
+        {:noreply, assign(socket, :mensaje, {:error, mensaje})}
+    end
   end
 
   # Condición de visibilidad de CUALQUIER componente seleccionado — a
@@ -667,7 +672,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     agregar_token_formula(socket, "#{funcion}(#{catalogo}.#{campo})")
   end
 
-  # "¿Qué querés agregar?" — tarjetas grandes que muestran/ocultan UN
+  # "¿Qué quieres agregar?" — tarjetas grandes que muestran/ocultan UN
   # constructor secundario a la vez (Resumen / Condición / Otro registro),
   # en vez de los 3 apilados y siempre visibles — el ruido visual real
   # venía de mostrar todo junto, no de que faltara alguno. La tira de
@@ -895,9 +900,34 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     |> assign(:definicion, nueva_definicion)
   end
 
+  # SPEC-SYS-1109202607 R21a/R24: el modo Captura de "Renglones de detalle"
+  # solo vale para un detalle de este maestro, y cada detalle se captura en
+  # un solo lugar del formulario.
+  defp validar_modo_captura(socket, id, propiedades) do
+    nodo = MetaPlantillas.buscar_nodo(socket.assigns.definicion, id)
+    resultantes = Map.merge((nodo && nodo["propiedades"]) || %{}, propiedades)
+
+    cond do
+      is_nil(nodo) or nodo["tipo"] != "renglones" or resultantes["modo"] != "captura" ->
+        :ok
+
+      not Enum.any?(socket.assigns.catalogos_detalle_disponibles, &(&1.nombre == resultantes["catalogo"])) ->
+        {:error, "La captura solo aplica a un detalle de este catálogo."}
+
+      Enum.any?(MetaPlantillas.nodos_de_tipo(socket.assigns.definicion, "renglones"), fn otro ->
+        otro["id"] != id and otro["propiedades"]["modo"] == "captura" and
+          otro["propiedades"]["catalogo"] == resultantes["catalogo"]
+      end) ->
+        {:error, "Ese detalle ya se captura en otro lugar de este formulario."}
+
+      true ->
+        :ok
+    end
+  end
+
   defp colocar_en_grid(socket, nodo) do
     case socket.assigns.celda_seleccionada do
-      nil -> {:noreply, assign(socket, :mensaje, {:error, "Elegí primero una celda vacía del grid."})}
+      nil -> {:noreply, assign(socket, :mensaje, {:error, "Elige primero una celda vacía del grid."})}
       %{fila: fila, columna: columna} -> colocar_soltado(socket, nodo, fila, columna)
     end
   end
@@ -1131,32 +1161,45 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       </div>
 
       <div :if={is_nil(@plantilla)} class="bg-white border border-gray-200 rounded-xl p-10 text-center text-gray-400 text-sm">
-        Este catálogo todavía no tiene ningún PostView. Creá uno para empezar.
+        Este catálogo todavía no tiene ningún PostView. Crea uno para empezar.
       </div>
 
       <div :if={@plantilla} class="grid grid-cols-1 lg:grid-cols-[180px_1fr_280px] gap-4">
         <div class="bg-white border border-gray-200 rounded-xl p-3">
           <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">Componentes</div>
-          <div :for={{grupo, items} <- @grupos_paleta} class="mb-3">
-            <div class="text-[10px] font-semibold text-gray-400 mb-1">{grupo}</div>
-            <div class="flex flex-col gap-1.5">
+          <%!-- Acordeón nativo (R13-R15): abrir/cerrar no viaja al servidor, y
+               ignore_attributes evita que un patch de LiveView regrese
+               "open" al valor inicial (solo Campos abierto). --%>
+          <details :for={{{grupo, items}, i} <- Enum.with_index(@grupos_paleta)} id={"paleta-grupo-#{i}"}
+            phx-mounted={Phoenix.LiveView.JS.ignore_attributes(["open"])} class="group mb-2">
+            <summary class="flex items-center justify-between cursor-pointer select-none list-none py-1 text-[10px] font-semibold text-gray-400 hover:text-gray-600 [&::-webkit-details-marker]:hidden">
+              {grupo}
+              <.icon name="hero-chevron-right" class="w-3 h-3 transition-transform group-open:rotate-90" />
+            </summary>
+            <div class="flex flex-col gap-1.5 mt-1">
               <button :for={{tipo, etiqueta} <- items} type="button" draggable="true" data-origen="paleta" data-tipo={tipo}
                 phx-click="grid_colocar_tipo" phx-value-tipo={tipo}
                 class="gc-paleta-item flex items-center gap-2.5 text-left px-2 py-1.5 rounded-lg border border-transparent text-xs font-semibold text-gray-600 hover:border-gray-200 hover:bg-gray-50 cursor-grab">
                 <span class="gc-paleta-icono"><.icono tipo={tipo} /></span> {etiqueta}
               </button>
             </div>
-          </div>
-          <div class="text-[11px] font-bold uppercase tracking-wide text-gray-400 mb-2">Campos</div>
-          <div class="flex flex-col gap-1.5">
-            <button :for={{filtro, etiqueta} <- @tipos_campo} type="button" draggable="true" data-origen="paleta" data-filtro={filtro}
-              phx-click="grid_colocar_campo" phx-value-filtro={filtro}
-              class="gc-paleta-item flex items-center gap-2.5 text-left px-2 py-1.5 rounded-lg border border-transparent text-xs font-semibold text-gray-600 hover:border-gray-200 hover:bg-gray-50 cursor-grab">
-              <span class="gc-paleta-icono"><.icono tipo={filtro} /></span> {etiqueta}
-            </button>
-          </div>
+          </details>
+          <details id={"paleta-grupo-#{length(@grupos_paleta)}"} open
+            phx-mounted={Phoenix.LiveView.JS.ignore_attributes(["open"])} class="group mb-2">
+            <summary class="flex items-center justify-between cursor-pointer select-none list-none py-1 text-[11px] font-bold uppercase tracking-wide text-gray-400 hover:text-gray-600 [&::-webkit-details-marker]:hidden">
+              Campos
+              <.icon name="hero-chevron-right" class="w-3 h-3 transition-transform group-open:rotate-90" />
+            </summary>
+            <div class="flex flex-col gap-1.5 mt-1">
+              <button :for={{filtro, etiqueta} <- @tipos_campo} type="button" draggable="true" data-origen="paleta" data-filtro={filtro}
+                phx-click="grid_colocar_campo" phx-value-filtro={filtro}
+                class="gc-paleta-item flex items-center gap-2.5 text-left px-2 py-1.5 rounded-lg border border-transparent text-xs font-semibold text-gray-600 hover:border-gray-200 hover:bg-gray-50 cursor-grab">
+                <span class="gc-paleta-icono"><.icono tipo={filtro} /></span> {etiqueta}
+              </button>
+            </div>
+          </details>
           <p class="text-[11px] text-gray-400 mt-3">
-            Arrastrá un componente a una celda, o hacé clic en una celda vacía y después acá.
+            Arrastra un componente a una celda, o haz clic en una celda vacía y después acá.
           </p>
         </div>
 
@@ -1176,7 +1219,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
             lookup_catalogo={@lookup_catalogo} lookup_id={@lookup_id} lookup_campo={@lookup_campo} definicion={@definicion}
             herramienta_calculado={@herramienta_calculado}
             nombre={@nombre} registro_muestra_id={@registro_muestra_id} current_scope={@current_scope} header={@header} />
-          <p :if={!@nodo_seleccionado_id} class="text-xs text-gray-400">Elegí una celda ocupada del grid.</p>
+          <p :if={!@nodo_seleccionado_id} class="text-xs text-gray-400">Elige una celda ocupada del grid.</p>
           <.panel_condicion :if={@nodo_seleccionado_id} nodo={MetaPlantillas.buscar_nodo(@definicion, @nodo_seleccionado_id)} campos={@campos} estados={@estados} />
         </div>
       </div>
@@ -1373,7 +1416,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           Mostrar contador de campos junto al título de cada pestaña
         </label>
       </form>
-      <p class="text-gray-500 mb-0.5">Entrá a cada pestaña para editar su contenido.</p>
+      <p class="text-gray-500 mb-0.5">Entra a cada pestaña para editar su contenido.</p>
       <div :for={p <- @nodo["hijos"]} class="flex items-center gap-1">
         <button type="button" phx-click="entrar_contenedor" phx-value-id={p["id"]}
           class="flex-1 flex items-center justify-between px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 font-semibold hover:border-purple-400 hover:text-purple-700 hover:bg-purple-50/50">
@@ -1416,9 +1459,9 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     </form>
     <p class="text-gray-400 mt-2 mb-2">
       <%= if @nodo["propiedades"]["distribucion"] in [nil, "grid"] do %>
-        Con Grid, acomodá los componentes a mano (fila/columna) entrando al panel.
+        Con Grid, acomoda los componentes a mano (fila/columna) entrando al panel.
       <% else %>
-        Con esta distribución el orden es el mismo en que agregaste los componentes — entrá al panel para agregar/quitar, no hace falta acomodarlos en celdas.
+        Con esta distribución el orden es el mismo en que agregaste los componentes — entra al panel para agregar/quitar, no hace falta acomodarlos en celdas.
       <% end %>
     </p>
     <.boton_entrar id={@nodo["id"]} />
@@ -1445,15 +1488,12 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         Enum.filter(assigns.campos, &(&1.schema_context_properties["tipo"] in tipos_permitidos))
       end
 
-    # Los campos de control solo tienen sentido en el selector "general"
-    # (sin tipo_filtro) -- no tienen un schema_context_properties["tipo"]
-    # real contra el que filtrar (ver moduledoc de @campos_control).
+    # Los campos de control no tienen un schema_context_properties["tipo"]
+    # contra el que filtrar, así que se ofrecen con cualquier tipo_filtro:
+    # todo nodo "campo" de la paleta trae uno, y filtrarlos los dejaría
+    # inalcanzables en una plantilla custom.
     campos_control_filtrados =
-      if tipos_permitidos == [] do
-        Enum.reject(@campos_control, &(&1.requiere_alcance? and not assigns.header.alcance_habilitado))
-      else
-        []
-      end
+      Enum.reject(@campos_control, &(&1.requiere_alcance? and not assigns.header.alcance_habilitado))
 
     assigns =
       assigns
@@ -1498,7 +1538,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     # YA armado (formula no vacía), @herramienta_calculado todavía es nil
     # (se resetea al seleccionar cualquier nodo, ver handle_event
     # "seleccionar_nodo") -- sin esto, reabrir un cálculo existente
-    # mostraría el estado vacío "elegí una opción" en vez de la fórmula
+    # mostraría el estado vacío "elige una opción" en vez de la fórmula
     # que ya tiene. Una vez que el usuario clickea una opción (real
     # @herramienta_calculado, vía "seleccionar_herramienta_calculado"),
     # esa elección manda siempre.
@@ -1523,7 +1563,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       </form>
 
       <div>
-        <p class="text-gray-500 font-semibold mb-1.5">¿Cómo querés obtener este valor?</p>
+        <p class="text-gray-500 font-semibold mb-1.5">¿Cómo quieres obtener este valor?</p>
         <div class="grid grid-cols-2 gap-1.5">
           <button :for={{herramienta, simbolo, etiqueta} <- herramientas_calculado(@catalogos_disponibles)}
             type="button" phx-click="seleccionar_herramienta_calculado" phx-value-herramienta={herramienta}
@@ -1539,7 +1579,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       </div>
 
       <p :if={@herramienta_efectiva in [nil, ""]} class="text-gray-400 text-center py-2">
-        Elegí una opción arriba para empezar.
+        Elige una opción arriba para empezar.
       </p>
 
       <div :if={@herramienta_efectiva not in [nil, ""]}>
@@ -1550,7 +1590,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
             {texto_legible_token(token, @campos)}
             <button type="button" phx-click="formula_quitar_token" phx-value-indice={i} class="opacity-50 hover:opacity-100">✕</button>
           </span>
-          <span :if={@formula_tokens == []} class="text-gray-400">Vacío — agregá un campo o un operador abajo</span>
+          <span :if={@formula_tokens == []} class="text-gray-400">Vacío — agrega un campo o un operador abajo</span>
         </div>
 
         <div :if={@herramienta_efectiva in ["formula", "condicion"]}>
@@ -1763,7 +1803,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     """
   end
 
-  # "Autocompletar": elegís un campo tipo referencia DE ESTE catálogo (el id
+  # "Autocompletar": eliges un campo tipo referencia DE ESTE catálogo (el id
   # que el usuario tipeó ahí) y un catálogo+campos destino — en la Ficha
   # 360° se busca ESE registro puntual y se muestran sus campos de solo
   # lectura, recalculado en cada cambio (mismo mecanismo que
@@ -1829,7 +1869,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           <label class="text-gray-500 font-semibold">Campos a mostrar</label>
         </div>
         <form phx-change="actualizar_propiedad" class="pl-5">
-          <p :if={@campos_del_destino == []} class="text-gray-400">Elegí un catálogo destino en el paso 1 primero.</p>
+          <p :if={@campos_del_destino == []} class="text-gray-400">Elige un catálogo destino en el paso 1 primero.</p>
           <input type="hidden" name="campos_destino[]" value="" />
           <label :for={c <- @campos_del_destino} class="flex items-center gap-1.5 mb-1">
             <input type="checkbox" name="campos_destino[]" value={c.schema_context_field} checked={c.schema_context_field in @campos_destino_actuales} class="accent-purple-600" />
@@ -1841,7 +1881,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           <label class="block text-gray-500 mt-2 mb-0.5">Mostrar</label>
           <select name="mostrar" class="w-full border border-gray-300 rounded px-2 py-1.5">
             <option value="lista" selected={(@nodo["propiedades"]["mostrar"] || "lista") == "lista"}>Lista (una fila por campo)</option>
-            <option value="tarjeta" selected={@nodo["propiedades"]["mostrar"] == "tarjeta"}>Tarjeta (grilla de 2 columnas, compacta)</option>
+            <option value="tarjeta" selected={@nodo["propiedades"]["mostrar"] == "tarjeta"}>Tarjeta (cuadrícula de 2 columnas, compacta)</option>
             <option value="resumen" selected={@nodo["propiedades"]["mostrar"] == "resumen"}>Resumen (una sola línea)</option>
             <option value="campos" selected={@nodo["propiedades"]["mostrar"] == "campos"}>Campos (como un formulario de solo lectura)</option>
           </select>
@@ -1901,7 +1941,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
             {c.schema_context_properties["etiqueta"]}
           </option>
         </select>
-        <p :if={@campos_url == []} class="text-gray-400 mt-1">Este catálogo no tiene campos de texto — creá uno para guardar la URL primero.</p>
+        <p :if={@campos_url == []} class="text-gray-400 mt-1">Este catálogo no tiene campos de texto — crea uno para guardar la URL primero.</p>
       </div>
       <div>
         <label class="block text-gray-500 mb-0.5">Título (opcional)</label>
@@ -1980,7 +2020,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     ~H"""
     <div class="flex flex-col gap-2.5 text-xs">
       <form phx-change="actualizar_propiedad">
-        <label class="block text-gray-500 mb-0.5">¿Qué registros relacionados querés mostrar?</label>
+        <label class="block text-gray-500 mb-0.5">¿Qué registros relacionados quieres mostrar?</label>
         <select name="catalogo" class="w-full border border-gray-300 rounded px-2 py-1.5">
           <option value="" selected={is_nil(@nodo["propiedades"]["catalogo"])}>Elegir catálogo…</option>
           <option :for={{c, etiqueta} <- @catalogos_relacionables} value={c} selected={@nodo["propiedades"]["catalogo"] == c}>
@@ -1991,7 +2031,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       </form>
 
       <p :if={@nodo["propiedades"]["catalogo"] in [nil, ""]} class="text-gray-400 text-center py-2">
-        Elegí un catálogo arriba para configurar el resto.
+        Elige un catálogo arriba para configurar el resto.
       </p>
 
       <form :if={@nodo["propiedades"]["catalogo"] not in [nil, ""]} phx-change="actualizar_propiedad" class="flex flex-col gap-2.5">
@@ -2012,7 +2052,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           <label class="block text-gray-500 mb-0.5">Vista</label>
           <select name="vista" class="w-full border border-gray-300 rounded px-2 py-1.5">
             <option value="tabla" selected={(@nodo["propiedades"]["vista"] || "tabla") == "tabla"}>Tabla (filas y columnas)</option>
-            <option value="tarjetas" selected={@nodo["propiedades"]["vista"] == "tarjetas"}>Tarjetas (grilla de bloques)</option>
+            <option value="tarjetas" selected={@nodo["propiedades"]["vista"] == "tarjetas"}>Tarjetas (cuadrícula de bloques)</option>
             <option value="kanban" selected={@nodo["propiedades"]["vista"] == "kanban"}>Kanban (columnas por Estado/Lista)</option>
             <option value="calendario" selected={@nodo["propiedades"]["vista"] == "calendario"}>Calendario (agenda por fecha)</option>
           </select>
@@ -2073,7 +2113,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       </div>
       <div>
         <label class="block text-gray-500 mb-1">Campos a mostrar (línea chica debajo del título de cada ítem)</label>
-        <p :if={@campos_del_catalogo == []} class="text-gray-400">Elegí un catálogo relacionado arriba primero.</p>
+        <p :if={@campos_del_catalogo == []} class="text-gray-400">Elige un catálogo relacionado arriba primero.</p>
         <input type="hidden" name="campos[]" value="" />
         <label :for={c <- @campos_del_catalogo} class="flex items-center gap-1.5 mb-1">
           <input type="checkbox" name="campos[]" value={c.schema_context_field} checked={c.schema_context_field in @campos_actuales} class="accent-purple-600" />
@@ -2105,6 +2145,8 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       |> assign(:columnas_del_detalle, columnas_del_detalle)
       |> assign(:columnas_numericas, columnas_numericas)
       |> assign(:campos_actuales, campos_actuales)
+      |> assign(:detalle_elegido, detalle_elegido)
+      |> assign(:captura?, detalle_elegido != nil and assigns.nodo["propiedades"]["modo"] == "captura")
 
     ~H"""
     <form phx-change="actualizar_propiedad" class="flex flex-col gap-2.5 text-xs">
@@ -2118,14 +2160,21 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         </select>
         <p :if={@catalogos_detalle_disponibles == []} class="text-gray-400 mt-1">Este catálogo no tiene ningún detalle configurado.</p>
       </div>
+      <div :if={@detalle_elegido}>
+        <label class="block text-gray-500 mb-0.5">Modo</label>
+        <select name="modo" id="renglones-modo" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="lectura" selected={!@captura?}>Solo lectura</option>
+          <option value="captura" selected={@captura?}>Captura (se capturan aquí, no en el tab Detalle)</option>
+        </select>
+      </div>
       <div>
         <label class="block text-gray-500 mb-0.5">Título</label>
         <input type="text" name="titulo" value={@nodo["propiedades"]["titulo"]} placeholder={(@catalogos_detalle_disponibles |> Enum.find(&(&1.nombre == @nodo["propiedades"]["catalogo"])) || %{etiqueta: "Renglones"}).etiqueta}
           class="w-full border border-gray-300 rounded px-2 py-1.5" />
       </div>
-      <div>
+      <div :if={!@captura?}>
         <label class="block text-gray-500 mb-1">Columnas a mostrar</label>
-        <p :if={@columnas_del_detalle == []} class="text-gray-400">Elegí un detalle arriba primero.</p>
+        <p :if={@columnas_del_detalle == []} class="text-gray-400">Elige un detalle arriba primero.</p>
         <input type="hidden" name="campos[]" value="" />
         <label :for={c <- @columnas_del_detalle} class="flex items-center gap-1.5 mb-1">
           <input type="checkbox" name="campos[]" value={c.schema_context_field} checked={c.schema_context_field in @campos_actuales} class="accent-purple-600" />
@@ -2133,8 +2182,8 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         </label>
         <p class="text-gray-400 mt-1">Sin nada marcado, se muestran las columnas que ese detalle ya usa en su propia tabla.</p>
       </div>
-      <.toggle_switch name="mostrar_total" checked={@nodo["propiedades"]["mostrar_total"] == true} label="Mostrar total al pie" />
-      <div :if={@nodo["propiedades"]["mostrar_total"] == true}>
+      <.toggle_switch :if={!@captura?} name="mostrar_total" checked={@nodo["propiedades"]["mostrar_total"] == true} label="Mostrar total al pie" />
+      <div :if={!@captura? and @nodo["propiedades"]["mostrar_total"] == true}>
         <label class="block text-gray-500 mb-0.5">Campo a sumar</label>
         <select name="campo_total" class="w-full border border-gray-300 rounded px-2 py-1.5">
           <option value="" selected={is_nil(@nodo["propiedades"]["campo_total"])}>Elegir…</option>
@@ -2404,7 +2453,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
           <.botones_alineacion_v name="alineacion_v" valor={@celda["alineacion_v"]} />
         </div>
       </div>
-      <p class="text-gray-400 -mt-2">Mueve el contenido DENTRO de la celda (que siempre llena su ancho) — para un ancho angosto de verdad, usá "Ancho" arriba.</p>
+      <p class="text-gray-400 -mt-2">Mueve el contenido DENTRO de la celda (que siempre llena su ancho) — para un ancho angosto de verdad, usa "Ancho" arriba.</p>
 
       <div>
         <label class="block text-gray-500 mb-1">Padding</label>
@@ -2690,7 +2739,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       <div :if={@columnas != []} class="gc-doc-tabla-head">
         <span :for={c <- @columnas}>{c}</span>
       </div>
-      <p :if={@columnas == []} class="gc-doc-hint">Elegí un catálogo relacionado →</p>
+      <p :if={@columnas == []} class="gc-doc-hint">Elige un catálogo relacionado →</p>
     </div>
     """
   end
@@ -2708,7 +2757,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       <div :if={@columnas != []} class="gc-doc-tabla-head">
         <span :for={c <- @columnas}>{c}</span>
       </div>
-      <p :if={@columnas == []} class="gc-doc-hint">Elegí un detalle →</p>
+      <p :if={@columnas == []} class="gc-doc-hint">Elige un detalle →</p>
     </div>
     """
   end
@@ -2872,14 +2921,14 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     |> Enum.reject(&(&1 in [nil, ""]))
   end
 
-  # Tarjetas de "¿Qué querés agregar?" — "Resumen" y "Otro registro" dependen
+  # Tarjetas de "¿Qué quieres agregar?" — "Resumen" y "Otro registro" dependen
   # de que exista al menos un catálogo relacionado (@catalogos_disponibles);
   # sin eso sus paneles no muestran nada, así que ni se ofrecen como tarjeta.
   # "Condición" no depende de catálogos relacionados y siempre se muestra.
   # "formula" SIEMPRE primero -- es la opción "Asistente" por defecto
-  # (2026-08-14, pregunta inicial "¿Cómo querés obtener este valor?" en
+  # (2026-08-14, pregunta inicial "¿Cómo quieres obtener este valor?" en
   # panel_propiedades/1 de campo_calculado), las demás son las
-  # herramientas que ya existían como "¿Qué querés agregar?".
+  # herramientas que ya existían como "¿Qué quieres agregar?".
   defp herramientas_calculado([]), do: [{"formula", "ƒ", "Fórmula / cálculo"}, {"condicion", "?", "Condición"}]
 
   defp herramientas_calculado(_catalogos_disponibles) do
@@ -2947,7 +2996,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   defp a_entero(_), do: nil
 
   defp mensaje_vista_previa({:error, :sin_registro_de_muestra}), do: "Este catálogo todavía no tiene registros para probar."
-  defp mensaje_vista_previa({:error, :incompleto}), do: "Completá el paso 1 y elegí al menos un campo en el paso 2."
+  defp mensaje_vista_previa({:error, :incompleto}), do: "Completa el paso 1 y elige al menos un campo en el paso 2."
   defp mensaje_vista_previa({:error, :sin_valor}), do: "El registro de muestra no tiene un valor numérico en ese campo."
   defp mensaje_vista_previa({:error, :no_encontrado}), do: "No se encontró un registro con ese id en el catálogo destino."
 
@@ -2999,7 +3048,7 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   defp mensaje_error_formula({:error, {:numero_invalido, texto}}), do: "\"#{texto}\" no es un número válido."
   defp mensaje_error_formula({:error, {:caracter_invalido, c}}), do: "Carácter no permitido: \"#{c}\"."
   defp mensaje_error_formula({:error, {:funcion_sin_parentesis, nombre}}), do: "A #{nombre} le falta \"(...)\"."
-  defp mensaje_error_formula({:error, {:funcion_desconocida, nombre}}), do: "\"#{nombre}\" no es una función reconocida — usá SUM/COUNT/AVG/MIN/MAX."
+  defp mensaje_error_formula({:error, {:funcion_desconocida, nombre}}), do: "\"#{nombre}\" no es una función reconocida — usa SUM/COUNT/AVG/MIN/MAX."
   defp mensaje_error_formula({:error, {:argumento_invalido, arg}}), do: "Argumento inválido: \"#{arg}\"."
   defp mensaje_error_formula({:error, motivo}), do: "No se pudo calcular (#{inspect(motivo)})."
 
@@ -3009,14 +3058,14 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
   # ambos es el evaluador (Formula).
   defp contexto_actual(%Scope{usuario: usuario, empresa_activa: empresa}) do
     %{
-      "hoy" => Date.utc_today(),
+      "hoy" => MetadataApp.Hoy.fecha(),
       "usuario_actual" => (usuario && (usuario.alias || usuario.email)) || "",
       "empresa_activa" => (empresa && empresa.nombre) || ""
     }
   end
 
   defp contexto_actual(_sin_scope) do
-    %{"hoy" => Date.utc_today(), "usuario_actual" => "", "empresa_activa" => ""}
+    %{"hoy" => MetadataApp.Hoy.fecha(), "usuario_actual" => "", "empresa_activa" => ""}
   end
 
   # Disponible para CUALQUIER tipo de nodo (no solo algunos, a diferencia de

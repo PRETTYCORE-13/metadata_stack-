@@ -51,7 +51,7 @@ defmodule MetadataApp.MetaAuditoria do
 
   @doc """
   Resuelve "quién creó" cada registro de un catálogo, en un solo query
-  batched (Get View → columna "Creado por" — ver panel_get_view/1 en
+  batched (Lista → columna "Creado por" — ver panel_get_view/1 en
   BcMotorLive y la tabla de CatalogoLive) — nunca una columna física
   nueva, se apoya en este mismo log. Solo mira operacion "alta": si el
   registro se editó después por otra persona, sigue mostrando a quien lo

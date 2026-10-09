@@ -18,8 +18,9 @@ defmodule Mix.Tasks.Motor.Export do
   referencia cruzada por NOMBRE, no por id, porque los ids
   autoincrementales no coinciden entre bases distintas.
 
-  Sincroniza el directorio: catálogos sin autómata (o borrados) no dejan
-  un `.motor.json` huérfano.
+  Los `.motor.json` huérfanos (catálogos sin autómata o que no existen en
+  la base local) se listan y solo se borran si se confirma
+  (`Mix.Tasks.Meta.Huerfanos`, SPEC-SYS-0210202601 R6).
   """
 
   def run(args) do
@@ -35,20 +36,7 @@ defmodule Mix.Tasks.Motor.Export do
         |> Enum.reject(&is_nil/1)
       end)
 
-    limpiar_huerfanos(dir, nombres, ".motor.json")
+    Mix.Tasks.Meta.Huerfanos.limpiar(dir, nombres, ".motor.json")
     Mix.shell().info("Exportado el autómata de #{length(nombres)} catálogo(s) a #{dir}/")
-  end
-
-  defp limpiar_huerfanos(dir, nombres_vigentes, sufijo) do
-    esperados = MapSet.new(nombres_vigentes, &"#{&1}#{sufijo}")
-
-    dir
-    |> File.ls!()
-    |> Enum.filter(&String.ends_with?(&1, sufijo))
-    |> Enum.reject(&MapSet.member?(esperados, &1))
-    |> Enum.each(fn archivo ->
-      File.rm!(Path.join(dir, archivo))
-      Mix.shell().info("  (huérfano borrado: #{archivo})")
-    end)
   end
 end

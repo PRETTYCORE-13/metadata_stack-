@@ -26,7 +26,7 @@ defmodule MetadataApp.Application do
       # se está tipeando.
       MetadataApp.MetaPlantillas.FormulaCache,
       # Límite de intentos fallidos de /api/movil/login|verificar
-      # (SPEC-API-0409202601, R10/R11) -- mismo criterio que las cachés
+      # (SPEC-APP-0409202601, R10/R11) -- mismo criterio que las cachés
       # de arriba, tabla ETS en su propio proceso.
       MetadataApp.Autenticacion.LimiteIntentos,
       # SPEC-SYS-1009202602, R39-R41 -- Job asíncrono para extraer el

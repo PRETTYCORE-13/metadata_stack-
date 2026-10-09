@@ -10,7 +10,7 @@ defmodule Mix.Tasks.Endpoint.Despublicar do
   Uso: mix endpoint.despublicar --sistema=<sistema> <consulta>
 
   `--sistema=` obligatorio, sin default, mismo criterio que `mix
-  motor.publicar`/`mix motor.despublicar` (SPEC-SYS-0309202601, R5/R10)
+  motor.publicar`/`mix motor.despublicar` (SPEC-ARQ-0309202601, R5/R10)
   -- se valida con `MetadataApp.MotorAlta.publicable?/1` antes de tocar
   nada: un cliente real de `priv/sistemas.json`, o `"unstable"` (nunca
   `"testing"`/`"stable"`).
@@ -88,7 +88,7 @@ defmodule Mix.Tasks.Endpoint.Despublicar do
       :tiene_endpoint ->
         Mix.raise(
           "\"#{consulta_nombre}\" todavía tiene un Endpoint vivo -- despublicar es para uno YA borrado " <>
-            "local (sección Endpoints -> Eliminar). Para publicar el que existe, usá \"mix motor.publicar\"."
+            "local (sección Endpoints -> Eliminar). Para publicar el que existe, usa \"mix motor.publicar\"."
         )
 
       :ok ->
@@ -103,7 +103,13 @@ defmodule Mix.Tasks.Endpoint.Despublicar do
     File.write!(Path.join(dir, "#{consulta_nombre}.endpoint.json"), tombstone)
     Mix.shell().info("== tombstone escrito para \"#{consulta_nombre}\" ==")
 
-    case MetaPublicador.armar_bundle([consulta_nombre]) do
+    # Solo el tombstone y las migraciones de borrado: un .meta.json local
+    # volvería a crear la Consulta interna en cada arranque del destino.
+    solo_borrado =
+      &(String.ends_with?(&1, "/#{consulta_nombre}.endpoint.json") or
+          (String.starts_with?(&1, "priv/repo/migrations/") and &1 =~ "_eliminar_#{consulta_nombre}_"))
+
+    case MetaPublicador.armar_bundle([consulta_nombre], incluir: solo_borrado) do
       {:error, mensaje} ->
         Mix.raise(mensaje)
 
@@ -122,7 +128,7 @@ defmodule Mix.Tasks.Endpoint.Despublicar do
             case MetaPublicador.disparar_deploy(sistema, [consulta_nombre], bundle_path) do
               {:ok, salida} ->
                 Mix.shell().info(salida)
-                Mix.shell().info("Disparado -- el borrado de #{consulta_nombre} va camino a \"#{sistema}\". Seguí con \"gh run list\" / \"gh run watch\".")
+                Mix.shell().info("Disparado -- el borrado de #{consulta_nombre} va camino a \"#{sistema}\". Sigue con \"gh run list\" / \"gh run watch\".")
 
               {:error, mensaje} ->
                 Mix.raise(mensaje)

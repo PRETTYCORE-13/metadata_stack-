@@ -1,0 +1,19 @@
+# Quién puede alterar cada área de SPEC (docs/specs/SPEC-<ÁREA>-*).
+# Lo verifica .github/workflows/spec-permisos.yml por cada commit,
+# contra el usuario de GitHub del AUTOR del commit.
+#
+# Formato: <ÁREA> <usuario GitHub> [<usuario GitHub> ...]
+#   *      = cualquier persona con acceso de escritura al repo
+#   ADMIN  = quién puede modificar este archivo, el script y el workflow
+#
+# Personas:
+#   Urixsg         Uriel
+#   X4GUSS         Agustín
+#   Lizbeth123143  Lizbeth
+#   PRETTYCORE-13  Jesús
+
+SYS    Urixsg Lizbeth123143
+ADN    *
+ARQ    Urixsg X4GUSS
+APP    Urixsg PRETTYCORE-13
+ADMIN  Urixsg

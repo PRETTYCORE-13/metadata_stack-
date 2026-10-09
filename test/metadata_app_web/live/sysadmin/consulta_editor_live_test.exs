@@ -53,7 +53,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
   # Config" → Columnas) viven en dos forms/eventos separados desde el
   # rediseño en tabs (2026-08-25) -- antes era un solo form/evento
   # "guardar_campos" que hacía las tres cosas juntas.
-  test "cambia etiqueta (Configuración) y visibilidad/agregacion_activa (Get Config) de un campo", %{conn: conn} do
+  test "cambia etiqueta (Configuración) y visibilidad/agregacion_activa (Lista) de un campo", %{conn: conn} do
     {header, _consulta} = criar_consulta()
 
     {:ok, view, html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
@@ -167,7 +167,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
   end
 
   # Round-trip: configurar Acotado/Tipo/Origen a fondo, apagar Visible
-  # (Get Config lo permite -- no fuerza "apagar Parámetro" al mismo
+  # (Lista lo permite -- no fuerza "apagar Parámetro" al mismo
   # tiempo), prenderlo de nuevo -- nada debería perderse ni quedar en un
   # estado no interactivo. Cubre los 3 grupos reales de celdas_parametro/1
   # (date, string/referencia, integer/decimal) con datos reales del
@@ -259,9 +259,9 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
   end
 
   # Drag-and-drop (hook ListaOrdenable, mismo componente que BcMotorLive
-  # usa en su Get View) reemplazó los botones ▲/▼ (2026-08-26) -- el
+  # usa en su Lista) reemplazó los botones ▲/▼ (2026-08-26) -- el
   # hook empuja "mover_a" con el id del <tr> soltado y el índice nuevo,
-  # mismo evento/shape que ya usa BcMotorLive para su propia Get View.
+  # mismo evento/shape que ya usa BcMotorLive para su propia Lista.
   test "mover_a (drag-and-drop) reordena las columnas del Get", %{conn: conn} do
     {header, consulta} = criar_consulta()
     assert Enum.map(Enum.sort_by(consulta.campos, & &1["orden"]), & &1["campo"]) |> Enum.take(3) ==
@@ -507,9 +507,16 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLiveTest do
 
     {:ok, _view, html} = live(conn, ~p"/sysadmin/bc-list/#{header.schema_context_name}/consulta")
 
-    orden_esperado = ["Configuración", "Contrato", "Permisos", "Get Config", "SQL"]
-    posiciones = Enum.map(orden_esperado, &:binary.match(html, &1))
-    assert posiciones == Enum.sort_by(posiciones, &elem(&1, 0))
+    # Solo los botones de tab: el layout también dice "Configuración" y
+    # "Permisos …" (menú administrativo), y buscar en todo el HTML los
+    # confundía con los tabs.
+    tabs =
+      html
+      |> LazyHTML.from_document()
+      |> LazyHTML.query(~s(button[phx-click="cambiar_tab"]))
+      |> Enum.map(&(&1 |> LazyHTML.text() |> String.trim()))
+
+    assert tabs == ["Configuración", "Contrato", "Permisos", "Lista", "SQL"]
 
     assert html =~ "solo la etiqueta es editable"
   end

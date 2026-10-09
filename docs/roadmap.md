@@ -124,7 +124,7 @@ Encontrado 2026-08-03, discutiendo el permiso "Eliminar" en Permission Sets. `Ca
 
 ## 16 — Configurar correo para alta y reactivación de cuentas (self-service para el sysadmin de cada sistema)
 
-Encontrado 2026-09-08, dando de alta el primer usuario real en un canal (`unstable`) recién creado: el "Log in with email" (magic-link) fallaba con `auth_failed` porque el `Secret` `smtp-compartido` (SPEC-SYS-0309202601, un solo SMTP compartido por TODOS los sistemas del clúster) tenía la contraseña corrompida — se armó copiándola por shell desde el secret viejo de `metadata-stack-app-env` antes de borrarlo, y algún carácter especial se mal-interpretó en el camino. Se arregló a mano por SSH (recreando el secret desde un archivo, sin pasar la contraseña por ninguna variable de shell) y re-probado real (`Autenticacion.deliver_login_instructions/2` devolviendo `{:ok, %Swoosh.Email{}}`) — pero el proceso completo depende de que Dev tenga acceso SSH al servidor y sepa hacerlo bien.
+Encontrado 2026-09-08, dando de alta el primer usuario real en un canal (`unstable`) recién creado: el "Log in with email" (magic-link) fallaba con `auth_failed` porque el `Secret` `smtp-compartido` (SPEC-ARQ-0309202601, un solo SMTP compartido por TODOS los sistemas del clúster) tenía la contraseña corrompida — se armó copiándola por shell desde el secret viejo de `metadata-stack-app-env` antes de borrarlo, y algún carácter especial se mal-interpretó en el camino. Se arregló a mano por SSH (recreando el secret desde un archivo, sin pasar la contraseña por ninguna variable de shell) y re-probado real (`Autenticacion.deliver_login_instructions/2` devolviendo `{:ok, %Swoosh.Email{}}`) — pero el proceso completo depende de que Dev tenga acceso SSH al servidor y sepa hacerlo bien.
 
 **El problema de fondo**: hoy no hay NINGÚN camino para que alguien sin acceso SSH (el propio sysadmin de un sistema, o ADN) configure o corrija el SMTP de su sistema — ni para verificar que sigue andando sin mandar un correo de prueba a mano por consola remota como se hizo hoy. Con varios sistemas de cliente reales (cada uno podría eventualmente querer su PROPIO remitente/dominio de correo, no necesariamente compartir el de la plataforma), esto se vuelve un cuello de botella real.
 
@@ -136,7 +136,7 @@ Encontrado 2026-09-08, dando de alta el primer usuario real en un canal (`unstab
 
 ## 17 — `testing` no puede migrar: `pty_dsd_mat_material` referencia `pty_dsd_mat_marca`, que no existe ahí ✅ RESUELTO (2026-09-21)
 
-Encontrado 2026-09-21, verificando en real `SPEC-SYS-1809202603` Grupo H (rollback de base de datos): al propagar cualquier commit nuevo a `testing`, `/app/bin/setup` falla migrando —
+Encontrado 2026-09-21, verificando en real `SPEC-ARQ-1809202603` Grupo H (rollback de base de datos): al propagar cualquier commit nuevo a `testing`, `/app/bin/setup` falla migrando —
 
 ```
 == Running 20260818225730 MetadataApp.Repo.Migrations.CrearPtyDsdMatMaterial20260818225730.change/0 forward
@@ -167,3 +167,99 @@ para que este tipo de drift se detecte ANTES de un deploy real en vez
 de tumbarlo a mitad de camino — este incidente puntual ya se resolvió,
 pero el mecanismo que lo permitió (catálogos `pty_*` que pueden quedar
 con dependencias rotas en un ambiente específico) sigue igual.
+
+## 18 — Valor inexistente en un campo referencia truena en vez de dar error de validación
+
+Encontrado el 2026-10-05, durante la verificación real de
+SPEC-SYS-0510202601 (A5). Al guardar en un campo referencia un id que
+no existe en el catálogo destino, el alta lanza `Ecto.ConstraintError`
+en lugar de regresar el error de changeset "no existe un registro con
+este valor". Afecta a **cualquier** referencia, con nombre propio o no.
+
+Causa: `MetaCatalogoGenerico.aplicar_referencia/3` declara
+`foreign_key_constraint(cs, campo, ...)` sin `name:`, así que Ecto
+espera el nombre por omisión (`<tabla>_<campo>_fkey`, con el nombre de
+la tabla repetido porque el campo ya lo trae como prefijo). La llave
+real en Postgres se llama distinto (ej. `pty_zz_refnom_clave_alterna_fkey`),
+no coincide, y la violación se convierte en excepción.
+
+Impacto: por pantalla, el combo solo ofrece valores válidos, así que
+casi no se ve. Por API, importación de datos o reglas, una referencia
+mal capturada regresa un error 500 en vez de un 422 con el campo
+señalado.
+
+Por decidir antes de empezar: pasar `name:` con el nombre real que crea
+`CatalogoGenerador` (y confirmar que es el mismo en catálogos viejos y
+nuevos), o leerlo de Postgres. Va en una spec SYS propia, con prueba de
+regresión por API.
+
+## 19 — Los textos se guardan con los espacios que se teclean al inicio y al final
+
+Encontrado el 2026-10-05 por el usuario, en la verificación por pantalla
+de SPEC-SYS-0510202601 (E3): una partida capturada como `"PROHIBIDO "`
+(con un espacio al final) se guardó tal cual y no la detectó una regla
+que comparaba contra `"PROHIBIDO"`.
+
+Hoy ningún campo de texto recorta espacios al guardar, salvo que tenga
+configurada una transformación. La mayoría de los ERP los quitan solos
+al capturar. Sin eso aparecen, con el tiempo: registros "iguales" que no
+se empatan, búsquedas que no encuentran, índices únicos que no detectan
+duplicados (`"ABC"` y `"ABC "`) e importaciones que no cruzan con lo que
+ya existe.
+
+Mientras tanto, la guía de uso de SPEC-SYS-0510202601 pide que toda
+regla que compare texto lo normalice antes (`String.trim/1`, y
+mayúsculas si aplica).
+
+Por decidir antes de empezar: recortar en todos los campos de texto por
+omisión (con una opción por campo para no hacerlo) o solo en los que lo
+pidan; si se corrigen los datos que ya existen; y el efecto en índices
+únicos que hoy conviven con variantes con espacio. Va en una spec SYS
+propia, porque toca a todos los catálogos.
+
+## 20 — Eliminar un campo no lo quita de la "llave de identificación" de la Ficha
+
+Encontrado el 2026-10-06 en la verificación de SPEC-ADN-0510202601 (H1):
+después de quitar `pty_mat_materiales_piezaxcaja` con
+`CatalogoGenerador.eliminar_campo/4` (el mismo que usa el Motor), abrir
+cualquier material en la Ficha daba **error 500**
+(`String.to_existing_atom("pty_mat_materiales_piezaxcaja")` en
+`FichaLive.llave_negocio/2`). El campo seguía en
+`Header.campos_llave_ficha`. `eliminar_campo/4` tampoco lo quita de los
+`campos_editables` de las transiciones (en esa spec se hizo a mano).
+
+En dev se corrigió quitándolo de la llave con
+`MetaSchemaContext.actualizar_header/2`, igual que lo hace el Motor. Le
+puede pasar a cualquier catálogo al que se le quite un campo que esté en
+su llave de la Ficha.
+
+Por decidir: que `eliminar_campo/4` limpie el campo de todo lo que lo
+nombra en el encabezado y las transiciones (`campos_llave_ficha`,
+`campos_editables`, y revisar `orden_columnas_tabla` y
+`orden_resultados`), y que `llave_negocio/2` ignore un campo que ya no
+existe en lugar de tronar. Va en una spec SYS propia.
+
+## 21 — Combo dependiente por renglón en el Grid Editable
+
+Pedido por el usuario el 2026-10-06, en SPEC-ADN-0510202601 (H1): que
+el combo de unidad de un precio solo ofrezca las unidades **con venta
+del material elegido en ese mismo renglón**, con una SQL View tipo
+Diccionario.
+
+Hoy no se puede: `GridEditableComponents.opciones_columna/1` usa
+opciones precalculadas una sola vez por columna
+(`FichaLive.cargar_catalogos_detalle/1`), no por renglón. Las
+dependencias de un campo referencia funcionan contra campos del
+encabezado o del formulario, pero no contra otra columna del mismo
+renglón del Grid.
+
+Mientras tanto, la regla R18.1 de la lista de precios rechaza un precio
+en una unidad que el material no vende.
+
+Por decidir: cómo pide el Grid las opciones de una celda cuando cambia
+el valor del que depende (evento al servidor con el renglón, o las
+opciones de todos los valores posibles precargadas), el límite de 500
+opciones por renglón, y la validación del lado del servidor. Va en una
+spec SYS propia; después, el Diccionario
+`pty_sql_mat_unidades_venta` (unidades con venta por material) se
+conecta al campo `pty_mat_precios_det_unidad`.

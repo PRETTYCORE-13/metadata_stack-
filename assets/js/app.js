@@ -386,7 +386,7 @@ const RecordarSeccion = {
     this.el.addEventListener("toggle", () => localStorage.setItem(this.llave, this.el.open))
   },
   // Bug real (2026-09-02): cualquier phx-change/phx-click DENTRO de la
-  // sección (ej. tipear en la grilla de Get Config) parchea este <details>
+  // sección (ej. tipear en la tabla de Lista) parchea este <details>
   // -- el HTML del servidor nunca manda `open` (es 100% cliente), así que
   // morphdom lo borraba del DOM en cada patch y la sección se cerraba sola.
   // Reaplicar acá lo mismo que mounted() evita que el patch pise el estado.
@@ -855,6 +855,8 @@ const DiagramaMotor = {
     const definicion = this.el.dataset.diagrama
     if (!definicion || definicion === this.definicionPintada) return
 
+    // El indicador de carga espera a que se quite (pantallaLista en app.js).
+    this.el.dataset.pcPendiente = ""
     try {
       const mermaid = await cargarMermaid()
       mermaid.initialize({startOnLoad: false, theme: "neutral", securityLevel: "strict"})
@@ -864,6 +866,8 @@ const DiagramaMotor = {
     } catch (e) {
       this.el.textContent = "No se pudo dibujar el diagrama."
       console.error("[DiagramaMotor]", e)
+    } finally {
+      delete this.el.dataset.pcPendiente
     }
   },
 }
@@ -998,16 +1002,142 @@ const FiltrarListaRoles = {
   },
 }
 
+// Prefijo de directorio (bc_list_live.ex, SPEC-SYS-2909202601 R3):
+// mayúsculas, sin acentos, solo A-Z0-9, máximo 5 -- mientras se teclea.
+// LiveView no reescribe un <input> con el foco, así que la normalización
+// del servidor (normalizar_prefijo_carpeta/1, la que hace cumplir la
+// regla) no se vería hasta salir del campo. El listener va en el propio
+// <input>, así corre antes que el phx-change del <form> (burbujeo).
+const PrefijoDirectorio = {
+  mounted() {
+    this.el.addEventListener("input", () => this.normalizar())
+  },
+  normalizar() {
+    const limpiar = (texto) =>
+      texto.normalize("NFD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "")
+    const valor = this.el.value
+    const limpio = limpiar(valor).slice(0, 5)
+    if (limpio === valor) return
+    const cursor = Math.min(limpiar(valor.slice(0, this.el.selectionStart ?? valor.length)).length, limpio.length)
+    this.el.value = limpio
+    this.el.setSelectionRange(cursor, cursor)
+  },
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField, UnidadOperativaWatcher, RecordarSeccion, AutoImprimir, ZoomLienzo, DescargarArchivo, SeleccionarTodosCheckbox, FiltrarListaRoles},
+  hooks: {...colocatedHooks, FiltroMenu, RedimensionarSidebar, RedimensionarFlyout, PersistirSidebarAbierto, EvitarToggleNativoCarpetas, CopiarRuta, CopiarTexto, CopiarTextarea, SelectorCampos, AvisoReglasSinGuardar, DiagramaMotor, ListaOrdenable, AbrirVistaPrevia, GridEditable, RenglonForm, ReferenciaField, GridConstructor, RelacionCampos, AbrirCalendario, FormatoCapturaField, FormatoNumericoField, UnidadOperativaWatcher, RecordarSeccion, AutoImprimir, ZoomLienzo, DescargarArchivo, SeleccionarTodosCheckbox, FiltrarListaRoles, PrefijoDirectorio},
 })
 
 // Show progress bar on live navigation and form submits
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
-window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
-window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
+
+// Indicador de carga entre pantallas (#pc-cargando, SPEC-SYS-0909202601
+// R27–R35): en navegación entre LiveViews (kind "redirect") y en recargas
+// completas (beforeunload), solo si tarda más de CARGANDO_ESPERA_MS; una
+// vez visible se queda al menos CARGANDO_MINIMO_MS para no parpadear.
+// Patch, element, error e initial siguen solo con topbar.
+//
+// La carga termina cuando pantallaLista(): page-loading-stop solo cubre la
+// vista principal, no las embebidas (live_render) ni lo que un hook dibuja
+// después de montar. Un hook asíncrono marca su elemento con
+// data-pc-pendiente mientras trabaja (ver DiagramaMotor).
+const CARGANDO_ESPERA_MS = 400
+const CARGANDO_MINIMO_MS = 500
+const CARGANDO_TOPE_MS = 10000
+const CARGANDO_MARCA = "pc-cargando"
+
+const pantallaLista = () =>
+  [...document.querySelectorAll("[data-phx-session]")].every(el => el.classList.contains("phx-connected")) &&
+  !document.querySelector("[data-pc-pendiente]")
+
+const cargando = {
+  espera: null,
+  revision: null,
+  salida: null,
+  tope: null,
+  visibleDesde: null,
+  el() { return document.getElementById("pc-cargando") },
+  mostrar() {
+    this.el()?.classList.remove("is-hidden")
+    this.visibleDesde = Date.now()
+  },
+  // `procede` se evalúa al vencer la espera; `topeMs` oculta el velo si la
+  // página sigue viva ese tiempo después de mostrarse.
+  iniciar(procede = () => true, topeMs = null) {
+    clearInterval(this.revision)
+    clearTimeout(this.salida)
+    if (this.visibleDesde !== null) return
+    clearTimeout(this.espera)
+    this.espera = setTimeout(() => {
+      this.espera = null
+      if (!procede()) return
+      this.mostrar()
+      if (topeMs) this.tope = setTimeout(() => this.ocultar(), topeMs)
+    }, CARGANDO_ESPERA_MS)
+  },
+  ocultar() {
+    clearTimeout(this.espera)
+    clearInterval(this.revision)
+    clearTimeout(this.salida)
+    clearTimeout(this.tope)
+    this.espera = null
+    this.el()?.classList.add("is-hidden")
+    this.visibleDesde = null
+  },
+  // Espera a pantallaLista() (o al tope) y entonces cancela la espera si el
+  // velo no llegó a mostrarse, o lo quita respetando el mínimo visible.
+  terminar() {
+    if (this.espera === null && this.visibleDesde === null) return
+    clearInterval(this.revision)
+    const limite = Date.now() + CARGANDO_TOPE_MS
+    const revisar = () => {
+      if (!pantallaLista() && Date.now() < limite) return
+      clearInterval(this.revision)
+      clearTimeout(this.espera)
+      this.espera = null
+      if (this.visibleDesde === null) return
+      const restante = Math.max(0, CARGANDO_MINIMO_MS - (Date.now() - this.visibleDesde))
+      this.salida = setTimeout(() => this.ocultar(), restante)
+    }
+    this.revision = setInterval(revisar, 50)
+    revisar()
+  },
+}
+
+// Recarga completa (F5, enlace normal): la página actual sigue pintada
+// hasta que llega la nueva, así que el velo se ve encima. No se muestra
+// si otro listener canceló la salida (AvisoReglasSinGuardar), y el tope
+// lo quita si en realidad no hubo recarga (descarga de archivo, mailto:).
+window.addEventListener("beforeunload", (e) => {
+  cargando.iniciar(() => !e.defaultPrevented, CARGANDO_TOPE_MS)
+})
+// pagehide sí es una salida real: si el velo estaba visible, la página
+// nueva arranca con él puesto hasta terminar de cargar (R35).
+window.addEventListener("pagehide", () => {
+  if (cargando.visibleDesde === null) return
+  try { sessionStorage.setItem(CARGANDO_MARCA, String(Date.now())) } catch (_) {}
+})
+window.addEventListener("pageshow", (e) => { if (e.persisted) cargando.ocultar() })
+
+try {
+  const marca = Number(sessionStorage.getItem(CARGANDO_MARCA))
+  sessionStorage.removeItem(CARGANDO_MARCA)
+  if (marca && Date.now() - marca < 15000) {
+    cargando.mostrar()
+    cargando.terminar()
+  }
+} catch (_) {}
+
+window.addEventListener("phx:page-loading-start", ({detail}) => {
+  if (detail?.kind === "redirect") cargando.iniciar()
+  else topbar.show(300)
+})
+window.addEventListener("phx:page-loading-stop", _info => {
+  cargando.terminar()
+  topbar.hide()
+})
 
 // connect if there are any LiveViews on the page
 liveSocket.connect()

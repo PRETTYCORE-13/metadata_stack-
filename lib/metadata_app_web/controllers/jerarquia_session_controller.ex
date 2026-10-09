@@ -45,7 +45,7 @@ defmodule MetadataAppWeb.JerarquiaSessionController do
     else
       _ ->
         conn
-        |> put_flash(:error, "Elegí una sucursal y un almacén válidos para continuar.")
+        |> put_flash(:error, "Elige una sucursal y un almacén válidos para continuar.")
         |> redirect(to: ~p"/meta_schema_usuario/seleccionar-jerarquia")
     end
   end

@@ -37,7 +37,7 @@ defmodule MetadataApp.ParametrosCatalogo do
   # -- branch/inventory_location/sales_unit son conceptualmente una
   # referencia aunque su "tipo" guardado sea nil (no vienen de
   # meta_schema_detail). Un catálogo (BC) normal nunca alimenta acá un
-  # campo con "control" => true (su grilla de Parámetro solo cubre
+  # campo con "control" => true (su tabla de Parámetro solo cubre
   # campos de negocio, ver design.md §1.4) -- estas cláusulas quedan
   # inertes para ese origen, no hace falta separarlas por origen.
   @controles_referencia ~w(branch inventory_location sales_unit)
@@ -70,7 +70,7 @@ defmodule MetadataApp.ParametrosCatalogo do
   @doc "true si el tipo de campo es elegible para Parámetro estándar (cualquiera de los tres grupos)."
   def tipo_elegible?(tipo), do: tipo in @tipos_elegibles_fecha ++ @tipos_elegibles_string ++ @tipos_elegibles_numerico
 
-  @doc "Campos VISIBLES, de tipo fecha Y marcados \"es_parametro\" => true por el admin en Get Config."
+  @doc "Campos VISIBLES, de tipo fecha Y marcados \"es_parametro\" => true por el admin en Lista."
   def campos_elegibles_fecha(campos), do: Enum.filter(campos, &campo_parametro?(&1, @tipos_elegibles_fecha))
 
   @doc "Campos VISIBLES, de tipo string/referencia Y marcados \"es_parametro\" => true."
@@ -109,7 +109,7 @@ defmodule MetadataApp.ParametrosCatalogo do
   `clave_campo/1`, mismo shape que el "defaults"/"acotado"/"tipo_filtro"
   de ese campo) -- para cuando el USUARIO FINAL cambia un parámetro
   desde el panel de filtros rápidos, sin pisar el default que configuró
-  el admin en Get Config: vive SOLO en el socket de esa sesión (nunca se
+  el admin en Lista: vive SOLO en el socket de esa sesión (nunca se
   persiste acá), `%{}` es "usar el default de todos los campos tal cual
   están guardados".
   """

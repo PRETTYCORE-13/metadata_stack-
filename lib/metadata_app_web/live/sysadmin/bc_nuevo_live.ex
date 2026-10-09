@@ -167,7 +167,7 @@ defmodule MetadataAppWeb.Sysadmin.BcNuevoLive do
     # después si hace falta (ver MetaSchemaContext.activar_alcance_con_default_sucursal/1).
     case MetaSchemaContext.activar_alcance_con_default_sucursal(header) do
       {:ok, _} -> texto_generado <> " Alcance de datos activado (Sucursal por default)."
-      {:error, _} -> texto_generado <> " No se pudo activar Alcance de datos por default, revisalo manualmente."
+      {:error, _} -> texto_generado <> " No se pudo activar Alcance de datos por default, revísalo manualmente."
     end
   end
 

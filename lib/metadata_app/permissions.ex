@@ -13,6 +13,8 @@ defmodule MetadataApp.Permissions do
   alias MetadataApp.Repo
   alias MetadataApp.Autenticacion.{Scope, Rol, RolPermiso, Permiso, UsuarioRol, Usuario, UsuarioEmpresa, RolAlcance}
   alias MetadataApp.BusinessProcessBuilder.MetaSchema.Header
+  alias MetadataApp.BusinessProcessBuilder.MetaSchemaContext
+  alias MetadataApp.MetaEstadosAdmin
   alias MetadataApp.Permissions.Cache
 
   @ttl_ms :timer.minutes(5)
@@ -91,10 +93,23 @@ defmodule MetadataApp.Permissions do
     )
   end
 
-  @doc "Borra la entrada de cache (permisos Y alcance) de un usuario/empresa — se recalcula sola en el próximo can?/3 o alcance_tipo_efectivo/2."
+  @doc """
+  Borra la entrada de cache (permisos Y alcance) de un usuario/empresa —
+  se recalcula sola en el próximo can?/3 o alcance_tipo_efectivo/2.
+
+  No-op si la tabla no existe (bug real, 2026-09-29): tasks `mix motor.*`
+  corren con `Ecto.Migrator.with_repo/3`, sin arrancar la app completa
+  -- `MetadataApp.Permissions.Cache` (parte del árbol de supervisión
+  normal) nunca llega a crear su ETS table ahí, y sin este chequeo
+  `:ets.delete/2` explotaba con ArgumentError en cualquier camino que
+  registrara/revocara permisos desde una task (ej. `mix motor.tepache.importar`).
+  """
   def invalidar_cache(usuario_id, empresa_id) do
-    :ets.delete(Cache.tabla(), {usuario_id, empresa_id})
-    :ets.delete(Cache.tabla(), {:alcance, usuario_id, empresa_id})
+    if :ets.whereis(Cache.tabla()) != :undefined do
+      :ets.delete(Cache.tabla(), {usuario_id, empresa_id})
+      :ets.delete(Cache.tabla(), {:alcance, usuario_id, empresa_id})
+    end
+
     :ok
   end
 
@@ -188,6 +203,53 @@ defmodule MetadataApp.Permissions do
     end
 
     resultado
+  end
+
+  @doc """
+  Registra en `meta_schema_permiso` el CRUD estándar (leer/crear/editar/
+  eliminar) + el nombre de cada transición real del catálogo — SIN
+  concederlo a ningún rol. Sin este registro ni "administrador" podría
+  ver/ejecutar algo recién importado (ve todo lo YA REGISTRADO, no es un
+  comodín ciego — ver `can?/3`). Ignora en silencio los que ya existan
+  (idempotente, mismo criterio que `MetaImportExport.importar_meta/1`).
+
+  Movido acá (2026-09-30) desde `MetaTepache`, que era el único caller —
+  bug real: `mix motor.publicar` publica un catálogo a un ambiente real
+  pero nunca registraba sus permisos ahí (solo `mix motor.tepache.importar`
+  lo hacía), dejándolo invisible incluso para un administrador. El lugar
+  correcto es acá, llamado desde `MetaImportExport.importar_contexto_base/1`
+  -- el único código que de verdad corre en TODOS los caminos de import
+  (CI/CD, `mix meta.import` manual, y el release de producción vía
+  `rel/overlays/bin/import_meta`), a diferencia de `mix motor.publicar`
+  (que solo arma y sube el paquete desde la máquina de quien publica,
+  nunca toca la base del ambiente destino).
+  """
+  def registrar_permisos_catalogo(nombre_catalogo) do
+    case MetaSchemaContext.obtener_header_por_nombre(nombre_catalogo) do
+      nil ->
+        {:error, "\"#{nombre_catalogo}\" no se encontró — ¿faltó importar_meta antes?"}
+
+      header ->
+        acciones =
+          (["leer", "crear", "editar", "eliminar"] ++
+             Enum.map(MetaEstadosAdmin.listar_transiciones(header.id), & &1.accion))
+          |> Enum.uniq()
+
+        # Solo las que faltan: un INSERT rechazado por el índice único
+        # aborta la transacción que lo envuelva (el import de un tepache
+        # corre esto dentro de una -- SPEC-SYS-0710202601 R21.3), así que
+        # no se puede depender de que el duplicado "choque y se ignore".
+        existentes =
+          from(p in Permiso, where: p.recurso == ^nombre_catalogo, select: p.accion)
+          |> Repo.all()
+          |> MapSet.new()
+
+        acciones
+        |> Enum.reject(&MapSet.member?(existentes, &1))
+        |> Enum.each(&crear_permiso(%{recurso: nombre_catalogo, accion: &1}))
+
+        :ok
+    end
   end
 
   defp invalidar_cache_de_administradores do
@@ -351,7 +413,7 @@ defmodule MetadataApp.Permissions do
   (empresa_id nil). `incluir_sysadmin?` (default true, o sea sin cambio de
   comportamiento para quien ya llamaba esto con 1 argumento — RolController
   y CatalogoPermisosLive siguen viendo todo) — en false filtra los roles
-  tipo :sysadmin (los 10 "acceso_sysadmin_*"): RolesLive pasa explícito
+  tipo :sysadmin (los "acceso_sysadmin_*"): RolesLive pasa explícito
   `false` por default y solo `true` cuando quien mira es super_admin.
   """
   def listar_roles(empresa_id, incluir_sysadmin? \\ true) do
@@ -460,7 +522,8 @@ defmodule MetadataApp.Permissions do
   defp normalizar_id(id) when is_binary(id), do: String.to_integer(id)
   defp normalizar_id(id) when is_integer(id), do: id
 
-  defp invalidar_cache_de_rol(rol_id) do
+  @doc "Limpia la caché de permisos de cada usuario con el rol `rol_id`."
+  def invalidar_cache_de_rol(rol_id) do
     from(ur in UsuarioRol, where: ur.rol_id == ^rol_id and is_nil(ur.delete_guid))
     |> Repo.all()
     |> Enum.each(&invalidar_cache(&1.usuario_id, &1.empresa_id))
@@ -512,20 +575,19 @@ defmodule MetadataApp.Permissions do
         where: ^condicion_texto,
         order_by: h.schema_context_label,
         limit: ^limite,
-        select: %{recurso: h.schema_context_name, label: h.schema_context_label, es_consulta: h.schema_context_type == 3}
+        select: %{recurso: h.schema_context_name, label: h.schema_context_label, es_consulta: h.schema_context_type in [3, 4]}
     )
   end
 
   # Qué artefactos aceptan permisos propios: catálogos raíz (ni carpeta,
-  # tipo 2, ni detalle) con al menos una transición viva, o Consultas.
-  # Compartido por el buscador (query_catalogos/2) y el árbol
-  # (listar_nivel_arbol/1) para que nunca diverjan.
+  # tipo 2, ni detalle) con al menos una transición viva, o Consultas
+  # (Ecto, tipo 3; SQL View, tipo 4 -- nunca tienen motor de estados).
   defp base_permisible do
     from h in Header,
       as: :header,
       where: is_nil(h.delete_guid) and h.schema_context_type != 2 and is_nil(h.schema_encabezado_id),
       where:
-        h.schema_context_type == 3 or
+        h.schema_context_type in [3, 4] or
           exists(
             from t in "meta_schema_transiciones",
               where: t.meta_schema_header_id == parent_as(:header).id and is_nil(t.delete_guid),
@@ -545,7 +607,7 @@ defmodule MetadataApp.Permissions do
       from h in Header,
         where: is_nil(h.delete_guid) and h.schema_context_type != 2,
         order_by: h.schema_context_label,
-        select: %{recurso: h.schema_context_name, label: h.schema_context_label, es_consulta: h.schema_context_type == 3}
+        select: %{recurso: h.schema_context_name, label: h.schema_context_label, es_consulta: h.schema_context_type in [3, 4]}
     )
   end
 
@@ -782,7 +844,10 @@ defmodule MetadataApp.Permissions do
           id: h.id,
           recurso: h.schema_context_name,
           label: h.schema_context_label,
-          es_consulta: h.schema_context_type == 3,
+          # Tipo 4 (Consulta SQL, SPEC-SYS-2509202601) también es solo
+          # lectura: mismas acciones (~w(leer)) que una Consulta Ecto.
+          es_consulta: h.schema_context_type in [3, 4],
+          es_consulta_sql: h.schema_context_type == 4,
           es_detalle: not is_nil(h.schema_encabezado_id),
           # Fase 6 del modelo de Alcance de Datos (2026-08-11) -- para que
           # CatalogoPermisosLive sepa si ofrecer la sección de alcance por
@@ -867,16 +932,18 @@ defmodule MetadataApp.Permissions do
     {"sysadmin_tepache", "acceso_sysadmin_tepache", "Tepache Exp/Imp"},
     {"sysadmin_roles", "acceso_sysadmin_roles", "Roles"},
     {"sysadmin_empresas", "acceso_sysadmin_empresas", "Empresas"},
-    {"sysadmin_usuarios", "acceso_sysadmin_usuarios", "RBAC Usuarios"},
-    {"sysadmin_catalogos_permisos", "acceso_sysadmin_catalogos_permisos", "RBAC Business Context"},
+    {"sysadmin_usuarios", "acceso_sysadmin_usuarios", "Permisos Usuarios"},
+    {"sysadmin_catalogos_permisos", "acceso_sysadmin_catalogos_permisos", "Permisos ADN"},
     {"sysadmin_jerarquia", "acceso_sysadmin_jerarquia", "Jerarquía organizacional"},
     {"sysadmin_credenciales", "acceso_sysadmin_credenciales", "Credenciales"},
     {"sysadmin_acciones_externas", "acceso_sysadmin_acciones_externas", "Acciones externas"},
     {"sysadmin_ambientes", "acceso_sysadmin_ambientes", "Ambientes de Deploy"},
-    {"sysadmin_panel_control", "acceso_sysadmin_panel_control", "Panel Control"}
+    {"sysadmin_panel_control", "acceso_sysadmin_panel_control", "Panel Control"},
+    {"sysadmin_propagacion", "acceso_sysadmin_propagacion", "Propagación"},
+    {"sysadmin_purgar", "acceso_sysadmin_purgar", "Purgar artefactos"}
   ]
 
-  @doc "Las 12 capacidades de Sysadmin, `{recurso, rol_nombre, etiqueta}` -- fuente única para la migración de seed y para la pestaña Sysadmin de UsuariosEmpresaLive."
+  @doc "Las capacidades de Sysadmin, `{recurso, rol_nombre, etiqueta}` -- fuente única para la migración de seed y para la pestaña Sysadmin de UsuariosEmpresaLive."
   def capacidades_sysadmin, do: @capacidades_sysadmin
 
   @doc """

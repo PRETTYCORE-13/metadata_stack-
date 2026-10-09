@@ -738,7 +738,7 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
         disabled={!@resuelto?}
         phx-click={@resuelto? && "toggle_capacidad_sysadmin"}
         phx-value-recurso={@recurso}
-        title={if @resuelto?, do: nil, else: "Corré la migración de seed para habilitar este switch"}
+        title={if @resuelto?, do: nil, else: "Corre la migración de seed para habilitar este switch"}
         class={[
           "relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0",
           @prendido? && "bg-purple-600",
@@ -1218,14 +1218,14 @@ defmodule MetadataAppWeb.Sysadmin.UsuariosEmpresaLive do
                       </tr>
                     <% end %>
                     <tr :if={@alcance.empresas == []}>
-                      <td colspan="4" class="px-3 py-6 text-center text-xs text-gray-400">Asigná una empresa arriba para configurar su jerarquía.</td>
+                      <td colspan="4" class="px-3 py-6 text-center text-xs text-gray-400">Asigna una empresa arriba para configurar su jerarquía.</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
             </div>
           <% else %>
-            <p class="text-center text-sm text-gray-400 py-24">Elegí un usuario de la izquierda.</p>
+            <p class="text-center text-sm text-gray-400 py-24">Elige un usuario de la izquierda.</p>
           <% end %>
         </div>
       </div>

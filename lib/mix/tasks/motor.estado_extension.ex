@@ -3,7 +3,7 @@ defmodule Mix.Tasks.Motor.EstadoExtension do
   alias MetadataApp.{Ambientes, MotorAlta}
   alias MetadataApp.MotorAlta.Estado
 
-  @shortdoc "Qué imagen corre en cada canal/sistema, en una sola corrida (SPEC-SYS-1809202603)"
+  @shortdoc "Qué imagen corre en cada canal/sistema, en una sola corrida (SPEC-ARQ-1809202603)"
 
   @moduledoc """
   Uso: mix motor.estado_extension <ambiente>

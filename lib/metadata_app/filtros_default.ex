@@ -7,7 +7,7 @@ defmodule MetadataApp.FiltrosDefault do
   módulo en vez de duplicar los `case modo do`.
 
   Hasta 2026-09-11 también cubría "Filtros por default" de
-  `Header.filtro_default_fecha_modo` (BC Motor → Get Config) — eliminado
+  `Header.filtro_default_fecha_modo` (BC Motor → Lista) — eliminado
   a pedido explícito del usuario (SPEC-SYS-1109202606 §5/§8): ningún
   catálogo real lo usaba, y este mismo mecanismo ya cubre la necesidad de
   forma más flexible.
@@ -40,7 +40,7 @@ defmodule MetadataApp.FiltrosDefault do
   directo contra una columna de fecha real.
 
   Todos los modos salvo "formula" son dinámicos: ignoran `valor`/
-  `valor_hasta` y calculan siempre contra `Date.utc_today()` del momento
+  `valor_hasta` y calculan siempre contra `MetadataApp.Hoy.fecha()` del momento
   en que se llama — un filtro configurado hoy sigue siendo correcto
   mañana, el año que viene, siempre, sin que nadie tenga que volver a
   tocarlo.
@@ -58,36 +58,36 @@ defmodule MetadataApp.FiltrosDefault do
   def rango_fecha(modo, valor, valor_hasta \\ nil)
 
   def rango_fecha("actual", _valor, _valor_hasta) do
-    hoy = Date.utc_today()
+    hoy = MetadataApp.Hoy.fecha()
     {inicio_dia(hoy), fin_dia(hoy)}
   end
 
   def rango_fecha("mes_actual", _valor, _valor_hasta) do
-    hoy = Date.utc_today()
+    hoy = MetadataApp.Hoy.fecha()
     desde = Date.new!(hoy.year, hoy.month, 1)
     hasta = Date.new!(hoy.year, hoy.month, Date.days_in_month(hoy))
     {inicio_dia(desde), fin_dia(hasta)}
   end
 
   def rango_fecha("mes_a_fecha", _valor, _valor_hasta) do
-    hoy = Date.utc_today()
+    hoy = MetadataApp.Hoy.fecha()
     desde = Date.new!(hoy.year, hoy.month, 1)
     {inicio_dia(desde), fin_dia(hoy)}
   end
 
   def rango_fecha("anio_actual", _valor, _valor_hasta) do
-    hoy = Date.utc_today()
+    hoy = MetadataApp.Hoy.fecha()
     {inicio_dia(Date.new!(hoy.year, 1, 1)), fin_dia(Date.new!(hoy.year, 12, 31))}
   end
 
   def rango_fecha("primer_dia_mes", _valor, _valor_hasta) do
-    hoy = Date.utc_today()
+    hoy = MetadataApp.Hoy.fecha()
     dia = Date.new!(hoy.year, hoy.month, 1)
     {inicio_dia(dia), fin_dia(dia)}
   end
 
   def rango_fecha("primer_dia_anio", _valor, _valor_hasta) do
-    dia = Date.new!(Date.utc_today().year, 1, 1)
+    dia = Date.new!(MetadataApp.Hoy.fecha().year, 1, 1)
     {inicio_dia(dia), fin_dia(dia)}
   end
 
@@ -121,34 +121,34 @@ defmodule MetadataApp.FiltrosDefault do
   def descripcion(modo, valor, valor_hasta \\ nil)
 
   def descripcion("actual", _valor, _valor_hasta) do
-    "Fecha actual — hoy (#{formatear(Date.utc_today())})"
+    "Fecha actual — hoy (#{formatear(MetadataApp.Hoy.fecha())})"
   end
 
   def descripcion("mes_actual", _valor, _valor_hasta) do
-    hoy = Date.utc_today()
+    hoy = MetadataApp.Hoy.fecha()
     desde = Date.new!(hoy.year, hoy.month, 1)
     hasta = Date.new!(hoy.year, hoy.month, Date.days_in_month(hoy))
     "Mes actual completo — del #{formatear(desde)} al #{formatear(hasta)}"
   end
 
   def descripcion("mes_a_fecha", _valor, _valor_hasta) do
-    hoy = Date.utc_today()
+    hoy = MetadataApp.Hoy.fecha()
     desde = Date.new!(hoy.year, hoy.month, 1)
     "Mes actual a la fecha — del #{formatear(desde)} al #{formatear(hoy)}"
   end
 
   def descripcion("anio_actual", _valor, _valor_hasta) do
-    hoy = Date.utc_today()
+    hoy = MetadataApp.Hoy.fecha()
     "Año actual completo — del 1/1/#{hoy.year} al 31/12/#{hoy.year}"
   end
 
   def descripcion("primer_dia_mes", _valor, _valor_hasta) do
-    hoy = Date.utc_today()
+    hoy = MetadataApp.Hoy.fecha()
     "Inicio de mes — #{formatear(Date.new!(hoy.year, hoy.month, 1))}"
   end
 
   def descripcion("primer_dia_anio", _valor, _valor_hasta) do
-    "Inicio de año — 1/1/#{Date.utc_today().year}"
+    "Inicio de año — 1/1/#{MetadataApp.Hoy.fecha().year}"
   end
 
   def descripcion("formula", valor, valor_hasta) do

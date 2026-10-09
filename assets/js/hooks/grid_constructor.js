@@ -13,7 +13,7 @@
 //     en modo grid) — trae data-tipo o data-filtro.
 //   - "celda": un chip ya colocado (mover uno existente) — trae data-nodo-id.
 //
-// El hook vive en el contenedor raíz de la grilla (id="gc-grid"), montado
+// El hook vive en el contenedor raíz de la cuadrícula (id="gc-grid"), montado
 // de nuevo cada vez que se abre un grid distinto (LiveView destruye/vuelve
 // a montar el hook porque cambia el id del nodo padre en el árbol de
 // PlantillaConstructorLive) — por eso el listener de la paleta se cuelga a

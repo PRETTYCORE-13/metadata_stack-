@@ -1,8 +1,8 @@
 defmodule MetadataApp.ResumenRenglones do
   @moduledoc """
-  Cálculo de la fila de resumen (pie fijo) de la grilla de renglones (ver
+  Cálculo de la fila de resumen (pie fijo) de la tabla de renglones (ver
   `MetadataAppWeb.GridEditableComponents`, tab "Detalle" de la Ficha
-  360°) — estándar fijo para TODAS las grillas de renglones, sin
+  360°) — estándar fijo para TODAS las tablas de renglones, sin
   configuración por catálogo (ver `GridEditableComponents.resumen_estandar/1`,
   misma regla replicada acá): toda columna numérica suma, el resto no
   participa. Misma semántica de operación que `calcularResumen` en

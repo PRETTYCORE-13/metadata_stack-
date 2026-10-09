@@ -32,7 +32,7 @@ defmodule MetadataApp.PanelControl.Cloudflare do
   def crear_registro_a(dominio_base, subdominio, ip_destino) do
     case MetadataApp.Integraciones.obtener_credencial_por_sistema("cloudflare") do
       nil ->
-        {:error, "No hay ninguna credencial de Cloudflare configurada -- creá una en /sysadmin/credenciales con sistema_externo \"cloudflare\"."}
+        {:error, "No hay ninguna credencial de Cloudflare configurada -- crea una en /sysadmin/credenciales con sistema_externo \"cloudflare\"."}
 
       credencial ->
         with {:ok, zone_id} <- obtener_zone_id(credencial, dominio_base),
@@ -46,7 +46,7 @@ defmodule MetadataApp.PanelControl.Cloudflare do
 
   @doc """
   Borra el registro A de `subdominio` en la zona de `dominio_base`, si
-  existe. Contraparte de `crear_registro_a/3` (SPEC-SYS-1709202603,
+  existe. Contraparte de `crear_registro_a/3` (SPEC-ARQ-1709202603,
   mecanismo de baja) -- idempotente a propósito, mismo criterio que el
   resto de este mecanismo: si el registro ya no existe (ej. una baja
   reintentada), no es error.
@@ -56,7 +56,7 @@ defmodule MetadataApp.PanelControl.Cloudflare do
   def eliminar_registro_a(dominio_base, subdominio) do
     case MetadataApp.Integraciones.obtener_credencial_por_sistema("cloudflare") do
       nil ->
-        {:error, "No hay ninguna credencial de Cloudflare configurada -- creá una en /sysadmin/credenciales con sistema_externo \"cloudflare\"."}
+        {:error, "No hay ninguna credencial de Cloudflare configurada -- crea una en /sysadmin/credenciales con sistema_externo \"cloudflare\"."}
 
       credencial ->
         with {:ok, zone_id} <- obtener_zone_id(credencial, dominio_base),

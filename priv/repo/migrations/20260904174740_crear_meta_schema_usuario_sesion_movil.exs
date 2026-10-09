@@ -1,7 +1,7 @@
 defmodule MetadataApp.Repo.Migrations.CrearMetaSchemaUsuarioSesionMovil do
   use Ecto.Migration
 
-  # SPEC-API-0409202601 -- autenticación móvil (Flutter), ver design.md
+  # SPEC-APP-0409202601 -- autenticación móvil (Flutter), ver design.md
   # §2. Mismo patrón que meta_schema_usuario_tokens (FK con
   # on_delete: :delete_all, sin guids de soft-delete -- revocar una
   # sesión es un DELETE real, no un flag) pero en tabla aparte: esta

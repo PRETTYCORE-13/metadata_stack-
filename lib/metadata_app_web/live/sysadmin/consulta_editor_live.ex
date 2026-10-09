@@ -7,7 +7,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
   # para el motor real (arma la query, filtra, pagina, totaliza).
   #
   # 5 tabs (2026-08-26), mismo orden que BcMotorLive (Configuración
-  # primero, Get Config al final -- BcMotorLive no tiene un tab "Get
+  # primero, Lista al final -- BcMotorLive no tiene un tab "Get
   # Config" propio, es "VISUALIZACIÓN DE CAMPOS" adentro de
   # Configuración, así que acá queda último en vez de en el medio):
   #   - Configuración: encabezado (etiqueta/nav/icono/visible, movido acá
@@ -20,8 +20,8 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
   #   - Permisos: embebe CatalogoPermisosLive -- ya sabe tratar una
   #     Consulta como solo-lectura (~w(leer)) y muestra su Alcance de
   #     Datos como referencia de solo lectura al de catalogo_base.
-  #   - Get Config: qué columnas se ven, en qué orden y con qué
-  #     parámetro estándar (Get View de la Consulta).
+  #   - Lista: qué columnas se ven, en qué orden y con qué
+  #     parámetro estándar (Lista de la Consulta).
   #   - SQL: de solo lectura, 2 sub-tabs (SQL real vía
   #     Ecto.Adapters.SQL.to_sql/3, y la Ecto.Query tal cual la arma
   #     MetaConsultas.construir_query_base/1) -- para auditar qué
@@ -63,7 +63,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     {"configuracion", "Configuración"},
     {"contrato", "Contrato"},
     {"permisos", "Permisos"},
-    {"get_config", "Get Config"},
+    {"get_config", "Lista"},
     {"sql", "SQL"}
   ]
 
@@ -132,7 +132,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     {:noreply, assign(socket, :subtab_sql, subtab)}
   end
 
-  # --- Get Config: encabezado -------------------------------------------
+  # --- Lista: encabezado -------------------------------------------
   # Mismo panel/lógica que BcMotorLive (ver EncabezadoBcComponents) --
   # ninguna Consulta necesita nada distinto acá, los 4 campos genéricos
   # son los mismos.
@@ -159,10 +159,10 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     end
   end
 
-  # --- Get Config: columnas (visible/orden/totalizar) -----------------
+  # --- Lista: columnas (visible/orden/totalizar) -----------------
 
   # Drag-and-drop (hook ListaOrdenable, mismo componente que
-  # BcMotorLive usa en su Get View, ver panel_get_view/1 ahí) -- se
+  # BcMotorLive usa en su Lista, ver panel_get_view/1 ahí) -- se
   # persiste al toque, no forma parte del form de "Guardar columnas" de
   # abajo, para que el orden de la lista no dependa de acordarse de
   # guardar aparte.
@@ -196,7 +196,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     guardar_campos(socket, campos, "Columnas actualizadas.")
   end
 
-  # --- Get Config: campos de control del catálogo base -----------------
+  # --- Lista: campos de control del catálogo base -----------------
 
   def handle_event("guardar_campos_control", params, socket) do
     claves = params |> Map.get("claves", []) |> List.wrap()
@@ -217,7 +217,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     end
   end
 
-  # --- Get Config: Orden de resultados (R1 admin, 2026-08-27) -----------
+  # --- Lista: Orden de resultados (R1 admin, 2026-08-27) -----------
   # Cualquier campo de la consulta es elegible, visible o no (ordenar por
   # una columna no la hace aparecer en la tabla) -- a diferencia del resto
   # de este editor, que solo ofrece manejar columnas visibles. Guardado
@@ -271,7 +271,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     end
   end
 
-  # --- Get Config: Parámetro estándar por columna (rediseño 2026-08-27) --
+  # --- Lista: Parámetro estándar por columna (rediseño 2026-08-27) --
   # Guardado inmediato (no forma parte de "Guardar columnas") -- mismo
   # criterio que el resto de los toggles de configuración de este editor.
   # Ver moduledoc de MetaSchema.Consulta para el shape completo de
@@ -311,7 +311,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
 
   # <select> (lookup, 2026-08-27 -- reemplaza la fila de botones "Tipo":
   # con 3-4 opciones se amontonaba/enrollaba en la columna angosta de la
-  # grilla) -- name-based con form="form-guardar-columnas", mismo motivo
+  # tabla) -- name-based con form="form-guardar-columnas", mismo motivo
   # que el resto de los controles con phx-change de este panel.
   def handle_event("cambiar_tipo_filtro", %{"tipo_filtro" => mapa}, socket) do
     {id, tipo_filtro} = mapa |> Map.to_list() |> List.first()
@@ -375,7 +375,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
     guardar_campos(socket, campos, "Default actualizado.")
   end
 
-  # --- Get Config: Totales (SPEC-SYS-0209202601, sube a la par de BC) ---
+  # --- Lista: Totales (SPEC-SYS-0209202601, sube a la par de BC) ---
   # "totalizar" (simple booleano) se retira -- reemplazado por el mismo
   # shape rico que ya usaba `pty_gasto_diariov2` en BC (Mín./Máx., Total
   # página, Total general, Máscara), vía celda_totales/1 (mismo
@@ -563,7 +563,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
   defp panel_get_config(assigns) do
     ~H"""
     <div class="flex flex-col gap-4">
-      <%!-- Las 3 secciones de Get Config son acordeones (2026-08-28, a
+      <%!-- Las 3 secciones de Lista son acordeones (2026-08-28, a
       pedido explícito -- "permite mejor administración") -- <details>/
       <summary> nativo + el hook RecordarSeccion, mismo patrón exacto que
       panel_parametros/1 en catalogo_live.ex (recuerda open/closed en
@@ -703,7 +703,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
           <%= if @selector_orden_abierto do %>
             <div class="fixed inset-0 z-40" phx-click="cerrar_selector_orden"></div>
             <%!-- Abre hacia ARRIBA (bottom-full, no top-full) -- esta es la
-            última sección de Get Config, casi siempre pegada al borde de
+            última sección de Lista, casi siempre pegada al borde de
             abajo de la ventana; abriendo hacia abajo el popover quedaba
             cortado contra el viewport, sin espacio para desplegar (bug
             real 2026-08-27, "no puedo ordenar porque no se ve el
@@ -859,7 +859,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
             <tr>
               <td class="py-1.5 pr-4 font-mono text-gray-700">&lt;campo&gt;=&lt;valor&gt;</td>
               <td class="py-1.5 text-gray-500">
-                Filtro de igualdad exacta contra cualquier columna del Get Config (visible o no) — nombre crudo del campo, sin el catálogo delante.
+                Filtro de igualdad exacta contra cualquier columna de la Lista (visible o no) — nombre crudo del campo, sin el catálogo delante.
                 Si dos tablas unidas tienen un campo con el mismo nombre, filtra ambas por igual (misma limitación que la tabla admin).
               </td>
             </tr>
@@ -885,7 +885,7 @@ defmodule MetadataAppWeb.Sysadmin.ConsultaEditorLive do
         <p class="text-xs text-gray-500 mt-2">
           Las llaves de <code class="font-mono">data</code>/<code class="font-mono">totales</code> van namespaced (<code class="font-mono">catalogo__campo</code>), nunca solo el nombre del campo —
           evita ambigüedad cuando dos tablas unidas comparten nombre de columna. <code class="font-mono">meta_campos</code> trae esa misma llave en <code class="font-mono">clave</code> para no tener que recalcularla del lado del cliente.
-          Solo aparecen ahí las columnas visibles del Get Config, en su mismo orden.
+          Solo aparecen ahí las columnas visibles de la Lista, en su mismo orden.
         </p>
       </div>
     </div>

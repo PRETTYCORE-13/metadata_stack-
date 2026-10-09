@@ -2,7 +2,7 @@ defmodule MetadataApp.Repo.Migrations.AgregarPtyDsdEmpleadosDsdEmpleadosFuncionA
   use Ecto.Migration
 
   # Mismo motivo/mismo fix que 20260817201540_crear_pty_dsd_empleados
-  # (2026-09-04, SPEC-SYS-0309202601) -- esta columna de todas formas se
+  # (2026-09-04, SPEC-ARQ-0309202601) -- esta columna de todas formas se
   # vuelve a quitar en 20260817224821 (nunca sobrevive al schema final),
   # así que ni siquiera hace falta la FK acá.
   def change do

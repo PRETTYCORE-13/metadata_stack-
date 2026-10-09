@@ -126,6 +126,50 @@ defmodule MetadataApp.MetaImportacionDatos do
     end)
   end
 
+  @doc """
+  Los campos que el asistente ofrece: de `campos_disponibles/1`, solo los
+  que un usuario puede capturar (SPEC-SYS-0810202601 R8): editables en el
+  contrato y, si el maestro tiene motor de estados, en `alta` o `guardar`.
+  Para un catálogo detalle se usan las transiciones de su maestro, que son
+  las que listan los campos de sus renglones.
+  """
+  def campos_importables(catalogo_nombre) do
+    editables = editables_por_usuario(catalogo_nombre)
+    catalogo_nombre |> campos_disponibles() |> Enum.filter(&MapSet.member?(editables, &1.campo))
+  end
+
+  defp editables_por_usuario(catalogo_nombre) do
+    header = MetaSchemaContext.obtener_header_por_nombre(catalogo_nombre)
+
+    maestro =
+      if header.schema_encabezado_id,
+        do: MetaSchemaContext.obtener_header!(header.schema_encabezado_id),
+        else: header
+
+    del_contrato =
+      catalogo_nombre
+      |> MetaSchemaContext.listar_detalles()
+      |> Enum.filter(&(&1.schema_context_properties["editable"] == true))
+      |> MapSet.new(& &1.schema_context_field)
+
+    de_transiciones =
+      if MetaStateEngine.catalogo_con_motor?(maestro.schema_context_name) do
+        maestro.id
+        |> MetadataApp.MetaEstadosAdmin.listar_transiciones()
+        |> Enum.filter(&(&1.accion in ["alta", "guardar"]))
+        |> Enum.flat_map(&(&1.campos_editables || []))
+        |> MapSet.new()
+        |> MapSet.intersection(MapSet.new(MetaSchemaContext.listar_detalles(catalogo_nombre), & &1.schema_context_field))
+      else
+        MapSet.new()
+      end
+
+    # Criterio híbrido (SPEC-SYS-0810202601 D3.1): si las transiciones no
+    # listan ningún campo de este catálogo (pasa con algunos detalles), basta
+    # el contrato.
+    if MapSet.size(de_transiciones) == 0, do: del_contrato, else: MapSet.intersection(del_contrato, de_transiciones)
+  end
+
   @doc "Catálogos detalle REALES de un maestro (Fase 2) — nombre/etiqueta, la lista que el paso \"¿Tiene detalles?\" del asistente ofrece tildar."
   def catalogos_detalle_disponibles(header_id) do
     header_id
@@ -598,11 +642,11 @@ defmodule MetadataApp.MetaImportacionDatos do
     end
   end
 
+  # SPEC-SYS-0710202602: los renglones nuevos se crean dentro de la
+  # transición del encabezado (`escribir_renglones`), antes de su regla POST.
   defp aplicar_actualizacion(existente, scope, attrs, catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo) do
-    with {:ok, actualizado} <- aplicar_encabezado(existente, scope, attrs, catalogo_maestro, editar_por_catalogo),
-         {:ok, _nuevos} <- Renglones.crear_todos(catalogo_maestro, existente.id, nuevo_por_catalogo) do
-      {:ok, actualizado}
-    end
+    escribir = fn _registro -> Renglones.crear_todos(catalogo_maestro, existente.id, nuevo_por_catalogo) end
+    aplicar_encabezado(existente, scope, attrs, catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo, escribir)
   end
 
   # Bucket "editar" vacío en TODOS los detalles -> mismo camino de la
@@ -612,17 +656,26 @@ defmodule MetadataApp.MetaImportacionDatos do
   # manual de un renglón existente, CompliancePty C6) -- sin ella, la
   # fila entera se rechaza (R11), nunca se editan los renglones "por la
   # ventana" saltándose el motor de estados.
-  defp aplicar_encabezado(existente, scope, attrs, _catalogo_maestro, editar_por_catalogo) when map_size(editar_por_catalogo) == 0,
-    do: CatalogoGenerico.actualizar(existente, scope, attrs)
+  #
+  # `nuevo_por_catalogo` lo escribe `escribir` (Renglones.crear_todos/3)
+  # dentro de la transición; la regla PRE del encabezado ya lo ve
+  # (SPEC-SYS-0510202601 R8).
+  defp aplicar_encabezado(existente, scope, attrs, _catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo, escribir)
+       when map_size(editar_por_catalogo) == 0,
+       do: CatalogoGenerico.actualizar(existente, scope, attrs, %{}, renglones_nuevos: nuevo_por_catalogo, escribir_renglones: escribir)
 
-  defp aplicar_encabezado(existente, _scope, attrs, catalogo_maestro, editar_por_catalogo) do
+  defp aplicar_encabezado(existente, _scope, attrs, catalogo_maestro, editar_por_catalogo, nuevo_por_catalogo, escribir) do
     case MetaStateEngine.transicion_guardar(catalogo_maestro, existente.estado_id) do
       nil ->
         {catalogo, _items} = Enum.at(editar_por_catalogo, 0)
         {:error, {:renglon_sin_guardar, catalogo}}
 
       transicion ->
-        MetaStateEngine.ejecutar_transicion(existente, transicion.accion, attrs, renglones: editar_por_catalogo)
+        MetaStateEngine.ejecutar_transicion(existente, transicion.accion, attrs,
+          renglones: editar_por_catalogo,
+          renglones_nuevos: nuevo_por_catalogo,
+          escribir_renglones: escribir
+        )
     end
   end
 
@@ -714,13 +767,13 @@ defmodule MetadataApp.MetaImportacionDatos do
   # inventory) y quien importa no tiene uno elegido. `to_string/1` no
   # soporta tuplas (crasheaba acá), de ahí el catch-all con `inspect/1`.
   defp mensaje_de_motivo({:alcance_requerido, "branch_id"}),
-    do: "No hay una Sucursal activa — elegí una desde la banda de pie antes de importar."
+    do: "No hay una Sucursal activa — elige una desde la banda de pie antes de importar."
 
   defp mensaje_de_motivo({:alcance_requerido, "sales_unit_id"}),
-    do: "No hay una Unidad de Venta activa — elegí una desde la banda de pie antes de importar."
+    do: "No hay una Unidad de Venta activa — elige una desde la banda de pie antes de importar."
 
   defp mensaje_de_motivo({:alcance_requerido, "inventory_id"}),
-    do: "No hay un Almacén activo — elegí uno desde la banda de pie antes de importar."
+    do: "No hay un Almacén activo — elige uno desde la banda de pie antes de importar."
 
   # MetadataApp.IdentificadoresTransaccionales.asignar/4 — errores de
   # CONFIGURACIÓN del catálogo (Perfil de Folio), no del archivo que se
@@ -736,7 +789,7 @@ defmodule MetadataApp.MetaImportacionDatos do
     do: "Hay más de un Perfil de Folio que aplica a esta fila — la configuración del catálogo es ambigua, no tu archivo."
 
   defp mensaje_de_motivo(:subtipo_dado_de_baja),
-    do: "El subtipo de transacción de esta fila está dado de baja y no puede foliar — revisá el valor o avisale a un administrador."
+    do: "El subtipo de transacción de esta fila está dado de baja y no puede foliar — revisa el valor o avísale a un administrador."
 
   # SPEC-SYS-0909202604 (tarea E1) -- errores propios del camino de
   # actualización (Grupo C/D).
@@ -842,16 +895,16 @@ defmodule MetadataApp.MetaImportacionDatos do
 
   defp sugerencia_para(mensaje) do
     cond do
-      mensaje =~ "no tiene configurada la transición" -> "Configurá la transición \"Guardar\" para este catálogo en el Motor de Estados — sin ella no se puede editar un renglón ya existente, ni a mano ni por importación."
-      mensaje =~ "blank" or mensaje =~ "vacío" -> "Completá este campo — es obligatorio."
+      mensaje =~ "no tiene configurada la transición" -> "Configura la transición \"Guardar\" para este catálogo en el Motor de Estados — sin ella no se puede editar un renglón ya existente, ni a mano ni por importación."
+      mensaje =~ "blank" or mensaje =~ "vacío" -> "Completa este campo — es obligatorio."
       mensaje =~ "taken" or mensaje =~ "ya existe" or mensaje =~ "único" -> "Ya existe un registro con este valor — tiene que ser único."
-      mensaje =~ "no se encontró" -> "Revisá que el valor exista en el catálogo relacionado, escrito exactamente igual."
+      mensaje =~ "no se encontró" -> "Revisa que el valor exista en el catálogo relacionado, escrito exactamente igual."
       mensaje =~ "más de un" -> "El valor no identifica un único registro — hace falta un dato más específico."
-      mensaje =~ "invalid" or mensaje =~ "inválido" or mensaje =~ "formato" -> "El formato no es válido — revisá el tipo de dato esperado."
-      mensaje =~ "sin_scope" -> "No se pudo determinar la empresa/sucursal — iniciá sesión de nuevo e intentá otra vez."
-      mensaje =~ "no permite insertar renglones" -> "El estado actual del catálogo no permite cargar detalles — revisá los permisos por estado en el Motor."
-      mensaje =~ "Perfil de Folio" -> "No es algo que puedas resolver con el archivo — pedile a un administrador que revise la configuración de Folio de este catálogo."
-      true -> "Revisá el valor e intentá de nuevo."
+      mensaje =~ "invalid" or mensaje =~ "inválido" or mensaje =~ "formato" -> "El formato no es válido — revisa el tipo de dato esperado."
+      mensaje =~ "sin_scope" -> "No se pudo determinar la empresa/sucursal — inicia sesión de nuevo e intenta otra vez."
+      mensaje =~ "no permite insertar renglones" -> "El estado actual del catálogo no permite cargar detalles — revisa los permisos por estado en el Motor."
+      mensaje =~ "Perfil de Folio" -> "No es algo que puedas resolver con el archivo — pídele a un administrador que revise la configuración de Folio de este catálogo."
+      true -> "Revisa el valor e intenta de nuevo."
     end
   end
 

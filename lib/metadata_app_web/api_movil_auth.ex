@@ -1,6 +1,6 @@
 defmodule MetadataAppWeb.ApiMovilAuth do
   @moduledoc """
-  Plug de autenticación para `/api/movil` (SPEC-API-0409202601,
+  Plug de autenticación para `/api/movil` (SPEC-APP-0409202601,
   design.md §1.3) -- lee `Authorization: Bearer <access_token>`,
   verifica firma+expiración+revocación (`Autenticacion.
   verificar_access_token/1`) y arma `current_scope` igual que el resto

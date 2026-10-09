@@ -21,4 +21,19 @@ defmodule MetadataApp.MetaStateEngine.ReglaPost do
 
   @callback ejecutar(accion :: String.t(), registro :: struct(), contexto :: map(), repo :: module()) ::
               {:ok, term()} | {:error, term()}
+
+  @doc """
+  Opcional (SPEC-SYS-0810202603): cálculo preliminar de un renglón mientras
+  se captura en la Ficha. `detalle` es el catálogo del renglón; `encabezado`
+  y `renglon` son mapas con llaves de texto y valores como vienen de la
+  pantalla (texto) o de la base. Solo lectura: nunca escribe.
+
+  Regresa los valores de las columnas de solo lectura del renglón (los
+  demás campos se ignoran), `:sin_calculo` si todavía faltan datos, o
+  `{:aviso, texto}` para avisar sin bloquear la captura.
+  """
+  @callback calcular_renglon(detalle :: String.t(), encabezado :: map(), renglon :: map()) ::
+              {:ok, map()} | :sin_calculo | {:aviso, String.t()}
+
+  @optional_callbacks calcular_renglon: 3
 end

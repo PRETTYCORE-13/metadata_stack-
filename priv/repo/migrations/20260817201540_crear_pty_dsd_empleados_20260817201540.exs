@@ -2,7 +2,7 @@ defmodule MetadataApp.Repo.Migrations.CrearPtyDsdEmpleados20260817201540 do
   use Ecto.Migration
 
   # `references(:pty_dsd_empleados_funcion)` original quitada (2026-09-04,
-  # SPEC-SYS-0309202601, auditoría de replay desde cero): esa tabla vive
+  # SPEC-ARQ-0309202601, auditoría de replay desde cero): esa tabla vive
   # en el bloque de migraciones con timestamp viejo de 17 dígitos
   # (milisegundos, previo al fix de `CatalogoGenerador.timestamp_utc/0`)
   # -- Ecto ordena por VALOR NUMÉRICO, y un número de 17 dígitos es más

@@ -89,7 +89,7 @@ export function detectarDuplicados(filas, columns) {
   return duplicados
 }
 
-// Fila de resumen configurable (pie fijo, siempre al fondo de la grilla) —
+// Fila de resumen configurable (pie fijo, siempre al fondo de la tabla) —
 // cálculo puro para poder probarlo sin DOM
 // (ver assets/js/hooks/__tests__/grid_editable.test.mjs). `ventana`, si no
 // es null, es {inicio, fin} (mismo shape que devuelve calcularVentana) —
@@ -97,7 +97,7 @@ export function detectarDuplicados(filas, columns) {
 // las filas están "visibles" ya de por sí, así que null equivale a "todas".
 // `overrides` es un mapa {campo: operacion} elegido en runtime por clic
 // derecho — nunca se persiste (mismo criterio que @agregaciones del lado
-// servidor, ver docs de Get View), tiene prioridad sobre la metadata.
+// servidor, ver docs de Lista), tiene prioridad sobre la metadata.
 const OPERACIONES_NUMERICAS = ["suma", "promedio", "minimo", "maximo"]
 const ETIQUETAS_OPERACION = {
   suma: "Total",
@@ -175,6 +175,8 @@ export function calcularResumen(filas, columnas, ventana, overrides = {}) {
 // reglas del changeset) viaja al servidor por separado (ver
 // programarValidacionServidor).
 function validarCelda(valor, columna) {
+  // Columna de solo lectura (SPEC-SYS-0810202602): la llena el sistema.
+  if (columna.solo_lectura) return []
   const vacio = celdaVacia(valor)
 
   if (!columna.opcional && vacio) return ["obligatorio"]
@@ -201,6 +203,11 @@ function validarCelda(valor, columna) {
 function textoCelda(col, valor) {
   if (celdaVacia(valor)) return ""
 
+  if (col.solo_lectura && TIPOS_NUMERICOS.includes(col.tipo)) {
+    const numero = Number(valor)
+    if (Number.isFinite(numero)) return formatearNumero(numero, col)
+  }
+
   if (col.tipo === "referencia" && Array.isArray(col.opciones)) {
     const opcion = col.opciones.find((o) => String(o.id) === valor)
     if (opcion) return opcion.etiqueta
@@ -209,6 +216,15 @@ function textoCelda(col, valor) {
   if (col.tipo === "boolean") return valor === "true" ? "Sí" : "No"
 
   return valor
+}
+
+// Formato es-MX con los decimales del campo (y moneda si aplica), mismo
+// criterio que FichaLive.formatear_numero_columna/2.
+function formatearNumero(numero, col) {
+  const decimales = Number.isInteger(col.decimales) ? col.decimales : 2
+  const opciones = {minimumFractionDigits: decimales, maximumFractionDigits: decimales}
+  if (col.moneda) Object.assign(opciones, {style: "currency", currency: "MXN"})
+  return new Intl.NumberFormat("es-MX", opciones).format(numero)
 }
 
 let contadorClientId = 0
@@ -234,6 +250,12 @@ function filaDesdeServidor(f) {
   }
 }
 
+// Las columnas de solo lectura nunca viajan al guardar.
+function sinSoloLectura(valores, columnas) {
+  const soloLectura = new Set(columnas.filter((c) => c.solo_lectura).map((c) => c.campo))
+  return Object.fromEntries(Object.entries(valores).filter(([campo]) => !soloLectura.has(campo)))
+}
+
 export default {
   mounted() {
     this.catalogo = this.el.dataset.catalogo
@@ -254,7 +276,7 @@ export default {
     this.resumenRow = this.el.querySelector('[data-resumen-pos="abajo"]')
     // Operación elegida en runtime por clic derecho — nunca persistida,
     // se pierde si se recarga la página (mismo criterio que @agregaciones
-    // de Get View).
+    // de Lista).
     this.resumenOverrides = {}
     this.menuResumenEl = null
     this.el.addEventListener("contextmenu", (e) => this.alContextMenuResumen(e))
@@ -329,6 +351,24 @@ export default {
       this.render()
       this.programarValidacionServidor(idx)
       this.programarSync()
+    })
+
+    // Cálculo preliminar del renglón (SPEC-SYS-0810202603): valores de las
+    // columnas de solo lectura, escritos directo (setCelda las ignora) y sin
+    // marcar la fila como cambiada. Se ven en cursiva hasta que se guarda y
+    // la tabla se recarga con lo definitivo.
+    this.handleEvent("grid_calculado_fila", ({catalogo, client_id, renglon_id, valores}) => {
+      if (catalogo !== this.catalogo) return
+      const fila =
+        this.rows.find((r) => client_id != null && r.clientId === client_id) ||
+        this.rows.find((r) => renglon_id != null && r.renglonId === renglon_id)
+      if (!fila) return
+      fila.preliminar = new Set()
+      Object.entries(valores).forEach(([campo, valor]) => {
+        fila.values[campo] = valor
+        if (!celdaVacia(valor)) fila.preliminar.add(campo)
+      })
+      this.render()
     })
 
     // "+ Nueva línea" del formulario (hoy disparado por el hook
@@ -427,6 +467,8 @@ export default {
   },
 
   setCelda(rowIdx, campo, valor) {
+    const columna = this.columns.find((c) => c.campo === campo)
+    if (columna && columna.solo_lectura) return
     while (this.rows.length <= rowIdx) this.rows.push(filaNueva())
     const fila = this.rows[rowIdx]
     fila.values[campo] = valor
@@ -676,8 +718,12 @@ export default {
         const claseTexto = errores.length > 0 ? "text-red-600" : fila.marcadaEliminar ? "text-gray-400" : "text-gray-700"
         const texto = escaparHtml(textoCelda(col, valor))
 
-        return `<td class="px-1.5 py-1 align-top text-xs ${claseTexto} ${claseTachado} truncate max-w-[16rem]"
-          title="${errores.length ? escaparHtml(errores.join("; ")) : ""}">${texto === "" ? "&nbsp;" : texto}</td>`
+        const claseSoloLectura = col.solo_lectura ? "text-right bg-gray-50/60" : ""
+        const preliminar = fila.preliminar && fila.preliminar.has(col.campo)
+        const titulo = errores.length ? errores.join("; ") : preliminar ? "preliminar" : ""
+
+        return `<td class="px-1.5 py-1 align-top text-xs ${claseTexto} ${claseTachado} ${claseSoloLectura} ${preliminar ? "italic" : ""} truncate max-w-[16rem]"
+          title="${escaparHtml(titulo)}">${texto === "" ? "&nbsp;" : texto}</td>`
       })
       .join("")
 
@@ -734,9 +780,10 @@ export default {
         eliminadas.push(fila.renglonId)
         return
       }
-      if (filaVacia(fila.values)) return
-      if (fila.renglonId == null) nuevas.push(fila.values)
-      else if (fila.dirty.size > 0) editadas.push({renglon_id: fila.renglonId, campos: fila.values})
+      const valores = sinSoloLectura(fila.values, this.columns)
+      if (filaVacia(valores)) return
+      if (fila.renglonId == null) nuevas.push(valores)
+      else if (fila.dirty.size > 0) editadas.push({renglon_id: fila.renglonId, campos: valores})
     })
 
     this.pushEvent("grid_sync", {catalogo: this.catalogo, nuevas, editadas, eliminadas})

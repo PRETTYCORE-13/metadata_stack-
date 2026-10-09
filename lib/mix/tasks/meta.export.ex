@@ -17,9 +17,10 @@ defmodule Mix.Tasks.Meta.Export do
   diff de git, aparentara tocar — TODOS los catálogos, no solo el que
   cambió.
 
-  Sincroniza el directorio con el estado actual de la base: si un
-  catálogo ya no existe (borrado total), su `.meta.json` huérfano se
-  borra automáticamente.
+  Los `.meta.json` de catálogos que no existen en la base local
+  (huérfanos) se listan y solo se borran si se confirma
+  (`Mix.Tasks.Meta.Huerfanos`, SPEC-SYS-0210202601 R6): la carpeta es
+  compartida y pueden ser de otra persona.
   """
 
   def run(args) do
@@ -34,24 +35,7 @@ defmodule Mix.Tasks.Meta.Export do
         |> Enum.map(&MetaSchemaContext.exportar_header(&1, dir))
       end)
 
-    limpiar_huerfanos(dir, nombres, ".meta.json")
+    Mix.Tasks.Meta.Huerfanos.limpiar(dir, nombres, ".meta.json")
     Mix.shell().info("Exportados #{length(nombres)} Business Context(s) a #{dir}/")
-  end
-
-  # Sincroniza el directorio con lo que existe hoy en la base: un catálogo
-  # que ya no está en `nombres_vigentes` (borrado total) no debe dejar un
-  # archivo huérfano dando vueltas — se leería en el próximo import como si
-  # todavía existiera.
-  defp limpiar_huerfanos(dir, nombres_vigentes, sufijo) do
-    esperados = MapSet.new(nombres_vigentes, &"#{&1}#{sufijo}")
-
-    dir
-    |> File.ls!()
-    |> Enum.filter(&String.ends_with?(&1, sufijo))
-    |> Enum.reject(&MapSet.member?(esperados, &1))
-    |> Enum.each(fn archivo ->
-      File.rm!(Path.join(dir, archivo))
-      Mix.shell().info("  (huérfano borrado: #{archivo})")
-    end)
   end
 end

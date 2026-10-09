@@ -70,10 +70,52 @@ defmodule MetadataAppWeb.Api.ConsultaEndpointController do
   defp ejecutar(conn, endpoint, credencial, metodo, params, inicio) do
     valores_externos = Map.drop(params, ["ruta"])
 
-    if endpoint.metodo == "post" and endpoint.permite_alta do
-      ejecutar_alta(conn, endpoint, credencial, valores_externos, inicio)
+    cond do
+      ConsultaEndpoints.de_servicio?(endpoint) ->
+        ejecutar_servicio(conn, endpoint, credencial, valores_externos, inicio)
+
+      endpoint.metodo == "post" and endpoint.permite_alta ->
+        ejecutar_alta(conn, endpoint, credencial, valores_externos, inicio)
+
+      true ->
+        ejecutar_consulta(conn, endpoint, credencial, metodo, valores_externos, inicio)
+    end
+  end
+
+  # SPEC-SYS-2509202601 §11.6 (R49-R51): los valores llegan por la dirección
+  # en GET (una lista como `1,2,3` o `x[]=1&x[]=2`) o por el cuerpo JSON en
+  # POST; Phoenix ya junta los dos en `params`. Se validan contra los
+  # parámetros ACTUALES del Servicio (no la copia del endpoint). La
+  # respuesta no se pagina: el Servicio ya está acotado por su tope (R43).
+  # Solo los errores de parámetros y de tope se explican a quien llama; un
+  # error de ejecución del SQL se registra y se responde genérico, para no
+  # exponer detalles internos de la base.
+  defp ejecutar_servicio(conn, endpoint, credencial, valores, inicio) do
+    servicio = endpoint.consulta_sql
+    nombre = ConsultaEndpoints.nombre_de_origen(endpoint)
+
+    with {:ok, _} <- MetadataApp.ConsultasSql.Parametros.preparar(servicio.parametros, valores),
+         {:ok, %{columnas: columnas, filas: filas}} <-
+           MetadataApp.ConsultasSql.ejecutar_servicio(nombre, valores, {:empresa_fija, endpoint.empresa_id}) do
+      permitidos = credencial.campos_permitidos
+      body = %{"data" => Enum.map(filas, &Map.take(&1, permitidos)), "meta_campos" => Enum.filter(columnas, &(&1 in permitidos))}
+      responder(conn, :ok, body, endpoint, credencial, inicio, length(filas))
     else
-      ejecutar_consulta(conn, endpoint, credencial, metodo, valores_externos, inicio)
+      {:error, :tiempo_excedido} ->
+        responder(conn, :gateway_timeout, %{"error" => "Tiempo de ejecución excedido"}, endpoint, credencial, inicio)
+
+      {:error, mensaje} when is_binary(mensaje) ->
+        cond do
+          String.starts_with?(mensaje, ["Falta el parámetro", "El parámetro «"]) ->
+            responder(conn, :bad_request, %{"error" => mensaje}, endpoint, credencial, inicio)
+
+          String.contains?(mensaje, "excede el tope") ->
+            responder(conn, :unprocessable_entity, %{"error" => mensaje}, endpoint, credencial, inicio)
+
+          true ->
+            Logger.error("Endpoint #{endpoint.id} (servicio #{nombre}) falló: #{mensaje}")
+            responder(conn, :internal_server_error, %{"error" => "No se pudo ejecutar el servicio"}, endpoint, credencial, inicio)
+        end
     end
   end
 
@@ -133,7 +175,7 @@ defmodule MetadataAppWeb.Api.ConsultaEndpointController do
   # incorrecto, nombres de campo viejos/mal escritos, etc.) -- lista los
   # campos que SÍ acepta para que el caller pueda comparar de una.
   defp mensaje_error_alta({:body_sin_coincidencias, campos_alta}) do
-    "El body no coincide con ningún campo habilitado para este endpoint -- revisá que el header " <>
+    "El body no coincide con ningún campo habilitado para este endpoint -- revisa que el header " <>
       "\"Content-Type: application/json\" esté presente y que los nombres de campo sean exactamente: " <>
       Enum.join(campos_alta, ", ")
   end
@@ -310,7 +352,9 @@ defmodule MetadataAppWeb.Api.ConsultaEndpointController do
       fecha_hora: DateTime.utc_now(),
       empresa_id: endpoint.empresa_id,
       ip: AuditoriaContexto.desde_conn(conn).ip,
-      metodo: endpoint.metodo,
+      # El método de la PETICIÓN: un endpoint de Servicio responde por GET y
+      # por POST aunque tenga uno configurado (R50).
+      metodo: String.downcase(conn.method),
       resultado_http: Plug.Conn.Status.code(status),
       duracion_ms: duracion_ms,
       cantidad_registros: cantidad_registros

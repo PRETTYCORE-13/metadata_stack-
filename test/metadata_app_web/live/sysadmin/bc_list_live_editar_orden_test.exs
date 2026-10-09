@@ -65,7 +65,7 @@ defmodule MetadataAppWeb.Sysadmin.BcListLiveEditarOrdenTest do
 
     html = view |> element("button[phx-click=abrir_editar_orden]", "Vista") |> render_click()
 
-    assert html =~ "Arrastrá para cambiar el orden"
+    assert html =~ "Arrastra para cambiar el orden"
     assert html =~ "Carpeta A #{sufijo}"
     assert html =~ "Carpeta B #{sufijo}"
     assert html =~ "id=\"orden-nodo-orden_a_#{sufijo}\""

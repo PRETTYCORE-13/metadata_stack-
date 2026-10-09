@@ -27,6 +27,7 @@ defmodule MetadataAppWeb.BusinessProcessBuilder.CatalogoController do
   def index(conn, %{"tabla" => tabla} = params) do
     case MetaSchemaContext.obtener_header_por_nombre(tabla) do
       %{schema_context_type: 3} -> MetadataAppWeb.BusinessProcessBuilder.ConsultaController.index(conn, params)
+      %{schema_context_type: 4} -> MetadataAppWeb.BusinessProcessBuilder.ConsultaSqlController.index(conn, params)
       _otro -> index_catalogo(conn, tabla, params)
     end
   end

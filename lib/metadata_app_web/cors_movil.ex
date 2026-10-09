@@ -1,6 +1,6 @@
 defmodule MetadataAppWeb.CorsMovil do
   @moduledoc """
-  CORS para `/api/movil/*` (SPEC-API-0409202601) -- sin esto, un
+  CORS para `/api/movil/*` (SPEC-APP-0409202601) -- sin esto, un
   cliente corriendo en un navegador (`flutter run -d chrome`, o una
   futura build web) no puede llamar la API: los navegadores bloquean
   requests entre orígenes distintos si el servidor no manda estos

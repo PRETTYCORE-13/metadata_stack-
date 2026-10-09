@@ -67,7 +67,7 @@ defmodule MetadataApp.MetaConsultas do
 
   @doc """
   Claves de control ofrecibles para `catalogo_base` (para el checklist de
-  Get Config) -- filtradas contra columnas reales del módulo compilado Y
+  Lista) -- filtradas contra columnas reales del módulo compilado Y
   contra las mismas condiciones que ya usa un catálogo normal para
   decidir si "Estado"/"TRN"/Alcance tienen sentido ahí (ver
   CatalogoLive.montar_catalogo/2: estado necesita motor de estados
@@ -135,7 +135,7 @@ defmodule MetadataApp.MetaConsultas do
 
   @doc """
   Campos VISIBLES, de tipo fecha Y marcados "es_parametro" => true por el
-  admin en Get Config -- ver moduledoc de `MetaSchema.Consulta`.
+  admin en Lista -- ver moduledoc de `MetaSchema.Consulta`.
   """
   def campos_elegibles_fecha(%Consulta{campos: campos}), do: ParametrosCatalogo.campos_elegibles_fecha(campos)
 
@@ -274,7 +274,7 @@ defmodule MetadataApp.MetaConsultas do
   maestro-detalle, así que ese caso siempre requiere `agregar_tabla_manual/5`
   y es fácil elegir mal). A diferencia de sacar y volver a agregar la
   tabla (`quitar_ultima_tabla/1` + `agregar_tabla_manual/5`), esto NO
-  toca `campos` -- toda la config de Get Config ya hecha sobre esa tabla
+  toca `campos` -- toda la config de la Lista ya hecha sobre esa tabla
   (etiquetas, Parámetro, Defaults) se conserva tal cual.
   """
   def corregir_union(%Consulta{} = consulta, catalogo, campo_en_nuevo, campo_en_destino) do
@@ -307,11 +307,11 @@ defmodule MetadataApp.MetaConsultas do
   # es el campo remoto, solo de qué lado está la referencia:
   #
   #   Dirección A: la tabla que se agrega TIENE el campo referencia hacia
-  #   alguna tabla ya presente (caso típico: agregás el lado "muchos"
+  #   alguna tabla ya presente (caso típico: agregas el lado "muchos"
   #   cuando el "uno" ya estaba).
   #
   #   Dirección B: alguna tabla ya presente tiene un campo referencia
-  #   HACIA la tabla que se agrega (agregás el lado "uno" cuando el
+  #   HACIA la tabla que se agrega (agregas el lado "uno" cuando el
   #   "muchos" ya estaba).
   @doc """
   Igual que la detección que hace `agregar_tabla/2` internamente, pero
@@ -483,7 +483,7 @@ defmodule MetadataApp.MetaConsultas do
 
   @doc """
   Query "representativa" de la consulta -- joins reales + `select` de las
-  columnas visibles (Get Config), tal como las arma `ejecutar/6`, pero
+  columnas visibles (Lista), tal como las arma `ejecutar/6`, pero
   SIN filtros/alcance/paginación (esos dependen de cada request, no
   tiene sentido fijarlos en una query de referencia). Pensada para el
   tab SQL del admin (ver ConsultaEditorLive) -- nunca para ejecutar

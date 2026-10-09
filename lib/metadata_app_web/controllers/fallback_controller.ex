@@ -84,9 +84,9 @@ defmodule MetadataAppWeb.FallbackController do
   def call(conn, {:error, {:alcance_requerido, campo}}) do
     detalle =
       case campo do
-        "branch_id" -> "No hay una Sucursal activa — elegí una desde la banda de pie antes de crear este registro."
-        "sales_unit_id" -> "No hay una Unidad de Venta activa — elegí una desde la banda de pie antes de crear este registro."
-        "inventory_id" -> "No hay un Almacén activo — elegí uno desde la banda de pie antes de crear este registro."
+        "branch_id" -> "No hay una Sucursal activa — elige una desde la banda de pie antes de crear este registro."
+        "sales_unit_id" -> "No hay una Unidad de Venta activa — elige una desde la banda de pie antes de crear este registro."
+        "inventory_id" -> "No hay un Almacén activo — elige uno desde la banda de pie antes de crear este registro."
       end
 
     conn

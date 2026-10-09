@@ -1,6 +1,6 @@
 defmodule MetadataAppWeb.Sysadmin.BcMotorLiveParametrosTest do
   @moduledoc """
-  SPEC-SYS-0209202601, Grupo D — la grilla "Columnas del GET" de un BC
+  SPEC-SYS-0209202601, Grupo D — la tabla "Columnas del GET" de un BC
   ahora tiene Tot./Param/Tipo/Acot./Default (antes solo Consultas los
   tenía). Mismos nombres de evento que consulta_editor_live.ex, acá
   persistidos contra meta_schema_detail (ver ParametrosCatalogoComponents
