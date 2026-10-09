@@ -2526,7 +2526,7 @@ defmodule MetadataAppWeb.FichaLive do
     assigns = assign(assigns, :clave, clave)
 
     ~H"""
-    <.campo_control_row clave={@clave} registro={@registro} campos_editables={@campos_editables} edicion={@edicion} estados_por_id={@estados_por_id} tabla={@registro.__struct__.__schema__(:source)} />
+    <.campo_control_row clave={@clave} registro={@registro} campos_editables={@campos_editables} edicion={@edicion} estados_por_id={@estados_por_id} tabla={tabla_de_registro(@registro)} />
     """
   end
 
@@ -3646,6 +3646,11 @@ defmodule MetadataAppWeb.FichaLive do
     """
   end
 
+  # En modo alta @registro es un mapa vacío (sin struct ni id): los campos
+  # de control todavía no tienen valor.
+  defp tabla_de_registro(%{__struct__: schema}), do: schema.__schema__(:source)
+  defp tabla_de_registro(_registro), do: nil
+
   defp campo_real_de_control("branch"), do: "branch_id"
   defp campo_real_de_control("inventory_location"), do: "inventory_id"
   defp campo_real_de_control("sales_unit"), do: "sales_unit_id"
@@ -3663,7 +3668,7 @@ defmodule MetadataAppWeb.FichaLive do
   defp formatear_folio(nil, _numero), do: nil
   defp formatear_folio(_serie, nil), do: nil
   defp formatear_folio(serie, numero), do: "#{serie}-#{numero}"
-  defp valor_legible_control("estado", registro, estados_por_id, _tabla), do: Map.get(estados_por_id, registro.estado_id)
+  defp valor_legible_control("estado", registro, estados_por_id, _tabla), do: Map.get(estados_por_id, Map.get(registro, :estado_id))
   defp valor_legible_control("branch", registro, _estados_por_id, _tabla), do: valor_dimension_alcance(:branch, Map.get(registro, :branch_id))
 
   defp valor_legible_control("inventory_location", registro, _estados_por_id, _tabla),
@@ -3682,9 +3687,11 @@ defmodule MetadataAppWeb.FichaLive do
     end
   end
 
-  defp valor_legible_control("creado_por", registro, _estados_por_id, tabla) do
-    MetaAuditoria.creadores_de(tabla, [registro.id]) |> Map.get(registro.id)
+  defp valor_legible_control("creado_por", %{id: id}, _estados_por_id, tabla) when not is_nil(id) do
+    MetaAuditoria.creadores_de(tabla, [id]) |> Map.get(id)
   end
+
+  defp valor_legible_control("creado_por", _registro, _estados_por_id, _tabla), do: nil
 
   defp valor_dimension_alcance(_dimension, nil), do: nil
   defp valor_dimension_alcance(dimension, id), do: etiqueta_dimension_alcance(dimension, id)
