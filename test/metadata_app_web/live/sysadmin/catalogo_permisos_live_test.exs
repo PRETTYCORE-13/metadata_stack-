@@ -176,4 +176,92 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLiveTest do
       assert has_element?(view, "#picker-#{otro.schema_context_name}")
     end
   end
+
+  describe "filtro por módulo (SPEC-SYS-0910202601 R6-R9)" do
+    # Módulo = carpeta (tipo 2) con prefijo_directorio, igual que en
+    # "Catálogo destino" de BC Motor.
+    defp modulo_fixture do
+      n = System.unique_integer([:positive])
+      prefijo = "m#{n}"
+
+      {:ok, carpeta} =
+        %MetadataApp.BusinessProcessBuilder.MetaSchema.Header{}
+        |> MetadataApp.BusinessProcessBuilder.MetaSchema.Header.changeset(%{
+          schema_context_name: "pty_carpeta_#{prefijo}",
+          schema_context_label: "Módulo #{prefijo}",
+          schema_context_type: 2,
+          schema_context_nav: "/modulo-#{n}",
+          schema_visible: true
+        })
+        |> Ecto.Changeset.put_change(:prefijo_directorio, prefijo)
+        |> Ecto.Changeset.put_change(:insert_guid, Ecto.UUID.generate() |> String.replace("-", ""))
+        |> Repo.insert()
+
+      carpeta
+    end
+
+    defp consulta_en(nav, prefijo_nombre) do
+      nombre = "#{prefijo_nombre}_#{System.unique_integer([:positive])}"
+
+      {:ok, {header, _detalles}} =
+        MetaSchemaContext.crear_header_con_detalles(%{
+          "schema_context_name" => nombre,
+          "schema_context_label" => "Catálogo #{nombre}",
+          "schema_context_nav" => nav,
+          "schema_visible" => true,
+          "schema_context_type" => 3,
+          "detalles" => []
+        })
+
+      {:ok, _consulta} = MetaConsultas.crear(header, "meta_fixture_cliente")
+      header
+    end
+
+    test "elegir un módulo deja solo sus catálogos; Todos regresa la lista completa", %{conn: conn} do
+      modulo = modulo_fixture()
+      adentro = consulta_en(modulo.schema_context_nav <> "/sub/consulta", "pty_mod_adentro")
+      afuera = catalogo_fixture("pty_mod_afuera")
+
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/catalogos/permisos")
+      assert has_element?(view, "#filtro-modulo option[value='#{modulo.prefijo_directorio}']")
+
+      view |> form("#filtro-modulo-form", %{"modulo" => modulo.prefijo_directorio}) |> render_change()
+      assert has_element?(view, "#picker-#{adentro.schema_context_name}")
+      refute has_element?(view, "#picker-#{afuera.schema_context_name}")
+
+      view |> form("#filtro-modulo-form", %{"modulo" => ""}) |> render_change()
+      assert has_element?(view, "#picker-#{afuera.schema_context_name}")
+    end
+
+    test "módulo y texto del buscador se aplican juntos (R8)", %{conn: conn} do
+      modulo = modulo_fixture()
+      buscado = consulta_en(modulo.schema_context_nav <> "/buscado", "pty_mod_buscado")
+      otro = consulta_en(modulo.schema_context_nav <> "/otro", "pty_mod_otro")
+
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/catalogos/permisos")
+      view |> form("#filtro-modulo-form", %{"modulo" => modulo.prefijo_directorio}) |> render_change()
+      view |> element("input[phx-keyup=buscar_catalogo_picker]") |> render_keyup(%{"value" => "pty_mod_buscado"})
+
+      assert has_element?(view, "#picker-#{buscado.schema_context_name}")
+      refute has_element?(view, "#picker-#{otro.schema_context_name}")
+    end
+
+    test "elegir un catálogo conserva el módulo elegido (R9)", %{conn: conn} do
+      modulo = modulo_fixture()
+      adentro = consulta_en(modulo.schema_context_nav <> "/consulta", "pty_mod_conserva")
+      afuera = catalogo_fixture("pty_mod_fuera")
+
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/catalogos/permisos")
+      view |> form("#filtro-modulo-form", %{"modulo" => modulo.prefijo_directorio}) |> render_change()
+
+      {:ok, view2, _html} =
+        view
+        |> element(~s(button[phx-click=elegir_catalogo][phx-value-recurso="#{adentro.schema_context_name}"]))
+        |> render_click()
+        |> follow_redirect(conn)
+
+      assert has_element?(view2, "#filtro-modulo option[value='#{modulo.prefijo_directorio}'][selected]")
+      refute has_element?(view2, "#picker-#{afuera.schema_context_name}")
+    end
+  end
 end

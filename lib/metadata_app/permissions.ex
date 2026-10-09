@@ -607,7 +607,12 @@ defmodule MetadataApp.Permissions do
       from h in Header,
         where: is_nil(h.delete_guid) and h.schema_context_type != 2,
         order_by: h.schema_context_label,
-        select: %{recurso: h.schema_context_name, label: h.schema_context_label, es_consulta: h.schema_context_type in [3, 4]}
+        select: %{
+          recurso: h.schema_context_name,
+          label: h.schema_context_label,
+          es_consulta: h.schema_context_type in [3, 4],
+          nav: h.schema_context_nav
+        }
     )
   end
 
