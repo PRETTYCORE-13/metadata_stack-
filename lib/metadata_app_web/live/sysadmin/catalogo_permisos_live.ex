@@ -83,8 +83,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
       |> assign(:show_programacion_children, false)
       |> assign(:show_clientes_children, false)
       |> assign(:show_prettycore_children, false)
-      |> assign(:todos_los_catalogos, Permissions.listar_catalogos_para_permisos())
-      |> assign(:modulos, MetaSchemaContext.listar_modulos())
+      |> cargar_catalogos()
       |> restaurar_modulo(params["modulo"])
       |> restaurar_busqueda_picker(params["q"])
       |> montar_catalogo(recurso)
@@ -125,8 +124,14 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
      |> assign(:show_prettycore_children, false)
      |> assign(:catalogo, nil)
      |> assign(:transiciones, [])
-     |> assign(:todos_los_catalogos, Permissions.listar_catalogos_para_permisos())
-     |> assign(:modulos, MetaSchemaContext.listar_modulos())}
+     |> cargar_catalogos()}
+  end
+
+  # Lista completa del picker y sus módulos (SPEC-SYS-0910202601) —
+  # solo en standalone; embebido no hay picker.
+  defp cargar_catalogos(socket) do
+    catalogos = Permissions.listar_catalogos_para_permisos()
+    assign(socket, todos_los_catalogos: catalogos, modulos: modulos_de(catalogos))
   end
 
   defp montar_base(socket) do
@@ -164,25 +169,46 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   # (query param + push_navigate normal) no toca esa área en absoluto: el
   # picker vuelve a poblarse en mount/3, mismo camino que un F5 directo a
   # esa URL, sin ningún mecanismo de vida nueva.
-  # SPEC-SYS-0910202601 R9: el módulo elegido viaja en "?modulo=" igual
-  # que "q"; solo se acepta un prefijo que exista.
-  defp restaurar_modulo(socket, prefijo) do
-    if Enum.any?(socket.assigns.modulos, &(&1.prefijo == prefijo)),
-      do: assign(socket, :modulo_filtro, prefijo),
-      else: socket
-  end
-
-  # R7/R8: el módulo se aplica encima de la lista base (completa o ya
-  # filtrada por el buscador), con el mismo filtro de "Catálogo destino".
-  defp catalogos_visibles(busqueda, todos, resultados, modulo, modulos) do
-    base = if busqueda == "", do: todos, else: resultados
-    MetaSchemaContext.catalogos_del_modulo(base, modulo, modulos)
-  end
 
   defp restaurar_busqueda_picker(socket, texto) when texto in [nil, ""], do: socket
 
   defp restaurar_busqueda_picker(socket, texto) do
     assign(socket, busqueda_catalogo_picker: texto, resultados_catalogo_picker: filtrar_catalogos(socket.assigns.todos_los_catalogos, texto))
+  end
+
+  # SPEC-SYS-0910202601 R6/R6a: el módulo sale del nombre técnico —
+  # "pty_ch_areas" -> "pty-ch" —, la misma convención de los roles
+  # ("pty-ch", "pty-mat-admin"). Un solo segmento cae en "otros".
+  defp modulo_de_catalogo(recurso) do
+    case recurso |> String.trim_leading("_") |> String.split("_", parts: 3) do
+      [prefijo, modulo | _] when prefijo != "" and modulo != "" -> prefijo <> "-" <> modulo
+      _ -> "otros"
+    end
+  end
+
+  defp modulos_de(catalogos) do
+    catalogos
+    |> Enum.frequencies_by(&modulo_de_catalogo(&1.recurso))
+    |> Enum.map(fn {clave, cuenta} -> %{clave: clave, cuenta: cuenta} end)
+    |> Enum.sort_by(&{&1.clave == "otros", &1.clave})
+  end
+
+  # R9: el módulo elegido viaja en "?modulo=" igual que "q"; solo se
+  # acepta uno que exista en la lista.
+  defp restaurar_modulo(socket, clave) do
+    if Enum.any?(socket.assigns.modulos, &(&1.clave == clave)),
+      do: assign(socket, :modulo_filtro, clave),
+      else: socket
+  end
+
+  # R7/R8: el módulo se aplica encima de la lista base (completa o ya
+  # filtrada por el buscador).
+  defp catalogos_visibles(busqueda, todos, resultados, modulo) do
+    base = if busqueda == "", do: todos, else: resultados
+
+    if modulo == "",
+      do: base,
+      else: Enum.filter(base, &(modulo_de_catalogo(&1.recurso) == modulo))
   end
 
   # SPEC-SYS-0910202601: el buscador filtra la lista completa ya cargada
@@ -279,8 +305,8 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     {:noreply, push_navigate(socket, to: destino)}
   end
 
-  def handle_event("filtrar_modulo", %{"modulo" => prefijo}, socket) do
-    {:noreply, socket |> assign(:modulo_filtro, "") |> restaurar_modulo(prefijo)}
+  def handle_event("filtrar_modulo", %{"modulo" => clave}, socket) do
+    {:noreply, socket |> assign(:modulo_filtro, "") |> restaurar_modulo(clave)}
   end
 
   def handle_event("ver_todos_los_roles", _params, socket) do
@@ -537,7 +563,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
           Todos los roles
         </button>
         <%!-- SPEC-SYS-0910202601 R6: filtra la lista de catálogos por
-             módulo (carpeta con prefijo), mismo formato que BC Motor. --%>
+             módulo ("pty-ch"), sacado del nombre técnico del catálogo. --%>
         <form :if={!@embebido?} id="filtro-modulo-form" phx-change="filtrar_modulo">
           <select
             id="filtro-modulo"
@@ -552,8 +578,8 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
             ]}
           >
             <option value="" selected={@modulo_filtro == ""}>Módulo: Todos</option>
-            <option :for={m <- @modulos} value={m.prefijo} selected={@modulo_filtro == m.prefijo}>
-              {m.prefijo} — {m.etiqueta}
+            <option :for={m <- @modulos} value={m.clave} selected={@modulo_filtro == m.clave}>
+              {if m.clave == "otros", do: "Otros", else: m.clave} ({m.cuenta})
             </option>
           </select>
         </form>
@@ -592,7 +618,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
             class="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-[32rem] overflow-y-auto"
           >
             <li
-              :for={c <- catalogos_visibles(@busqueda_catalogo_picker, @todos_los_catalogos, @resultados_catalogo_picker, @modulo_filtro, @modulos)}
+              :for={c <- catalogos_visibles(@busqueda_catalogo_picker, @todos_los_catalogos, @resultados_catalogo_picker, @modulo_filtro)}
               id={"picker-" <> c.recurso}
             >
               <button
