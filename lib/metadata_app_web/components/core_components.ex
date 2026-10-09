@@ -119,7 +119,10 @@ defmodule MetadataAppWeb.CoreComponents do
     assigns = assign(assigns, :primera_key, primera_key)
 
     ~H"""
-    <div class="flex gap-1 border-b border-gray-200 mb-4 overflow-x-auto">
+    <%!-- overflow-y-hidden: con overflow-x-auto el eje vertical también
+         queda en auto, y el -mb-px de cada tab (su línea tapa el borde)
+         desborda 1px y saca una barra vertical diminuta. --%>
+    <div class="flex gap-1 border-b border-gray-200 mb-4 overflow-x-auto overflow-y-hidden">
       <%= for tab <- @tabs do %>
         <.link
           :if={Map.has_key?(tab, :navigate)}
