@@ -551,9 +551,14 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         par -> par
       end)
 
-    definicion = MetaPlantillas.actualizar_propiedades(socket.assigns.definicion, id, propiedades)
+    case validar_modo_captura(socket, id, propiedades) do
+      :ok ->
+        definicion = MetaPlantillas.actualizar_propiedades(socket.assigns.definicion, id, propiedades)
+        {:noreply, assign(socket, :definicion, definicion)}
 
-    {:noreply, assign(socket, :definicion, definicion)}
+      {:error, mensaje} ->
+        {:noreply, assign(socket, :mensaje, {:error, mensaje})}
+    end
   end
 
   # Condición de visibilidad de CUALQUIER componente seleccionado — a
@@ -893,6 +898,31 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
     |> assign(:grid_historial_undo, [socket.assigns.definicion | Enum.take(socket.assigns.grid_historial_undo, 29)])
     |> assign(:grid_historial_redo, [])
     |> assign(:definicion, nueva_definicion)
+  end
+
+  # SPEC-SYS-1109202607 R21a/R24: el modo Captura de "Renglones de detalle"
+  # solo vale para un detalle de este maestro, y cada detalle se captura en
+  # un solo lugar del formulario.
+  defp validar_modo_captura(socket, id, propiedades) do
+    nodo = MetaPlantillas.buscar_nodo(socket.assigns.definicion, id)
+    resultantes = Map.merge((nodo && nodo["propiedades"]) || %{}, propiedades)
+
+    cond do
+      is_nil(nodo) or nodo["tipo"] != "renglones" or resultantes["modo"] != "captura" ->
+        :ok
+
+      not Enum.any?(socket.assigns.catalogos_detalle_disponibles, &(&1.nombre == resultantes["catalogo"])) ->
+        {:error, "La captura solo aplica a un detalle de este catálogo."}
+
+      Enum.any?(MetaPlantillas.nodos_de_tipo(socket.assigns.definicion, "renglones"), fn otro ->
+        otro["id"] != id and otro["propiedades"]["modo"] == "captura" and
+          otro["propiedades"]["catalogo"] == resultantes["catalogo"]
+      end) ->
+        {:error, "Ese detalle ya se captura en otro lugar de este formulario."}
+
+      true ->
+        :ok
+    end
   end
 
   defp colocar_en_grid(socket, nodo) do
@@ -2115,6 +2145,8 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
       |> assign(:columnas_del_detalle, columnas_del_detalle)
       |> assign(:columnas_numericas, columnas_numericas)
       |> assign(:campos_actuales, campos_actuales)
+      |> assign(:detalle_elegido, detalle_elegido)
+      |> assign(:captura?, detalle_elegido != nil and assigns.nodo["propiedades"]["modo"] == "captura")
 
     ~H"""
     <form phx-change="actualizar_propiedad" class="flex flex-col gap-2.5 text-xs">
@@ -2128,12 +2160,19 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         </select>
         <p :if={@catalogos_detalle_disponibles == []} class="text-gray-400 mt-1">Este catálogo no tiene ningún detalle configurado.</p>
       </div>
+      <div :if={@detalle_elegido}>
+        <label class="block text-gray-500 mb-0.5">Modo</label>
+        <select name="modo" id="renglones-modo" class="w-full border border-gray-300 rounded px-2 py-1.5">
+          <option value="lectura" selected={!@captura?}>Solo lectura</option>
+          <option value="captura" selected={@captura?}>Captura (se capturan aquí, no en el tab Detalle)</option>
+        </select>
+      </div>
       <div>
         <label class="block text-gray-500 mb-0.5">Título</label>
         <input type="text" name="titulo" value={@nodo["propiedades"]["titulo"]} placeholder={(@catalogos_detalle_disponibles |> Enum.find(&(&1.nombre == @nodo["propiedades"]["catalogo"])) || %{etiqueta: "Renglones"}).etiqueta}
           class="w-full border border-gray-300 rounded px-2 py-1.5" />
       </div>
-      <div>
+      <div :if={!@captura?}>
         <label class="block text-gray-500 mb-1">Columnas a mostrar</label>
         <p :if={@columnas_del_detalle == []} class="text-gray-400">Elige un detalle arriba primero.</p>
         <input type="hidden" name="campos[]" value="" />
@@ -2143,8 +2182,8 @@ defmodule MetadataAppWeb.Sysadmin.PlantillaConstructorLive do
         </label>
         <p class="text-gray-400 mt-1">Sin nada marcado, se muestran las columnas que ese detalle ya usa en su propia tabla.</p>
       </div>
-      <.toggle_switch name="mostrar_total" checked={@nodo["propiedades"]["mostrar_total"] == true} label="Mostrar total al pie" />
-      <div :if={@nodo["propiedades"]["mostrar_total"] == true}>
+      <.toggle_switch :if={!@captura?} name="mostrar_total" checked={@nodo["propiedades"]["mostrar_total"] == true} label="Mostrar total al pie" />
+      <div :if={!@captura? and @nodo["propiedades"]["mostrar_total"] == true}>
         <label class="block text-gray-500 mb-0.5">Campo a sumar</label>
         <select name="campo_total" class="w-full border border-gray-300 rounded px-2 py-1.5">
           <option value="" selected={is_nil(@nodo["propiedades"]["campo_total"])}>Elegir…</option>

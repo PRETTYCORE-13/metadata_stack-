@@ -350,6 +350,14 @@ defmodule MetadataAppWeb.FichaLive do
     {:noreply, Enum.reduce(socket.assigns.catalogos_detalle, socket, &recargar_grid(&2, &1.nombre))}
   end
 
+  # Captura de renglones embebida en la plantilla (SPEC-SYS-1109202607 R22):
+  # sus campos viajan con el form del encabezado como
+  # renglones[<detalle>][<campo>]; se atienden igual que en el tab Detalle.
+  def handle_event("validar", %{"_target" => ["renglones", catalogo | _], "renglones" => renglones}, socket)
+      when is_map_key(renglones, catalogo) do
+    handle_event("detalle_form_cambiar", %{"catalogo" => catalogo, "renglon" => renglones[catalogo]}, socket)
+  end
+
   def handle_event("validar", %{"campos" => campos_params}, socket) do
     cambios = campos_modificados(socket.assigns.registro, campos_params, socket.assigns.campos_editables)
 
@@ -1971,6 +1979,7 @@ defmodule MetadataAppWeb.FichaLive do
         :renglones_nuevos_count,
         contar_cambios_detalle(assigns.detalle_renglones_nuevos, assigns.detalle_renglones_editados, assigns.detalle_renglones_eliminados)
       )
+      |> asignar_detalles_en_formulario()
       # Map.get/2, no @registro.trn — FichaLive es genérico para CUALQUIER
       # catálogo, y el campo :trn solo existe en el struct compilado si el
       # header estaba schema_es_transaccional: true en el momento en que
@@ -2178,7 +2187,7 @@ defmodule MetadataAppWeb.FichaLive do
           class={["pb-2 -mb-px font-semibold", @tab == "datos" && "text-purple-700 border-b-2 border-purple-600", @tab != "datos" && "text-gray-400"]}>
           Datos
         </button>
-        <button :if={@catalogos_detalle != []} type="button" phx-click="cambiar_tab" phx-value-tab="detalle"
+        <button :if={@catalogos_detalle_tab != []} type="button" phx-click="cambiar_tab" phx-value-tab="detalle"
           class={["pb-2 -mb-px font-semibold", @tab == "detalle" && "text-purple-700 border-b-2 border-purple-600", @tab != "detalle" && "text-gray-400"]}>
           Detalle{if @renglones_nuevos_count > 0, do: " (#{@renglones_nuevos_count})"}
         </button>
@@ -2192,13 +2201,17 @@ defmodule MetadataAppWeb.FichaLive do
         </button>
       </div>
 
-      <.tab_datos :if={@tab == "datos"} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
-        plantilla={@plantilla} relaciones={@relaciones} detalle={%{catalogos: @catalogos_detalle, renglones: @detalle_renglones}}
+      <%!-- Con captura de renglones en la plantilla, "Datos" se oculta en vez
+           de desmontarse: su tabla editable perdería lo no guardado
+           (SPEC-SYS-1109202607 R25). --%>
+      <.tab_datos :if={@tab == "datos" or @detalles_en_formulario != []} oculto={@tab != "datos"}
+        columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
+        plantilla={@plantilla} relaciones={@relaciones} detalle={detalle_para_plantilla(assigns)}
         estados_por_id={@estados_por_id} otras_transiciones={@otras_transiciones}
         edicion={%{valores: @form_values, errores: @errores_campos, contexto: @contexto_formula, calculados: @valores_calculados, opciones_alcance: @opciones_alcance, scope: @current_scope}} />
       <.tab_relaciones :if={@tab == "relaciones"} relaciones={@relaciones} />
       <.tab_historial :if={@tab == "historial"} historial={@historial} estados_por_id={@estados_por_id} />
-      <.tab_detalle :if={@catalogos_detalle != []} tab_activo={@tab} modo={@modo} catalogos_detalle={@catalogos_detalle} detalle_renglones={@detalle_renglones}
+      <.tab_detalle :if={@catalogos_detalle_tab != []} tab_activo={@tab} modo={@modo} catalogos_detalle={@catalogos_detalle_tab} detalle_renglones={@detalle_renglones}
         otras_transiciones={@otras_transiciones} detalle_form_error={@detalle_form_error} estados_por_id={@estados_por_id}
         detalle_seleccion={@detalle_seleccion} detalle_campos_editables={@detalle_campos_editables} detalle_catalogo_activo={@detalle_catalogo_activo}
         detalle_aviso_calculo={@detalle_aviso_calculo} />
@@ -2304,6 +2317,44 @@ defmodule MetadataAppWeb.FichaLive do
   defp formatear_body_accion_externa(body) when is_map(body) or is_list(body), do: Jason.encode!(body, pretty: true)
   defp formatear_body_accion_externa(body), do: to_string(body)
 
+  # SPEC-SYS-1109202607 R21a/R23: detalles de ESTE maestro que la plantilla
+  # mostrada captura en el formulario; el tab "Detalle" lleva solo los demás.
+  defp asignar_detalles_en_formulario(assigns) do
+    nombres = MapSet.new(assigns.catalogos_detalle, & &1.nombre)
+
+    en_formulario =
+      case assigns[:plantilla] do
+        %{definicion: definicion} ->
+          definicion
+          |> MetaPlantillas.nodos_de_tipo("renglones")
+          |> Enum.filter(&(&1["propiedades"]["modo"] == "captura"))
+          |> Enum.map(& &1["propiedades"]["catalogo"])
+          |> Enum.filter(&MapSet.member?(nombres, &1))
+
+        _ ->
+          []
+      end
+
+    assigns
+    |> assign(:detalles_en_formulario, en_formulario)
+    |> assign(:catalogos_detalle_tab, Enum.reject(assigns.catalogos_detalle, &(&1.nombre in en_formulario)))
+  end
+
+  # Lo que la plantilla en pantalla necesita del detalle; con captura? los
+  # nodos "renglones" en modo Captura pintan la captura (la impresión no lo
+  # recibe, R27).
+  defp detalle_para_plantilla(assigns) do
+    %{
+      catalogos: assigns.catalogos_detalle,
+      renglones: assigns.detalle_renglones,
+      captura?: true,
+      seleccion: assigns.detalle_seleccion,
+      campos_editables: assigns.detalle_campos_editables,
+      aviso: assigns.detalle_aviso_calculo,
+      form_error: assigns.detalle_form_error
+    }
+  end
+
   attr :columnas, :list, required: true
   attr :registro, :map, required: true
   attr :campos_editables, :list, required: true
@@ -2313,6 +2364,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :estados_por_id, :map, default: %{}
   attr :edicion, :map, required: true
   attr :otras_transiciones, :list, default: []
+  attr :oculto, :boolean, default: false
 
   # Sin plantilla publicada (el 100% de los catálogos hasta que alguien use
   # el Constructor): la lista plana de siempre, sin cambios. Con plantilla,
@@ -2327,7 +2379,7 @@ defmodule MetadataAppWeb.FichaLive do
   # form="form-ficha-datos".
   defp tab_datos(%{plantilla: nil} = assigns) do
     ~H"""
-    <form id="form-ficha-datos" phx-change="validar" phx-submit="guardar">
+    <form id="form-ficha-datos" phx-change="validar" phx-submit="guardar" hidden={@oculto}>
       <div :if={map_size(@edicion.errores) > 0} class="bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2 mb-3">
         No se pudo guardar: revisa los campos marcados en rojo.
       </div>
@@ -2360,7 +2412,7 @@ defmodule MetadataAppWeb.FichaLive do
       |> assign(:botones_pie, botones_pie)
 
     ~H"""
-    <form id="form-ficha-datos" phx-change="validar" phx-submit="guardar" class="space-y-4">
+    <form id="form-ficha-datos" phx-change="validar" phx-submit="guardar" class="space-y-4" hidden={@oculto}>
       <div :if={map_size(@edicion.errores) > 0} class="bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2">
         No se pudo guardar: revisa los campos marcados en rojo.
       </div>
@@ -2944,6 +2996,33 @@ defmodule MetadataAppWeb.FichaLive do
   # armado desde los 2 call-sites de tab_datos/1 (modo normal y modo
   # impresión por igual, mismo dato que ya cargaba cargar_catalogos_detalle/1
   # y cargar_detalle_renglones/4 -- nunca una consulta nueva acá).
+  # Modo Captura (SPEC-SYS-1109202607 R21-R22, R21a): solo si el detalle es
+  # de este maestro (está en detalle.catalogos) y la plantilla no es de
+  # impresión (ese mapa no trae captura?); si no, solo lectura.
+  defp nodo_plantilla_render(
+         %{nodo: %{"tipo" => "renglones", "propiedades" => %{"modo" => "captura", "catalogo" => catalogo}}, detalle: %{captura?: true} = detalle} =
+           assigns
+       )
+       when is_binary(catalogo) do
+    case Enum.find(detalle.catalogos, &(&1.nombre == catalogo)) do
+      nil ->
+        nodo_plantilla_render(put_in(assigns, [:nodo, "propiedades", "modo"], "lectura"))
+
+      cat ->
+        assigns = assign(assigns, :cat, cat)
+
+        ~H"""
+        <div class="space-y-2">
+          <div :if={@detalle.form_error} class="bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2">{@detalle.form_error}</div>
+          <.panel_detalle_catalogo cat={@cat} activo={true} filas={Map.get(@detalle.renglones, @cat.nombre, [])}
+            otras_transiciones={@otras_transiciones} estados_por_id={@estados_por_id}
+            seleccion={Map.get(@detalle.seleccion, @cat.nombre)} campos_editables={@detalle.campos_editables}
+            aviso_calculo={Map.get(@detalle.aviso, @cat.nombre)} embebido={true} />
+        </div>
+        """
+    end
+  end
+
   defp nodo_plantilla_render(%{nodo: %{"tipo" => "renglones"}} = assigns) do
     catalogo_nombre = assigns.nodo["propiedades"]["catalogo"]
     detalle_info = Enum.find(assigns.detalle[:catalogos] || [], &(&1.nombre == catalogo_nombre))
@@ -4318,6 +4397,15 @@ defmodule MetadataAppWeb.FichaLive do
   # ya es un mapa por catálogo (soporta esto de una); `detalle_campos_editables`
   # es agnóstico del catálogo activo (viene de la transición del maestro).
   defp tab_detalle(assigns) do
+    # El activo puede ser un detalle que ahora se captura en el formulario
+    # (SPEC-SYS-1109202607 R23): entonces el primero de los que quedan.
+    activo =
+      if Enum.any?(assigns.catalogos_detalle, &(&1.nombre == assigns.detalle_catalogo_activo)),
+        do: assigns.detalle_catalogo_activo,
+        else: List.first(assigns.catalogos_detalle).nombre
+
+    assigns = assign(assigns, :detalle_catalogo_activo, activo)
+
     ~H"""
     <div class="space-y-4" hidden={@tab_activo != "detalle"}>
       <div :if={@detalle_form_error} class="bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2">{@detalle_form_error}</div>
@@ -4349,6 +4437,7 @@ defmodule MetadataAppWeb.FichaLive do
   attr :seleccion, :map, default: nil
   attr :campos_editables, :list, default: []
   attr :aviso_calculo, :string, default: nil
+  attr :embebido, :boolean, default: false
 
   defp panel_detalle_catalogo(assigns) do
     # Id FÍSICO (no @seleccion.renglon_id, el contador por maestro) del
@@ -4376,7 +4465,7 @@ defmodule MetadataAppWeb.FichaLive do
 
       <div class="border-b border-gray-100">
         <.formulario_renglon cat={@cat} seleccion={@seleccion} total={length(@filas)} campos_editables={@campos_editables} id_fisico={@id_fisico}
-          aviso_calculo={@aviso_calculo} />
+          aviso_calculo={@aviso_calculo} embebido={@embebido} />
       </div>
 
       <div class="overflow-x-auto">
@@ -4388,11 +4477,44 @@ defmodule MetadataAppWeb.FichaLive do
   end
 
   attr :cat, :map, required: true
+  attr :seleccion, :map, required: true
+  attr :campos_editables, :list, default: []
+  attr :prefijo, :string, required: true
+
+  defp campos_renglon(assigns) do
+    ~H"""
+    <div class="px-3 py-2 flex flex-wrap items-end gap-2">
+      <div :for={campo <- @cat.columnas} class="flex-1 min-w-[120px]">
+        <% {opciones_campo, deshabilitado_dep?, mensaje_dep} =
+          resolver_info_dependencia(campo.schema_context_properties, opciones_para_campo(campo), &Map.get(@seleccion.valores, &1), @cat.scope) %>
+        <% {valor_campo, calculado?} = valor_renglon_con_calculado(campo, @seleccion.valores) %>
+        <.campo_input columna={campo} mostrar_etiqueta={true}
+          valor={valor_campo}
+          name={"#{@prefijo}[#{campo.schema_context_field}]"} opciones={opciones_campo}
+          id={"campo-#{@cat.nombre}-#{campo.schema_context_field}"}
+          disabled={!campo_detalle_editable?(campo, @seleccion, @campos_editables) or deshabilitado_dep? or calculado?}
+          mensaje_dependencia={mensaje_dep} />
+      </div>
+      <div class="flex items-center gap-1.5 flex-none pb-0.5">
+        <button type="button" phx-click="detalle_eliminar_linea" phx-value-catalogo={@cat.nombre}
+          title={
+            if @seleccion.renglon_id,
+              do: "Eliminar renglón (se aplica recién al Guardar)",
+              else: "Eliminar línea"
+          }
+          class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 font-bold hover:bg-gray-50">×</button>
+      </div>
+    </div>
+    """
+  end
+
+  attr :cat, :map, required: true
   attr :seleccion, :map, default: nil
   attr :total, :integer, required: true
   attr :campos_editables, :list, default: []
   attr :id_fisico, :integer, default: nil
   attr :aviso_calculo, :string, default: nil
+  attr :embebido, :boolean, default: false
 
   defp formulario_renglon(assigns) do
     # Un renglón YA PERSISTIDO solo se puede tocar si al menos uno de sus
@@ -4446,31 +4568,15 @@ defmodule MetadataAppWeb.FichaLive do
           <span>Cargando…</span>
         </div>
       <% else %>
-        <form id={"renglon-form-#{@cat.nombre}"} phx-hook="RenglonForm" data-catalogo={@cat.nombre} phx-change="detalle_form_cambiar">
+        <%!-- Embebido en la plantilla (SPEC-SYS-1109202607 R22): ya está dentro
+             del <form> del encabezado y HTML no admite un form anidado, así
+             que es un <div> y sus cambios llegan con "validar" (ver ahí). --%>
+        <div :if={@embebido} id={"renglon-form-#{@cat.nombre}"} phx-hook="RenglonForm" data-catalogo={@cat.nombre}>
+          <.campos_renglon cat={@cat} seleccion={@seleccion} campos_editables={@campos_editables} prefijo={"renglones[#{@cat.nombre}]"} />
+        </div>
+        <form :if={!@embebido} id={"renglon-form-#{@cat.nombre}"} phx-hook="RenglonForm" data-catalogo={@cat.nombre} phx-change="detalle_form_cambiar">
           <input type="hidden" name="catalogo" value={@cat.nombre} />
-
-          <div class="px-3 py-2 flex flex-wrap items-end gap-2">
-            <div :for={campo <- @cat.columnas} class="flex-1 min-w-[120px]">
-              <% {opciones_campo, deshabilitado_dep?, mensaje_dep} =
-                resolver_info_dependencia(campo.schema_context_properties, opciones_para_campo(campo), &Map.get(@seleccion.valores, &1), @cat.scope) %>
-              <% {valor_campo, calculado?} = valor_renglon_con_calculado(campo, @seleccion.valores) %>
-              <.campo_input columna={campo} mostrar_etiqueta={true}
-                valor={valor_campo}
-                name={"renglon[#{campo.schema_context_field}]"} opciones={opciones_campo}
-                id={"campo-#{@cat.nombre}-#{campo.schema_context_field}"}
-                disabled={!campo_detalle_editable?(campo, @seleccion, @campos_editables) or deshabilitado_dep? or calculado?}
-                mensaje_dependencia={mensaje_dep} />
-            </div>
-            <div class="flex items-center gap-1.5 flex-none pb-0.5">
-              <button type="button" phx-click="detalle_eliminar_linea" phx-value-catalogo={@cat.nombre}
-                title={
-                  if @seleccion.renglon_id,
-                    do: "Eliminar renglón (se aplica recién al Guardar)",
-                    else: "Eliminar línea"
-                }
-                class="w-6 h-6 rounded-lg border border-gray-300 text-gray-600 font-bold hover:bg-gray-50">×</button>
-            </div>
-          </div>
+          <.campos_renglon cat={@cat} seleccion={@seleccion} campos_editables={@campos_editables} prefijo="renglon" />
         </form>
         <%!-- Aviso del cálculo preliminar (SPEC-SYS-0810202603): informa, no bloquea. --%>
         <div :if={@aviso_calculo} id={"aviso-calculo-#{@cat.nombre}"} class="mx-3 mb-2 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-700 text-[11px]">
