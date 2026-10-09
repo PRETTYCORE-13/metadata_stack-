@@ -30,4 +30,33 @@ defmodule MetadataAppWeb.GridEditableFormatoTest do
     assert %{formato: false} = sin
     assert %{formato: false} = deshabilitado
   end
+
+  describe "operación del pie (R13, Total en renglones)" do
+    test "sin configurar suma; promedio y ninguno según el campo" do
+      [sin, promedio, ninguno] =
+        GridEditableComponents.columnas_para_js([
+          columna(%{}),
+          columna(%{"total_renglones" => "promedio"}),
+          columna(%{"total_renglones" => "ninguno"})
+        ])
+
+      assert %{activo: true, operacion: "suma"} = sin.resumen
+      assert %{activo: true, operacion: "promedio"} = promedio.resumen
+      assert %{activo: false} = ninguno.resumen
+    end
+
+    test "ResumenRenglones aplica la misma regla" do
+      renglones = [%{"a" => "2", "b" => "2", "c" => "2"}, %{"a" => "4", "b" => "4", "c" => "4"}]
+
+      col = fn campo, op ->
+        %{schema_context_field: campo, schema_context_properties: %{"tipo" => "decimal", "total_renglones" => op}}
+      end
+
+      resumen = MetadataApp.ResumenRenglones.calcular(renglones, [col.("a", "suma"), col.("b", "promedio"), col.("c", "ninguno")])
+
+      assert resumen["a"].valor == 6.0
+      assert resumen["b"].valor == 3.0
+      refute Map.has_key?(resumen, "c")
+    end
+  end
 end

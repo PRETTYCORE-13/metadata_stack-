@@ -162,7 +162,12 @@ export function calcularResumen(filas, columnas, ventana, overrides = {}) {
       return {
         campo: col.campo,
         etiqueta: resumen.etiqueta || ETIQUETAS_OPERACION[operacion] || "",
-        texto: esConteo ? String(valor) : formatearResumen(valor, resumen.formato, resumen.decimales),
+        // Con el formato de la columna si se muestra formateada (R12).
+        texto: esConteo
+          ? String(valor)
+          : numeroConFormato(col) && valor != null
+            ? formatearNumero(valor, col)
+            : formatearResumen(valor, resumen.formato, resumen.decimales),
         operacion,
         editable: resumen.editable_runtime !== false,
       }

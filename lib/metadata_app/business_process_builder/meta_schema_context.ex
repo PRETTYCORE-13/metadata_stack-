@@ -733,6 +733,19 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
   def mostrar_en_tabla?(%{schema_context_properties: props}), do: mostrar_en_tabla?(props)
   def mostrar_en_tabla?(%{} = props), do: Map.get(props, "mostrar_en_tabla", true) != false
 
+  @doc """
+  Operación del pie de la tabla de renglones para un campo numérico
+  ("Total en renglones", SPEC-SYS-1109202601 R50): "suma", "promedio" o
+  "ninguno"; sin configurar, "suma". Independiente de los totales del Tab
+  Lista.
+  """
+  def total_renglones(%{} = props) do
+    case Map.get(props, "total_renglones") do
+      op when op in ["promedio", "ninguno"] -> op
+      _ -> "suma"
+    end
+  end
+
   def listar_detalles(schema_context_name) do
     from(d in Detail,
       join: h in assoc(d, :header),

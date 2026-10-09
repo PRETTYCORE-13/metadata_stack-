@@ -792,6 +792,20 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     end
   end
 
+  # "Total en renglones" (SPEC-SYS-1109202601 R50): operación del pie de la
+  # tabla de renglones de la Ficha; independiente de los totales del Tab
+  # Lista. Guardado inmediato, igual que "En tabla".
+  def handle_event("cambiar_total_renglones", %{"campo" => campo, "total_renglones" => op}, socket)
+      when op in ["suma", "promedio", "ninguno"] do
+    detalle = Enum.find(socket.assigns.campos, &(&1.schema_context_field == campo))
+    props = Map.put(detalle.schema_context_properties, "total_renglones", op)
+
+    case MetaSchemaContext.actualizar_detalle(detalle, %{"schema_context_properties" => props}) do
+      {:ok, _detalle} -> {:noreply, cargar_motor(socket)}
+      {:error, _changeset} -> {:noreply, put_flash(socket, :error, "No se pudo actualizar \"#{campo}\".")}
+    end
+  end
+
   # Etiqueta de un campo ya existente (2026-08-04, a pedido explícito) —
   # mismo criterio inmediato que cambiar_mostrar_en_tabla de arriba: sin
   # modal, guarda directo al perder foco (evento "change"
@@ -2578,6 +2592,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                 <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Solo validación de la app (el formulario no deja guardar vacío) — la columna en la base de datos se queda nullable siempre">Obligatorio</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si el campo obligatorio llega vacío, se rellena con este valor en vez de rechazar el guardado">Default</th>
                 <th class="px-1.5 py-1 text-center font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Si aparece como columna en la tabla del tab Detalle de la Ficha 360° — el formulario de al lado siempre muestra todos los campos, esto es solo la tabla">En tabla</th>
+                <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Qué muestra el pie de la tabla de renglones de la Ficha para este campo numérico. No afecta los totales de la Lista del catálogo">Total en renglones</th>
                 <th class="px-1.5 py-1 text-left font-semibold uppercase tracking-wide text-[11px] text-gray-500 border-b border-gray-200" title="Máscara de texto (teléfono, RFC, personalizada…) o formato numérico/moneda (decimales, separador de miles, negativos)">Formato</th>
                 <th class="px-1.5 py-1 border-b border-gray-200"></th>
               </tr>
@@ -2654,6 +2669,15 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
                       <input type="hidden" name="campo" value={c.schema_context_field} />
                       <input type="hidden" name="mostrar_en_tabla" value="false" />
                       <input type="checkbox" name="mostrar_en_tabla" value="true" checked={MetaSchemaContext.mostrar_en_tabla?(props)} class="accent-purple-600" />
+                    </form>
+                  </td>
+                  <td class="px-1.5 py-1">
+                    <form :if={Map.get(props, "tipo") in ["integer", "decimal"]} id={"total-renglones-#{c.schema_context_field}"} phx-change="cambiar_total_renglones">
+                      <input type="hidden" name="campo" value={c.schema_context_field} />
+                      <select name="total_renglones" class="border border-gray-300 rounded text-[11px] px-1 py-0.5">
+                        <option :for={{valor, etiqueta} <- [{"suma", "Suma"}, {"promedio", "Promedio"}, {"ninguno", "Ninguno"}]}
+                          value={valor} selected={MetaSchemaContext.total_renglones(props) == valor}>{etiqueta}</option>
+                      </select>
                     </form>
                   </td>
                   <td class="px-1.5 py-1">

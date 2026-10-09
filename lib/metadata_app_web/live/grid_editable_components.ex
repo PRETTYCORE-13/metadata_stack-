@@ -89,7 +89,7 @@ defmodule MetadataAppWeb.GridEditableComponents do
       longitud: props["longitud"],
       valores: props["valores"],
       opciones: opciones_columna(col),
-      resumen: resumen_estandar(props["tipo"]),
+      resumen: resumen_estandar(props["tipo"], props),
       solo_lectura: Map.get(col, :solo_lectura, false),
       decimales: decimales,
       moneda: moneda?,
@@ -108,20 +108,25 @@ defmodule MetadataAppWeb.GridEditableComponents do
 
   @doc """
   Fila de resumen (pie fijo de la tabla, ver `grid/1` + hook `GridEditable`)
-  — estándar fijo para TODAS las tablas de renglones, sin configuración
-  por catálogo: toda columna numérica suma por default; el resto no
-  muestra nada por default, pero sí admite "Recuento" (cuántos renglones
-  tienen algo cargado ahí) con clic derecho — sumar/promediar/etc no
+  — cada columna numérica usa la operación de su campo ("Total en
+  renglones", SPEC-SYS-1109202601 R50: suma por default, promedio o
+  ninguno); el resto no muestra nada por default, pero sí admite
+  "Recuento" (cuántos renglones tienen algo cargado ahí) con clic derecho — sumar/promediar/etc no
   tiene sentido en una columna no numérica, así que esas dos son las
   únicas opciones que el hook JS ofrece ahí (ver TIPOS_NUMERICOS en
   assets/js/hooks/grid_editable.js). El usuario final elige la operación
-  con clic derecho, solo en memoria, nunca se guarda — no hay nada que
-  configurar de antemano.
+  con clic derecho, solo en memoria, nunca se guarda.
   """
-  def resumen_estandar(tipo) when tipo in ["integer", "decimal"],
-    do: %{activo: true, operacion: "suma", formato: "numero", decimales: 2, editable_runtime: true}
+  def resumen_estandar(tipo, props \\ %{})
 
-  def resumen_estandar(_tipo), do: %{activo: false, operacion: "ninguno", editable_runtime: true}
+  def resumen_estandar(tipo, props) when tipo in ["integer", "decimal"] do
+    case MetadataApp.BusinessProcessBuilder.MetaSchemaContext.total_renglones(props) do
+      "ninguno" -> %{activo: false, operacion: "ninguno", editable_runtime: true}
+      op -> %{activo: true, operacion: op, formato: "numero", decimales: 2, editable_runtime: true}
+    end
+  end
+
+  def resumen_estandar(_tipo, _props), do: %{activo: false, operacion: "ninguno", editable_runtime: true}
 
   # Igual que el picker de referencia del formulario de al lado
   # (CampoInputComponents.campo_input/1) — el hook JS pinta un <select>

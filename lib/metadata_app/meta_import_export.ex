@@ -710,7 +710,9 @@ defmodule MetadataApp.MetaImportExport do
   # sobreescribirlos a ciegas con lo que traiga el bundle. Usa Map.has_key?
   # en vez de comparar contra nil -- son booleanos legítimamente `false`
   # (mismo gotcha ya documentado arriba en columnas estructurales).
-  @propiedades_parametros_totales ~w(acotado agregacion_activa defaults es_parametro total_general_activo total_pagina_activo)
+  # `total_renglones` (SPEC-SYS-1109202601 R51) es el pie de la tabla de
+  # renglones de la Ficha, mismo criterio.
+  @propiedades_parametros_totales ~w(acotado agregacion_activa defaults es_parametro total_general_activo total_pagina_activo total_renglones)
 
   defp sincronizar_parametros_y_totales(header, detalles_json) do
     existentes =

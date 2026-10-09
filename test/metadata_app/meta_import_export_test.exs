@@ -80,7 +80,8 @@ defmodule MetadataApp.MetaImportExportTest do
             "acotado" => true,
             "agregacion_activa" => false,
             "total_general_activo" => false,
-            "total_pagina_activo" => false
+            "total_pagina_activo" => false,
+            "total_renglones" => "ninguno"
           }
         }
       ]
@@ -93,6 +94,7 @@ defmodule MetadataApp.MetaImportExportTest do
     assert detalle.schema_context_properties["es_parametro"] == true
     assert detalle.schema_context_properties["defaults"] == %{"modo" => "mes_actual"}
     assert detalle.schema_context_properties["acotado"] == true
+    assert detalle.schema_context_properties["total_renglones"] == "ninguno"
   end
 
   # Encontrado real (2026-09-17): captura mostrando el orden de Lista

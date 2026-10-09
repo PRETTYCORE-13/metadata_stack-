@@ -2,10 +2,10 @@ defmodule MetadataApp.ResumenRenglones do
   @moduledoc """
   Cálculo de la fila de resumen (pie fijo) de la tabla de renglones (ver
   `MetadataAppWeb.GridEditableComponents`, tab "Detalle" de la Ficha
-  360°) — estándar fijo para TODAS las tablas de renglones, sin
-  configuración por catálogo (ver `GridEditableComponents.resumen_estandar/1`,
-  misma regla replicada acá): toda columna numérica suma, el resto no
-  participa. Misma semántica de operación que `calcularResumen` en
+  360°) — misma regla que `GridEditableComponents.resumen_estandar/2`:
+  cada columna numérica usa la operación de su campo ("Total en
+  renglones": suma por default, promedio, o ninguno y no participa); el
+  resto no participa. Misma semántica de operación que `calcularResumen` en
   `assets/js/hooks/grid_editable.js` (nombres de operación mapeables 1:1),
   pero de servidor: trabaja sobre una lista de mapas ya en memoria, no una
   query Ecto (a diferencia de `CatalogoGenerico.agregar/5`, usado por Get
@@ -33,19 +33,25 @@ defmodule MetadataApp.ResumenRenglones do
   defp resumen_columna(col, renglones) do
     props = col.schema_context_properties || %{}
 
-    if props["tipo"] in @tipos_numericos do
-      valores = valores_columna(renglones, col.schema_context_field)
-      valor = sumar(valores)
+    operacion = MetadataApp.BusinessProcessBuilder.MetaSchemaContext.total_renglones(props)
+
+    if props["tipo"] in @tipos_numericos and operacion != "ninguno" do
+      numeros = renglones |> valores_columna(col.schema_context_field) |> numeros()
+      valor = operar(operacion, numeros)
 
       %{
         campo: col.schema_context_field,
-        operacion: "suma",
-        etiqueta: "Total",
+        operacion: operacion,
+        etiqueta: if(operacion == "promedio", do: "Prom.", else: "Total"),
         valor: valor,
         texto: formatear(valor)
       }
     end
   end
+
+  defp operar("promedio", []), do: 0.0
+  defp operar("promedio", numeros), do: Enum.sum(numeros) / length(numeros)
+  defp operar(_suma, numeros), do: Enum.sum(numeros)
 
   defp valores_columna(renglones, campo) do
     renglones
@@ -57,11 +63,10 @@ defmodule MetadataApp.ResumenRenglones do
   defp vacio?(""), do: true
   defp vacio?(_), do: false
 
-  defp sumar(valores) do
+  defp numeros(valores) do
     valores
     |> Enum.map(&to_numero/1)
     |> Enum.reject(&is_nil/1)
-    |> Enum.sum()
   end
 
   defp to_numero(valor) when is_number(valor), do: valor
