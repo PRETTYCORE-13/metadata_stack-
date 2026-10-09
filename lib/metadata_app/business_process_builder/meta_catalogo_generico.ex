@@ -414,7 +414,8 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
     validate_change(cs, campo, fn _campo, valor ->
       case valor do
         %Decimal{} = d ->
-          if Decimal.scale(d) > escala,
+          # Decimales reales: "10.500000" cabe en una columna de 2.
+          if Decimal.scale(Decimal.normalize(d)) > escala,
             do: [{campo, "no puede tener más de #{escala} decimales"}],
             else: []
 

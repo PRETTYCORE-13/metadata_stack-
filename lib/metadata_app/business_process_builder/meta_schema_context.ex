@@ -1360,6 +1360,9 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
 
     cond do
       valor in [nil, ""] -> changeset
+      # Lo pone el sistema (regla POST, campo calculado), nadie lo captura:
+      # el formato solo sirve para mostrarlo.
+      props["editable"] == false -> changeset
       props["tipo"] == "string" and formato["modo"] in ["numero", "moneda"] -> validar_formato_numerico_texto(changeset, campo_atom, valor, formato)
       props["tipo"] == "string" -> validar_formato_texto(changeset, campo_atom, valor, formato)
       props["tipo"] in ["integer", "decimal"] -> validar_formato_numerico(changeset, campo_atom, valor, formato)
@@ -1486,7 +1489,9 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaSchemaContext do
     end
   end
 
-  defp excede_decimales?(%Decimal{} = valor, decimales), do: Decimal.scale(valor) > decimales
+  # Decimales reales, no la escala de la columna: numeric(20,6) regresa
+  # 4651.600000, que tiene uno solo.
+  defp excede_decimales?(%Decimal{} = valor, decimales), do: Decimal.scale(Decimal.normalize(valor)) > decimales
   defp excede_decimales?(_valor, _decimales), do: false
 
   defp negativo?(%Decimal{} = valor), do: Decimal.negative?(valor)

@@ -2355,6 +2355,43 @@ defmodule MetadataAppWeb.FichaLive do
     }
   end
 
+  attr :errores, :map, required: true
+  attr :columnas, :list, required: true
+  attr :campos_editables, :list, required: true
+  attr :plantilla, :any, required: true
+  attr :clase, :string, default: nil
+
+  # El error de un campo solo se marca en rojo junto a su input (campo
+  # editable y presente en el formulario). Los demás — de solo lectura, o
+  # fuera de la plantilla publicada — se listan aquí con su etiqueta, para
+  # que un error nunca quede sin mostrarse.
+  @doc false
+  def aviso_errores(assigns) do
+    en_plantilla =
+      assigns.plantilla &&
+        assigns.plantilla.definicion |> MetaPlantillas.nodos_de_tipo("campo") |> Enum.map(& &1["propiedades"]["campo"])
+
+    etiquetas = Map.new(assigns.columnas, &{&1.schema_context_field, &1.schema_context_properties["etiqueta"]})
+
+    no_visibles =
+      for {campo, mensajes} <- assigns.errores,
+          campo = to_string(campo),
+          campo not in assigns.campos_editables or (en_plantilla != nil and campo not in en_plantilla),
+          do: {etiquetas[campo] || campo, Enum.join(List.wrap(mensajes), "; ")}
+
+    assigns = assign(assigns, :no_visibles, no_visibles)
+
+    ~H"""
+    <div :if={map_size(@errores) > 0} id="aviso-errores-guardado" class={["bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2", @clase]}>
+      <p :if={length(@no_visibles) < map_size(@errores)}>No se pudo guardar: revisa los campos marcados en rojo.</p>
+      <p :if={@no_visibles != [] and length(@no_visibles) == map_size(@errores)}>No se pudo guardar:</p>
+      <ul :if={@no_visibles != []} class="list-disc pl-5 mt-0.5">
+        <li :for={{etiqueta, mensaje} <- @no_visibles}><span class="font-semibold">{etiqueta}</span>: {mensaje}</li>
+      </ul>
+    </div>
+    """
+  end
+
   attr :columnas, :list, required: true
   attr :registro, :map, required: true
   attr :campos_editables, :list, required: true
@@ -2380,9 +2417,7 @@ defmodule MetadataAppWeb.FichaLive do
   defp tab_datos(%{plantilla: nil} = assigns) do
     ~H"""
     <form id="form-ficha-datos" phx-change="validar" phx-submit="guardar" hidden={@oculto}>
-      <div :if={map_size(@edicion.errores) > 0} class="bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2 mb-3">
-        No se pudo guardar: revisa los campos marcados en rojo.
-      </div>
+      <.aviso_errores errores={@edicion.errores} columnas={@columnas} campos_editables={@campos_editables} plantilla={nil} clase="mb-3" />
       <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <.campo_row :for={col <- @columnas} col={col} registro={@registro} campos_editables={@campos_editables} edicion={@edicion} columnas={@columnas} />
         <p :if={@columnas == []} class="px-4 py-8 text-center text-gray-400 text-sm">Este catálogo no tiene campos visibles.</p>
@@ -2413,9 +2448,7 @@ defmodule MetadataAppWeb.FichaLive do
 
     ~H"""
     <form id="form-ficha-datos" phx-change="validar" phx-submit="guardar" class="space-y-4" hidden={@oculto}>
-      <div :if={map_size(@edicion.errores) > 0} class="bg-red-50 text-red-700 text-xs rounded-lg px-3 py-2">
-        No se pudo guardar: revisa los campos marcados en rojo.
-      </div>
+      <.aviso_errores errores={@edicion.errores} columnas={@columnas} campos_editables={@campos_editables} plantilla={@plantilla} />
       <div class="pc-grid-dinamica" style={@estilo_grid}>
         <.celda_grid :for={hijo <- @hijos} hijo={hijo} columnas={@columnas} registro={@registro} campos_editables={@campos_editables}
           relaciones={@relaciones} detalle={@detalle} estados_por_id={@estados_por_id} edicion={@edicion} otras_transiciones={@otras_transiciones} />

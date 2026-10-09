@@ -189,6 +189,20 @@ defmodule MetadataApp.BusinessProcessBuilder.FormatoCapturaTest do
       refute cs.valid?
       assert "no puede ser negativo" in errors_on(cs).meta_fixture_cliente_venta
     end
+
+    test "los ceros a la derecha (escala de la columna, ej. numeric(20,6)) no cuentan como decimales" do
+      assert changeset_venta(Decimal.new("10.500000")).valid?
+      assert changeset_venta(Decimal.new("4600.000000")).valid?
+      refute changeset_venta(Decimal.new("10.550000")).valid?
+    end
+
+    test "un campo que no se captura (editable: false) no se valida" do
+      d = detalle("meta_fixture_cliente_venta")
+      props = Map.put(d.schema_context_properties, "editable", false)
+      d |> Ecto.Changeset.change(%{schema_context_properties: props}) |> Repo.update!()
+
+      assert changeset_venta(Decimal.new("109.99")).valid?
+    end
   end
 
   describe "validar_formato_captura/2 — numérico (permitir_negativos)" do
