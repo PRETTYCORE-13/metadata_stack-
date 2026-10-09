@@ -182,7 +182,9 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLiveTest do
     # "Catálogo destino" de BC Motor.
     defp modulo_fixture do
       n = System.unique_integer([:positive])
-      prefijo = "m#{n}"
+      # prefijo_directorio es varchar(5): "m" + 4 caracteres al azar, nunca
+      # derivado de unique_integer (en CI es largo y la base lo rechaza).
+      prefijo = "m" <> (:crypto.strong_rand_bytes(3) |> Base.encode32(case: :lower, padding: false) |> binary_part(0, 4))
 
       {:ok, carpeta} =
         %MetadataApp.BusinessProcessBuilder.MetaSchema.Header{}
