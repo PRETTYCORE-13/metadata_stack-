@@ -320,8 +320,9 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   inactivos por ahora, IEPS, IVA, total), calculado al guardar en la regla
   POST y congelado al confirmar. Estados Captura → Confirmado →
   Remisionado / Cancelado; folio del administrador de folios. Aprobada el
-  2026-10-08; Grupos A-E y F2-F4 hechos, F1 (prueba en pantalla) en curso
-  y G (cierre) pendiente. Depende de SPEC-ADN-0710202602 y
+  2026-10-08; Grupos A-H cerrados en dev (precio preliminar al capturar
+  incluido), F1 parcial (faltan remisionar y cancelar en pantalla); falta
+  publicar (datos para quien publique en `03.tasks.md` G2). Depende de SPEC-ADN-0710202602 y
   SPEC-SYS-0710202602 (las dos construidas).
 - [`SPEC-ADN-0710202602-datos-fiscales-impuestos/`](SPEC-ADN-0710202602-datos-fiscales-impuestos/) —
   tipos y tasas de impuesto con vigencia, datos fiscales de material,
