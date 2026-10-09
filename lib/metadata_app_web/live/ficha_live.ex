@@ -407,16 +407,21 @@ defmodule MetadataAppWeb.FichaLive do
     {:noreply, assign(socket, :error_guardado, nil)}
   end
 
+  # cargar_registro/2 descarta los renglones en staging del lado servidor,
+  # así que la tabla también se recarga con los persistidos — si no, seguiría
+  # mostrando cambios que "Guardar" ya no tiene.
   def handle_event("actualizar_ficha", _params, socket) do
     %{schema_mod: schema_mod, registro: registro} = socket.assigns
     registro_actual = CatalogoGenerico.obtener!(schema_mod, socket.assigns[:current_scope], registro.id)
 
-    {:noreply,
-     socket
-     |> assign(:form_values, %{})
-     |> assign(:errores_campos, %{})
-     |> assign(:error_guardado, nil)
-     |> cargar_registro(registro_actual)}
+    socket =
+      socket
+      |> assign(:form_values, %{})
+      |> assign(:errores_campos, %{})
+      |> assign(:error_guardado, nil)
+      |> cargar_registro(registro_actual)
+
+    {:noreply, Enum.reduce(socket.assigns.catalogos_detalle, socket, &recargar_grid(&2, &1.nombre))}
   end
 
   # --- Catálogo Maestro-Detalle: Grid Editable del tab "Detalle" ----------
@@ -775,7 +780,7 @@ defmodule MetadataAppWeb.FichaLive do
 
     cond do
       map_size(attrs) == 0 and not hay_renglones_nuevos? and not hay_renglones_editados? and not hay_renglones_eliminados? ->
-        {:noreply, socket}
+        {:noreply, put_flash(socket, :info, "No hay cambios por guardar.")}
 
       hay_renglones_editados? and is_nil(transicion_edicion) ->
         {:noreply,
