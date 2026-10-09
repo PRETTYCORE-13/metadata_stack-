@@ -607,8 +607,27 @@ defmodule MetadataApp.Permissions do
       from h in Header,
         where: is_nil(h.delete_guid) and h.schema_context_type != 2,
         order_by: h.schema_context_label,
-        select: %{recurso: h.schema_context_name, label: h.schema_context_label, es_consulta: h.schema_context_type in [3, 4]}
+        select: %{
+          recurso: h.schema_context_name,
+          label: h.schema_context_label,
+          es_consulta: h.schema_context_type in [3, 4],
+          nav: h.schema_context_nav
+        }
     )
+  end
+
+  @doc """
+  `%{nav => etiqueta}` de las carpetas del menú (headers tipo 2 vivos) —
+  el nombre legible de cada módulo del picker de Permission Sets
+  (SPEC-SYS-0910202601 R6b). Una sola consulta.
+  """
+  def etiquetas_de_carpetas do
+    from(h in Header,
+      where: is_nil(h.delete_guid) and h.schema_context_type == 2,
+      select: {h.schema_context_nav, h.schema_context_label}
+    )
+    |> Repo.all()
+    |> Map.new()
   end
 
   @doc """
