@@ -131,7 +131,13 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
   # solo en standalone; embebido no hay picker.
   defp cargar_catalogos(socket) do
     catalogos = Permissions.listar_catalogos_para_permisos()
-    assign(socket, todos_los_catalogos: catalogos, modulos: modulos_de(catalogos))
+    nombres = nombres_de_modulos(catalogos, Permissions.etiquetas_de_carpetas())
+
+    assign(socket,
+      todos_los_catalogos: catalogos,
+      nombre_de_modulo: nombres,
+      modulos: opciones_de_modulos(catalogos, nombres)
+    )
   end
 
   defp montar_base(socket) do
@@ -153,6 +159,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     |> assign(:mostrar_sysadmin?, false)
     |> assign(:todos_los_catalogos, [])
     |> assign(:modulos, [])
+    |> assign(:nombre_de_modulo, %{})
     |> assign(:modulo_filtro, "")
   end
 
@@ -186,12 +193,47 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
     end
   end
 
-  defp modulos_de(catalogos) do
+  # R6b: el nombre legible de un módulo es la carpeta del menú donde viven
+  # más de sus catálogos ("Capital Humano"); sin carpeta, la clave técnica.
+  # Devuelve `%{clave técnica => nombre}`.
+  defp nombres_de_modulos(catalogos, etiquetas_de_carpetas) do
     catalogos
-    |> Enum.frequencies_by(&modulo_de_catalogo(&1.recurso))
-    |> Enum.map(fn {clave, cuenta} -> %{clave: clave, cuenta: cuenta} end)
-    |> Enum.sort_by(&{&1.clave == "otros", &1.clave})
+    |> Enum.group_by(&modulo_de_catalogo(&1.recurso))
+    |> Map.new(fn {clave, del_modulo} -> {clave, nombre_de_modulo(clave, del_modulo, etiquetas_de_carpetas)} end)
   end
+
+  # Opciones del selector agrupadas por nombre: varias claves técnicas en
+  # la misma carpeta ("pty-gym", "pty-socios" en "Gimnasio") son una sola
+  # opción. El valor de la opción (y de "?modulo=") es el nombre.
+  defp opciones_de_modulos(catalogos, nombres) do
+    catalogos
+    |> Enum.frequencies_by(&nombre_de_catalogo(&1, nombres))
+    |> Enum.map(fn {nombre, cuenta} -> %{clave: nombre, nombre: nombre, cuenta: cuenta} end)
+    |> Enum.sort_by(&{&1.nombre == "Otros", String.downcase(&1.nombre)})
+  end
+
+  defp nombre_de_catalogo(catalogo, nombres), do: Map.fetch!(nombres, modulo_de_catalogo(catalogo.recurso))
+
+  defp nombre_de_modulo("otros", _catalogos, _etiquetas), do: "Otros"
+
+  defp nombre_de_modulo(clave, catalogos, etiquetas) do
+    catalogos
+    |> Enum.map(&Map.get(etiquetas, carpeta_de(&1.nav)))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.frequencies()
+    |> Enum.max_by(fn {_nombre, veces} -> veces end, fn -> {clave, 0} end)
+    |> elem(0)
+  end
+
+  # Nav de la carpeta padre: "/capital-humano/areas" -> "/capital-humano".
+  defp carpeta_de(nav) when is_binary(nav) do
+    case nav |> String.split("/", trim: true) |> Enum.drop(-1) do
+      [] -> nil
+      segmentos -> "/" <> Enum.join(segmentos, "/")
+    end
+  end
+
+  defp carpeta_de(_nav), do: nil
 
   # R9: el módulo elegido viaja en "?modulo=" igual que "q"; solo se
   # acepta uno que exista en la lista.
@@ -203,12 +245,12 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
 
   # R7/R8: el módulo se aplica encima de la lista base (completa o ya
   # filtrada por el buscador).
-  defp catalogos_visibles(busqueda, todos, resultados, modulo) do
+  defp catalogos_visibles(busqueda, todos, resultados, modulo, nombres) do
     base = if busqueda == "", do: todos, else: resultados
 
     if modulo == "",
       do: base,
-      else: Enum.filter(base, &(modulo_de_catalogo(&1.recurso) == modulo))
+      else: Enum.filter(base, &(nombre_de_catalogo(&1, nombres) == modulo))
   end
 
   # SPEC-SYS-0910202601: el buscador filtra la lista completa ya cargada
@@ -579,7 +621,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
           >
             <option value="" selected={@modulo_filtro == ""}>Módulo: Todos</option>
             <option :for={m <- @modulos} value={m.clave} selected={@modulo_filtro == m.clave}>
-              {if m.clave == "otros", do: "Otros", else: m.clave} ({m.cuenta})
+              {m.nombre} ({m.cuenta})
             </option>
           </select>
         </form>
@@ -618,7 +660,7 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLive do
             class="border border-gray-200 rounded-lg divide-y divide-gray-100 max-h-[32rem] overflow-y-auto"
           >
             <li
-              :for={c <- catalogos_visibles(@busqueda_catalogo_picker, @todos_los_catalogos, @resultados_catalogo_picker, @modulo_filtro)}
+              :for={c <- catalogos_visibles(@busqueda_catalogo_picker, @todos_los_catalogos, @resultados_catalogo_picker, @modulo_filtro, @nombre_de_modulo)}
               id={"picker-" <> c.recurso}
             >
               <button

@@ -200,6 +200,51 @@ defmodule MetadataAppWeb.Sysadmin.CatalogoPermisosLiveTest do
       assert has_element?(view, "#picker-#{afuera.schema_context_name}")
     end
 
+    test "el módulo se muestra con el nombre de su carpeta del menú (R6b)", %{conn: conn} do
+      modulo = modulo_unico()
+      carpeta_nav = "/carpeta-#{modulo}"
+
+      {:ok, _carpeta} =
+        %MetadataApp.BusinessProcessBuilder.MetaSchema.Header{}
+        |> MetadataApp.BusinessProcessBuilder.MetaSchema.Header.changeset(%{
+          schema_context_name: "pty_carpeta_#{modulo}",
+          schema_context_label: "Capital Humano #{modulo}",
+          schema_context_type: 2,
+          schema_context_nav: carpeta_nav,
+          schema_visible: true
+        })
+        |> Ecto.Changeset.put_change(:insert_guid, Ecto.UUID.generate() |> String.replace("-", ""))
+        |> Repo.insert()
+
+      # Dos claves técnicas distintas ("pty-mxN" y "pty-mxNb") en la misma
+      # carpeta: deben salir como UNA sola opción con el nombre de la carpeta.
+      for {clave, sufijo} <- [{modulo, "areas"}, {"#{modulo}b", "puestos"}] do
+        {:ok, {header, _}} =
+          MetaSchemaContext.crear_header_con_detalles(%{
+            "schema_context_name" => "pty_#{clave}_#{sufijo}",
+            "schema_context_label" => "Catálogo #{sufijo}",
+            "schema_context_nav" => "#{carpeta_nav}/#{sufijo}",
+            "schema_visible" => true,
+            "schema_context_type" => 3,
+            "detalles" => []
+          })
+
+        {:ok, _} = MetaConsultas.crear(header, "meta_fixture_cliente")
+      end
+
+      {:ok, view, _html} = live(conn, ~p"/sysadmin/catalogos/permisos")
+
+      assert view |> element("#filtro-modulo option[value='Capital Humano #{modulo}']") |> render() =~
+               "Capital Humano #{modulo} (2)"
+
+      refute has_element?(view, "#filtro-modulo option[value='pty-#{modulo}']")
+      refute has_element?(view, "#filtro-modulo option[value='pty-#{modulo}b']")
+
+      view |> form("#filtro-modulo-form", %{"modulo" => "Capital Humano #{modulo}"}) |> render_change()
+      assert has_element?(view, "#picker-pty_#{modulo}_areas")
+      assert has_element?(view, "#picker-pty_#{modulo}b_puestos")
+    end
+
     test "módulo y texto del buscador se aplican juntos (R8)", %{conn: conn} do
       modulo = modulo_unico()
       buscado = catalogo_fixture("pty_#{modulo}_buscado")
