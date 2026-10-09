@@ -855,6 +855,8 @@ const DiagramaMotor = {
     const definicion = this.el.dataset.diagrama
     if (!definicion || definicion === this.definicionPintada) return
 
+    // El indicador de carga espera a que se quite (pantallaLista en app.js).
+    this.el.dataset.pcPendiente = ""
     try {
       const mermaid = await cargarMermaid()
       mermaid.initialize({startOnLoad: false, theme: "neutral", securityLevel: "strict"})
@@ -864,6 +866,8 @@ const DiagramaMotor = {
     } catch (e) {
       this.el.textContent = "No se pudo dibujar el diagrama."
       console.error("[DiagramaMotor]", e)
+    } finally {
+      delete this.el.dataset.pcPendiente
     }
   },
 }
@@ -1030,41 +1034,75 @@ const liveSocket = new LiveSocket("/live", Socket, {
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
 
 // Indicador de carga entre pantallas (#pc-cargando, SPEC-SYS-0909202601
-// R27–R33): en navegación entre LiveViews (kind "redirect") y en recargas
+// R27–R35): en navegación entre LiveViews (kind "redirect") y en recargas
 // completas (beforeunload), solo si tarda más de CARGANDO_ESPERA_MS; una
 // vez visible se queda al menos CARGANDO_MINIMO_MS para no parpadear.
 // Patch, element, error e initial siguen solo con topbar.
+//
+// La carga termina cuando pantallaLista(): page-loading-stop solo cubre la
+// vista principal, no las embebidas (live_render) ni lo que un hook dibuja
+// después de montar. Un hook asíncrono marca su elemento con
+// data-pc-pendiente mientras trabaja (ver DiagramaMotor).
 const CARGANDO_ESPERA_MS = 400
 const CARGANDO_MINIMO_MS = 500
-const CARGANDO_TOPE_RECARGA_MS = 10000
+const CARGANDO_TOPE_MS = 10000
+const CARGANDO_MARCA = "pc-cargando"
+
+const pantallaLista = () =>
+  [...document.querySelectorAll("[data-phx-session]")].every(el => el.classList.contains("phx-connected")) &&
+  !document.querySelector("[data-pc-pendiente]")
+
 const cargando = {
-  timer: null,
+  espera: null,
+  revision: null,
+  salida: null,
   tope: null,
   visibleDesde: null,
   el() { return document.getElementById("pc-cargando") },
+  mostrar() {
+    this.el()?.classList.remove("is-hidden")
+    this.visibleDesde = Date.now()
+  },
   // `procede` se evalúa al vencer la espera; `topeMs` oculta el velo si la
   // página sigue viva ese tiempo después de mostrarse.
   iniciar(procede = () => true, topeMs = null) {
-    clearTimeout(this.timer)
+    clearInterval(this.revision)
+    clearTimeout(this.salida)
     if (this.visibleDesde !== null) return
-    this.timer = setTimeout(() => {
+    clearTimeout(this.espera)
+    this.espera = setTimeout(() => {
+      this.espera = null
       if (!procede()) return
-      this.el()?.classList.remove("is-hidden")
-      this.visibleDesde = Date.now()
+      this.mostrar()
       if (topeMs) this.tope = setTimeout(() => this.ocultar(), topeMs)
     }, CARGANDO_ESPERA_MS)
   },
   ocultar() {
-    clearTimeout(this.timer)
+    clearTimeout(this.espera)
+    clearInterval(this.revision)
+    clearTimeout(this.salida)
     clearTimeout(this.tope)
+    this.espera = null
     this.el()?.classList.add("is-hidden")
     this.visibleDesde = null
   },
+  // Espera a pantallaLista() (o al tope) y entonces cancela la espera si el
+  // velo no llegó a mostrarse, o lo quita respetando el mínimo visible.
   terminar() {
-    clearTimeout(this.timer)
-    if (this.visibleDesde === null) return
-    const restante = Math.max(0, CARGANDO_MINIMO_MS - (Date.now() - this.visibleDesde))
-    this.timer = setTimeout(() => this.ocultar(), restante)
+    if (this.espera === null && this.visibleDesde === null) return
+    clearInterval(this.revision)
+    const limite = Date.now() + CARGANDO_TOPE_MS
+    const revisar = () => {
+      if (!pantallaLista() && Date.now() < limite) return
+      clearInterval(this.revision)
+      clearTimeout(this.espera)
+      this.espera = null
+      if (this.visibleDesde === null) return
+      const restante = Math.max(0, CARGANDO_MINIMO_MS - (Date.now() - this.visibleDesde))
+      this.salida = setTimeout(() => this.ocultar(), restante)
+    }
+    this.revision = setInterval(revisar, 50)
+    revisar()
   },
 }
 
@@ -1073,9 +1111,24 @@ const cargando = {
 // si otro listener canceló la salida (AvisoReglasSinGuardar), y el tope
 // lo quita si en realidad no hubo recarga (descarga de archivo, mailto:).
 window.addEventListener("beforeunload", (e) => {
-  cargando.iniciar(() => !e.defaultPrevented, CARGANDO_TOPE_RECARGA_MS)
+  cargando.iniciar(() => !e.defaultPrevented, CARGANDO_TOPE_MS)
 })
-window.addEventListener("pageshow", () => cargando.ocultar())
+// pagehide sí es una salida real: si el velo estaba visible, la página
+// nueva arranca con él puesto hasta terminar de cargar (R35).
+window.addEventListener("pagehide", () => {
+  if (cargando.visibleDesde === null) return
+  try { sessionStorage.setItem(CARGANDO_MARCA, String(Date.now())) } catch (_) {}
+})
+window.addEventListener("pageshow", (e) => { if (e.persisted) cargando.ocultar() })
+
+try {
+  const marca = Number(sessionStorage.getItem(CARGANDO_MARCA))
+  sessionStorage.removeItem(CARGANDO_MARCA)
+  if (marca && Date.now() - marca < 15000) {
+    cargando.mostrar()
+    cargando.terminar()
+  }
+} catch (_) {}
 
 window.addEventListener("phx:page-loading-start", ({detail}) => {
   if (detail?.kind === "redirect") cargando.iniciar()
