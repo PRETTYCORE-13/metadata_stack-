@@ -57,6 +57,18 @@ This is a web application written using the Phoenix web framework.
     `docs/specs/SPEC-...` (debe tener `03.tasks.md`) o `hotfix` si el
     usuario lo autoriza. Al cerrar la SPEC se borra. Nunca crearlo para
     destrabar el bloqueo por cuenta propia.
+- **Una SPEC por capacidad, no por cambio.** Antes de crear una SPEC
+  nueva, buscar si la capacidad ya tiene una SPEC dueña
+  (`docs/specs/README.md`, `grep` en `docs/specs`). Criterio:
+  - **Defecto** (el sistema no hace lo que su SPEC ya dice, o falla):
+    hotfix con prueba (solo si el usuario lo autoriza) y nota en
+    `03.tasks.md` de la SPEC dueña.
+  - **Capacidad nueva o cambio de comportamiento en algo con SPEC
+    dueña:** ampliar esa SPEC con requisitos nuevos numerados (sección
+    "Ampliación AAAA-MM-DD"), con su ciclo de aprobación normal.
+  - **Capacidad nueva sin dueña clara:** SPEC nueva; solo en este caso.
+  Si hay duda de cuál es la dueña, proponerla al usuario antes de
+  escribir.
 - **Toda recomendación** debe pensarse en función de: experiencia del
   cliente final, alta capacidad de respuesta (performance),
   escalabilidad, y volumen transaccional masivo — no solo "que
