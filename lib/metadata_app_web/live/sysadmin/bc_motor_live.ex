@@ -1370,7 +1370,7 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
     |> Enum.reject(&MapSet.member?(ya_usados, &1.schema_context_field))
   end
 
-  # --- Get View: "Llave de identificación" (Ficha 360°) -------------------
+  # --- Formulario: "Llave de identificación" de la Ficha -----------------
   # Mismo mecanismo que "Orden de resultados" arriba, pero sobre
   # Header.campos_llave_ficha (lista simple de nombres, sin dirección) y
   # con un tope duro de 3 (a pedido explícito, ver header.ex) -- el botón
@@ -2330,6 +2330,12 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
            a propósito (con id propio ya alcanza para que tabs_motor lo
            muestre/oculte igual que a los demás). -->
       <div id="motor-panel-postview" class="hidden">
+        <%!-- La llave de identificación configura la Ficha, no el listado
+             (SPEC-SYS-1109202607 R17). La pinta este LiveView, así que sus
+             eventos siguen llegando aquí y no al Constructor embebido. --%>
+        <div class="mb-4">
+          <.panel_llave_ficha campos={@campos} header={@header} selector_abierto={@selector_llave_ficha_abierto} />
+        </div>
         {live_render(@socket, MetadataAppWeb.Sysadmin.PlantillaConstructorLive,
           id: "plantilla-embebido-#{@header.schema_context_name}",
           session: %{"nombre" => @header.schema_context_name}
@@ -2913,7 +2919,6 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
       </details>
 
       <.panel_orden_resultados campos={@campos} header={@header} selector_abierto={@selector_orden_resultados_abierto} />
-      <.panel_llave_ficha campos={@campos} header={@header} selector_abierto={@selector_llave_ficha_abierto} />
     </div>
     """
   end
@@ -2997,11 +3002,11 @@ defmodule MetadataAppWeb.Sysadmin.BcMotorLive do
   # tope duro de 3 -- agregar/el selector desaparecen al llegar al tope.
   defp panel_llave_ficha(assigns) do
     ~H"""
-    <details id="get-view-llave-ficha" phx-hook="RecordarSeccion" class="group bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
+    <details id="formulario-llave-ficha" phx-hook="RecordarSeccion" class="group bg-white border border-gray-200 rounded-2xl shadow-sm p-4">
       <summary class="text-[11px] font-bold uppercase tracking-wide text-gray-400 flex items-center gap-1.5 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
         <span class="material-symbols-outlined text-gray-400 transition-transform group-open:rotate-90" style="font-size: 15px">chevron_right</span>
         <span class="material-symbols-outlined" style="font-size: 15px">key</span>
-        Llave de identificación (Ficha 360°)
+        Llave de identificación
       </summary>
       <p class="text-xs text-gray-400 mb-3 mt-2">
         Hasta 3 campos que se muestran junto al título de la Ficha, para reconocer un registro sin depender del id interno
