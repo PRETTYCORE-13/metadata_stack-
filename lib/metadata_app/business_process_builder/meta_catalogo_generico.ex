@@ -327,8 +327,15 @@ defmodule MetadataApp.BusinessProcessBuilder.MetaCatalogoGenerico do
 
   defp aplicar_valores(cs, _campo, _opciones), do: cs
 
-  defp aplicar_referencia(cs, campo, %{tabla_referenciada: tabla}) when is_binary(tabla),
-    do: foreign_key_constraint(cs, campo, message: "no existe un registro con este valor")
+  # SPEC-SYS-0810202601 (R9, D5): el generador nombra la llave
+  # "<campo>_fkey"; el nombre por omisión de Ecto ("<tabla>_<campo>_fkey")
+  # queda para tablas viejas. Sin el nombre real, Ecto no traduce el error y
+  # la operación truena en lugar de regresar el campo.
+  defp aplicar_referencia(cs, campo, %{tabla_referenciada: tabla}) when is_binary(tabla) do
+    cs
+    |> foreign_key_constraint(campo, message: "no existe un registro con este valor")
+    |> foreign_key_constraint(campo, name: "#{campo}_fkey", message: "no existe un registro con este valor")
+  end
 
   defp aplicar_referencia(cs, _campo, _opciones), do: cs
 

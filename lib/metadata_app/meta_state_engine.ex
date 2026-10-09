@@ -95,6 +95,7 @@ defmodule MetadataApp.MetaStateEngine do
     with {:ok, transicion} <- resolver_transicion(header, registro_actual.estado_id, accion),
          {:ok, changeset} <- construir_changeset_transicion(registro_actual, transicion, contexto),
          {:ok, renglones} <- resolver_renglones(registro_actual, transicion, renglones_spec),
+         :ok <- referencias_existentes([changeset | Enum.map(renglones, & &1.changeset)]),
          contexto_header =
            con_renglones_propuestos(contexto, header.id, registro_actual.id, %{
              editados: Enum.map(renglones, & &1.changeset),
@@ -104,6 +105,35 @@ defmodule MetadataApp.MetaStateEngine do
          :ok <- evaluar_precondiciones_todos(transicion, Ecto.Changeset.apply_changes(changeset), renglones, contexto, contexto_header) do
       ejecutar_nucleo(changeset, header, transicion, contexto, renglones, opciones)
     end
+  end
+
+  # SPEC-SYS-0810202601 (R9, D6): esta ruta escribe con update_all, así que
+  # la restricción de llave foránea del changeset no se aplica y un id
+  # inexistente truena en la base. Se revisan antes las referencias que
+  # cambian, con una consulta por tabla referenciada (no por renglón).
+  defp referencias_existentes(changesets) do
+    pendientes =
+      for cs <- changesets,
+          catalogo = cs.data.__struct__.__schema__(:source),
+          detalle <- MetaSchemaContext.listar_detalles(catalogo),
+          props = detalle.schema_context_properties,
+          props["tipo"] == "referencia",
+          campo = String.to_existing_atom(detalle.schema_context_field),
+          valor = Map.get(cs.changes, campo),
+          not is_nil(valor),
+          do: {props["catalogo"], valor, cs, campo}
+
+    pendientes
+    |> Enum.group_by(&elem(&1, 0))
+    |> Enum.find_value(:ok, fn {tabla, refs} ->
+      ids = refs |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+      existentes = Repo.all(from(t in tabla, where: t.id in ^ids, select: t.id)) |> MapSet.new()
+
+      case Enum.find(refs, fn {_t, valor, _cs, _campo} -> not MapSet.member?(existentes, valor) end) do
+        nil -> nil
+        {_t, _valor, cs, campo} -> {:error, Ecto.Changeset.add_error(cs, campo, "no existe un registro con este valor")}
+      end
+    end)
   end
 
   # Si la transición no tiene campos_editables, es un changeset vacío (0
@@ -343,6 +373,9 @@ defmodule MetadataApp.MetaStateEngine do
     |> Map.new()
   end
 
+  @doc "true si `catalogo` adoptó el motor de estados (tiene al menos un estado)."
+  def catalogo_con_motor?(catalogo), do: catalogo_adopto_motor?(catalogo)
+
   defp catalogo_adopto_motor?(catalogo) do
     header = obtener_header_por_nombre!(catalogo)
 
@@ -483,14 +516,20 @@ defmodule MetadataApp.MetaStateEngine do
   # real (ej. "baja", mueve encabezado + renglones juntos a otro estado)
   # queda gobernada solo por el permiso RBAC de transición de siempre,
   # sin capa extra acá.
-  defp verificar_permiso_detalle(registro, transicion, header_detalle) do
+  #
+  # SPEC-SYS-0810202601 (R1, D2): con el estado ACTUAL del maestro, que en el
+  # self-loop es `transicion.estado_origen_id` (resolver_transicion/3 ya lo
+  # validó contra la base), no con el estado_id guardado en el renglón, que
+  # no sigue al maestro cuando una transición no incluye renglones.
+  defp verificar_permiso_detalle(_registro, transicion, header_detalle) do
     if transicion.estado_origen_id == transicion.estado_destino_id do
-      permiso = MetaEstadosAdmin.permiso_detalle(registro.estado_id, header_detalle.id)
+      permiso = MetaEstadosAdmin.permiso_detalle(transicion.estado_origen_id, header_detalle.id)
 
       if permiso.permite_actualizar do
         :ok
       else
-        {:error, "el estado actual de '#{header_detalle.schema_context_name}' no permite actualizar este renglón"}
+        {:error,
+         "En el estado #{MetadataApp.Renglones.nombre_estado(transicion.estado_origen_id)} no se pueden cambiar renglones de #{header_detalle.schema_context_label}"}
       end
     else
       :ok

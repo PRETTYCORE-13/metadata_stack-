@@ -126,6 +126,50 @@ defmodule MetadataApp.MetaImportacionDatos do
     end)
   end
 
+  @doc """
+  Los campos que el asistente ofrece: de `campos_disponibles/1`, solo los
+  que un usuario puede capturar (SPEC-SYS-0810202601 R8): editables en el
+  contrato y, si el maestro tiene motor de estados, en `alta` o `guardar`.
+  Para un catálogo detalle se usan las transiciones de su maestro, que son
+  las que listan los campos de sus renglones.
+  """
+  def campos_importables(catalogo_nombre) do
+    editables = editables_por_usuario(catalogo_nombre)
+    catalogo_nombre |> campos_disponibles() |> Enum.filter(&MapSet.member?(editables, &1.campo))
+  end
+
+  defp editables_por_usuario(catalogo_nombre) do
+    header = MetaSchemaContext.obtener_header_por_nombre(catalogo_nombre)
+
+    maestro =
+      if header.schema_encabezado_id,
+        do: MetaSchemaContext.obtener_header!(header.schema_encabezado_id),
+        else: header
+
+    del_contrato =
+      catalogo_nombre
+      |> MetaSchemaContext.listar_detalles()
+      |> Enum.filter(&(&1.schema_context_properties["editable"] == true))
+      |> MapSet.new(& &1.schema_context_field)
+
+    de_transiciones =
+      if MetaStateEngine.catalogo_con_motor?(maestro.schema_context_name) do
+        maestro.id
+        |> MetadataApp.MetaEstadosAdmin.listar_transiciones()
+        |> Enum.filter(&(&1.accion in ["alta", "guardar"]))
+        |> Enum.flat_map(&(&1.campos_editables || []))
+        |> MapSet.new()
+        |> MapSet.intersection(MapSet.new(MetaSchemaContext.listar_detalles(catalogo_nombre), & &1.schema_context_field))
+      else
+        MapSet.new()
+      end
+
+    # Criterio híbrido (SPEC-SYS-0810202601 D3.1): si las transiciones no
+    # listan ningún campo de este catálogo (pasa con algunos detalles), basta
+    # el contrato.
+    if MapSet.size(de_transiciones) == 0, do: del_contrato, else: MapSet.intersection(del_contrato, de_transiciones)
+  end
+
   @doc "Catálogos detalle REALES de un maestro (Fase 2) — nombre/etiqueta, la lista que el paso \"¿Tiene detalles?\" del asistente ofrece tildar."
   def catalogos_detalle_disponibles(header_id) do
     header_id

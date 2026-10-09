@@ -316,11 +316,13 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   desde 2026-09-30 (el uso Servicio de SPEC-SYS-2509202601 ya existe).
 - [`SPEC-ADN-0710202601-pedido-renglones-precio/`](SPEC-ADN-0710202601-pedido-renglones-precio/) —
   renglones del pedido de venta (`pty_dsd_pedidos`) y procedimiento de
-  precios configurable con tipos de paso cerrados (precio, descuentos,
-  IEPS, IVA, total), recalculado sobre todo el pedido con cada renglón
-  y congelado al guardar. Solo `00.doc_human.md`; **en pausa** hasta
-  cerrar la spec de descuentos y la SYS de recálculo en vivo
-  (SPEC-ADN-0710202602 ya está construida).
+  precios configurable con tipos de paso cerrados (precio, descuentos
+  inactivos por ahora, IEPS, IVA, total), calculado al guardar en la regla
+  POST y congelado al confirmar. Estados Captura → Confirmado →
+  Remisionado / Cancelado; folio del administrador de folios. Aprobada el
+  2026-10-08; Grupos A-E y F2-F4 hechos, F1 (prueba en pantalla) en curso
+  y G (cierre) pendiente. Depende de SPEC-ADN-0710202602 y
+  SPEC-SYS-0710202602 (las dos construidas).
 - [`SPEC-ADN-0710202602-datos-fiscales-impuestos/`](SPEC-ADN-0710202602-datos-fiscales-impuestos/) —
   tipos y tasas de impuesto con vigencia, datos fiscales de material,
   cliente, dirección y sucursal, catálogo de códigos postales del SAT,
@@ -337,6 +339,13 @@ Crear, editar, renombrar o borrar cualquier archivo de una carpeta
   hoy. Prerrequisito del cálculo de precios del pedido
   (SPEC-ADN-0710202601). Grupos A-F cerrados el 2026-10-07 (12 pruebas
   nuevas, suite 1151/1155 con las 4 fallas conocidas de Windows).
+- [`SPEC-SYS-0810202601-permisos-renglones-y-alta/`](SPEC-SYS-0810202601-permisos-renglones-y-alta/) —
+  los permisos de cambiar y quitar renglones se revisan con el estado
+  actual del documento (no con el guardado en cada renglón); el alta de un
+  usuario solo acepta campos editables (encabezado y renglones); una
+  referencia inexistente se rechaza con el campo en lugar de un error
+  interno. Encontrado por las pruebas adversas de SPEC-ADN-0710202601.
+  Grupos A-F cerrados el 2026-10-08 (8 pruebas nuevas; pruebas adversas del pedido sin residuo).
 - [`SPEC-SYS-3009202602-endpoints-externos/`](SPEC-SYS-3009202602-endpoints-externos/) —
   Endpoints Externos (antes "Acciones externas"): llamadas configuradas a
   APIs de otros sistemas, con credencial cifrada, botón en la ficha,

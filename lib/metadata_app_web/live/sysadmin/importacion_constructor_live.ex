@@ -53,7 +53,7 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
          socket
          |> assign(:encontrado?, true)
          |> assign(:header, header)
-         |> assign(:campos_disponibles, MetaImportacionDatos.campos_disponibles(nombre))
+         |> assign(:campos_disponibles, MetaImportacionDatos.campos_importables(nombre))
          |> assign(:detalles_disponibles, MetaImportacionDatos.catalogos_detalle_disponibles(header.id))
          |> assign(:plantillas, MetaImportacionDatos.listar_plantillas(header.id))
          |> assign(:editor, nil)}
@@ -317,13 +317,13 @@ defmodule MetadataAppWeb.Sysadmin.ImportacionConstructorLive do
       "catalogo" => catalogo,
       "etiqueta" => etiqueta,
       "activo" => false,
-      "elegidos" => elegidos_iniciales(MetaImportacionDatos.campos_disponibles(catalogo)),
+      "elegidos" => elegidos_iniciales(MetaImportacionDatos.campos_importables(catalogo)),
       "campo_identificador_detalle" => nil
     }
   end
 
   defp detalle_inicial(%{catalogo: catalogo, etiqueta: etiqueta}, guardado) do
-    campos_disponibles = MetaImportacionDatos.campos_disponibles(catalogo)
+    campos_disponibles = MetaImportacionDatos.campos_importables(catalogo)
     guardados = Map.new(guardado["campos"] || [], &{&1["campo"], &1})
 
     elegidos =

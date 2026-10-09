@@ -183,8 +183,8 @@ defmodule MetadataApp.Renglones do
   transición, es sacarlo de la vista — mismo `delete_guid` de siempre.
 
   Gateado por `MetaEstadosAdmin.permiso_detalle/2.permite_borrar` del
-  estado ACTUAL de cada renglón — deny-by-default, mismo criterio que
-  `asignar_o_rechazar/5` ya usa para `permite_insertar`.
+  estado ACTUAL del maestro (SPEC-SYS-0810202601) — deny-by-default, mismo
+  criterio que `asignar_o_rechazar/5` ya usa para `permite_insertar`.
 
   `renglones_spec`: `%{"catalogo_detalle" => [renglon_id, ...]}` —
   mismo shape/estructura de validación que `crear_todos/3` (catálogo
@@ -197,16 +197,28 @@ defmodule MetadataApp.Renglones do
 
   def eliminar_todos(catalogo_maestro, registro_id, renglones_spec) do
     header_maestro = MetaSchemaContext.obtener_header_por_nombre(catalogo_maestro)
+    estado_maestro = estado_del_maestro(catalogo_maestro, registro_id)
 
     Enum.reduce_while(renglones_spec, {:ok, []}, fn {catalogo, renglon_ids}, {:ok, acc} ->
-      case eliminar_renglones_de_catalogo(header_maestro, registro_id, catalogo, renglon_ids) do
+      case eliminar_renglones_de_catalogo(header_maestro, registro_id, estado_maestro, catalogo, renglon_ids) do
         {:ok, eliminados} -> {:cont, {:ok, acc ++ eliminados}}
         {:error, _motivo} = error -> {:halt, error}
       end
     end)
   end
 
-  defp eliminar_renglones_de_catalogo(header_maestro, encabezado_id, catalogo, renglon_ids) do
+  # SPEC-SYS-0810202601 (R1, D1): el permiso de borrar se revisa con el
+  # estado ACTUAL del maestro, igual que insertar. El estado_id guardado en
+  # el renglón no sigue al maestro cuando una transición no incluye renglones.
+  defp estado_del_maestro(catalogo_maestro, registro_id) do
+    import Ecto.Query
+
+    modulo = MetaSchemaContext.modulo_por_nombre(catalogo_maestro)
+    # credo:disable-for-next-line MetadataApp.CredoChecks.RepoDirectoConVariable
+    Repo.one(from(r in modulo, where: r.id == ^registro_id, select: r.estado_id))
+  end
+
+  defp eliminar_renglones_de_catalogo(header_maestro, encabezado_id, estado_maestro, catalogo, renglon_ids) do
     modulo = MetaSchemaContext.modulo_por_nombre(catalogo)
     header_detalle = MetaSchemaContext.obtener_header_por_nombre(catalogo)
 
@@ -217,8 +229,21 @@ defmodule MetadataApp.Renglones do
       header_detalle.schema_encabezado_id != header_maestro.id ->
         {:error, "'#{catalogo}' no es un catálogo detalle de este maestro"}
 
+      not MetadataApp.MetaEstadosAdmin.permiso_detalle(estado_maestro, header_detalle.id).permite_borrar ->
+        {:error, "En el estado #{nombre_estado(estado_maestro)} no se pueden quitar renglones de #{header_detalle.schema_context_label}"}
+
       true ->
         eliminar_cada_renglon(modulo, header_detalle, encabezado_id, renglon_ids)
+    end
+  end
+
+  @doc "Nombre de un estado, para los mensajes de permiso de renglones."
+  def nombre_estado(nil), do: "(sin estado)"
+
+  def nombre_estado(estado_id) do
+    case Repo.get(MetadataApp.MetaSchema.Estado, estado_id) do
+      nil -> "(sin estado)"
+      estado -> estado.nombre
     end
   end
 
@@ -235,7 +260,7 @@ defmodule MetadataApp.Renglones do
            {:error, "renglón #{renglon_id} de '#{header_detalle.schema_context_name}' no existe para este encabezado"}}
 
         registro ->
-          case borrar_si_permitido(registro, header_detalle) do
+          case registro |> Ecto.Changeset.change(%{delete_guid: generar_guid()}) |> Repo.update() do
             {:ok, eliminado} -> {:cont, {:ok, [eliminado | acc]}}
             {:error, _motivo} = error -> {:halt, error}
           end
@@ -244,18 +269,6 @@ defmodule MetadataApp.Renglones do
     |> case do
       {:ok, lista} -> {:ok, Enum.reverse(lista)}
       error -> error
-    end
-  end
-
-  defp borrar_si_permitido(registro, header_detalle) do
-    permiso = MetadataApp.MetaEstadosAdmin.permiso_detalle(registro.estado_id, header_detalle.id)
-
-    if permiso.permite_borrar do
-      registro
-      |> Ecto.Changeset.change(%{delete_guid: generar_guid()})
-      |> Repo.update()
-    else
-      {:error, "el estado actual de '#{header_detalle.schema_context_name}' no permite eliminar este renglón"}
     end
   end
 

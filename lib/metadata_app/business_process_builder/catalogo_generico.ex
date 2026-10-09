@@ -371,10 +371,109 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
     renglones_spec = Keyword.get(opciones, :renglones, %{})
     contexto = Keyword.get(opciones, :contexto, %{})
 
-    case preparar_attrs_con_alcance(schema_mod, scope, attrs) do
-      {:error, _motivo} = error -> error
-      {:ok, attrs} -> crear_con_attrs_preparados(schema_mod, catalogo, attrs, renglones_spec, contexto)
+    with {:ok, attrs} <- preparar_attrs_con_alcance(schema_mod, scope, attrs),
+         :ok <- solo_editables_en_alta(scope, schema_mod, catalogo, attrs, renglones_spec) do
+      crear_con_attrs_preparados(schema_mod, catalogo, attrs, renglones_spec, contexto)
     end
+  end
+
+  # SPEC-SYS-0810202601 (R4-R7, D3, D4): lo que manda un usuario (pantalla,
+  # API, importación) solo puede traer campos de negocio editables en la
+  # transición `alta` y en el contrato, igual que `guardar`; también los
+  # renglones. El código del sistema (:sistema) pone valores calculados a
+  # propósito y no se filtra. Un catálogo sin transición `alta` sigue igual.
+  defp solo_editables_en_alta(%Scope{}, schema_mod, catalogo, attrs, renglones_spec) do
+    case MetadataApp.MetaStateEngine.transicion_alta(catalogo) do
+      nil -> :ok
+      transicion -> solo_editables(schema_mod, catalogo, transicion, attrs, renglones_spec, "el alta")
+    end
+  end
+
+  defp solo_editables_en_alta(_scope, _schema_mod, _catalogo, _attrs, _renglones_spec), do: :ok
+
+  defp solo_editables(schema_mod, catalogo, transicion, attrs, renglones_spec, cuando) do
+    editables = editables_de(catalogo, transicion)
+    llaves = llaves_texto(attrs)
+
+    no_editables =
+      for campo <- campos_de_negocio(catalogo), MapSet.member?(llaves, campo), campo not in editables, do: campo
+
+    case no_editables do
+      [] ->
+        renglones_solo_editables(catalogo, transicion, renglones_spec, cuando)
+
+      _ ->
+        # Sin validar el resto: solo los campos rechazados, para no mezclar
+        # errores de "obligatorio" que no vienen al caso.
+        changeset =
+          Enum.reduce(no_editables, Ecto.Changeset.change(struct(schema_mod)), fn campo, cs ->
+            Ecto.Changeset.add_error(cs, String.to_existing_atom(campo), "no editable en #{cuando}")
+          end)
+
+        {:error, changeset}
+    end
+  end
+
+  defp renglones_solo_editables(_catalogo, transicion, renglones_spec, cuando) do
+    Enum.find_value(renglones_spec, :ok, fn {catalogo_detalle, items} ->
+      editables = editables_de_renglon(catalogo_detalle, transicion)
+      campos = campos_de_negocio(catalogo_detalle)
+
+      items
+      |> Enum.with_index(1)
+      |> Enum.find_value(fn {item, n} ->
+        llaves = llaves_texto(item)
+        campo = Enum.find(campos, &(MapSet.member?(llaves, &1) and &1 not in editables))
+        if campo, do: {:error, "Renglón #{n} de #{etiqueta_catalogo(catalogo_detalle)}: el campo #{etiqueta_campo(catalogo_detalle, campo)} no es editable en #{cuando}"}
+      end)
+    end)
+  end
+
+  # Editables = los de la transición (que también lista los campos de sus
+  # renglones) ∩ los que el contrato marca editables — mismo criterio que
+  # actualizar_directo/6 para `guardar`.
+  defp editables_de(catalogo, transicion) do
+    del_contrato =
+      catalogo
+      |> MetaSchemaContext.listar_detalles()
+      |> Enum.filter(&(&1.schema_context_properties["editable"] == true))
+      |> Enum.map(& &1.schema_context_field)
+      |> MapSet.new()
+
+    Enum.filter(transicion.campos_editables || [], &MapSet.member?(del_contrato, &1))
+  end
+
+  # D3.1 (criterio híbrido): un campo del detalle con editable=false nunca
+  # pasa; si la transición del maestro lista campos de este detalle, además
+  # tiene que estar entre ellos. Hay maestros que no los listan.
+  defp editables_de_renglon(catalogo_detalle, transicion) do
+    detalles = MetaSchemaContext.listar_detalles(catalogo_detalle)
+    del_contrato = for d <- detalles, d.schema_context_properties["editable"] == true, do: d.schema_context_field
+    de_la_transicion = Enum.filter(transicion.campos_editables || [], &(&1 in Enum.map(detalles, fn d -> d.schema_context_field end)))
+
+    if de_la_transicion == [], do: del_contrato, else: Enum.filter(del_contrato, &(&1 in de_la_transicion))
+  end
+
+  defp llaves_texto(mapa), do: mapa |> Map.keys() |> MapSet.new(&to_string/1)
+
+  defp etiqueta_catalogo(catalogo) do
+    case MetaSchemaContext.obtener_header_por_nombre(catalogo) do
+      %{schema_context_label: etiqueta} when is_binary(etiqueta) -> etiqueta
+      _ -> catalogo
+    end
+  end
+
+  defp etiqueta_campo(catalogo, campo) do
+    catalogo
+    |> MetaSchemaContext.listar_detalles()
+    |> Enum.find_value(campo, &(&1.schema_context_field == campo && &1.schema_context_properties["etiqueta"]))
+  end
+
+  defp campos_de_negocio(catalogo) do
+    catalogo
+    |> MetaSchemaContext.listar_detalles()
+    |> Enum.map(& &1.schema_context_field)
+    |> Enum.reject(&(&1 == "fecha_registro"))
   end
 
   defp crear_con_attrs_preparados(schema_mod, catalogo, attrs, renglones_spec, contexto) do
@@ -847,6 +946,25 @@ defmodule MetadataApp.BusinessProcessBuilder.CatalogoGenerico do
 
   defp actualizar_directo(registro, scope, attrs, schema_mod, catalogo, opciones) do
     transicion = MetadataApp.MetaStateEngine.transicion_guardar(catalogo, registro.estado_id)
+
+    case renglones_nuevos_editables(scope, catalogo, transicion, Keyword.get(opciones, :renglones_nuevos, %{})) do
+      :ok -> actualizar_con_transicion(registro, scope, attrs, schema_mod, catalogo, opciones, transicion)
+      error -> error
+    end
+  end
+
+  # SPEC-SYS-0810202601 (R5, D3): los renglones nuevos de un usuario solo
+  # traen campos editables en `guardar`. Sin "guardar" en este estado no hay
+  # campos editables, así que cualquier campo se rechaza.
+  defp renglones_nuevos_editables(%Scope{}, catalogo, transicion, nuevos) when map_size(nuevos) > 0 do
+    if MetadataApp.MetaStateEngine.catalogo_con_motor?(catalogo),
+      do: renglones_solo_editables(catalogo, transicion || %{campos_editables: []}, nuevos, "guardar"),
+      else: :ok
+  end
+
+  defp renglones_nuevos_editables(_scope, _catalogo, _transicion, _nuevos), do: :ok
+
+  defp actualizar_con_transicion(registro, scope, attrs, schema_mod, catalogo, opciones, transicion) do
 
     detalles = MetadataApp.BusinessProcessBuilder.MetaSchemaContext.listar_detalles(catalogo)
     todos_los_campos = Enum.map(detalles, & &1.schema_context_field)
